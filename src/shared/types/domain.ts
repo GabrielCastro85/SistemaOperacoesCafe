@@ -11,6 +11,7 @@ export interface Organization {
   displayName: string;
   appDisplayName: string;
   logoPath: string | null;
+  compactLogoPath: string | null;
   iconPath: string | null;
   primaryColor: string;
   secondaryColor: string;
@@ -39,6 +40,7 @@ export interface LegalEntity {
   state: string;
   postalCode: string;
   documentPrefix: string | null;
+  isDraft: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -107,6 +109,29 @@ export interface BootstrapData {
   legalEntities: LegalEntity[];
   locations: Location[];
 }
+
+export interface OrganizationListItem extends Organization {
+  legalEntityCount: number;
+  locationCount: number;
+}
+
+export interface ActiveContext {
+  organizationId: string | null;
+  legalEntityId: string | null;
+  appVariant: AppVariant | null;
+  branding: {
+    appDisplayName: string;
+    logoPath: string | null;
+    compactLogoPath: string | null;
+    iconPath: string | null;
+    primaryColor: string;
+    secondaryColor: string;
+    accentColor: string;
+    themeMode: ThemeMode;
+  } | null;
+}
+
+export type BrandingAssetKind = "logo" | "compactLogo" | "icon";
 
 export interface Diagnostics {
   appVersion: string;

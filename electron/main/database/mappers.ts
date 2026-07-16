@@ -13,6 +13,7 @@ export function mapOrganization(row: DbRecord): Organization {
     displayName: String(row.display_name),
     appDisplayName: String(row.app_display_name),
     logoPath: textOrNull(row.logo_path),
+    compactLogoPath: textOrNull(row.compact_logo_path),
     iconPath: textOrNull(row.icon_path),
     primaryColor: String(row.primary_color),
     secondaryColor: String(row.secondary_color),
@@ -43,6 +44,7 @@ export function mapLegalEntity(row: DbRecord): LegalEntity {
     state: String(row.state),
     postalCode: String(row.postal_code),
     documentPrefix: textOrNull(row.document_prefix),
+    isDraft: bool(row.is_draft),
     isActive: bool(row.is_active),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)

@@ -25,7 +25,13 @@ O banco fica em `app.getPath("userData")/database/operations.sqlite`. Documentos
 
 ## Branding
 
-Variantes suportadas: `villa`, `grao` e `multiempresa`. Logos e icones devem ser colocados em `assets/branding/<variante>/` como PNG, SVG ou WebP.
+Variantes suportadas: `villa`, `grao` e `multiempresa`. Na tela Configuracoes > Identidade visual, o app abre o seletor no processo principal, valida PNG/SVG/WebP ate 5 MB, copia o arquivo para `userData/settings/branding/<organization-id>/` e salva apenas o caminho interno no banco.
+
+## Cadastros Administrativos
+
+Use Configuracoes para administrar Organizacoes, Empresas e CNPJs, Locais, Identidade visual, Perfil da instalacao e Diagnostico. CNPJs sao armazenados apenas com numeros e validados por digitos verificadores. Dados demonstrativos sem CNPJ podem permanecer como rascunho ate serem substituidos.
+
+Regras de variante: `villa` limita a Villa Coffee, `grao` limita a Grao & Grao, e `multiempresa` permite novas organizacoes e alternancia autorizada.
 
 ## Estrutura
 

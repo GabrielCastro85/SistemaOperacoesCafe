@@ -7,6 +7,8 @@ export const userRoleSchema = z.enum(["ADMIN", "OPERATOR", "VIEWER"]);
 
 const isoDateSchema = z.string().datetime();
 const nullableText = z.string().trim().min(1).nullable();
+const ufSchema = z.enum(["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"]);
+const digits = (value: string): string => value.replace(/\D/g, "");
 
 export const organizationSchema = z.object({
   id: z.string().uuid(),
@@ -15,6 +17,7 @@ export const organizationSchema = z.object({
   displayName: z.string().trim().min(1),
   appDisplayName: z.string().trim().min(1),
   logoPath: z.string().trim().min(1).nullable(),
+  compactLogoPath: z.string().trim().min(1).nullable(),
   iconPath: z.string().trim().min(1).nullable(),
   primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
   secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
@@ -40,9 +43,10 @@ export const legalEntitySchema = z.object({
   addressComplement: nullableText,
   district: z.string().trim().min(1),
   city: z.string().trim().min(1),
-  state: z.string().trim().length(2),
+  state: ufSchema,
   postalCode: z.string().regex(/^\d{8}$/),
   documentPrefix: nullableText,
+  isDraft: z.boolean(),
   isActive: z.boolean(),
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema
@@ -60,7 +64,7 @@ export const locationSchema = z.object({
   addressComplement: nullableText,
   district: nullableText,
   city: nullableText,
-  state: z.string().trim().length(2).nullable(),
+  state: ufSchema.nullable(),
   postalCode: z.string().regex(/^\d{8}$/).nullable(),
   isActive: z.boolean(),
   createdAt: isoDateSchema,
@@ -85,3 +89,63 @@ export const saveInstallationProfileSchema = installationProfileSchema.omit({
   createdAt: true,
   updatedAt: true
 });
+
+export const organizationInputSchema = z.object({
+  name: z.string().trim().min(1),
+  slug: z.string().trim().min(1).regex(/^[a-z0-9-]+$/),
+  displayName: z.string().trim().min(1),
+  appDisplayName: z.string().trim().min(1),
+  logoPath: z.string().trim().min(1).nullable().optional(),
+  compactLogoPath: z.string().trim().min(1).nullable().optional(),
+  iconPath: z.string().trim().min(1).nullable().optional(),
+  primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+  secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+  accentColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+  themeMode: themeModeSchema,
+  isActive: z.boolean()
+});
+
+export const legalEntityInputSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    legalName: z.string().trim().min(1),
+    tradeName: z.string().trim().min(1),
+    cnpj: z.string().transform(digits).pipe(z.string().length(14)).nullable(),
+    stateRegistration: nullableText,
+    municipalRegistration: nullableText,
+    email: z.string().trim().email().nullable(),
+    phone: z.string().transform(digits).pipe(z.string().min(8).max(13)).nullable(),
+    addressLine: z.string().trim().min(1),
+    addressNumber: z.string().trim().min(1),
+    addressComplement: nullableText,
+    district: z.string().trim().min(1),
+    city: z.string().trim().min(1),
+    state: ufSchema,
+    postalCode: z.string().transform(digits).pipe(z.string().length(8)),
+    documentPrefix: z.string().trim().regex(/^[A-Za-z0-9_.-]{1,20}$/).nullable(),
+    isDraft: z.boolean(),
+    isActive: z.boolean()
+  })
+  .refine((value) => value.isDraft || value.cnpj !== null, "CNPJ valido e obrigatorio para cadastro ativo.");
+
+export const locationInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  legalEntityId: z.string().uuid().nullable(),
+  name: z.string().trim().min(1),
+  type: locationTypeSchema,
+  description: nullableText,
+  addressLine: nullableText,
+  addressNumber: nullableText,
+  addressComplement: nullableText,
+  district: nullableText,
+  city: nullableText,
+  state: ufSchema.nullable(),
+  postalCode: z.string().transform(digits).pipe(z.string().length(8)).nullable(),
+  isActive: z.boolean()
+});
+
+export const updateInstallationProfileSchema = saveInstallationProfileSchema.extend({
+  confirmVariantChange: z.boolean().optional()
+});
+
+export const brandingAssetKindSchema = z.enum(["logo", "compactLogo", "icon"]);

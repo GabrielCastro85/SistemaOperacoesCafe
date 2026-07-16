@@ -247,5 +247,30 @@ export const migrations: Migration[] = [
         });
       });
     }
+  },
+  {
+    name: "003_admin_modules",
+    up: (db) => {
+      const columns = (table: string): string[] =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
+      const organizationColumns = columns("organizations");
+      const legalEntityColumns = columns("legal_entities");
+      if (!organizationColumns.includes("compact_logo_path")) {
+        db.exec("ALTER TABLE organizations ADD COLUMN compact_logo_path TEXT");
+      }
+      if (!legalEntityColumns.includes("is_draft")) {
+        db.exec("ALTER TABLE legal_entities ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 1 CHECK (is_draft IN (0, 1))");
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_organizations_is_active ON organizations(is_active);
+        CREATE INDEX IF NOT EXISTS idx_organizations_name_search ON organizations(name, display_name);
+        CREATE INDEX IF NOT EXISTS idx_legal_entities_is_active ON legal_entities(is_active);
+        CREATE INDEX IF NOT EXISTS idx_legal_entities_state ON legal_entities(state);
+        CREATE INDEX IF NOT EXISTS idx_legal_entities_trade_name_search ON legal_entities(trade_name, legal_name);
+        CREATE INDEX IF NOT EXISTS idx_locations_is_active ON locations(is_active);
+        CREATE INDEX IF NOT EXISTS idx_locations_type ON locations(type);
+        CREATE INDEX IF NOT EXISTS idx_locations_name_search ON locations(name);
+      `);
+    }
   }
 ];

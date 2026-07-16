@@ -1,7 +1,7 @@
 # Roadmap
 
 1. Fundacao e arquitetura.
-2. Multiempresa e cadastros.
+2. Multiempresa e cadastros. Concluido parcialmente com administracao de organizacoes, CNPJs, locais, branding e perfil.
 3. Clientes e regras por saca.
 4. Notas e operacoes manuais.
 5. Importacao das planilhas.

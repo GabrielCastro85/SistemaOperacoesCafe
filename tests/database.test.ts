@@ -31,8 +31,9 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("002_seed_demo_data");
+    expect(getCurrentMigration(db)).toBe("003_admin_modules");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
+    expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     db.close();
   });
 

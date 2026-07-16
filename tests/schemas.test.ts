@@ -13,6 +13,7 @@ describe("domain schemas", () => {
         displayName: "Demo",
         appDisplayName: "Demo Operacoes",
         logoPath: null,
+        compactLogoPath: null,
         iconPath: null,
         primaryColor: "#111111",
         secondaryColor: "#222222",
@@ -44,6 +45,7 @@ describe("domain schemas", () => {
       state: "MG",
       postalCode: "00000000",
       documentPrefix: null,
+      isDraft: false,
       isActive: true,
       createdAt: now,
       updatedAt: now
