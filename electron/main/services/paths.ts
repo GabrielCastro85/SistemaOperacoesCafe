@@ -1,0 +1,26 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type { AppDirectories } from "../../../src/shared/types/domain.js";
+
+export function resolveAppDirectories(userData: string): AppDirectories {
+  return {
+    userData,
+    databaseDir: join(userData, "database"),
+    databasePath: join(userData, "database", "operations.sqlite"),
+    documentsDir: join(userData, "documents"),
+    invoicesDir: join(userData, "documents", "invoices"),
+    confirmationsDir: join(userData, "documents", "confirmations"),
+    chargesDir: join(userData, "documents", "charges"),
+    attachmentsDir: join(userData, "documents", "attachments"),
+    signedDir: join(userData, "documents", "signed"),
+    backupsDir: join(userData, "backups"),
+    logsDir: join(userData, "logs"),
+    settingsDir: join(userData, "settings")
+  };
+}
+
+export function ensureAppDirectories(directories: AppDirectories): void {
+  Object.values(directories)
+    .filter((value) => value !== directories.databasePath)
+    .forEach((directory) => mkdirSync(directory, { recursive: true }));
+}
