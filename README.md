@@ -33,6 +33,12 @@ Use Configuracoes para administrar Organizacoes, Empresas e CNPJs, Locais, Ident
 
 Regras de variante: `villa` limita a Villa Coffee, `grao` limita a Grao & Grao, e `multiempresa` permite novas organizacoes e alternancia autorizada.
 
+## Parceiros, Produtos E Regras
+
+Use Clientes para cadastrar parceiros comerciais com um ou mais papeis, seus estabelecimentos/CNPJs e contatos. Produtos possuem categoria, unidade e peso sugerido de saca. Use Cobrancas para cadastrar regras de valor por saca por cliente, tipo interno/externo, produto e CNPJ proprio.
+
+Valores monetarios sao salvos em centavos inteiros. Exemplo: R$ 5,00 vira `500`.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.

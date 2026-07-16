@@ -9,3 +9,5 @@ Organizacao representa a marca ou grupo empresarial. Pessoa juridica representa 
 Objetivos: preservar dados locais, permitir atualizacoes manuais sem apagar historico e preparar modulos de notas, clientes, cobrancas, conta-corrente, financeiro, confirmacoes e relatorios.
 
 A segunda etapa transforma os cadastros multiempresa em modulos administrativos: organizacoes, empresas/CNPJs, locais, identidade visual e perfil da instalacao.
+
+A terceira etapa adiciona cadastros de parceiros comerciais, estabelecimentos dos parceiros, contatos, produtos, perfil de cobranca do cliente e regras de valor por saca para uso futuro nas operacoes.

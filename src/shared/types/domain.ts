@@ -133,6 +133,122 @@ export interface ActiveContext {
 
 export type BrandingAssetKind = "logo" | "compactLogo" | "icon";
 
+export type BusinessPartnerRole = "CLIENT" | "SUPPLIER" | "SELLER" | "BUYER" | "DESTINATION" | "CARRIER" | "SERVICE_PROVIDER" | "OTHER";
+export type PreferredContactMethod = "PHONE" | "MOBILE" | "EMAIL" | "WHATSAPP" | "OTHER";
+export type ProductCategory = "COFFEE_ARABICA" | "COFFEE_CONILON" | "COFFEE_OTHER" | "OTHER";
+export type ProductUnit = "SACK" | "KG" | "TON" | "UNIT";
+export type BillingPeriodicity = "WEEKLY" | "BIWEEKLY" | "MONTHLY" | "QUARTERLY" | "CUSTOM";
+export type OperationScope = "INTERNAL" | "EXTERNAL" | "ALL";
+export type RateType = "PER_SACK";
+
+export interface BusinessPartner {
+  id: string;
+  organizationId: string;
+  displayName: string;
+  notes: string | null;
+  roles: BusinessPartnerRole[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessPartnerLegalEntity {
+  id: string;
+  businessPartnerId: string;
+  legalName: string;
+  tradeName: string;
+  cnpj: string | null;
+  stateRegistration: string | null;
+  municipalRegistration: string | null;
+  email: string | null;
+  phone: string | null;
+  addressLine: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  district: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  isPrimary: boolean;
+  isActive: boolean;
+  isDraft: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PartnerContact {
+  id: string;
+  businessPartnerId: string;
+  partnerLegalEntityId: string | null;
+  name: string;
+  department: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  preferredContactMethod: PreferredContactMethod;
+  isPrimary: boolean;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Product {
+  id: string;
+  organizationId: string;
+  name: string;
+  code: string | null;
+  category: ProductCategory;
+  defaultUnit: ProductUnit;
+  defaultSackWeightKg: number | null;
+  description: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClientBillingProfile {
+  id: string;
+  organizationId: string;
+  businessPartnerId: string;
+  ownLegalEntityId: string | null;
+  periodicity: BillingPeriodicity;
+  closingWeekday: number | null;
+  closingDayOfMonth: number | null;
+  dueDaysAfterClosing: number;
+  autoIncludeUnbilledOperations: boolean;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServiceRateRule {
+  id: string;
+  organizationId: string;
+  businessPartnerId: string;
+  ownLegalEntityId: string | null;
+  productId: string | null;
+  operationScope: OperationScope;
+  rateType: RateType;
+  rateValueCents: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  priority: number;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResolveRateResult {
+  status: "found" | "missing" | "conflict";
+  rule: ServiceRateRule | null;
+  rateValueCents: number | null;
+  origin: string;
+  message: string | null;
+}
+
 export interface Diagnostics {
   appVersion: string;
   databasePath: string;

@@ -36,3 +36,7 @@ export function formatCep(cep: string | null): string {
 export function formatDateBr(value: string): string {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
+
+export function formatCurrencyFromCents(value: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
+}

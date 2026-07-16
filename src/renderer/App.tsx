@@ -1,8 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getBrandingConfig } from "../shared/branding/branding";
-import type { AppVariant, BootstrapData, Diagnostics, InstallationProfile, LegalEntity, Location, Organization, OrganizationListItem } from "../shared/types/domain";
-import { formatCep, formatCnpj, formatDateBr, onlyDigits } from "../shared/utils/format";
+import type {
+  AppVariant,
+  BootstrapData,
+  BusinessPartner,
+  BusinessPartnerLegalEntity,
+  BusinessPartnerRole,
+  Diagnostics,
+  InstallationProfile,
+  LegalEntity,
+  Location,
+  OperationScope,
+  Organization,
+  OrganizationListItem,
+  PartnerContact,
+  Product,
+  ServiceRateRule
+} from "../shared/types/domain";
+import { formatCep, formatCnpj, formatCurrencyFromCents, formatDateBr, onlyDigits } from "../shared/utils/format";
 import "./styles.css";
 
 type StatusFilter = "active" | "inactive" | "all";
@@ -18,6 +34,18 @@ const locationLabels: Record<Location["type"], string> = {
   STORAGE: "Deposito",
   OTHER: "Outro"
 };
+const roleLabels: Record<BusinessPartnerRole, string> = {
+  CLIENT: "Cliente",
+  SUPPLIER: "Fornecedor",
+  SELLER: "Vendedor",
+  BUYER: "Comprador",
+  DESTINATION: "Destino",
+  CARRIER: "Transportadora",
+  SERVICE_PROVIDER: "Prestador de servico",
+  OTHER: "Outro"
+};
+const scopeLabels: Record<OperationScope, string> = { INTERNAL: "Interna", EXTERNAL: "Externa", ALL: "Todas" };
+const productLabels: Record<Product["category"], string> = { COFFEE_ARABICA: "Cafe Arabica", COFFEE_CONILON: "Cafe Conilon", COFFEE_OTHER: "Outro cafe", OTHER: "Outro produto" };
 
 const blankOrg = (variant: AppVariant): Omit<Organization, "id" | "createdAt" | "updatedAt"> => {
   const branding = getBrandingConfig(variant);
@@ -185,6 +213,202 @@ function SettingsPage({ profile, refresh, onProfile }: { profile: InstallationPr
       {tab === "Identidade visual" ? <BrandingAdmin refresh={refresh} /> : null}
       {tab === "Perfil da instalacao" ? <ProfileAdmin profile={profile} refresh={refresh} onProfile={onProfile} /> : null}
       {tab === "Diagnostico" ? <DiagnosticsLoader /> : null}
+    </section>
+  );
+}
+
+function PartnersPage({ data, refresh }: { data: BootstrapData; refresh: () => Promise<BootstrapData> }): JSX.Element {
+  const [items, setItems] = useState<BusinessPartner[]>([]);
+  const [selected, setSelected] = useState<BusinessPartner | null>(null);
+  const [legalEntities, setLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
+  const [contacts, setContacts] = useState<PartnerContact[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [search, setSearch] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const [partnerName, setPartnerName] = useState("");
+  const [roles, setRoles] = useState<BusinessPartnerRole[]>(["CLIENT"]);
+  const [cnpj, setCnpj] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [productName, setProductName] = useState("");
+
+  const load = useCallback(async () => {
+    setItems(await window.operationsCafe.listBusinessPartners({ organizationId, search, status: "all" }));
+    setProducts(await window.operationsCafe.listProducts({ organizationId, status: "all" }));
+  }, [organizationId, search]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function loadDetail(partner: BusinessPartner): Promise<void> {
+    setSelected(partner);
+    setLegalEntities(await window.operationsCafe.listPartnerLegalEntities(partner.id));
+    setContacts(await window.operationsCafe.listPartnerContacts(partner.id));
+  }
+
+  async function savePartner(): Promise<void> {
+    try {
+      const partner = await window.operationsCafe.createBusinessPartner({ organizationId, displayName: partnerName, notes: null, roles, isActive: true });
+      setPartnerName("");
+      setMessage("Parceiro salvo.");
+      await load();
+      await loadDetail(partner);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar parceiro."}`);
+    }
+  }
+
+  async function savePartnerLegalEntity(): Promise<void> {
+    if (!selected) return;
+    try {
+      await window.operationsCafe.createPartnerLegalEntity({
+        businessPartnerId: selected.id,
+        legalName: selected.displayName,
+        tradeName: selected.displayName,
+        cnpj: onlyDigits(cnpj),
+        stateRegistration: null,
+        municipalRegistration: null,
+        email: null,
+        phone: null,
+        addressLine: null,
+        addressNumber: null,
+        addressComplement: null,
+        district: null,
+        city: null,
+        state: null,
+        postalCode: null,
+        isPrimary: legalEntities.length === 0,
+        isActive: true,
+        isDraft: false
+      });
+      setCnpj("");
+      setMessage("Estabelecimento salvo.");
+      await loadDetail(selected);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar estabelecimento."}`);
+    }
+  }
+
+  async function saveContact(): Promise<void> {
+    if (!selected) return;
+    try {
+      await window.operationsCafe.createPartnerContact({
+        businessPartnerId: selected.id,
+        partnerLegalEntityId: null,
+        name: contactName,
+        department: null,
+        email: null,
+        phone: null,
+        mobile: null,
+        preferredContactMethod: "PHONE",
+        isPrimary: contacts.length === 0,
+        notes: null,
+        isActive: true
+      });
+      setContactName("");
+      setMessage("Contato salvo.");
+      await loadDetail(selected);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar contato."}`);
+    }
+  }
+
+  async function saveProduct(): Promise<void> {
+    try {
+      await window.operationsCafe.createProduct({ organizationId, name: productName, code: productName.toUpperCase().replace(/\s+/g, "-"), category: "COFFEE_OTHER", defaultUnit: "SACK", defaultSackWeightKg: 60, description: null, isActive: true });
+      setProductName("");
+      setMessage("Produto salvo.");
+      await load();
+      await refresh();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar produto."}`);
+    }
+  }
+
+  return (
+    <section className="content-section settings">
+      <AdminBlock title="Clientes e parceiros">
+        <Toolbar search={search} status="all" onSearch={setSearch} onStatus={() => undefined} />
+        <FormGrid>
+          <TextField label="Nome do parceiro" value={partnerName} onChange={setPartnerName} required />
+          <label className="checkbox"><input type="checkbox" checked={roles.includes("CLIENT")} onChange={(event) => setRoles(event.target.checked ? Array.from(new Set([...roles, "CLIENT"])) : roles.filter((role) => role !== "CLIENT"))} /> Cliente</label>
+          <label className="checkbox"><input type="checkbox" checked={roles.includes("BUYER")} onChange={(event) => setRoles(event.target.checked ? Array.from(new Set([...roles, "BUYER"])) : roles.filter((role) => role !== "BUYER"))} /> Comprador</label>
+          <button className="primary" onClick={() => void savePartner()}>Cadastrar parceiro</button>
+        </FormGrid>
+        <div className="table">
+          <div className="table-head partner-grid"><span>Parceiro</span><span>Papeis</span><span>Status</span><span>Atualizado</span><span>Acoes</span></div>
+          {items.map((item) => <div key={item.id} className="table-row partner-grid"><span>{item.displayName}</span><span>{item.roles.map((role) => roleLabels[role]).join(", ")}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span><span className="actions"><button onClick={() => void loadDetail(item)}>Detalhar</button></span></div>)}
+        </div>
+      </AdminBlock>
+      {selected ? <AdminBlock title={`Detalhe: ${selected.displayName}`}>
+        <FormGrid>
+          <TextField label="CNPJ do estabelecimento" value={cnpj} onChange={setCnpj} />
+          <button onClick={() => void savePartnerLegalEntity()}>Cadastrar CNPJ</button>
+          <TextField label="Nome do contato" value={contactName} onChange={setContactName} />
+          <button onClick={() => void saveContact()}>Cadastrar contato</button>
+        </FormGrid>
+        <div className="cards"><article><span>Estabelecimentos</span><strong>{legalEntities.map((item) => `${item.tradeName} ${formatCnpj(item.cnpj)}`).join(" | ") || "Nenhum"}</strong></article><article><span>Contatos</span><strong>{contacts.map((item) => item.name).join(" | ") || "Nenhum"}</strong></article></div>
+      </AdminBlock> : null}
+      <AdminBlock title="Produtos">
+        <FormGrid><TextField label="Produto" value={productName} onChange={setProductName} /><button onClick={() => void saveProduct()}>Cadastrar produto</button></FormGrid>
+        <div className="table"><div className="table-head product-grid"><span>Nome</span><span>Codigo</span><span>Categoria</span><span>Peso saca</span><span>Status</span></div>{products.map((item) => <div key={item.id} className="table-row product-grid"><span>{item.name}</span><span>{item.code ?? "-"}</span><span>{productLabels[item.category]}</span><span>{item.defaultSackWeightKg ?? "-"} kg</span><span>{item.isActive ? "Ativo" : "Inativo"}</span></div>)}</div>
+      </AdminBlock>
+      <Feedback message={message} />
+    </section>
+  );
+}
+
+function ServiceRatesPage({ data }: { data: BootstrapData }): JSX.Element {
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [rules, setRules] = useState<ServiceRateRule[]>([]);
+  const [partnerId, setPartnerId] = useState("");
+  const [productId, setProductId] = useState("");
+  const [scope, setScope] = useState<OperationScope>("EXTERNAL");
+  const [value, setValue] = useState("5,00");
+  const [message, setMessage] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    const clientPartners = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    setPartners(clientPartners);
+    setPartnerId((current) => current || clientPartners[0]?.id || "");
+    setProducts(await window.operationsCafe.listProducts({ organizationId, status: "active" }));
+    setRules(await window.operationsCafe.listServiceRateRules({ organizationId, status: "all" }));
+  }, [organizationId]);
+  useEffect(() => { void load(); }, [load]);
+  async function saveRule(): Promise<void> {
+    try {
+      await window.operationsCafe.createServiceRateRule({
+        organizationId,
+        businessPartnerId: partnerId,
+        ownLegalEntityId: null,
+        productId: productId || null,
+        operationScope: scope,
+        rateType: "PER_SACK",
+        rateValueCents: Math.round(Number(value.replace(".", "").replace(",", ".")) * 100),
+        effectiveFrom: new Date().toISOString().slice(0, 10),
+        effectiveTo: null,
+        priority: productId ? 10 : 1,
+        notes: null,
+        isActive: true
+      });
+      setMessage("Regra por saca salva.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar regra."}`);
+    }
+  }
+  return (
+    <section className="content-section settings">
+      <AdminBlock title="Cobrancas - Regras por cliente">
+        <FormGrid>
+          <SelectField label="Cliente" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
+          <SelectField label="Tipo" value={scope} onChange={(next) => setScope(next as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"], ["ALL", "Todas"]]} />
+          <SelectField label="Produto" value={productId} onChange={setProductId} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
+          <TextField label="Valor por saca" value={value} onChange={setValue} />
+          <button className="primary" onClick={() => void saveRule()}>Cadastrar regra</button>
+        </FormGrid>
+        <div className="table"><div className="table-head rate-grid"><span>Cliente</span><span>Tipo</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span></div>{rules.map((item) => <div key={item.id} className="table-row rate-grid"><span>{partners.find((partner) => partner.id === item.businessPartnerId)?.displayName ?? item.businessPartnerId}</span><span>{scopeLabels[item.operationScope]}</span><span>{products.find((product) => product.id === item.productId)?.name ?? "Todos"}</span><span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span><span>{item.effectiveFrom} ate {item.effectiveTo ?? "sem data final"}</span><span>{item.isActive ? "Vigente" : "Inativa"}</span></div>)}</div>
+      </AdminBlock>
+      <Feedback message={message} />
     </section>
   );
 }
@@ -544,6 +768,8 @@ function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
 
   const page = useMemo(() => {
     if (activeMenu === "Dashboard") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} />;
+    if (activeMenu === "Clientes") return <PartnersPage data={data} refresh={refresh} />;
+    if (activeMenu === "Cobrancas") return <ServiceRatesPage data={data} />;
     if (activeMenu === "Configuracoes" && profile) return <SettingsPage profile={profile} refresh={refresh} onProfile={setProfile} />;
     return <ModulePlaceholder title={activeMenu} />;
   }, [activeMenu, data, profile, refresh]);

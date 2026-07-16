@@ -1,6 +1,6 @@
 import { dialog, type IpcMain } from "electron";
 import { z } from "zod";
-import { brandingAssetKindSchema } from "../../../src/shared/schemas/domainSchemas.js";
+import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
 import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
@@ -110,4 +110,66 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   ipcMain.handle(IPC_CHANNELS.activateLocation, (_event, payload: unknown) => repository.activateLocation(z.string().uuid().parse(payload)));
   ipcMain.handle(IPC_CHANNELS.deactivateLocation, (_event, payload: unknown) => repository.deactivateLocation(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listBusinessPartners, (_event, payload: unknown) =>
+    repository.listBusinessPartners(z.object({ search: z.string().optional(), role: businessPartnerRoleSchema.optional(), organizationId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
+  );
+  ipcMain.handle(IPC_CHANNELS.getBusinessPartner, (_event, payload: unknown) => repository.getBusinessPartner(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createBusinessPartner, (_event, payload: unknown) => repository.createBusinessPartner(payload));
+  ipcMain.handle(IPC_CHANNELS.updateBusinessPartner, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateBusinessPartner(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activateBusinessPartner, (_event, payload: unknown) => repository.activateBusinessPartner(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateBusinessPartner, (_event, payload: unknown) => repository.deactivateBusinessPartner(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.addBusinessPartnerRole, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), role: businessPartnerRoleSchema }).parse(payload);
+    return repository.addBusinessPartnerRole(data.id, data.role);
+  });
+  ipcMain.handle(IPC_CHANNELS.removeBusinessPartnerRole, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), role: businessPartnerRoleSchema }).parse(payload);
+    return repository.removeBusinessPartnerRole(data.id, data.role);
+  });
+  ipcMain.handle(IPC_CHANNELS.listPartnerLegalEntities, (_event, payload: unknown) => repository.listPartnerLegalEntities(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createPartnerLegalEntity, (_event, payload: unknown) => repository.createPartnerLegalEntity(payload));
+  ipcMain.handle(IPC_CHANNELS.updatePartnerLegalEntity, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updatePartnerLegalEntity(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activatePartnerLegalEntity, (_event, payload: unknown) => repository.activatePartnerLegalEntity(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivatePartnerLegalEntity, (_event, payload: unknown) => repository.deactivatePartnerLegalEntity(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listPartnerContacts, (_event, payload: unknown) => repository.listPartnerContacts(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createPartnerContact, (_event, payload: unknown) => repository.createPartnerContact(payload));
+  ipcMain.handle(IPC_CHANNELS.updatePartnerContact, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updatePartnerContact(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activatePartnerContact, (_event, payload: unknown) => repository.activatePartnerContact(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivatePartnerContact, (_event, payload: unknown) => repository.deactivatePartnerContact(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listProducts, (_event, payload: unknown) =>
+    repository.listProducts(z.object({ search: z.string().optional(), organizationId: z.string().uuid().optional(), category: z.string().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
+  );
+  ipcMain.handle(IPC_CHANNELS.getProduct, (_event, payload: unknown) => repository.getProduct(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createProduct, (_event, payload: unknown) => repository.createProduct(payload));
+  ipcMain.handle(IPC_CHANNELS.updateProduct, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateProduct(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activateProduct, (_event, payload: unknown) => repository.activateProduct(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateProduct, (_event, payload: unknown) => repository.deactivateProduct(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.getBillingProfile, (_event, payload: unknown) => repository.getBillingProfile(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.upsertBillingProfile, (_event, payload: unknown) => repository.upsertBillingProfile(payload));
+  ipcMain.handle(IPC_CHANNELS.activateBillingProfile, (_event, payload: unknown) => repository.activateBillingProfile(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateBillingProfile, (_event, payload: unknown) => repository.deactivateBillingProfile(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listServiceRateRules, (_event, payload: unknown) =>
+    repository.listServiceRateRules(z.object({ businessPartnerId: z.string().uuid().optional(), organizationId: z.string().uuid().optional(), operationScope: z.string().optional(), productId: z.string().uuid().optional(), ownLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
+  );
+  ipcMain.handle(IPC_CHANNELS.getServiceRateRule, (_event, payload: unknown) => repository.getServiceRateRule(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createServiceRateRule, (_event, payload: unknown) => repository.createServiceRateRule(payload));
+  ipcMain.handle(IPC_CHANNELS.updateServiceRateRule, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateServiceRateRule(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activateServiceRateRule, (_event, payload: unknown) => repository.activateServiceRateRule(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateServiceRateRule, (_event, payload: unknown) => repository.deactivateServiceRateRule(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.resolveServiceRateRule, (_event, payload: unknown) => repository.resolveServiceRateRule(payload));
 }

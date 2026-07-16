@@ -1,4 +1,15 @@
-import type { InstallationProfile, LegalEntity, Location, Organization } from "../../../src/shared/types/domain.js";
+import type {
+  BusinessPartner,
+  BusinessPartnerLegalEntity,
+  ClientBillingProfile,
+  InstallationProfile,
+  LegalEntity,
+  Location,
+  PartnerContact,
+  Product,
+  ServiceRateRule,
+  Organization
+} from "../../../src/shared/types/domain.js";
 
 type DbRecord = Record<string, unknown>;
 
@@ -82,6 +93,118 @@ export function mapInstallationProfile(row: DbRecord): InstallationProfile {
     allowOrganizationSwitch: bool(row.allow_organization_switch),
     allowLegalEntitySwitch: bool(row.allow_legal_entity_switch),
     completedSetup: bool(row.completed_setup),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapBusinessPartner(row: DbRecord, roles: BusinessPartner["roles"] = []): BusinessPartner {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    displayName: String(row.display_name),
+    notes: textOrNull(row.notes),
+    roles,
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapBusinessPartnerLegalEntity(row: DbRecord): BusinessPartnerLegalEntity {
+  return {
+    id: String(row.id),
+    businessPartnerId: String(row.business_partner_id),
+    legalName: String(row.legal_name),
+    tradeName: String(row.trade_name),
+    cnpj: textOrNull(row.cnpj),
+    stateRegistration: textOrNull(row.state_registration),
+    municipalRegistration: textOrNull(row.municipal_registration),
+    email: textOrNull(row.email),
+    phone: textOrNull(row.phone),
+    addressLine: textOrNull(row.address_line),
+    addressNumber: textOrNull(row.address_number),
+    addressComplement: textOrNull(row.address_complement),
+    district: textOrNull(row.district),
+    city: textOrNull(row.city),
+    state: textOrNull(row.state),
+    postalCode: textOrNull(row.postal_code),
+    isPrimary: bool(row.is_primary),
+    isActive: bool(row.is_active),
+    isDraft: bool(row.is_draft),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapPartnerContact(row: DbRecord): PartnerContact {
+  return {
+    id: String(row.id),
+    businessPartnerId: String(row.business_partner_id),
+    partnerLegalEntityId: textOrNull(row.partner_legal_entity_id),
+    name: String(row.name),
+    department: textOrNull(row.department),
+    email: textOrNull(row.email),
+    phone: textOrNull(row.phone),
+    mobile: textOrNull(row.mobile),
+    preferredContactMethod: String(row.preferred_contact_method) as PartnerContact["preferredContactMethod"],
+    isPrimary: bool(row.is_primary),
+    notes: textOrNull(row.notes),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapProduct(row: DbRecord): Product {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    name: String(row.name),
+    code: textOrNull(row.code),
+    category: String(row.category) as Product["category"],
+    defaultUnit: String(row.default_unit) as Product["defaultUnit"],
+    defaultSackWeightKg: typeof row.default_sack_weight_kg === "number" ? row.default_sack_weight_kg : null,
+    description: textOrNull(row.description),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapClientBillingProfile(row: DbRecord): ClientBillingProfile {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    businessPartnerId: String(row.business_partner_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    periodicity: String(row.periodicity) as ClientBillingProfile["periodicity"],
+    closingWeekday: typeof row.closing_weekday === "number" ? row.closing_weekday : null,
+    closingDayOfMonth: typeof row.closing_day_of_month === "number" ? row.closing_day_of_month : null,
+    dueDaysAfterClosing: Number(row.due_days_after_closing),
+    autoIncludeUnbilledOperations: bool(row.auto_include_unbilled_operations),
+    notes: textOrNull(row.notes),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapServiceRateRule(row: DbRecord): ServiceRateRule {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    businessPartnerId: String(row.business_partner_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    productId: textOrNull(row.product_id),
+    operationScope: String(row.operation_scope) as ServiceRateRule["operationScope"],
+    rateType: String(row.rate_type) as ServiceRateRule["rateType"],
+    rateValueCents: Number(row.rate_value_cents),
+    effectiveFrom: String(row.effective_from),
+    effectiveTo: textOrNull(row.effective_to),
+    priority: Number(row.priority),
+    notes: textOrNull(row.notes),
+    isActive: bool(row.is_active),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };

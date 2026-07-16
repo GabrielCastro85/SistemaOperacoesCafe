@@ -272,5 +272,185 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_locations_name_search ON locations(name);
       `);
     }
+  },
+  {
+    name: "004_partners_products_billing",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS business_partners (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          notes TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_business_partners_organization_id ON business_partners(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_business_partners_display_name ON business_partners(display_name);
+        CREATE INDEX IF NOT EXISTS idx_business_partners_is_active ON business_partners(is_active);
+
+        CREATE TABLE IF NOT EXISTS business_partner_roles (
+          id TEXT PRIMARY KEY,
+          business_partner_id TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('CLIENT','SUPPLIER','SELLER','BUYER','DESTINATION','CARRIER','SERVICE_PROVIDER','OTHER')),
+          created_at TEXT NOT NULL,
+          UNIQUE (business_partner_id, role),
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_business_partner_roles_business_partner_id ON business_partner_roles(business_partner_id);
+
+        CREATE TABLE IF NOT EXISTS partner_legal_entities (
+          id TEXT PRIMARY KEY,
+          business_partner_id TEXT NOT NULL,
+          legal_name TEXT NOT NULL,
+          trade_name TEXT NOT NULL,
+          cnpj TEXT,
+          state_registration TEXT,
+          municipal_registration TEXT,
+          email TEXT,
+          phone TEXT,
+          address_line TEXT,
+          address_number TEXT,
+          address_complement TEXT,
+          district TEXT,
+          city TEXT,
+          state TEXT,
+          postal_code TEXT,
+          is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_partner_legal_entities_business_partner_id ON partner_legal_entities(business_partner_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_legal_entities_cnpj_unique ON partner_legal_entities(cnpj) WHERE cnpj IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_legal_entities_one_primary ON partner_legal_entities(business_partner_id) WHERE is_primary = 1 AND is_active = 1;
+
+        CREATE TABLE IF NOT EXISTS partner_contacts (
+          id TEXT PRIMARY KEY,
+          business_partner_id TEXT NOT NULL,
+          partner_legal_entity_id TEXT,
+          name TEXT NOT NULL,
+          department TEXT,
+          email TEXT,
+          phone TEXT,
+          mobile TEXT,
+          preferred_contact_method TEXT NOT NULL CHECK (preferred_contact_method IN ('PHONE','MOBILE','EMAIL','WHATSAPP','OTHER')),
+          is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+          notes TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (partner_legal_entity_id) REFERENCES partner_legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_partner_contacts_business_partner_id ON partner_contacts(business_partner_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_contacts_one_primary ON partner_contacts(business_partner_id) WHERE is_primary = 1 AND is_active = 1;
+
+        CREATE TABLE IF NOT EXISTS products (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          code TEXT,
+          category TEXT NOT NULL CHECK (category IN ('COFFEE_ARABICA','COFFEE_CONILON','COFFEE_OTHER','OTHER')),
+          default_unit TEXT NOT NULL CHECK (default_unit IN ('SACK','KG','TON','UNIT')),
+          default_sack_weight_kg REAL,
+          description TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_products_organization_id ON products(organization_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_products_code_org_unique ON products(organization_id, code) WHERE code IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active);
+
+        CREATE TABLE IF NOT EXISTS client_billing_profiles (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          business_partner_id TEXT NOT NULL UNIQUE,
+          own_legal_entity_id TEXT,
+          periodicity TEXT NOT NULL CHECK (periodicity IN ('WEEKLY','BIWEEKLY','MONTHLY','QUARTERLY','CUSTOM')),
+          closing_weekday INTEGER,
+          closing_day_of_month INTEGER,
+          due_days_after_closing INTEGER NOT NULL,
+          auto_include_unbilled_operations INTEGER NOT NULL CHECK (auto_include_unbilled_operations IN (0, 1)),
+          notes TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_client_billing_profiles_business_partner_id ON client_billing_profiles(business_partner_id);
+
+        CREATE TABLE IF NOT EXISTS service_rate_rules (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          business_partner_id TEXT NOT NULL,
+          own_legal_entity_id TEXT,
+          product_id TEXT,
+          operation_scope TEXT NOT NULL CHECK (operation_scope IN ('INTERNAL','EXTERNAL','ALL')),
+          rate_type TEXT NOT NULL CHECK (rate_type IN ('PER_SACK')),
+          rate_value_cents INTEGER NOT NULL,
+          effective_from TEXT NOT NULL,
+          effective_to TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          notes TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (product_id) REFERENCES products(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_business_partner_id ON service_rate_rules(business_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_organization_id ON service_rate_rules(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_own_legal_entity_id ON service_rate_rules(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_product_id ON service_rate_rules(product_id);
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_effective_from ON service_rate_rules(effective_from);
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_effective_to ON service_rate_rules(effective_to);
+        CREATE INDEX IF NOT EXISTS idx_service_rate_rules_is_active ON service_rate_rules(is_active);
+      `);
+      const now = new Date().toISOString();
+      const insertProduct = db.prepare(`
+        INSERT OR IGNORE INTO products (
+          id, organization_id, name, code, category, default_unit, default_sack_weight_kg,
+          description, is_active, created_at, updated_at
+        ) VALUES (@id, @organizationId, @name, @code, @category, @defaultUnit, @defaultSackWeightKg,
+          @description, 1, @createdAt, @updatedAt)
+      `);
+      ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"].forEach((organizationId, index) => {
+        insertProduct.run({
+          id: `77777777-7777-4777-8777-7777777777${index}1`,
+          organizationId,
+          name: "Cafe Arabica",
+          code: "CAFE-ARABICA",
+          category: "COFFEE_ARABICA",
+          defaultUnit: "SACK",
+          defaultSackWeightKg: 60,
+          description: "Produto demonstrativo",
+          createdAt: now,
+          updatedAt: now
+        });
+        insertProduct.run({
+          id: `77777777-7777-4777-8777-7777777777${index}2`,
+          organizationId,
+          name: "Cafe Conilon",
+          code: "CAFE-CONILON",
+          category: "COFFEE_CONILON",
+          defaultUnit: "SACK",
+          defaultSackWeightKg: 60,
+          description: "Produto demonstrativo",
+          createdAt: now,
+          updatedAt: now
+        });
+      });
+    }
   }
 ];

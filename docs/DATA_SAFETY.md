@@ -9,3 +9,5 @@ Atualizacoes manuais nao devem substituir `userData`. Migrations sao executadas 
 Backups completos ainda nao foram implementados. Risco atual: backups dependem de processo manual ate a etapa dedicada.
 
 Arquivos de branding selecionados pelo usuario sao copiados para `userData/settings/branding/<organization-id>/`. O app nao depende do caminho original escolhido e nao grava imagens em Base64 no banco.
+
+Parceiros, produtos, perfis e regras sao armazenados no mesmo SQLite local e participam das migrations automaticas. Nenhum dado novo depende de internet ou servico externo.

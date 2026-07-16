@@ -23,3 +23,15 @@ Foi adicionado `legal_entities.is_draft` para permitir preservar dados demonstra
 ## Branding Local
 
 Logos sao copiadas para `userData/settings/branding/<organization-id>/`. Essa decisao evita dependencia do caminho original e mantem atualizacoes do aplicativo independentes dos dados locais.
+
+## Parceiro Comercial Unico
+
+Foi criada a entidade `BusinessPartner` com papeis multiplos para evitar duplicacao entre cliente, comprador, vendedor, fornecedor e destino.
+
+## Dinheiro Em Centavos
+
+Regras por saca armazenam valores em centavos inteiros. Isso evita erro de ponto flutuante e prepara calculos futuros.
+
+## Resolucao De Regra
+
+O resolvedor ordena por especificidade: CNPJ proprio, produto, tipo de operacao e prioridade. Empates igualmente especificos retornam conflito.
