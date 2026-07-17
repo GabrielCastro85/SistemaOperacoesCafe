@@ -5,6 +5,7 @@ import { PageHeader, Stepper, Tabs } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
+import { requestTextInput } from "../../utils/dialogs";
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
@@ -114,7 +115,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function overrideFirstOperation(): Promise<void> {
     if (!detail?.operations[0]) return;
-    const reason = window.prompt("Motivo da alteracao manual do valor por saca");
+    const reason = await requestTextInput({ title: "Alterar valor do serviço", label: "Motivo da alteração manual do valor por saca" });
     if (!reason) return;
     await window.operationsCafe.updateOperationManualRate(detail.operations[0].id, 750, reason);
     setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
@@ -276,7 +277,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <button onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
           <button onClick={() => void overrideFirstOperation()}>Alterar valor primeira operacao</button>
           <button onClick={() => window.operationsCafe.confirmFiscalDocument(detail.document.id).then(setDetail).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao confirmar."}`))}>Confirmar</button>
-          <button onClick={() => { const reason = window.prompt("Motivo do cancelamento"); if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then(setDetail); }}>Cancelar</button>
+          <button onClick={() => { void requestTextInput({ title: "Cancelar nota", label: "Motivo do cancelamento" }).then((reason) => { if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then(setDetail); }); }}>Cancelar</button>
         </FormGrid>
         <div className="cards">
           <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${item.unit}`).join(" | ") || "Nenhum"}</strong></article>
@@ -298,7 +299,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {importJob ? <div className="cards"><article><span>Total</span><strong>{importJob.job.totalRows}</strong></article><article><span>Validas</span><strong>{importJob.job.validRows}</strong></article><article><span>Erros</span><strong>{importJob.job.errorRows}</strong></article><article><span>Importadas</span><strong>{importJob.job.importedRows}</strong></article></div> : null}
       </AdminBlock>
       <AdminBlock title="Historico de importacoes">
-        <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span>{job.status}</span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { const reason = window.prompt("Motivo da reversao"); if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }}>Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span>{job.status}</span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter importação", label: "Motivo da reversão" }).then((reason) => { if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock>
       <AdminBlock title="Importar XML NF-e">
         <div className="toolbar">
@@ -318,7 +319,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
       </AdminBlock>
       <AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span>{job.status}</span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { const reason = window.prompt("Motivo da reversao XML"); if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }}>Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span>{job.status}</span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock>
       <Feedback message={message} />
     </section>

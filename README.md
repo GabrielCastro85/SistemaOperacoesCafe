@@ -81,6 +81,10 @@ O app agora possui sidebar recolhivel, topbar com organizacao e CNPJ ativo, toke
 
 A continuacao da etapa 10 migrou Notas e operacoes, importacoes de planilha/XML e Confirmacoes de negocio para paginas reais em `src/renderer/pages/operations`, `src/renderer/pages/imports` e `src/renderer/pages/confirmations`. O `LegacyWorkspace` permanece apenas como casca de composicao e para modulos ainda nao migrados visualmente.
 
+A etapa 10.2 removeu essa casca para os modulos migrados: as rotas hash agora sao resolvidas diretamente em `src/renderer/app/App.tsx`, envolvidas por `AppLayout`. `LegacyWorkspace` nao compoe mais Operacoes, importacoes ou Confirmacoes; ele apenas exporta paginas legadas ainda pendentes de migracao.
+
+A continuacao da etapa 10 tambem migrou Clientes e parceiros, Produtos, Regras por saca, Cobrancas e Conta-corrente para paginas diretas em `src/renderer/pages/partners`, `products`, `serviceRates`, `charges` e `clientLedger`. `LegacyWorkspace` fica temporariamente restrito a Financeiro, Relatorios e Configuracoes/admin.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.

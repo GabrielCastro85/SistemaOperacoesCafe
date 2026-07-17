@@ -1,25 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { getBrandingConfig } from "../../../shared/branding/branding";
 import type {
   AppVariant,
   BootstrapData,
   BusinessPartner,
-  BusinessPartnerLegalEntity,
-  BusinessPartnerRole,
   Diagnostics,
   InstallationProfile,
   LegalEntity,
   Location,
-  Operation,
-  OperationScope,
   Organization,
   OrganizationListItem,
-  PartnerContact,
-  Product,
-  ServiceRateRule,
-  ClientCharge,
-  ClientChargeDetail,
-  ClientLedgerEntry,
   BillingSummary,
   ExpenseCategory,
   CostCenter,
@@ -32,10 +22,7 @@ import type {
   DealConfirmationSummary
 } from "../../../shared/types/domain";
 import { formatCep, formatCnpj, formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
-import { ConfirmationsPage } from "../confirmations/ConfirmationsPage";
-import { OperationsPage } from "../operations/OperationsPage";
-import { legacyMenuFromPath, pathFromLegacyMenu } from "../../app/navigation";
-import { AppLayout } from "../../layouts/AppLayout";
+import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import "../../styles/index.css";
 
 type StatusFilter = "active" | "inactive" | "all";
@@ -50,19 +37,6 @@ const locationLabels: Record<Location["type"], string> = {
   STORAGE: "Deposito",
   OTHER: "Outro"
 };
-const roleLabels: Record<BusinessPartnerRole, string> = {
-  CLIENT: "Cliente",
-  SUPPLIER: "Fornecedor",
-  SELLER: "Vendedor",
-  BUYER: "Comprador",
-  DESTINATION: "Destino",
-  CARRIER: "Transportadora",
-  SERVICE_PROVIDER: "Prestador de servico",
-  OTHER: "Outro"
-};
-const scopeLabels: Record<OperationScope, string> = { INTERNAL: "Interna", EXTERNAL: "Externa", ALL: "Todas" };
-const productLabels: Record<Product["category"], string> = { COFFEE_ARABICA: "Cafe Arabica", COFFEE_CONILON: "Cafe Conilon", COFFEE_OTHER: "Outro cafe", OTHER: "Outro produto" };
-
 const blankOrg = (variant: AppVariant): Omit<Organization, "id" | "createdAt" | "updatedAt"> => {
   const branding = getBrandingConfig(variant);
   return {
@@ -118,7 +92,7 @@ const blankLocation = (organizationId: string): Omit<Location, "id" | "createdAt
   isActive: true
 });
 
-function Splash(): JSX.Element {
+export function Splash(): JSX.Element {
   return (
     <main className="splash">
       <div className="splash-mark">OC</div>
@@ -128,7 +102,7 @@ function Splash(): JSX.Element {
   );
 }
 
-function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (profile: InstallationProfile) => void }): JSX.Element {
+export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (profile: InstallationProfile) => void }): JSX.Element {
   const [variant, setVariant] = useState<AppVariant>(data.profile?.appVariant ?? "multiempresa");
   const [organizationId, setOrganizationId] = useState(data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "");
   const legalEntities = data.legalEntities.filter((entity) => entity.organizationId === organizationId);
@@ -212,7 +186,7 @@ function Feedback({ message }: { message: string | null }): JSX.Element | null {
   return message ? <p className={message.startsWith("Erro") ? "error" : "success"}>{message}</p> : null;
 }
 
-function SettingsPage({ profile, refresh, onProfile }: { profile: InstallationProfile; refresh: () => Promise<BootstrapData>; onProfile: (profile: InstallationProfile) => void }): JSX.Element {
+export function SettingsPage({ profile, refresh, onProfile }: { profile: InstallationProfile; refresh: () => Promise<BootstrapData>; onProfile: (profile: InstallationProfile) => void }): JSX.Element {
   const [tab, setTab] = useState<SettingsTab>("Organizacoes");
   return (
     <section className="content-section settings">
@@ -229,202 +203,6 @@ function SettingsPage({ profile, refresh, onProfile }: { profile: InstallationPr
       {tab === "Identidade visual" ? <BrandingAdmin refresh={refresh} /> : null}
       {tab === "Perfil da instalacao" ? <ProfileAdmin profile={profile} refresh={refresh} onProfile={onProfile} /> : null}
       {tab === "Diagnostico" ? <DiagnosticsLoader /> : null}
-    </section>
-  );
-}
-
-function PartnersPage({ data, refresh }: { data: BootstrapData; refresh: () => Promise<BootstrapData> }): JSX.Element {
-  const [items, setItems] = useState<BusinessPartner[]>([]);
-  const [selected, setSelected] = useState<BusinessPartner | null>(null);
-  const [legalEntities, setLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
-  const [contacts, setContacts] = useState<PartnerContact[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [search, setSearch] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
-  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
-  const [partnerName, setPartnerName] = useState("");
-  const [roles, setRoles] = useState<BusinessPartnerRole[]>(["CLIENT"]);
-  const [cnpj, setCnpj] = useState("");
-  const [contactName, setContactName] = useState("");
-  const [productName, setProductName] = useState("");
-
-  const load = useCallback(async () => {
-    setItems(await window.operationsCafe.listBusinessPartners({ organizationId, search, status: "all" }));
-    setProducts(await window.operationsCafe.listProducts({ organizationId, status: "all" }));
-  }, [organizationId, search]);
-  useEffect(() => { void load(); }, [load]);
-
-  async function loadDetail(partner: BusinessPartner): Promise<void> {
-    setSelected(partner);
-    setLegalEntities(await window.operationsCafe.listPartnerLegalEntities(partner.id));
-    setContacts(await window.operationsCafe.listPartnerContacts(partner.id));
-  }
-
-  async function savePartner(): Promise<void> {
-    try {
-      const partner = await window.operationsCafe.createBusinessPartner({ organizationId, displayName: partnerName, notes: null, roles, isActive: true });
-      setPartnerName("");
-      setMessage("Parceiro salvo.");
-      await load();
-      await loadDetail(partner);
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar parceiro."}`);
-    }
-  }
-
-  async function savePartnerLegalEntity(): Promise<void> {
-    if (!selected) return;
-    try {
-      await window.operationsCafe.createPartnerLegalEntity({
-        businessPartnerId: selected.id,
-        legalName: selected.displayName,
-        tradeName: selected.displayName,
-        cnpj: onlyDigits(cnpj),
-        stateRegistration: null,
-        municipalRegistration: null,
-        email: null,
-        phone: null,
-        addressLine: null,
-        addressNumber: null,
-        addressComplement: null,
-        district: null,
-        city: null,
-        state: null,
-        postalCode: null,
-        isPrimary: legalEntities.length === 0,
-        isActive: true,
-        isDraft: false
-      });
-      setCnpj("");
-      setMessage("Estabelecimento salvo.");
-      await loadDetail(selected);
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar estabelecimento."}`);
-    }
-  }
-
-  async function saveContact(): Promise<void> {
-    if (!selected) return;
-    try {
-      await window.operationsCafe.createPartnerContact({
-        businessPartnerId: selected.id,
-        partnerLegalEntityId: null,
-        name: contactName,
-        department: null,
-        email: null,
-        phone: null,
-        mobile: null,
-        preferredContactMethod: "PHONE",
-        isPrimary: contacts.length === 0,
-        notes: null,
-        isActive: true
-      });
-      setContactName("");
-      setMessage("Contato salvo.");
-      await loadDetail(selected);
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar contato."}`);
-    }
-  }
-
-  async function saveProduct(): Promise<void> {
-    try {
-      await window.operationsCafe.createProduct({ organizationId, name: productName, code: productName.toUpperCase().replace(/\s+/g, "-"), category: "COFFEE_OTHER", defaultUnit: "SACK", defaultSackWeightKg: 60, description: null, isActive: true });
-      setProductName("");
-      setMessage("Produto salvo.");
-      await load();
-      await refresh();
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar produto."}`);
-    }
-  }
-
-  return (
-    <section className="content-section settings">
-      <AdminBlock title="Clientes e parceiros">
-        <Toolbar search={search} status="all" onSearch={setSearch} onStatus={() => undefined} />
-        <FormGrid>
-          <TextField label="Nome do parceiro" value={partnerName} onChange={setPartnerName} required />
-          <label className="checkbox"><input type="checkbox" checked={roles.includes("CLIENT")} onChange={(event) => setRoles(event.target.checked ? Array.from(new Set([...roles, "CLIENT"])) : roles.filter((role) => role !== "CLIENT"))} /> Cliente</label>
-          <label className="checkbox"><input type="checkbox" checked={roles.includes("BUYER")} onChange={(event) => setRoles(event.target.checked ? Array.from(new Set([...roles, "BUYER"])) : roles.filter((role) => role !== "BUYER"))} /> Comprador</label>
-          <button className="primary" onClick={() => void savePartner()}>Cadastrar parceiro</button>
-        </FormGrid>
-        <div className="table">
-          <div className="table-head partner-grid"><span>Parceiro</span><span>Papeis</span><span>Status</span><span>Atualizado</span><span>Acoes</span></div>
-          {items.map((item) => <div key={item.id} className="table-row partner-grid"><span>{item.displayName}</span><span>{item.roles.map((role) => roleLabels[role]).join(", ")}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span><span className="actions"><button onClick={() => void loadDetail(item)}>Detalhar</button></span></div>)}
-        </div>
-      </AdminBlock>
-      {selected ? <AdminBlock title={`Detalhe: ${selected.displayName}`}>
-        <FormGrid>
-          <TextField label="CNPJ do estabelecimento" value={cnpj} onChange={setCnpj} />
-          <button onClick={() => void savePartnerLegalEntity()}>Cadastrar CNPJ</button>
-          <TextField label="Nome do contato" value={contactName} onChange={setContactName} />
-          <button onClick={() => void saveContact()}>Cadastrar contato</button>
-        </FormGrid>
-        <div className="cards"><article><span>Estabelecimentos</span><strong>{legalEntities.map((item) => `${item.tradeName} ${formatCnpj(item.cnpj)}`).join(" | ") || "Nenhum"}</strong></article><article><span>Contatos</span><strong>{contacts.map((item) => item.name).join(" | ") || "Nenhum"}</strong></article></div>
-      </AdminBlock> : null}
-      <AdminBlock title="Produtos">
-        <FormGrid><TextField label="Produto" value={productName} onChange={setProductName} /><button onClick={() => void saveProduct()}>Cadastrar produto</button></FormGrid>
-        <div className="table"><div className="table-head product-grid"><span>Nome</span><span>Codigo</span><span>Categoria</span><span>Peso saca</span><span>Status</span></div>{products.map((item) => <div key={item.id} className="table-row product-grid"><span>{item.name}</span><span>{item.code ?? "-"}</span><span>{productLabels[item.category]}</span><span>{item.defaultSackWeightKg ?? "-"} kg</span><span>{item.isActive ? "Ativo" : "Inativo"}</span></div>)}</div>
-      </AdminBlock>
-      <Feedback message={message} />
-    </section>
-  );
-}
-
-function ServiceRatesPage({ data }: { data: BootstrapData }): JSX.Element {
-  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [rules, setRules] = useState<ServiceRateRule[]>([]);
-  const [partnerId, setPartnerId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [scope, setScope] = useState<OperationScope>("EXTERNAL");
-  const [value, setValue] = useState("5,00");
-  const [message, setMessage] = useState<string | null>(null);
-  const load = useCallback(async () => {
-    const clientPartners = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
-    setPartners(clientPartners);
-    setPartnerId((current) => current || clientPartners[0]?.id || "");
-    setProducts(await window.operationsCafe.listProducts({ organizationId, status: "active" }));
-    setRules(await window.operationsCafe.listServiceRateRules({ organizationId, status: "all" }));
-  }, [organizationId]);
-  useEffect(() => { void load(); }, [load]);
-  async function saveRule(): Promise<void> {
-    try {
-      await window.operationsCafe.createServiceRateRule({
-        organizationId,
-        businessPartnerId: partnerId,
-        ownLegalEntityId: null,
-        productId: productId || null,
-        operationScope: scope,
-        rateType: "PER_SACK",
-        rateValueCents: Math.round(Number(value.replace(".", "").replace(",", ".")) * 100),
-        effectiveFrom: new Date().toISOString().slice(0, 10),
-        effectiveTo: null,
-        priority: productId ? 10 : 1,
-        notes: null,
-        isActive: true
-      });
-      setMessage("Regra por saca salva.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar regra."}`);
-    }
-  }
-  return (
-    <section className="content-section settings">
-      <AdminBlock title="Cobrancas - Regras por cliente">
-        <FormGrid>
-          <SelectField label="Cliente" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
-          <SelectField label="Tipo" value={scope} onChange={(next) => setScope(next as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"], ["ALL", "Todas"]]} />
-          <SelectField label="Produto" value={productId} onChange={setProductId} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
-          <TextField label="Valor por saca" value={value} onChange={setValue} />
-          <button className="primary" onClick={() => void saveRule()}>Cadastrar regra</button>
-        </FormGrid>
-        <div className="table"><div className="table-head rate-grid"><span>Cliente</span><span>Tipo</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span></div>{rules.map((item) => <div key={item.id} className="table-row rate-grid"><span>{partners.find((partner) => partner.id === item.businessPartnerId)?.displayName ?? item.businessPartnerId}</span><span>{scopeLabels[item.operationScope]}</span><span>{products.find((product) => product.id === item.productId)?.name ?? "Todos"}</span><span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span><span>{item.effectiveFrom} ate {item.effectiveTo ?? "sem data final"}</span><span>{item.isActive ? "Vigente" : "Inativa"}</span></div>)}</div>
-      </AdminBlock>
-      <Feedback message={message} />
     </section>
   );
 }
@@ -469,7 +247,7 @@ function OrganizationsAdmin({ profile, refresh }: { profile: InstallationProfile
           <div key={item.id} className="table-row org-grid">
             <span className="logo-cell">{item.logoPath ? "Logo" : item.displayName.slice(0, 2).toUpperCase()}</span>
             <span>{item.displayName}</span><span>{item.appDisplayName}</span><span>{item.slug}</span><span>{item.legalEntityCount}</span><span>{item.locationCount}</span><span>{item.isActive ? "Ativa" : "Inativa"}</span><span>{formatDateBr(item.updatedAt)}</span>
-            <span className="actions"><button onClick={() => { setEditing(item); setForm(item); }}>Editar</button><button onClick={() => void (item.isActive ? window.confirm("Desativar organizacao?") && window.operationsCafe.deactivateOrganization(item.id).then(load) : window.operationsCafe.activateOrganization(item.id).then(load))}>{item.isActive ? "Desativar" : "Ativar"}</button></span>
+            <span className="actions"><button onClick={() => { setEditing(item); setForm(item); }}>Editar</button><button onClick={() => void (item.isActive ? requestDecision({ title: "Desativar organização", message: "Deseja desativar esta organização?" }).then((ok) => { if (ok) void window.operationsCafe.deactivateOrganization(item.id).then(load); }) : window.operationsCafe.activateOrganization(item.id).then(load))}>{item.isActive ? "Desativar" : "Ativar"}</button></span>
           </div>
         ))}
         {items.length === 0 ? <p className="empty">Nenhuma organizacao encontrada.</p> : null}
@@ -531,7 +309,7 @@ function LegalEntitiesAdmin({ refresh }: { refresh: () => Promise<BootstrapData>
         {items.map((item) => (
           <div key={item.id} className="table-row entity-grid">
             <span>{item.tradeName}</span><span>{item.legalName}</span><span>{formatCnpj(item.cnpj)}</span><span>{data.organizations.find((org) => org.id === item.organizationId)?.displayName}</span><span>{item.city}/{item.state}</span><span>{item.stateRegistration ?? "-"}</span><span>{item.isActive ? "Ativo" : "Inativo"}{item.isDraft ? " / rascunho" : ""}</span><span>{formatDateBr(item.updatedAt)}</span>
-            <span className="actions"><button onClick={() => { setEditing(item); setForm(item); }}>Editar</button><button onClick={() => void (item.isActive ? window.confirm("Desativar CNPJ?") && window.operationsCafe.deactivateLegalEntity(item.id).then(load) : window.operationsCafe.activateLegalEntity(item.id).then(load))}>{item.isActive ? "Desativar" : "Ativar"}</button></span>
+            <span className="actions"><button onClick={() => { setEditing(item); setForm(item); }}>Editar</button><button onClick={() => void (item.isActive ? requestDecision({ title: "Desativar CNPJ", message: "Deseja desativar este CNPJ?" }).then((ok) => { if (ok) void window.operationsCafe.deactivateLegalEntity(item.id).then(load); }) : window.operationsCafe.activateLegalEntity(item.id).then(load))}>{item.isActive ? "Desativar" : "Ativar"}</button></span>
           </div>
         ))}
       </div>
@@ -598,7 +376,7 @@ function LocationsAdmin({ refresh }: { refresh: () => Promise<BootstrapData> }):
         {items.map((item) => (
           <div key={item.id} className="table-row location-grid">
             <span>{item.name}</span><span>{locationLabels[item.type]}</span><span>{data.organizations.find((org) => org.id === item.organizationId)?.displayName}</span><span>{data.legalEntities.find((entity) => entity.id === item.legalEntityId)?.tradeName ?? "-"}</span><span>{item.city ? `${item.city}/${item.state}` : "-"}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span>
-            <span className="actions"><button onClick={() => { setEditing(item); setForm(item); }}>Editar</button><button onClick={() => void (item.isActive ? window.confirm("Desativar local?") && window.operationsCafe.deactivateLocation(item.id).then(load) : window.operationsCafe.activateLocation(item.id).then(load))}>{item.isActive ? "Desativar" : "Ativar"}</button></span>
+            <span className="actions"><button onClick={() => { setEditing(item); setForm(item); }}>Editar</button><button onClick={() => void (item.isActive ? requestDecision({ title: "Desativar local", message: "Deseja desativar este local?" }).then((ok) => { if (ok) void window.operationsCafe.deactivateLocation(item.id).then(load); }) : window.operationsCafe.activateLocation(item.id).then(load))}>{item.isActive ? "Desativar" : "Ativar"}</button></span>
           </div>
         ))}
       </div>
@@ -730,150 +508,7 @@ function FormGrid({ children }: { children: React.ReactNode }): JSX.Element {
   return <div className="form-grid">{children}</div>;
 }
 
-function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
-  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
-  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [charges, setCharges] = useState<ClientCharge[]>([]);
-  const [eligible, setEligible] = useState<Operation[]>([]);
-  const [detail, setDetail] = useState<ClientChargeDetail | null>(null);
-  const [summary, setSummary] = useState<BillingSummary | null>(null);
-  const [clientId, setClientId] = useState("");
-  const [periodStart, setPeriodStart] = useState(new Date().toISOString().slice(0, 8) + "01");
-  const [periodEnd, setPeriodEnd] = useState(new Date().toISOString().slice(0, 10));
-  const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
-  const [message, setMessage] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
-    setPartners(clients);
-    setClientId((current) => current || clients[0]?.id || "");
-    setCharges(await window.operationsCafe.listClientCharges({ organizationId, status: "all" }));
-    setSummary(await window.operationsCafe.getBillingSummary(organizationId));
-  }, [organizationId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  async function suggestPeriod(): Promise<void> {
-    if (!clientId || !ownLegalEntityId) return;
-    const [period] = await window.operationsCafe.suggestChargePeriods({ organizationId, ownLegalEntityId, clientPartnerId: clientId, referenceDate: periodEnd });
-    if (period) { setPeriodStart(period.periodStart); setPeriodEnd(period.periodEnd); setMessage(period.label); }
-  }
-
-  async function findOperations(): Promise<void> {
-    setEligible(await window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: clientId, periodStart, periodEnd }));
-  }
-
-  async function createDraft(): Promise<void> {
-    try {
-      const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity: "CUSTOM", periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
-      setDetail(draft);
-      setMessage("Rascunho gerado e operacoes reservadas.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar cobranca."}`);
-    }
-  }
-
-  async function issue(): Promise<void> {
-    if (!detail) return;
-    const issued = await window.operationsCafe.issueClientCharge(detail.charge.id);
-    setDetail(issued);
-    setMessage("Cobranca emitida com documentos.");
-    await load();
-  }
-
-  async function addDiscount(): Promise<void> {
-    if (!detail) return;
-    const value = window.prompt("Valor do desconto em centavos");
-    if (!value) return;
-    setDetail(await window.operationsCafe.addChargeAdjustment({ clientChargeId: detail.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto manual", amountCents: Number(value), sortOrder: 10, reason: "Ajuste manual" }));
-  }
-
-  async function registerPayment(): Promise<void> {
-    if (!detail) return;
-    const value = window.prompt("Valor recebido em centavos");
-    if (!value) return;
-    const payment = await window.operationsCafe.createClientPayment({ organizationId, ownLegalEntityId, clientPartnerId: detail.charge.clientPartnerId, paymentDate: new Date().toISOString().slice(0, 10), amountCents: Number(value), paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
-    setDetail(await window.operationsCafe.allocateClientPayment({ clientPaymentId: payment.id, clientChargeId: detail.charge.id, amountCents: Number(value) }));
-    await load();
-  }
-
-  return (
-    <section className="content-section settings">
-      <AdminBlock title="Gerar cobranca">
-        <div className="cards">
-          <article><span>Total a receber</span><strong>{formatCurrencyFromCents(summary?.openCents ?? 0)}</strong></article>
-          <article><span>Recebido</span><strong>{formatCurrencyFromCents(summary?.receivedCents ?? 0)}</strong></article>
-          <article><span>Creditos</span><strong>{formatCurrencyFromCents(summary?.availableCreditsCents ?? 0)}</strong></article>
-          <article><span>Operacoes nao cobradas</span><strong>{summary?.unbilledOperations ?? 0}</strong></article>
-        </div>
-        <FormGrid>
-          <SelectField label="Cliente" value={clientId} onChange={setClientId} options={partners.map((item) => [item.id, item.displayName])} />
-          <TextField label="Inicio" value={periodStart} onChange={setPeriodStart} />
-          <TextField label="Fim" value={periodEnd} onChange={setPeriodEnd} />
-          <TextField label="Vencimento" value={dueDate} onChange={setDueDate} />
-          <button onClick={() => void suggestPeriod()}>Sugerir periodo</button>
-          <button onClick={() => void findOperations()}>Buscar operacoes</button>
-          <button className="primary" onClick={() => void createDraft()} disabled={eligible.length === 0}>Gerar rascunho</button>
-        </FormGrid>
-        <div className="table"><div className="table-head charge-operation-grid"><span>Data</span><span>Tipo</span><span>Sacas</span><span>R$/saca</span><span>Servico</span><span>Status</span></div>{eligible.map((op) => <div key={op.id} className="table-row charge-operation-grid"><span>{op.operationDate}</span><span>{op.operationScope}</span><span>{op.quantitySacks}</span><span>{formatCurrencyFromCents(op.appliedRateValueCents)}</span><span>{formatCurrencyFromCents(op.serviceAmountCents)}</span><span>{op.billingStatus}</span></div>)}</div>
-      </AdminBlock>
-      {detail ? <AdminBlock title={`Detalhe ${detail.charge.chargeNumber ?? "Rascunho"}`}>
-        <div className="cards">
-          <article><span>Subtotal</span><strong>{formatCurrencyFromCents(detail.charge.subtotalServicesCents)}</strong></article>
-          <article><span>Ajustes +</span><strong>{formatCurrencyFromCents(detail.charge.additionsCents)}</strong></article>
-          <article><span>Ajustes -</span><strong>{formatCurrencyFromCents(detail.charge.deductionsCents)}</strong></article>
-          <article><span>Total</span><strong>{formatCurrencyFromCents(detail.charge.finalAmountCents)}</strong></article>
-          <article><span>Aberto</span><strong>{formatCurrencyFromCents(detail.charge.openAmountCents)}</strong></article>
-        </div>
-        <div className="toolbar"><button onClick={() => void addDiscount()}>Adicionar desconto</button><button className="primary" onClick={() => void issue()} disabled={!["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status)}>Emitir e gerar documentos</button><button onClick={() => void registerPayment()}>Registrar pagamento</button></div>
-      </AdminBlock> : null}
-      <AdminBlock title="Historico de cobrancas">
-        <div className="table"><div className="table-head charge-grid"><span>Numero</span><span>Cliente</span><span>Periodo</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Status</span><span>Acoes</span></div>{charges.map((charge) => <div key={charge.id} className="table-row charge-grid"><span>{charge.chargeNumber ?? "Rascunho"}</span><span>{partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? charge.clientPartnerId}</span><span>{charge.periodStart} a {charge.periodEnd}</span><span>{formatCurrencyFromCents(charge.finalAmountCents)}</span><span>{formatCurrencyFromCents(charge.paidAmountCents)}</span><span>{formatCurrencyFromCents(charge.openAmountCents)}</span><span>{charge.status}</span><span><button onClick={() => window.operationsCafe.getClientCharge(charge.id).then(setDetail)}>Abrir</button></span></div>)}</div>
-      </AdminBlock>
-      <Feedback message={message} />
-    </section>
-  );
-}
-
-function LedgerPage({ data }: { data: BootstrapData }): JSX.Element {
-  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
-  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [clientId, setClientId] = useState("");
-  const [entries, setEntries] = useState<ClientLedgerEntry[]>([]);
-  const [amount, setAmount] = useState("500000");
-  const [message, setMessage] = useState<string | null>(null);
-  const load = useCallback(async () => {
-    const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
-    setPartners(clients);
-    const selected = clientId || clients[0]?.id || "";
-    setClientId(selected);
-    if (selected) setEntries(await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId: selected }));
-  }, [organizationId, ownLegalEntityId, clientId]);
-  useEffect(() => { void load(); }, [load]);
-  async function createAdvance(): Promise<void> {
-    await window.operationsCafe.createAdvance({ organizationId, ownLegalEntityId, clientPartnerId: clientId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: Number(amount), entryDate: new Date().toISOString().slice(0, 10), description: "Adiantamento recebido", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: Number(amount) });
-    setMessage("Adiantamento registrado.");
-    await load();
-  }
-  return (
-    <section className="content-section settings">
-      <AdminBlock title="Conta-corrente do cliente">
-        <FormGrid>
-          <SelectField label="Cliente" value={clientId} onChange={setClientId} options={partners.map((item) => [item.id, item.displayName])} />
-          <TextField label="Valor em centavos" value={amount} onChange={setAmount} />
-          <button className="primary" onClick={() => void createAdvance()}>Registrar adiantamento</button>
-        </FormGrid>
-        <div className="table"><div className="table-head ledger-grid"><span>Data</span><span>Tipo</span><span>Descricao</span><span>Efeito</span><span>Valor</span><span>Disponivel</span><span>Status</span></div>{entries.map((entry) => <div key={entry.id} className="table-row ledger-grid"><span>{entry.entryDate}</span><span>{entry.entryType}</span><span>{entry.description}</span><span>{entry.effect}</span><span>{formatCurrencyFromCents(entry.amountCents)}</span><span>{formatCurrencyFromCents(entry.availableAmountCents ?? 0)}</span><span>{entry.status}</span></div>)}</div>
-      </AdminBlock>
-      <Feedback message={message} />
-    </section>
-  );
-}
-
-function FinancialPage({ data }: { data: BootstrapData }): JSX.Element {
+export function FinancialPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const [tab, setTab] = useState("Visao geral");
@@ -1051,7 +686,7 @@ function FinancialPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function removeAttachment(id: string): Promise<void> {
-    const reason = window.prompt("Motivo da remocao/cancelamento do anexo") ?? "";
+    const reason = await requestTextInput({ title: "Remover anexo", label: "Motivo da remoção/cancelamento do anexo" }) ?? "";
     await window.operationsCafe.removePayableAttachment(id, reason || null);
     if (selectedPayableId) setAttachments(await window.operationsCafe.listPayableAttachments(selectedPayableId));
   }
@@ -1149,11 +784,11 @@ function FinancialPage({ data }: { data: BootstrapData }): JSX.Element {
   );
 }
 
-function ModulePlaceholder({ title }: { title: string }): JSX.Element {
+export function ModulePlaceholder({ title }: { title: string }): JSX.Element {
   return <section className="content-section"><h2>{title}</h2><p>Modulo em desenvolvimento. Esta etapa esta focada em multiempresa, CNPJs, locais e branding.</p></section>;
 }
 
-function Dashboard({ organizations, legalEntities, locations, organizationId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string }): JSX.Element {
+export function Dashboard({ organizations, legalEntities, locations, organizationId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
@@ -1196,89 +831,3 @@ function Dashboard({ organizations, legalEntities, locations, organizationId }: 
   );
 }
 
-function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
-  const [data, setData] = useState(initialData);
-  const [profile, setProfile] = useState(initialData.profile);
-  const [activeMenu, setActiveMenu] = useState(() => legacyMenuFromPath(window.location.hash.replace(/^#/, "")));
-  const organization = data.organizations.find((item) => item.id === profile?.defaultOrganizationId) ?? data.organizations[0];
-  const legalEntity = data.legalEntities.find((item) => item.id === profile?.defaultLegalEntityId);
-  const branding = getBrandingConfig(profile?.appVariant ?? "multiempresa");
-  const orgEntities = data.legalEntities.filter((item) => item.organizationId === organization?.id && item.isActive);
-  const canSwitchOrg = profile?.allowOrganizationSwitch && profile.appVariant === "multiempresa";
-
-  const refresh = useCallback(async (): Promise<BootstrapData> => {
-    const bootstrap = await window.operationsCafe.getBootstrapData();
-    setData(bootstrap);
-    setProfile(bootstrap.profile);
-    return bootstrap;
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.style.setProperty("--brand-primary", organization?.primaryColor ?? branding.colors.primary);
-    document.documentElement.style.setProperty("--brand-secondary", organization?.secondaryColor ?? branding.colors.secondary);
-    document.documentElement.style.setProperty("--brand-accent", organization?.accentColor ?? branding.colors.accent);
-  }, [organization, branding]);
-
-  async function changeLegalEntity(id: string): Promise<void> {
-    if (!id) return;
-    setProfile(await window.operationsCafe.setActiveLegalEntity(id));
-    await refresh();
-  }
-
-  async function changeOrganization(id: string): Promise<void> {
-    setProfile(await window.operationsCafe.setActiveOrganization(id));
-    await refresh();
-  }
-
-  function navigate(menu: string): void {
-    setActiveMenu(menu);
-    window.history.pushState(null, "", `#${pathFromLegacyMenu(menu)}`);
-  }
-
-  useEffect(() => {
-    const handlePopState = (): void => setActiveMenu(legacyMenuFromPath(window.location.hash.replace(/^#/, "")));
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
-
-  const page = useMemo(() => {
-    if (activeMenu === "Dashboard") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={organization?.id} />;
-    if (activeMenu === "Notas e operacoes") return <OperationsPage data={data} />;
-    if (activeMenu === "Clientes") return <PartnersPage data={data} refresh={refresh} />;
-    if (activeMenu === "Regras por saca") return <ServiceRatesPage data={data} />;
-    if (activeMenu === "Cobrancas") return <ChargesPage data={data} />;
-    if (activeMenu === "Conta-corrente") return <LedgerPage data={data} />;
-    if (activeMenu === "Confirmacoes") return <ConfirmationsPage data={data} />;
-    if (activeMenu === "Financeiro") return <FinancialPage data={data} />;
-    if (activeMenu === "Configuracoes" && profile) return <SettingsPage profile={profile} refresh={refresh} onProfile={setProfile} />;
-    return <ModulePlaceholder title={activeMenu} />;
-  }, [activeMenu, data, profile, refresh, organization?.id]);
-
-  return (
-    <AppLayout
-      variant={profile?.appVariant ?? "multiempresa"}
-      organization={organization ?? null}
-      organizations={data.organizations}
-      legalEntity={legalEntity ?? null}
-      legalEntities={orgEntities}
-      activeMenu={activeMenu}
-      canSwitchOrganization={Boolean(canSwitchOrg)}
-      canSwitchLegalEntity={Boolean(profile?.allowLegalEntitySwitch)}
-      version={data.version}
-      onNavigate={navigate}
-      onOrganizationChange={(id) => void changeOrganization(id)}
-      onLegalEntityChange={(id) => void changeLegalEntity(id)}
-    >
-      {page}
-    </AppLayout>
-  );
-}
-
-export default function LegacyWorkspace(): JSX.Element {
-  const [data, setData] = useState<BootstrapData | null>(null);
-  const [profile, setProfile] = useState<InstallationProfile | null>(null);
-  useEffect(() => { window.operationsCafe.getBootstrapData().then((bootstrap) => { setData(bootstrap); setProfile(bootstrap.profile); }); }, []);
-  if (!data) return <Splash />;
-  if (!profile?.completedSetup) return <SetupWizard data={data} onSaved={setProfile} />;
-  return <Shell initialData={{ ...data, profile }} />;
-}

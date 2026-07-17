@@ -26,7 +26,10 @@ Responsividade:
 
 Limitacoes restantes:
 
-- dialogs legados ainda devem migrar de `confirm()`/`alert()` nativos para `Dialog`/`ConfirmationDialog`;
 - formularios extensos ainda devem migrar para stepper completo;
-- testes automatizados de contraste cobrem a funcao de cor legivel, mas nao substituem auditoria visual completa.
-- alguns fluxos migrados ainda usam `prompt()` legado para motivo de cancelamento/reversao; a substituicao completa por `ConfirmationDialog` fica para a migracao final dos formularios.
+- testes automatizados de contraste cobrem a funcao de cor legivel, mas nao substituem auditoria visual completa;
+- algumas tabelas comerciais ainda usam classes legadas de grade enquanto os componentes dedicados sao incorporados nas telas finais.
+
+Na etapa 10.2, chamadas funcionais nativas de prompt, alert e confirm foram removidas do renderer. Acoes que precisam de texto ou decisao usam dialogs locais em `src/renderer/utils/dialogs.ts`, mantendo label, Escape e foco inicial.
+
+Na continuacao da etapa 10, os dialogs passaram a ser renderizados por `DialogProvider` dentro da arvore React principal, sem criacao manual de elementos DOM.

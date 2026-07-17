@@ -45,7 +45,13 @@ describe("renderer design system", () => {
     expect(navigationGroups.flatMap((group) => group.items).some((item) => item.legacyMenu === "Confirmacoes")).toBe(true);
     expect(routeIdFromLegacyMenu("Financeiro")).toBe("finance");
     expect(pathFromLegacyMenu("Notas e operacoes")).toBe("/operations");
+    expect(pathFromLegacyMenu("Produtos")).toBe("/products");
+    expect(pathFromLegacyMenu("Regras por saca")).toBe("/billing/rates");
     expect(legacyMenuFromPath("/imports/xml/history")).toBe("Notas e operacoes");
+    expect(legacyMenuFromPath("/products/details")).toBe("Produtos");
+    expect(legacyMenuFromPath("/billing/rates/active")).toBe("Regras por saca");
+    expect(legacyMenuFromPath("/charges/issued")).toBe("Cobrancas");
+    expect(legacyMenuFromPath("/client-ledger/client")).toBe("Conta-corrente");
     expect(legacyMenuFromPath("/confirmations/templates")).toBe("Confirmacoes");
   });
 
@@ -72,10 +78,34 @@ describe("renderer design system", () => {
 
   it("keeps migrated module definitions out of LegacyWorkspace", () => {
     const legacySource = readFileSync("src/renderer/pages/legacy/LegacyWorkspace.tsx", "utf8");
+    const appSource = readFileSync("src/renderer/app/App.tsx", "utf8");
 
     expect(legacySource).not.toContain("function ManualInvoicesPage");
     expect(legacySource).not.toContain("function DealConfirmationsPage");
-    expect(legacySource).toContain("<OperationsPage data={data} />");
-    expect(legacySource).toContain("<ConfirmationsPage data={data} />");
+    expect(legacySource).not.toContain("export function PartnersPage");
+    expect(legacySource).not.toContain("export function ServiceRatesPage");
+    expect(legacySource).not.toContain("export function ChargesPage");
+    expect(legacySource).not.toContain("export function LedgerPage");
+    expect(legacySource).not.toContain("<OperationsPage data={data} />");
+    expect(legacySource).not.toContain("<ConfirmationsPage data={data} />");
+    expect(appSource).toContain('path.startsWith("/operations")');
+    expect(appSource).toContain('path.startsWith("/partners")');
+    expect(appSource).toContain('path.startsWith("/products")');
+    expect(appSource).toContain('path.startsWith("/billing/rates")');
+    expect(appSource).toContain('path.startsWith("/charges")');
+    expect(appSource).toContain('path.startsWith("/client-ledger")');
+    expect(appSource).toContain('path.startsWith("/confirmations")');
+  });
+
+  it("uses the React dialog provider instead of native or manual DOM dialogs", () => {
+    const dialogSource = readFileSync("src/renderer/utils/dialogs.ts", "utf8");
+    const providersSource = readFileSync("src/renderer/app/providers.tsx", "utf8");
+
+    expect(dialogSource).not.toContain("window.prompt");
+    expect(dialogSource).not.toContain("window.alert");
+    expect(dialogSource).not.toContain("window.confirm");
+    expect(dialogSource).not.toContain("document.createElement");
+    expect(providersSource).toContain("DialogProvider");
+    expect(providersSource).toContain("registerDialogListener");
   });
 });

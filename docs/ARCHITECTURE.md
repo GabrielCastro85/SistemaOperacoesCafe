@@ -31,3 +31,9 @@ Na nona etapa, Confirmacoes de negocio usam IPCs especificos para rascunho, orig
 Na decima etapa, o renderer foi reorganizado. `src/renderer/App.tsx` passou a ser apenas o ponto de montagem React. O workspace funcional anterior foi preservado em `src/renderer/pages/legacy/LegacyWorkspace.tsx` enquanto layout, navegacao, temas e componentes reutilizaveis foram movidos para `app`, `layouts` e `design-system`. Esta etapa nao altera SQLite, migrations ou IPCs.
 
 Na continuacao da etapa 10, os modulos operacionais e de confirmacoes foram retirados do corpo do `LegacyWorkspace` e migrados para `src/renderer/pages/operations`, `src/renderer/pages/imports` e `src/renderer/pages/confirmations`. O legacy ainda compoe o shell e modulos administrativos/financeiros pendentes de migracao visual, mas nao define mais as funcoes de Notas/Operacoes nem Confirmacoes.
+
+Na etapa 10.2, `src/renderer/app/App.tsx` passou a executar o bootstrap, manter o contexto ativo, envolver as paginas com `AppLayout` e resolver diretamente as rotas hash. O `LegacyWorkspace` deixou de exportar um shell/default e passou a ser apenas uma colecao temporaria de paginas ainda legadas.
+
+Na continuacao da etapa 10, os modulos comerciais e de recebimentos tambem sairam do `LegacyWorkspace`. As paginas diretas ficam em `src/renderer/pages/partners`, `products`, `serviceRates`, `charges` e `clientLedger`, com subpastas `components`, `forms` e `hooks` para separar lista, detalhes, formularios e leitura de dados. O roteamento continua em `src/renderer/app/App.tsx` e nao foram adicionadas migrations, SQL ou IPCs nesta migracao visual.
+
+Dialogs simples agora sao resolvidos por `DialogProvider` em `src/renderer/app/providers.tsx`, registrado por `src/renderer/utils/dialogs.ts`. Isso evita APIs nativas do navegador e tambem evita criacao manual de DOM fora do React.

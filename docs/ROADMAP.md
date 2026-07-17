@@ -10,6 +10,6 @@
 8. Conta-corrente do cliente. Concluido parcialmente com adiantamentos, creditos, lancamentos, pagamentos e alocacoes.
 9. Financeiro e contas a pagar. Concluido com categorias, centros de custo, contas financeiras, contas manuais, recorrencias, parcelamentos, rateios, pagamentos, anexos, comprovantes, relatorios PDF/Excel e dashboard projetado.
 10. Confirmacoes de negocio. Concluido com rascunhos manuais, criacao por operacoes/notas, participantes, itens, templates, clausulas, pagamentos, signatarios, emissao PDF, assinatura externa, cancelamento, substituicao, dashboard e relatorios.
-11. Interface profissional. Iniciada com App.tsx reduzido, design system, layout desktop, sidebar recolhivel, topbar contextual, temas Villa/Grao/multiempresa, logos empacotadas, dashboard reorganizado e testes de UI. Continuada com migracao de Notas/Operacoes, importacoes e Confirmacoes para paginas reais fora do LegacyWorkspace.
+11. Interface profissional. Iniciada com App.tsx reduzido, design system, layout desktop, sidebar recolhivel, topbar contextual, temas Villa/Grao/multiempresa, logos empacotadas, dashboard reorganizado e testes de UI. Continuada com migracao de Notas/Operacoes, importacoes, Confirmacoes, Clientes, Produtos, Regras por saca, Cobrancas e Conta-corrente para paginas reais fora do LegacyWorkspace, roteamento direto no App e dialogs React sem APIs nativas.
 12. Dashboard e relatorios consolidados.
 13. Backups, auditoria e atualizacoes.

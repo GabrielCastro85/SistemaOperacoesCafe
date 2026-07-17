@@ -7,6 +7,7 @@ Grupos atuais:
 - Visao geral: Dashboard.
 - Operacoes: Notas e operacoes.
 - Comercial: Clientes e parceiros, Regras por saca, Confirmacoes.
+- Comercial tambem expoe Produtos como rota propria.
 - Recebimentos: Cobrancas, Conta-corrente.
 - Financeiro: Visao financeira, Relatorios.
 - Administracao: Configuracoes.
@@ -41,5 +42,27 @@ Rotas hash identificaveis adicionadas:
 - `#/confirmations/templates`;
 - `#/confirmations/clauses`;
 - `#/confirmations/reports`.
+- `#/partners`;
+- `#/products`;
+- `#/billing/rates`;
+- `#/charges`;
+- `#/client-ledger`.
 
 Enquanto nao ha roteador externo, `legacyMenuFromPath` e `pathFromLegacyMenu` mantem compatibilidade entre a navegacao nova e os menus funcionais existentes.
+
+Na etapa 10.2, as rotas de operacoes, importacoes e confirmacoes deixaram de ser renderizadas pelo `LegacyWorkspace`. `App.tsx` roteia diretamente:
+
+- `#/operations*` para `OperationsPage`;
+- `#/imports/spreadsheets*` para paginas de planilha;
+- `#/imports/xml*` para paginas de XML;
+- `#/confirmations*` para paginas de confirmacao, templates, clausulas e relatorios.
+
+Na continuacao da etapa 10, `App.tsx` tambem passou a rotear diretamente:
+
+- `#/partners*` para `PartnersPage`;
+- `#/products*` para `ProductsPage`;
+- `#/billing/rates*` para `ServiceRateRulesPage`;
+- `#/charges*` para `ChargesPage`;
+- `#/client-ledger*` para `ClientLedgerPage`.
+
+`LegacyWorkspace` permanece apenas como origem temporaria de `FinancialPage`, `Reports` via Financeiro e `SettingsPage`.

@@ -5,6 +5,7 @@ import { PageHeader, Stepper } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { Feedback } from "../../components/feedback/Feedback";
+import { requestTextInput } from "../../utils/dialogs";
 export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
@@ -128,7 +129,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   async function cancelDeal(): Promise<void> {
     if (!detail) return;
-    const reason = window.prompt("Motivo formal do cancelamento") ?? "";
+    const reason = await requestTextInput({ title: "Cancelar confirmação", label: "Motivo formal do cancelamento" }) ?? "";
     if (!reason) return;
     setDetail(await window.operationsCafe.cancelDealConfirmation(detail.confirmation.id, reason));
     await load();
@@ -136,7 +137,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   async function replaceDeal(): Promise<void> {
     if (!detail) return;
-    const reason = window.prompt("Motivo formal da substituicao") ?? "";
+    const reason = await requestTextInput({ title: "Substituir confirmação", label: "Motivo formal da substituição" }) ?? "";
     if (!reason) return;
     setDetail(await window.operationsCafe.replaceDealConfirmation(detail.confirmation.id, reason));
     await load();

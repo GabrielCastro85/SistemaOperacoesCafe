@@ -111,3 +111,11 @@
 - Migradas Confirmacoes de negocio, templates, clausulas e relatorios para `src/renderer/pages/confirmations`.
 - Adicionados Stepper, PageHeader, FileDropzone, DocumentPreviewCard, Drawer, ConfirmationDialog, Pagination, FilterBar, ProgressBar e demais componentes de suporte.
 - Adicionadas rotas hash identificaveis para operacoes, importacoes e confirmacoes.
+- Roteadas diretamente as paginas de operacoes, importacoes e confirmacoes pelo `src/renderer/app/App.tsx`.
+- Removido o shell/default do `LegacyWorkspace`; ele permanece apenas para paginas ainda legadas.
+- Removidas chamadas funcionais nativas de prompt, alert e confirm do renderer.
+- Adicionado `src/renderer/utils/dialogs.ts` para decisoes e entrada de motivo em acoes legadas/migradas.
+- Roteadas diretamente as paginas de Clientes e parceiros, Produtos, Regras por saca, Cobrancas e Conta-corrente.
+- Criadas estruturas `components`, `forms` e `hooks` para parceiros, produtos, regras de servico, cobrancas e conta-corrente.
+- Restringido o `LegacyWorkspace` aos modulos Financeiro, Relatorios e Configuracoes/admin ainda pendentes de migracao visual.
+- Substituido o helper de dialog por `DialogProvider` React registrado em `AppProviders`, sem `document.createElement`.
