@@ -39,6 +39,26 @@ Use Clientes para cadastrar parceiros comerciais com um ou mais papeis, seus est
 
 Valores monetarios sao salvos em centavos inteiros. Exemplo: R$ 5,00 vira `500`.
 
+## Notas E Operacoes Manuais
+
+Use Notas e operacoes para cadastrar uma nota manual, adicionar multiplos itens e gerar multiplas operacoes vinculadas. Quantidades e precos comerciais sao armazenados como decimal em texto normalizado, com ate 6 casas, para evitar perda de precisao. O valor do servico usa a regra por saca vigente ou um valor manual com motivo obrigatorio.
+
+## Importacao De Planilhas
+
+A tela Notas e operacoes tambem importa historicos em `.xlsx` usando biblioteca local (`exceljs`). O fluxo seleciona o arquivo, identifica abas, sugere mapeamento por cabecalho, valida linhas, cria um job de importacao, processa linhas validas ou com alerta e permite reversao logica. Nesta etapa nao ha XML, PDF nem cobranca por periodo.
+
+## Importacao De XML NF-e
+
+A sexta etapa adiciona importacao local/offline de XMLs de NF-e. Em Notas e operacoes, use selecao individual, selecao multipla ou pasta para criar uma fila, validar XMLs, identificar notas/eventos, aplicar cliente/classificacao do lote, importar para `fiscal_documents`, `fiscal_document_items` e `operations`, registrar eventos fiscais e reverter jobs permitidos.
+
+O parser le os dados contidos no XML e no protocolo arquivado, mas nao consulta a situacao atual da nota na SEFAZ. Consulta automatica, certificado digital, PDF/DANFE e cobrancas continuam fora do escopo.
+
+## Cobrancas E Conta-corrente
+
+A setima etapa adiciona cobrancas por periodo e conta-corrente do cliente. Use Cobrancas para sugerir periodos mensal, quinzenal, semanal ou personalizado, selecionar operacoes confirmadas ainda nao cobradas, reservar operacoes em rascunho, aplicar creditos, ajustar acrescimos/descontos com motivo, emitir cobranca numerada e gerar PDF, Excel e imagem local em `userData/documents/charges`.
+
+Use Conta-corrente para registrar adiantamentos e consultar lancamentos do cliente. Pagamentos podem ser registrados pela tela de Cobrancas e alocados parcial ou totalmente, atualizando o saldo aberto da cobranca.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.

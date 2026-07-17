@@ -3,11 +3,11 @@
 1. Fundacao e arquitetura.
 2. Multiempresa e cadastros. Concluido parcialmente com administracao de organizacoes, CNPJs, locais, branding e perfil.
 3. Clientes e regras por saca. Concluido com cadastros base, produtos, perfis de cobranca e resolvedor de regra.
-4. Notas e operacoes manuais.
-5. Importacao das planilhas.
-6. Importacao individual e multipla de XML.
-7. Cobrancas por periodo.
-8. Conta-corrente do cliente.
+4. Notas e operacoes manuais. Concluido com cadastro manual, itens, operacoes, pendencias, duplicidade e calculo de servico.
+5. Importacao das planilhas. Concluido com `.xlsx`, mapeamento, jobs, aliases, processamento parcial e reversao.
+6. Importacao individual e multipla de XML. Concluido com NF-e offline, eventos, mesclagem, aliases de produto, regras de classificacao e reversao.
+7. Cobrancas por periodo. Concluido com selecao/reserva de operacoes, ajustes, creditos, emissao numerada, PDF/Excel/imagem e indicadores.
+8. Conta-corrente do cliente. Concluido parcialmente com adiantamentos, creditos, lancamentos, pagamentos e alocacoes.
 9. Financeiro e contas a pagar.
 10. Confirmacoes de negocio.
 11. Dashboard e relatorios.

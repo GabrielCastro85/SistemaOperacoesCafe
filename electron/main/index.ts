@@ -38,7 +38,7 @@ function bootstrap(): void {
   log.transports.file.resolvePathFn = () => join(directories.logsDir, "main.log");
   const db = initializeDatabase(directories);
   const context = { version: app.getVersion(), directories, db };
-  const repository = new AppRepository(db);
+  const repository = new AppRepository(db, directories);
   registerIpcHandlers(ipcMain, context, repository);
 }
 

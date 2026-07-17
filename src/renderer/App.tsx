@@ -11,12 +11,26 @@ import type {
   InstallationProfile,
   LegalEntity,
   Location,
+  Operation,
   OperationScope,
   Organization,
   OrganizationListItem,
   PartnerContact,
   Product,
-  ServiceRateRule
+  ServiceRateRule,
+  FiscalDocument,
+  FiscalDocumentDetail,
+  WorkbookInspection,
+  SheetPreview,
+  SpreadsheetImportJob,
+  SpreadsheetImportRow,
+  XmlFileInspection,
+  XmlImportJob,
+  XmlImportFile,
+  ClientCharge,
+  ClientChargeDetail,
+  ClientLedgerEntry,
+  BillingSummary
 } from "../shared/types/domain";
 import { formatCep, formatCnpj, formatCurrencyFromCents, formatDateBr, onlyDigits } from "../shared/utils/format";
 import "./styles.css";
@@ -24,7 +38,7 @@ import "./styles.css";
 type StatusFilter = "active" | "inactive" | "all";
 type SettingsTab = "Organizacoes" | "Empresas e CNPJs" | "Locais" | "Identidade visual" | "Perfil da instalacao" | "Diagnostico";
 
-const menuItems = ["Dashboard", "Notas e operacoes", "Clientes", "Cobrancas", "Conta-corrente", "Confirmacoes", "Financeiro", "Relatorios", "Configuracoes"];
+const menuItems = ["Dashboard", "Notas e operacoes", "Clientes", "Regras por saca", "Cobrancas", "Conta-corrente", "Confirmacoes", "Financeiro", "Relatorios", "Configuracoes"];
 const settingsTabs: SettingsTab[] = ["Organizacoes", "Empresas e CNPJs", "Locais", "Identidade visual", "Perfil da instalacao", "Diagnostico"];
 const locationLabels: Record<Location["type"], string> = {
   OFFICE: "Escritorio",
@@ -413,6 +427,301 @@ function ServiceRatesPage({ data }: { data: BootstrapData }): JSX.Element {
   );
 }
 
+function ManualInvoicesPage({ data }: { data: BootstrapData }): JSX.Element {
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [documents, setDocuments] = useState<FiscalDocument[]>([]);
+  const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
+  const [indicators, setIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number } | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [partnerId, setPartnerId] = useState("");
+  const [number, setNumber] = useState("");
+  const [accessKey, setAccessKey] = useState("");
+  const [total, setTotal] = useState("0,00");
+  const [productId, setProductId] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [unitPrice, setUnitPrice] = useState("0.0000");
+  const [sacks, setSacks] = useState("1");
+  const [scope, setScope] = useState<OperationScope>("EXTERNAL");
+  const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
+  const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
+  const [preview, setPreview] = useState<SheetPreview | null>(null);
+  const [importJob, setImportJob] = useState<{ job: SpreadsheetImportJob; rows: SpreadsheetImportRow[] } | null>(null);
+  const [importHistory, setImportHistory] = useState<SpreadsheetImportJob[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState("");
+  const [headerRow, setHeaderRow] = useState("1");
+  const [xmlSelections, setXmlSelections] = useState<Array<{ token: string; fileName: string; sizeBytes: number }>>([]);
+  const [xmlQueue, setXmlQueue] = useState<XmlFileInspection[]>([]);
+  const [xmlJob, setXmlJob] = useState<{ job: XmlImportJob; files: XmlImportFile[] } | null>(null);
+  const [xmlHistory, setXmlHistory] = useState<XmlImportJob[]>([]);
+  const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
+
+  const load = useCallback(async () => {
+    const clientPartners = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    setPartners(clientPartners);
+    setPartnerId((current) => current || clientPartners[0]?.id || "");
+    const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
+    setProducts(activeProducts);
+    setProductId((current) => current || activeProducts[0]?.id || "");
+    setDocuments(await window.operationsCafe.listFiscalDocuments({ organizationId, status: "all" }));
+    setIndicators(await window.operationsCafe.getOperationalIndicators(organizationId));
+    setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
+    setXmlHistory(await window.operationsCafe.listXmlImportJobs(organizationId));
+  }, [organizationId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const parseCurrency = (value: string): number => Math.round(Number(value.replace(".", "").replace(",", ".")) * 100);
+
+  async function createDocument(): Promise<void> {
+    try {
+      const created = await window.operationsCafe.createFiscalDocument({
+        organizationId,
+        ownLegalEntityId,
+        responsiblePartnerId: partnerId,
+        partnerLegalEntityId: null,
+        accessKey: onlyDigits(accessKey),
+        documentNumber: number,
+        series: null,
+        issueDate: new Date().toISOString().slice(0, 10),
+        totalAmountCents: parseCurrency(total),
+        hasPendingIssues: false,
+        pendingNotes: null,
+        notes: null
+      });
+      setDetail(created);
+      setMessage(created.document.duplicateWarning ?? "Nota criada.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar nota."}`);
+    }
+  }
+
+  async function addItemAndOperation(): Promise<void> {
+    if (!detail) return;
+    try {
+      const item = await window.operationsCafe.addFiscalDocumentItem({
+        fiscalDocumentId: detail.document.id,
+        productId: productId || null,
+        description: products.find((product) => product.id === productId)?.name ?? "Item manual",
+        quantity,
+        unit: "SACK",
+        unitPriceDecimal: unitPrice,
+        totalAmountCents: parseCurrency(total),
+        sacksQuantity: sacks
+      });
+      await window.operationsCafe.addOperation({
+        fiscalDocumentId: detail.document.id,
+        fiscalDocumentItemId: item.id,
+        ownLegalEntityId,
+        responsiblePartnerId: detail.document.responsiblePartnerId,
+        productId: productId || null,
+        operationType,
+        operationScope: scope,
+        operationDate: detail.document.issueDate,
+        quantitySacks: sacks,
+        manualRateValueCents: null,
+        manualOverrideReason: null,
+        notes: null
+      });
+      setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
+      setMessage("Item e operacao adicionados.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao adicionar operacao."}`);
+    }
+  }
+
+  async function overrideFirstOperation(): Promise<void> {
+    if (!detail?.operations[0]) return;
+    const reason = window.prompt("Motivo da alteracao manual do valor por saca");
+    if (!reason) return;
+    await window.operationsCafe.updateOperationManualRate(detail.operations[0].id, 750, reason);
+    setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
+    setMessage("Valor por saca alterado manualmente para R$ 7,50.");
+  }
+
+  async function selectSpreadsheet(): Promise<void> {
+    try {
+      const selected = await window.operationsCafe.selectSpreadsheetFile();
+      if (!selected) return;
+      setWorkbook(selected);
+      setSelectedSheet(selected.sheets[0]?.name ?? "");
+      setMessage("Planilha selecionada.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar planilha."}`);
+    }
+  }
+
+  async function previewSpreadsheet(): Promise<void> {
+    if (!workbook || !selectedSheet) return;
+    const sheetPreview = await window.operationsCafe.previewSpreadsheetSheet({ token: workbook.token, sheetName: selectedSheet, headerRow: Number(headerRow) });
+    setPreview(sheetPreview);
+    setMessage("Previa carregada.");
+  }
+
+  async function validateSpreadsheet(): Promise<void> {
+    if (!workbook || !preview || !partnerId) return;
+    const job = await window.operationsCafe.createSpreadsheetImportDraft({
+      organizationId,
+      ownLegalEntityId,
+      mappingTemplateId: null,
+      originalFileName: workbook.fileName,
+      storedFilePath: null,
+      selectedSheetName: selectedSheet,
+      importType: preview.suggestedMapping.clientName ? "GENERAL_SALES" : "CLIENT_INDIVIDUAL",
+      settings: { defaultPartnerId: partnerId, operationType, defaultOperationScope: scope, defaultProductId: productId, defaultDate: new Date().toISOString().slice(0, 10) }
+    });
+    const validated = await window.operationsCafe.validateSpreadsheetImportRows({
+      token: workbook.token,
+      jobId: job.id,
+      sheetName: selectedSheet,
+      headerRow: Number(headerRow),
+      mapping: preview.suggestedMapping,
+      defaults: { defaultPartnerId: partnerId, operationType, defaultOperationScope: scope, defaultProductId: productId, defaultDate: new Date().toISOString().slice(0, 10) }
+    });
+    setImportJob(validated);
+    setMessage("Linhas validadas.");
+  }
+
+  async function executeSpreadsheet(): Promise<void> {
+    if (!workbook || !importJob) return;
+    const executed = await window.operationsCafe.executeSpreadsheetImport({ jobId: importJob.job.id, token: workbook.token, importWarnings: true });
+    setImportJob(executed);
+    setMessage("Importacao processada.");
+    await load();
+  }
+
+  async function prepareXmlImport(source: "single" | "multiple" | "folder"): Promise<void> {
+    try {
+      const selected =
+        source === "single"
+          ? await window.operationsCafe.selectXmlFile()
+          : source === "multiple"
+            ? await window.operationsCafe.selectXmlFiles()
+            : (await window.operationsCafe.selectXmlFolder(includeXmlSubfolders)).files;
+      if (selected.length === 0) return;
+      const inspections = await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token));
+      setXmlSelections(selected);
+      setXmlQueue(inspections);
+      setXmlJob(null);
+      setMessage(`${inspections.length} XML(s) inspecionado(s).`);
+    } catch (errorValue) {
+      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar XML."}`);
+    }
+  }
+
+  async function validateXmlImport(): Promise<void> {
+    if (xmlSelections.length === 0) return;
+    try {
+      const job = await window.operationsCafe.createXmlImportDraft({
+        organizationId,
+        sourceType: xmlSelections.length === 1 ? "FILE" : "MULTIPLE_FILES",
+        selectedFolder: null,
+        includeSubfolders: includeXmlSubfolders,
+        settings: { clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true }
+      });
+      const added = await window.operationsCafe.addXmlImportFiles({ jobId: job.id, tokens: xmlSelections.map((file) => file.token) });
+      const validated = await window.operationsCafe.validateXmlImportJob(added.job.id);
+      setXmlJob(validated);
+      setMessage("Fila XML validada.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao validar XML."}`);
+    }
+  }
+
+  async function executeXmlImport(): Promise<void> {
+    if (!xmlJob) return;
+    try {
+      const executed = await window.operationsCafe.executeXmlImportJob({ jobId: xmlJob.job.id, tokens: xmlSelections.map((file) => file.token) });
+      setXmlJob(executed);
+      setMessage("Importacao XML processada.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao importar XML."}`);
+    }
+  }
+
+  return (
+    <section className="content-section settings">
+      <AdminBlock title="Notas e operacoes manuais">
+        <div className="cards">
+          <article><span>Notas</span><strong>{indicators?.documents ?? 0}</strong></article>
+          <article><span>Pendencias</span><strong>{indicators?.pending ?? 0}</strong></article>
+          <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(indicators?.serviceAmountCents ?? 0)}</strong></article>
+        </div>
+        <FormGrid>
+          <SelectField label="Cliente responsavel" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
+          <TextField label="Numero da nota" value={number} onChange={setNumber} />
+          <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
+          <TextField label="Valor total" value={total} onChange={setTotal} />
+          <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
+        </FormGrid>
+        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span>{doc.status}</span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{doc.duplicateWarning ?? "-"}</span><span><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>)}</div>
+      </AdminBlock>
+      {detail ? <AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
+        <FormGrid>
+          <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
+          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+          <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
+          <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
+          <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
+          <TextField label="Sacas" value={sacks} onChange={setSacks} />
+          <button onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
+          <button onClick={() => void overrideFirstOperation()}>Alterar valor primeira operacao</button>
+          <button onClick={() => window.operationsCafe.confirmFiscalDocument(detail.document.id).then(setDetail).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao confirmar."}`))}>Confirmar</button>
+          <button onClick={() => { const reason = window.prompt("Motivo do cancelamento"); if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then(setDetail); }}>Cancelar</button>
+        </FormGrid>
+        <div className="cards">
+          <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${item.unit}`).join(" | ") || "Nenhum"}</strong></article>
+          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${op.operationScope}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
+          <article><span>Status</span><strong>{detail.document.status}</strong></article>
+        </div>
+      </AdminBlock> : null}
+      <AdminBlock title="Importar planilha">
+        <div className="toolbar">
+          <button onClick={() => void selectSpreadsheet()}>Selecionar planilha</button>
+          <SelectField label="Aba" value={selectedSheet} onChange={setSelectedSheet} options={(workbook?.sheets ?? []).map((sheet) => [sheet.name, `${sheet.name} (${sheet.rowCount} linhas)`])} />
+          <TextField label="Linha de cabecalho" value={headerRow} onChange={setHeaderRow} />
+          <button onClick={() => void previewSpreadsheet()} disabled={!workbook}>Previsualizar</button>
+          <button onClick={() => void validateSpreadsheet()} disabled={!preview}>Validar</button>
+          <button className="primary" onClick={() => void executeSpreadsheet()} disabled={!importJob}>Importar validas</button>
+        </div>
+        {workbook ? <p className="muted">Arquivo: {workbook.fileName} - {Math.round(workbook.sizeBytes / 1024)} KB</p> : null}
+        {preview ? <div className="table"><div className="table-head import-grid"><span>Campo</span><span>Coluna sugerida</span></div>{Object.entries(preview.suggestedMapping).map(([field, column]) => <div key={field} className="table-row import-grid"><span>{field}</span><span>{column}</span></div>)}</div> : null}
+        {importJob ? <div className="cards"><article><span>Total</span><strong>{importJob.job.totalRows}</strong></article><article><span>Validas</span><strong>{importJob.job.validRows}</strong></article><article><span>Erros</span><strong>{importJob.job.errorRows}</strong></article><article><span>Importadas</span><strong>{importJob.job.importedRows}</strong></article></div> : null}
+      </AdminBlock>
+      <AdminBlock title="Historico de importacoes">
+        <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span>{job.status}</span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { const reason = window.prompt("Motivo da reversao"); if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }}>Reverter</button></span></div>)}</div>
+      </AdminBlock>
+      <AdminBlock title="Importar XML NF-e">
+        <div className="toolbar">
+          <button onClick={() => void prepareXmlImport("single")}>Selecionar XML</button>
+          <button onClick={() => void prepareXmlImport("multiple")}>Selecionar varios XMLs</button>
+          <button onClick={() => void prepareXmlImport("folder")}>Selecionar pasta</button>
+          <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
+          <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0}>Validar fila</button>
+          <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob}>Importar XMLs</button>
+        </div>
+        <FormGrid>
+          <SelectField label="Cliente padrao" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
+          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+          <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
+        </FormGrid>
+        {xmlQueue.length ? <div className="table"><div className="table-head xml-grid"><span>Arquivo</span><span>Tipo</span><span>Chave</span><span>Status</span><span>Mensagens</span></div>{xmlQueue.map((file) => <div key={file.token} className="table-row xml-grid"><span>{file.originalFileName}</span><span>{file.xmlType}</span><span>{file.accessKey ?? "-"}</span><span>{file.status}</span><span>{file.errorMessage ?? (file.warnings.join(", ") || "-")}</span></div>)}</div> : null}
+        {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
+      </AdminBlock>
+      <AdminBlock title="Historico de XML">
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span>{job.status}</span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { const reason = window.prompt("Motivo da reversao XML"); if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }}>Reverter</button></span></div>)}</div>
+      </AdminBlock>
+      <Feedback message={message} />
+    </section>
+  );
+}
+
 function OrganizationsAdmin({ profile, refresh }: { profile: InstallationProfile; refresh: () => Promise<BootstrapData> }): JSX.Element {
   const [items, setItems] = useState<OrganizationListItem[]>([]);
   const [search, setSearch] = useState("");
@@ -714,19 +1023,170 @@ function FormGrid({ children }: { children: React.ReactNode }): JSX.Element {
   return <div className="form-grid">{children}</div>;
 }
 
+function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [charges, setCharges] = useState<ClientCharge[]>([]);
+  const [eligible, setEligible] = useState<Operation[]>([]);
+  const [detail, setDetail] = useState<ClientChargeDetail | null>(null);
+  const [summary, setSummary] = useState<BillingSummary | null>(null);
+  const [clientId, setClientId] = useState("");
+  const [periodStart, setPeriodStart] = useState(new Date().toISOString().slice(0, 8) + "01");
+  const [periodEnd, setPeriodEnd] = useState(new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    setPartners(clients);
+    setClientId((current) => current || clients[0]?.id || "");
+    setCharges(await window.operationsCafe.listClientCharges({ organizationId, status: "all" }));
+    setSummary(await window.operationsCafe.getBillingSummary(organizationId));
+  }, [organizationId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function suggestPeriod(): Promise<void> {
+    if (!clientId || !ownLegalEntityId) return;
+    const [period] = await window.operationsCafe.suggestChargePeriods({ organizationId, ownLegalEntityId, clientPartnerId: clientId, referenceDate: periodEnd });
+    if (period) { setPeriodStart(period.periodStart); setPeriodEnd(period.periodEnd); setMessage(period.label); }
+  }
+
+  async function findOperations(): Promise<void> {
+    setEligible(await window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: clientId, periodStart, periodEnd }));
+  }
+
+  async function createDraft(): Promise<void> {
+    try {
+      const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity: "CUSTOM", periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+      setDetail(draft);
+      setMessage("Rascunho gerado e operacoes reservadas.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar cobranca."}`);
+    }
+  }
+
+  async function issue(): Promise<void> {
+    if (!detail) return;
+    const issued = await window.operationsCafe.issueClientCharge(detail.charge.id);
+    setDetail(issued);
+    setMessage("Cobranca emitida com documentos.");
+    await load();
+  }
+
+  async function addDiscount(): Promise<void> {
+    if (!detail) return;
+    const value = window.prompt("Valor do desconto em centavos");
+    if (!value) return;
+    setDetail(await window.operationsCafe.addChargeAdjustment({ clientChargeId: detail.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto manual", amountCents: Number(value), sortOrder: 10, reason: "Ajuste manual" }));
+  }
+
+  async function registerPayment(): Promise<void> {
+    if (!detail) return;
+    const value = window.prompt("Valor recebido em centavos");
+    if (!value) return;
+    const payment = await window.operationsCafe.createClientPayment({ organizationId, ownLegalEntityId, clientPartnerId: detail.charge.clientPartnerId, paymentDate: new Date().toISOString().slice(0, 10), amountCents: Number(value), paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+    setDetail(await window.operationsCafe.allocateClientPayment({ clientPaymentId: payment.id, clientChargeId: detail.charge.id, amountCents: Number(value) }));
+    await load();
+  }
+
+  return (
+    <section className="content-section settings">
+      <AdminBlock title="Gerar cobranca">
+        <div className="cards">
+          <article><span>Total a receber</span><strong>{formatCurrencyFromCents(summary?.openCents ?? 0)}</strong></article>
+          <article><span>Recebido</span><strong>{formatCurrencyFromCents(summary?.receivedCents ?? 0)}</strong></article>
+          <article><span>Creditos</span><strong>{formatCurrencyFromCents(summary?.availableCreditsCents ?? 0)}</strong></article>
+          <article><span>Operacoes nao cobradas</span><strong>{summary?.unbilledOperations ?? 0}</strong></article>
+        </div>
+        <FormGrid>
+          <SelectField label="Cliente" value={clientId} onChange={setClientId} options={partners.map((item) => [item.id, item.displayName])} />
+          <TextField label="Inicio" value={periodStart} onChange={setPeriodStart} />
+          <TextField label="Fim" value={periodEnd} onChange={setPeriodEnd} />
+          <TextField label="Vencimento" value={dueDate} onChange={setDueDate} />
+          <button onClick={() => void suggestPeriod()}>Sugerir periodo</button>
+          <button onClick={() => void findOperations()}>Buscar operacoes</button>
+          <button className="primary" onClick={() => void createDraft()} disabled={eligible.length === 0}>Gerar rascunho</button>
+        </FormGrid>
+        <div className="table"><div className="table-head charge-operation-grid"><span>Data</span><span>Tipo</span><span>Sacas</span><span>R$/saca</span><span>Servico</span><span>Status</span></div>{eligible.map((op) => <div key={op.id} className="table-row charge-operation-grid"><span>{op.operationDate}</span><span>{op.operationScope}</span><span>{op.quantitySacks}</span><span>{formatCurrencyFromCents(op.appliedRateValueCents)}</span><span>{formatCurrencyFromCents(op.serviceAmountCents)}</span><span>{op.billingStatus}</span></div>)}</div>
+      </AdminBlock>
+      {detail ? <AdminBlock title={`Detalhe ${detail.charge.chargeNumber ?? "Rascunho"}`}>
+        <div className="cards">
+          <article><span>Subtotal</span><strong>{formatCurrencyFromCents(detail.charge.subtotalServicesCents)}</strong></article>
+          <article><span>Ajustes +</span><strong>{formatCurrencyFromCents(detail.charge.additionsCents)}</strong></article>
+          <article><span>Ajustes -</span><strong>{formatCurrencyFromCents(detail.charge.deductionsCents)}</strong></article>
+          <article><span>Total</span><strong>{formatCurrencyFromCents(detail.charge.finalAmountCents)}</strong></article>
+          <article><span>Aberto</span><strong>{formatCurrencyFromCents(detail.charge.openAmountCents)}</strong></article>
+        </div>
+        <div className="toolbar"><button onClick={() => void addDiscount()}>Adicionar desconto</button><button className="primary" onClick={() => void issue()} disabled={!["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status)}>Emitir e gerar documentos</button><button onClick={() => void registerPayment()}>Registrar pagamento</button></div>
+      </AdminBlock> : null}
+      <AdminBlock title="Historico de cobrancas">
+        <div className="table"><div className="table-head charge-grid"><span>Numero</span><span>Cliente</span><span>Periodo</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Status</span><span>Acoes</span></div>{charges.map((charge) => <div key={charge.id} className="table-row charge-grid"><span>{charge.chargeNumber ?? "Rascunho"}</span><span>{partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? charge.clientPartnerId}</span><span>{charge.periodStart} a {charge.periodEnd}</span><span>{formatCurrencyFromCents(charge.finalAmountCents)}</span><span>{formatCurrencyFromCents(charge.paidAmountCents)}</span><span>{formatCurrencyFromCents(charge.openAmountCents)}</span><span>{charge.status}</span><span><button onClick={() => window.operationsCafe.getClientCharge(charge.id).then(setDetail)}>Abrir</button></span></div>)}</div>
+      </AdminBlock>
+      <Feedback message={message} />
+    </section>
+  );
+}
+
+function LedgerPage({ data }: { data: BootstrapData }): JSX.Element {
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [clientId, setClientId] = useState("");
+  const [entries, setEntries] = useState<ClientLedgerEntry[]>([]);
+  const [amount, setAmount] = useState("500000");
+  const [message, setMessage] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    setPartners(clients);
+    const selected = clientId || clients[0]?.id || "";
+    setClientId(selected);
+    if (selected) setEntries(await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId: selected }));
+  }, [organizationId, ownLegalEntityId, clientId]);
+  useEffect(() => { void load(); }, [load]);
+  async function createAdvance(): Promise<void> {
+    await window.operationsCafe.createAdvance({ organizationId, ownLegalEntityId, clientPartnerId: clientId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: Number(amount), entryDate: new Date().toISOString().slice(0, 10), description: "Adiantamento recebido", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: Number(amount) });
+    setMessage("Adiantamento registrado.");
+    await load();
+  }
+  return (
+    <section className="content-section settings">
+      <AdminBlock title="Conta-corrente do cliente">
+        <FormGrid>
+          <SelectField label="Cliente" value={clientId} onChange={setClientId} options={partners.map((item) => [item.id, item.displayName])} />
+          <TextField label="Valor em centavos" value={amount} onChange={setAmount} />
+          <button className="primary" onClick={() => void createAdvance()}>Registrar adiantamento</button>
+        </FormGrid>
+        <div className="table"><div className="table-head ledger-grid"><span>Data</span><span>Tipo</span><span>Descricao</span><span>Efeito</span><span>Valor</span><span>Disponivel</span><span>Status</span></div>{entries.map((entry) => <div key={entry.id} className="table-row ledger-grid"><span>{entry.entryDate}</span><span>{entry.entryType}</span><span>{entry.description}</span><span>{entry.effect}</span><span>{formatCurrencyFromCents(entry.amountCents)}</span><span>{formatCurrencyFromCents(entry.availableAmountCents ?? 0)}</span><span>{entry.status}</span></div>)}</div>
+      </AdminBlock>
+      <Feedback message={message} />
+    </section>
+  );
+}
+
 function ModulePlaceholder({ title }: { title: string }): JSX.Element {
   return <section className="content-section"><h2>{title}</h2><p>Modulo em desenvolvimento. Esta etapa esta focada em multiempresa, CNPJs, locais e branding.</p></section>;
 }
 
-function Dashboard({ organizations, legalEntities, locations }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[] }): JSX.Element {
+function Dashboard({ organizations, legalEntities, locations, organizationId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string }): JSX.Element {
+  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+  useEffect(() => {
+    if (!organizationId) return;
+    void window.operationsCafe.getBillingSummary(organizationId).then(setBillingSummary);
+  }, [organizationId]);
   return (
     <section className="content-section">
       <h2>Inicio</h2>
-      <p>Ambiente offline-first configurado para operacoes de cafe, com cadastros administrativos persistentes.</p>
+      <p>Ambiente offline-first configurado para operacoes de cafe, com cadastros, notas, importacoes, cobrancas e conta-corrente local.</p>
       <div className="cards">
         <article><span>Organizacoes</span><strong>{organizations.length}</strong></article>
         <article><span>CNPJs</span><strong>{legalEntities.length}</strong></article>
         <article><span>Locais</span><strong>{locations.length}</strong></article>
+        <article><span>Operacoes a cobrar</span><strong>{billingSummary?.unbilledOperations ?? 0}</strong></article>
+        <article><span>Total a receber</span><strong>{formatCurrencyFromCents(billingSummary?.openCents ?? 0)}</strong></article>
+        <article><span>Creditos disponiveis</span><strong>{formatCurrencyFromCents(billingSummary?.availableCreditsCents ?? 0)}</strong></article>
       </div>
     </section>
   );
@@ -767,12 +1227,15 @@ function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
   }
 
   const page = useMemo(() => {
-    if (activeMenu === "Dashboard") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} />;
+    if (activeMenu === "Dashboard") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={organization?.id} />;
+    if (activeMenu === "Notas e operacoes") return <ManualInvoicesPage data={data} />;
     if (activeMenu === "Clientes") return <PartnersPage data={data} refresh={refresh} />;
-    if (activeMenu === "Cobrancas") return <ServiceRatesPage data={data} />;
+    if (activeMenu === "Regras por saca") return <ServiceRatesPage data={data} />;
+    if (activeMenu === "Cobrancas") return <ChargesPage data={data} />;
+    if (activeMenu === "Conta-corrente") return <LedgerPage data={data} />;
     if (activeMenu === "Configuracoes" && profile) return <SettingsPage profile={profile} refresh={refresh} onProfile={setProfile} />;
     return <ModulePlaceholder title={activeMenu} />;
-  }, [activeMenu, data, profile, refresh]);
+  }, [activeMenu, data, profile, refresh, organization?.id]);
 
   return (
     <main className="app-shell">

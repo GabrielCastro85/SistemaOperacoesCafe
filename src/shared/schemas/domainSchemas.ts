@@ -252,3 +252,252 @@ export const resolveRateInputSchema = z.object({
   operationScope: operationScopeSchema.exclude(["ALL"]),
   operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
+
+const decimalTextSchema = z.string().trim().regex(/^\d+(\.\d{1,6})?$/);
+export const fiscalDocumentStatusSchema = z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED"]);
+export const operationTypeSchema = z.enum(["PURCHASE", "SALE"]);
+
+export const fiscalDocumentInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  responsiblePartnerId: z.string().uuid(),
+  partnerLegalEntityId: z.string().uuid().nullable(),
+  accessKey: z.string().trim().regex(/^\d{44}$/).nullable(),
+  documentNumber: z.string().trim().min(1),
+  series: nullableText,
+  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  totalAmountCents: z.number().int().min(0),
+  hasPendingIssues: z.boolean(),
+  pendingNotes: nullableText,
+  notes: nullableText
+});
+
+export const fiscalDocumentItemInputSchema = z.object({
+  fiscalDocumentId: z.string().uuid(),
+  productId: z.string().uuid().nullable(),
+  description: z.string().trim().min(1),
+  quantity: decimalTextSchema,
+  unit: productUnitSchema,
+  unitPriceDecimal: decimalTextSchema,
+  totalAmountCents: z.number().int().min(0),
+  sacksQuantity: decimalTextSchema.nullable()
+});
+
+export const operationInputSchema = z.object({
+  fiscalDocumentId: z.string().uuid(),
+  fiscalDocumentItemId: z.string().uuid().nullable(),
+  ownLegalEntityId: z.string().uuid(),
+  responsiblePartnerId: z.string().uuid(),
+  productId: z.string().uuid().nullable(),
+  operationType: operationTypeSchema,
+  operationScope: operationScopeSchema.exclude(["ALL"]),
+  operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  quantitySacks: decimalTextSchema,
+  manualRateValueCents: z.number().int().min(0).nullable(),
+  manualOverrideReason: nullableText,
+  notes: nullableText
+});
+
+export const spreadsheetImportTypeSchema = z.enum(["GENERAL_SALES", "CLIENT_INDIVIDUAL", "CUSTOM"]);
+export const spreadsheetImportStatusSchema = z.enum(["DRAFT", "VALIDATED", "PROCESSING", "COMPLETED", "COMPLETED_WITH_ERRORS", "CANCELLED", "FAILED", "REVERTED"]);
+export const spreadsheetImportRowStatusSchema = z.enum(["PENDING", "VALID", "WARNING", "ERROR", "DUPLICATE", "IMPORTED", "SKIPPED", "REVERTED"]);
+
+export const spreadsheetMappingTemplateInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  name: z.string().trim().min(1),
+  importType: spreadsheetImportTypeSchema,
+  sheetNamePattern: nullableText,
+  headerRow: z.number().int().min(1),
+  columnMapping: z.record(z.string(), z.string()),
+  defaultCommercialFlow: operationTypeSchema.nullable(),
+  defaultOperationScope: operationScopeSchema.exclude(["ALL"]).nullable(),
+  defaultProductId: z.string().uuid().nullable(),
+  isActive: z.boolean()
+});
+
+export const spreadsheetImportJobInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  mappingTemplateId: z.string().uuid().nullable(),
+  originalFileName: z.string().trim().min(1),
+  storedFilePath: z.string().trim().min(1).nullable(),
+  selectedSheetName: z.string().trim().min(1),
+  importType: spreadsheetImportTypeSchema,
+  settings: z.record(z.string(), z.unknown())
+});
+
+export const spreadsheetImportRowInputSchema = z.object({
+  importJobId: z.string().uuid(),
+  sheetName: z.string().trim().min(1),
+  sourceRowNumber: z.number().int().min(1),
+  rawData: z.record(z.string(), z.unknown()),
+  normalizedData: z.record(z.string(), z.unknown()).nullable(),
+  status: spreadsheetImportRowStatusSchema,
+  errorCode: nullableText,
+  errorMessage: nullableText,
+  warningCodes: z.array(z.string())
+});
+
+export const partnerAliasInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  businessPartnerId: z.string().uuid(),
+  partnerLegalEntityId: z.string().uuid().nullable(),
+  alias: z.string().trim().min(1),
+  source: z.string().trim().min(1),
+  isActive: z.boolean()
+});
+
+export const xmlImportSourceTypeSchema = z.enum(["FILE", "MULTIPLE_FILES", "FOLDER", "DRAG_DROP"]);
+export const xmlImportStatusSchema = z.enum(["DRAFT", "INSPECTING", "VALIDATED", "PROCESSING", "COMPLETED", "COMPLETED_WITH_ERRORS", "CANCELLED", "FAILED", "REVERTED"]);
+export const xmlImportFileStatusSchema = z.enum(["PENDING", "VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE", "ERROR", "IMPORTED", "SKIPPED", "REVERTED"]);
+export const xmlTypeSchema = z.enum(["NFE_PROC", "NFE", "EVENT_CANCELLATION", "EVENT_CORRECTION_LETTER", "EVENT_OTHER", "UNKNOWN"]);
+export const fiscalDocumentEventTypeSchema = z.enum(["CANCELLATION", "CORRECTION_LETTER", "OTHER"]);
+
+export const xmlImportJobInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  sourceType: xmlImportSourceTypeSchema,
+  selectedFolder: nullableText,
+  includeSubfolders: z.boolean(),
+  settings: z.record(z.string(), z.unknown())
+});
+
+export const xmlImportFileInputSchema = z.object({
+  importJobId: z.string().uuid(),
+  originalFileName: z.string().trim().min(1),
+  fileHash: z.string().trim().regex(/^[a-f0-9]{64}$/),
+  fileSize: z.number().int().min(0),
+  xmlType: xmlTypeSchema,
+  accessKey: z.string().trim().regex(/^\d{44}$/).nullable(),
+  status: xmlImportFileStatusSchema,
+  errorCode: nullableText,
+  errorMessage: nullableText,
+  warningCodes: z.array(z.string()),
+  extractedData: z.record(z.string(), z.unknown()).nullable(),
+  resolutionData: z.record(z.string(), z.unknown()).nullable()
+});
+
+export const xmlImportResolutionSchema = z.object({
+  clientPartnerId: z.string().uuid().nullable().optional(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
+  operationType: operationTypeSchema.nullable().optional(),
+  operationScope: operationScopeSchema.exclude(["ALL"]).nullable().optional(),
+  productId: z.string().uuid().nullable().optional(),
+  createOperations: z.boolean().optional(),
+  manualSacks: decimalTextSchema.nullable().optional(),
+  manualRateValueCents: z.number().int().min(0).nullable().optional(),
+  manualOverrideReason: nullableText.optional(),
+  ignore: z.boolean().optional()
+});
+
+export const productAliasInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  productId: z.string().uuid(),
+  issuerPartnerLegalEntityId: z.string().uuid().nullable(),
+  sourceProductCode: nullableText,
+  sourceDescription: z.string().trim().min(1),
+  ncm: nullableText,
+  isActive: z.boolean()
+});
+
+export const operationClassificationRuleInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable(),
+  issuerPartnerLegalEntityId: z.string().uuid().nullable(),
+  recipientPartnerLegalEntityId: z.string().uuid().nullable(),
+  destinationPartnerId: z.string().uuid().nullable(),
+  productId: z.string().uuid().nullable(),
+  clientPartnerId: z.string().uuid(),
+  commercialFlow: operationTypeSchema.nullable(),
+  operationScope: operationScopeSchema.exclude(["ALL"]),
+  priority: z.number().int().min(0),
+  isActive: z.boolean()
+});
+
+export const operationBillingStatusSchema = z.enum(["UNBILLED", "RESERVED", "BILLED"]);
+export const clientChargeStatusSchema = z.enum(["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "PAID", "OVERDUE", "CANCELLED", "REPLACED"]);
+export const ledgerEntryTypeSchema = z.enum(["SERVICE_CHARGE", "ADVANCE_RECEIVED", "PAYMENT_RECEIVED", "DISCOUNT", "CREDIT", "SURCHARGE", "REIMBURSEMENT", "PREVIOUS_BALANCE", "MANUAL_ADJUSTMENT", "REVERSAL", "OTHER"]);
+export const ledgerEffectSchema = z.enum(["INCREASE_RECEIVABLE", "REDUCE_RECEIVABLE"]);
+export const chargeAdjustmentTypeSchema = z.enum(["ADVANCE", "CREDIT", "DISCOUNT", "SURCHARGE", "REIMBURSEMENT", "PREVIOUS_BALANCE", "MANUAL_ADJUSTMENT", "OTHER"]);
+export const paymentMethodSchema = z.enum(["PIX", "BANK_TRANSFER", "CASH", "CHECK", "OFFSET", "OTHER"]);
+
+export const suggestChargePeriodsInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  clientPartnerId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  periodicity: billingPeriodicitySchema.optional(),
+  referenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+});
+
+export const eligibleOperationsInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  clientPartnerId: z.string().uuid(),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+});
+
+export const clientChargeDraftInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  clientPartnerId: z.string().uuid(),
+  billingProfileId: z.string().uuid().nullable(),
+  periodicity: billingPeriodicitySchema,
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  notes: nullableText,
+  internalNotes: nullableText,
+  operationIds: z.array(z.string().uuid())
+});
+
+export const clientChargeAdjustmentInputSchema = z.object({
+  clientChargeId: z.string().uuid(),
+  ledgerEntryId: z.string().uuid().nullable(),
+  adjustmentType: chargeAdjustmentTypeSchema,
+  effect: ledgerEffectSchema,
+  description: z.string().trim().min(1),
+  amountCents: z.number().int().positive(),
+  sortOrder: z.number().int().min(0),
+  reason: nullableText.optional()
+});
+
+export const clientLedgerEntryInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  clientPartnerId: z.string().uuid(),
+  clientChargeId: z.string().uuid().nullable(),
+  entryType: ledgerEntryTypeSchema,
+  effect: ledgerEffectSchema,
+  amountCents: z.number().int().positive(),
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  description: z.string().trim().min(1),
+  referenceNumber: nullableText,
+  notes: nullableText,
+  attachmentPath: nullableText,
+  availableAmountCents: z.number().int().min(0).nullable()
+});
+
+export const creditAllocationInputSchema = z.object({
+  ledgerEntryId: z.string().uuid(),
+  clientChargeId: z.string().uuid(),
+  amountCents: z.number().int().positive()
+});
+
+export const clientPaymentInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  clientPartnerId: z.string().uuid(),
+  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  amountCents: z.number().int().positive(),
+  paymentMethod: paymentMethodSchema,
+  bankAccountDescription: nullableText,
+  transactionReference: nullableText,
+  notes: nullableText,
+  attachmentPath: nullableText
+});
+
+export const paymentAllocationInputSchema = z.object({
+  clientPaymentId: z.string().uuid(),
+  clientChargeId: z.string().uuid(),
+  amountCents: z.number().int().positive()
+});

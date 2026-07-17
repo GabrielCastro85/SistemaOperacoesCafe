@@ -13,6 +13,8 @@ export function resolveAppDirectories(userData: string): AppDirectories {
     chargesDir: join(userData, "documents", "charges"),
     attachmentsDir: join(userData, "documents", "attachments"),
     signedDir: join(userData, "documents", "signed"),
+    spreadsheetImportsDir: join(userData, "documents", "spreadsheet-imports"),
+    xmlImportsDir: join(userData, "documents", "invoices", "xml-imports"),
     backupsDir: join(userData, "backups"),
     logsDir: join(userData, "logs"),
     settingsDir: join(userData, "settings")
