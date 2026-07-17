@@ -59,3 +59,5 @@ Itens de confirmacao usam decimal exato em texto para quantidade e preco comerci
 Confirmacao emitida recebe numero sequencial por organizacao, CNPJ proprio, ano e tipo. Depois de emitida, itens, participantes, clausulas, pagamentos e signatarios nao sao editados silenciosamente. Alteracoes relevantes exigem cancelamento ou substituicao por novo rascunho.
 
 Previa, emissao e PDF assinado importado geram versoes em `deal_confirmation_document_versions`, com hash SHA-256. Importar PDF assinado preserva o arquivo externo copiado para pasta interna, mas a validacao criptografica da assinatura nao e realizada.
+
+Durante o feature freeze da homologacao `1.0.0-rc.1`, regras de negocio aprovadas nao devem ser alteradas sem defeito real identificado. Melhorias ficam registradas para versao posterior.

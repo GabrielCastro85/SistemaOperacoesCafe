@@ -59,3 +59,5 @@ Credenciais guardam somente hash `scrypt` versionado e salt aleatorio. Roles e p
 Migration `013_backups_integrity`: cria `backup_jobs`, `backup_file_entries`, `backup_settings`, `restore_jobs`, `integrity_check_runs` e `integrity_check_findings`.
 
 Pacotes de backup ficam fora do SQLite, em arquivo `.cafebackup`. O banco registra historico, status, hashes, destino, protecao, verificacao, restauracoes e findings de integridade. Permissoes de backup, restauracao, integridade, retencao e limpeza sao semeadas de forma idempotente.
+
+Homologacao `1.0.0-rc.1`: nenhuma migration nova foi criada apenas para mudar versao de aplicativo. A ultima migration permanece `013_backups_integrity`.

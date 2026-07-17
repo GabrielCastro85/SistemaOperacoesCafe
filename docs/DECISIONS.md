@@ -141,3 +141,7 @@ Villa Coffee, Grao & Grao e multiempresa possuem App ID, executavel, icone, arte
 ## Release Com Manifesto E Checksum
 
 Cada empacotamento gera `release-manifest.json`, `SHA256SUMS.txt` e `release-notes.md`. O manifesto nao substitui assinatura de codigo, mas fornece rastreabilidade local de versao, variante, artefato, hash, arquitetura, migration e limitacoes conhecidas.
+
+## Release Candidate Antes Do Stable
+
+Como instalacao limpa, atualizacao real, lado a lado e aceite de usuario dependem de ambiente manual, a etapa 14 gera `1.0.0-rc.1`. Essa decisao evita marcar como stable uma versao sem validacoes finais em maquina de usuario.

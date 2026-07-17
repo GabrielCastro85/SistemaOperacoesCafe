@@ -13,5 +13,6 @@
 11. Interface profissional. Concluida com App.tsx reduzido, design system, layout desktop, sidebar recolhivel, topbar contextual, temas Villa/Grao/multiempresa, logos empacotadas, dashboard reorganizado, dialogs React, rotas diretas para todos os modulos e remocao definitiva do workspace legado.
 12. Backups, restauracao e integridade. Concluido com pacote `.cafebackup`, snapshot SQLite, manifesto, hashes, criptografia opcional, backup automatico pendente, retencao, restauracao segura, integridade de banco/documentos e auditoria.
 13. Distribuicao Windows profissional. Concluido com variantes Villa/Grao/multiempresa, App IDs, executaveis, icones, isolamento de userData, instaladores, manifestos, checksums, smoke tests e documentacao de instalacao.
-14. Dashboard e relatorios consolidados.
-15. Atualizacoes automaticas e assinatura Authenticode final.
+14. Homologacao 1.0. Em release candidate `1.0.0-rc.1`, pendente de validacao manual em ambiente real para promocao stable.
+15. Dashboard e relatorios consolidados.
+16. Atualizacoes automaticas e assinatura Authenticode final.

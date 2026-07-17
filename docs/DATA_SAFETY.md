@@ -43,3 +43,5 @@ PDF assinado externamente e arquivado para auditoria, mas o sistema nao confere 
 Antes de restaurar, o app valida magic bytes, manifesto, hashes, banco e compatibilidade. A restauracao cria backup pre-restauracao protegido, expira sessoes locais e registra auditoria.
 
 Distribuicoes Windows usam `userData` isolado por variante. Isso permite instalar Villa Coffee, Grao & Grao e multiempresa na mesma maquina sem misturar bancos, documentos, logs, backups internos ou branding. Atualizacoes devem usar sempre instalador da mesma variante.
+
+Na homologacao `1.0.0-rc.1`, dados de teste nao devem conter dados pessoais ou empresariais reais no repositorio. Dados de aceitacao devem ser criados em ambiente isolado e nao empacotados nos instaladores.

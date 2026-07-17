@@ -31,7 +31,7 @@ describe("diagnostics IPC handler logic", () => {
       allowLegalEntitySwitch: true,
       completedSetup: true
     });
-    const diagnostics = createDiagnostics({ version: "0.13.0", directories, db, buildVariant: buildVariantConfigs.villa }, repo);
+    const diagnostics = createDiagnostics({ version: "1.0.0-rc.1", directories, db, buildVariant: buildVariantConfigs.villa }, repo);
     expect(diagnostics.databaseStatus).toBe("ok");
     expect(diagnostics.activeVariant).toBe("villa");
     expect(diagnostics.productName).toBe("Villa Coffee");

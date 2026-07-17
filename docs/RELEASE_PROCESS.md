@@ -32,3 +32,7 @@ Para instaladores NSIS:
 - `npm run release:multiempresa`
 
 Cada release gera `release-manifest.json`, `SHA256SUMS.txt` e `release-notes.md` em `release/<variant>/<version>/`.
+
+## Homologacao 1.0
+
+Quando houver validacoes manuais pendentes, gere `1.0.0-rc.1` e registre NO-GO para stable no relatorio. Somente promova para `1.0.0` depois de concluir instalacao limpa, atualizacao, lado a lado e aceite de usuario.

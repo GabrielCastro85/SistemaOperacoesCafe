@@ -33,7 +33,7 @@ describe("Windows distribution variants", () => {
       scripts: Record<string, string>;
       build: { appId: string; win: { icon: string; requestedExecutionLevel: string } };
     };
-    expect(pkg.version).toBe("0.13.0");
+    expect(pkg.version).toBe("1.0.0-rc.1");
     expect(pkg.author).toBeTruthy();
     expect(pkg.license).toBe("UNLICENSED");
     expect(pkg.engines?.node).toContain(">=20.19.0");
@@ -41,6 +41,10 @@ describe("Windows distribution variants", () => {
     expect(pkg.scripts["package:grao"]).toContain("grao");
     expect(pkg.scripts["release:verify"]).toContain("verify-release");
     expect(pkg.scripts["smoke:packaged"]).toContain("smoke-packaged");
+    expect(pkg.scripts["homologation:check"]).toContain("release-readiness");
+    expect(pkg.scripts["security:review"]).toContain("security-check");
+    expect(pkg.scripts["migrations:check"]).toContain("migration-check");
+    expect(pkg.scripts["performance:baseline"]).toContain("performance-baseline");
     expect(pkg.build.appId).toBe(buildVariantConfigs.multiempresa.appId);
     expect(pkg.build.win.icon).toBe(buildVariantConfigs.multiempresa.iconPath);
     expect(pkg.build.win.requestedExecutionLevel).toBe("asInvoker");
@@ -53,7 +57,15 @@ describe("Windows distribution variants", () => {
       "docs/UNINSTALLATION.md",
       "docs/RELEASE_PROCESS.md",
       "docs/CODE_SIGNING.md",
-      "docs/BUILD_VARIANTS.md"
+      "docs/BUILD_VARIANTS.md",
+      "docs/USER_MANUAL.md",
+      "docs/QUICK_START.md",
+      "docs/DAILY_OPERATION_CHECKLIST.md",
+      "docs/USER_ACCEPTANCE_TEST.md",
+      "docs/RELEASE_1_0_CHECKLIST.md",
+      "docs/RELEASE_1_0_ISSUES.md",
+      "docs/SECURITY_REVIEW_1_0.md",
+      "docs/HOMOLOGATION_REPORT_1_0.md"
     ]) {
       expect(existsSync(join(root, doc))).toBe(true);
     }

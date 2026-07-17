@@ -27,3 +27,7 @@ O backup interno fica em `userData/backups`. Um destino externo pode ser escolhi
 A restauracao exige sessao ativa, permissao `backups.restore`, senha atual do usuario e backup validado. Antes de substituir dados, o sistema cria um backup `PRE_RESTORE` protegido.
 
 Backups com migration mais nova sao bloqueados. Backups com migration mais antiga sao migrados em area temporaria antes da substituicao.
+
+## Homologacao 1.0
+
+Na homologacao `1.0.0-rc.1`, restauracoes destrutivas devem ser executadas somente em diretorio isolado. O aceite de usuario deve confirmar backup completo, backup criptografado, verificacao, restauracao e rollback quando aplicavel.

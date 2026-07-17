@@ -9,3 +9,5 @@ Antes de desinstalar:
 3. Confirme o SHA-256 do backup se ele sera arquivado.
 
 Dados preservados ficam em `%APPDATA%/<UserData da variante>/`. A remocao manual dessa pasta apaga banco, documentos, backups internos, logs e branding local.
+
+Na homologacao, confirme que desinstalar uma variante nao remove dados nem atalhos das outras variantes instaladas lado a lado.

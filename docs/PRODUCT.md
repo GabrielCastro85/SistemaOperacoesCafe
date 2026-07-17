@@ -25,3 +25,5 @@ A oitava etapa adiciona Financeiro e contas a pagar. O modulo controla despesas 
 A conclusao da oitava etapa adiciona anexos de contas, comprovantes de pagamento e relatorios financeiros PDF/Excel, mantendo tudo offline e armazenado em pastas internas do usuario.
 
 A nona etapa adiciona Confirmacoes de negocio. O usuario pode criar uma confirmacao manual ou a partir de operacoes/notas, revisar participantes, itens, clausulas, pagamento, entrega e signatarios, gerar previa, emitir PDF numerado, importar PDF assinado externamente, cancelar, substituir e consultar indicadores basicos.
+
+A decima quarta etapa congela funcionalidades e inicia a homologacao da primeira versao. O produto entra em `1.0.0-rc.1`, com manual de usuario, guia rapido, checklist de operacao, aceite de usuario e relatorio de homologacao. A promocao para `1.0.0` stable exige validacao manual em ambiente real.

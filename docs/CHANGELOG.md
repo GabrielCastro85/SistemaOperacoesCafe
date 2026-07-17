@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.1
+
+- Criado release candidate de homologacao da primeira versao.
+- Mantida a ultima migration em `013_backups_integrity`.
+- Adicionados scripts `homologation:check`, `security:review`, `migrations:check` e `performance:baseline`.
+- Criados manual do usuario, guia rapido, checklist diario, teste de aceite, checklist de release, controle de defeitos, revisao de seguranca e relatorio de homologacao.
+- Documentado bloqueio de promocao para `1.0.0` ate validacoes manuais de instalacao limpa, atualizacao, lado a lado e aceite.
+- Gerados artefatos RC por variante com `signed: false` quando nao houver certificado Authenticode.
+
 ## 0.13.0
 
 - Adicionada fundacao de distribuicao Windows profissional.

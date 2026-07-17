@@ -10,3 +10,5 @@
 Nao misture instaladores de variantes diferentes para atualizar a mesma base. Villa Coffee, Grao & Grao e multiempresa usam `userData` separados.
 
 Se uma atualizacao falhar, restaure o backup `.cafebackup` pela tela Configuracoes > Restaurar.
+
+Para promover `1.0.0-rc.1` a stable, valide a atualizacao 0.13.0 -> 1.0.0 em ambiente isolado com dados de teste representativos.

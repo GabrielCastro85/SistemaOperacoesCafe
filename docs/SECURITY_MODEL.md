@@ -32,3 +32,7 @@ O processo principal aplica hardening antes de abrir a janela:
 - Navegacao do renderer e restrita a `file://` em build empacotado e `http://127.0.0.1:` em desenvolvimento.
 - Permissoes de browser sao negadas por padrao.
 - Cada variante define `appId`, nome de produto e `userData` antes do banco ser aberto.
+
+## Homologacao 1.0
+
+O script `npm run security:review` verifica controles basicos de Electron, preload, CSP, navegacao, permissoes, IPC e auditoria. A revisao completa esta em `docs/SECURITY_REVIEW_1_0.md`.

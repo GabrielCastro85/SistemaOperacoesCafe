@@ -1,6 +1,6 @@
 {
   "name": "sistema-operacoes-cafe",
-  "version": "0.13.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "description": "Aplicativo desktop offline-first para gerenciamento de operacoes de empresas do ramo de cafe.",
   "author": "Sistema Operacoes Cafe",
@@ -34,6 +34,10 @@
     "release:all": "npm run release:villa && npm run release:grao && npm run release:multiempresa",
     "release:verify": "node scripts/release/verify-release.mjs",
     "smoke:packaged": "node scripts/release/smoke-packaged.mjs",
+    "homologation:check": "node scripts/homologation/release-readiness.mjs",
+    "security:review": "node scripts/homologation/security-check.mjs",
+    "migrations:check": "node scripts/homologation/migration-check.mjs",
+    "performance:baseline": "node scripts/homologation/performance-baseline.mjs",
     "postpackage": "npm rebuild better-sqlite3",
     "stop:electron": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*SistemaOperacoesCafe*' -and (($_.Name -eq 'electron.exe') -or ($_.Name -eq 'node.exe' -and $_.CommandLine -like '*electron*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\"",
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",

@@ -23,6 +23,10 @@ Aplicativo desktop Windows offline-first para operacoes internas de empresas do 
 - `npm run release:villa` e `npm run release:grao` geram instaladores NSIS.
 - `npm run release:verify` valida manifestos e checksums.
 - `npm run smoke:packaged` valida artefatos empacotados.
+- `npm run homologation:check` valida documentos e pre-condicoes da homologacao.
+- `npm run security:review` verifica controles de seguranca Electron/IPC.
+- `npm run migrations:check` confirma a ultima migration aprovada.
+- `npm run performance:baseline` executa um baseline SQLite local sintetico.
 
 ## Dados Locais
 
@@ -113,6 +117,10 @@ Backup interno nao protege contra perda total do disco; copie backups importante
 A decima terceira etapa profissionaliza a distribuicao Windows. `src/shared/buildVariants.ts` centraliza App ID, nome de produto, executavel, icone, artefatos e diretorio `userData` das variantes Villa Coffee, Grao & Grao e multiempresa.
 
 Os scripts em `scripts/release` geram icones `.ico`, empacotam variantes, criam manifestos de release, checksums SHA-256, notas de release e testes smoke de artefatos. A tela Configuracoes > Sobre exibe produto, versao, variante, App ID, executavel, arquitetura, Electron, migration e status de assinatura.
+
+## Homologacao 1.0
+
+A decima quarta etapa gerou `1.0.0-rc.1` como release candidate. A versao stable `1.0.0` fica bloqueada ate concluir instalacao limpa, atualizacao 0.13.0 -> 1.0.0, lado a lado e aceite de usuario em ambiente real. Consulte `docs/HOMOLOGATION_REPORT_1_0.md`, `docs/RELEASE_1_0_CHECKLIST.md` e `docs/USER_ACCEPTANCE_TEST.md`.
 
 ## Estrutura
 
