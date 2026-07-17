@@ -39,6 +39,7 @@ import { PartnersPage } from "../pages/partners/PartnersPage";
 import { ProductsPage } from "../pages/products/ProductsPage";
 import { ServiceRateRulesPage } from "../pages/serviceRates/ServiceRateRulesPage";
 import { BrandingSettingsPage } from "../pages/settings/branding/BrandingSettingsPage";
+import { BackupCreatePage, BackupDetailsPage, BackupsPage, BackupSettingsPage, IntegrityPage, RestorePage, RetentionPage } from "../pages/settings/backups/BackupPages";
 import { DiagnosticsPage } from "../pages/settings/diagnostics/DiagnosticsPage";
 import { DirectoriesPage } from "../pages/settings/directories/DirectoriesPage";
 import { InstallationProfilePage } from "../pages/settings/installation/InstallationProfilePage";
@@ -213,6 +214,13 @@ function renderRoute(
   if (path.startsWith("/settings/directories")) return <DirectoriesPage />;
   if (path.startsWith("/settings/users")) return <UsersPage />;
   if (path.startsWith("/settings/roles")) return <RolesPage />;
+  if (path.startsWith("/settings/backups/new")) return <BackupCreatePage />;
+  if (path.startsWith("/settings/backups/settings")) return <BackupSettingsPage />;
+  if (path.startsWith("/settings/backups/")) return <BackupDetailsPage id={routeTail(path, "/settings/backups/")} />;
+  if (path.startsWith("/settings/backups")) return <BackupsPage />;
+  if (path.startsWith("/settings/restore")) return <RestorePage />;
+  if (path.startsWith("/settings/integrity")) return <IntegrityPage />;
+  if (path.startsWith("/settings/retention")) return <RetentionPage />;
   if (path.startsWith("/settings/document-sequences")) return <DocumentSequencesPage {...settingsProps} />;
   if (path.startsWith("/settings/import-templates")) return <SpreadsheetMappingTemplatesPage />;
   if (path.startsWith("/settings/confirmation-templates")) return <ConfirmationTemplatesPage templates={[]} />;
@@ -228,6 +236,10 @@ function canOpenRoute(path: string, session: AuthSession): boolean {
   if (path.startsWith("/audit")) return session.permissions.includes("audit.view");
   if (path.startsWith("/settings/users")) return session.permissions.includes("users.view");
   if (path.startsWith("/settings/roles")) return session.permissions.includes("roles.view");
+  if (path.startsWith("/settings/backups")) return session.permissions.includes("backups.view");
+  if (path.startsWith("/settings/restore")) return session.permissions.includes("backups.restore");
+  if (path.startsWith("/settings/integrity")) return session.permissions.includes("integrity.view");
+  if (path.startsWith("/settings/retention")) return session.permissions.includes("retention.manage");
   return true;
 }
 

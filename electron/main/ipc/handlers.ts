@@ -15,6 +15,7 @@ import { inspectWorkbook, previewSheet, readSheetRows, validateSpreadsheetPath }
 import { multiplyDecimalByCents } from "../../../src/shared/utils/decimal.js";
 import { inspectXmlFile, safeXmlTargetName } from "../services/xmlNfeService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
+import { BackupService } from "../services/backupService.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
@@ -40,6 +41,7 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
 
 export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository): void {
   const auth = new AuthService(context.db);
+  const backups = new BackupService(context, auth);
   const handle = <T>(channel: string, listener: (event: IpcMainInvokeEvent, payload?: unknown) => T | Promise<T>): void => {
     ipcMain.handle(channel, async (event, payload) => {
       const policy = getIpcPolicy(channel);
@@ -84,6 +86,57 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return auth.listAuditEvents(data?.limit ?? 200);
   });
   handle(IPC_CHANNELS.verifyAuditChain, () => auth.verifyAuditChain());
+  handle(IPC_CHANNELS.listBackups, () => backups.list());
+  handle(IPC_CHANNELS.getBackup, (_event, payload: unknown) => backups.get(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.estimateBackup, (_event, payload: unknown) => {
+    const data = z.object({ backupType: z.enum(["FULL", "DATABASE_ONLY", "DOCUMENTS_ONLY"]).optional() }).optional().parse(payload);
+    return backups.estimate(data?.backupType);
+  });
+  handle(IPC_CHANNELS.selectBackupDestination, async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  handle(IPC_CHANNELS.createBackup, (_event, payload: unknown) => backups.create(payload));
+  handle(IPC_CHANNELS.cancelBackup, (_event, payload: unknown) => backups.get(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.verifyBackup, (_event, payload: unknown) => backups.verify(payload));
+  handle(IPC_CHANNELS.protectBackup, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().nullable().optional() }).parse(payload);
+    return backups.protect(data.id, data.reason ?? null);
+  });
+  handle(IPC_CHANNELS.unprotectBackup, (_event, payload: unknown) => backups.unprotect(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.deleteBackup, (_event, payload: unknown) => backups.delete(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.openBackupLocation, (_event, payload: unknown) => {
+    const backup = backups.get(z.string().uuid().parse(payload));
+    if (!backup.storedFilePath) return false;
+    shell.showItemInFolder(backup.storedFilePath);
+    return true;
+  });
+  handle(IPC_CHANNELS.getBackupSettings, () => backups.getSettings());
+  handle(IPC_CHANNELS.updateBackupSettings, (_event, payload: unknown) => backups.updateSettings(payload));
+  handle(IPC_CHANNELS.runPendingBackup, () => backups.runPendingAutomaticBackup());
+  handle(IPC_CHANNELS.selectRestoreFile, async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Backups do Operacoes Cafe", extensions: ["cafebackup"] }] });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  handle(IPC_CHANNELS.inspectRestoreBackup, (_event, payload: unknown) => {
+    const data = z.object({ path: z.string().min(1), password: z.string().nullable().optional() }).parse(payload);
+    return backups.inspectRestoreFile(data.path, data.password ?? null);
+  });
+  handle(IPC_CHANNELS.validateRestoreBackup, (_event, payload: unknown) => {
+    const data = z.object({ path: z.string().min(1), password: z.string().nullable().optional() }).parse(payload);
+    return backups.inspectRestoreFile(data.path, data.password ?? null);
+  });
+  handle(IPC_CHANNELS.executeRestore, (_event, payload: unknown) => backups.executeRestore(payload));
+  handle(IPC_CHANNELS.getRestoreStatus, () => null);
+  handle(IPC_CHANNELS.cancelRestore, () => false);
+  handle(IPC_CHANNELS.getIntegritySummary, () => ({ database: backups.runQuickDatabaseCheck(), documents: backups.checkDocumentFiles() }));
+  handle(IPC_CHANNELS.runQuickIntegrityCheck, () => backups.runQuickDatabaseCheck());
+  handle(IPC_CHANNELS.runFullIntegrityCheck, () => backups.runQuickDatabaseCheck());
+  handle(IPC_CHANNELS.checkDocumentIntegrity, () => backups.checkDocumentFiles());
+  handle(IPC_CHANNELS.findOrphanFiles, () => backups.findOrphans());
+  handle(IPC_CHANNELS.generateIntegrityReport, () => backups.generateIntegrityReport());
+  handle(IPC_CHANNELS.cleanupTemporaries, () => backups.findOrphans());
+  handle(IPC_CHANNELS.listIntegrityHistory, () => backups.history());
 
   handle(IPC_CHANNELS.getBootstrapData, () => repository.getBootstrapData(context.version));
   handle(IPC_CHANNELS.saveInstallationProfile, (_event, payload: unknown) => repository.saveInstallationProfile(payload));

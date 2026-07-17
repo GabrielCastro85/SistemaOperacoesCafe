@@ -1989,5 +1989,177 @@ export const migrations: Migration[] = [
         WHERE code IN ('system.view','operations.view','commercial.view','finance.view','roles.view');
       `);
     }
+  },
+  {
+    name: "013_backups_integrity",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS backup_jobs (
+          id TEXT PRIMARY KEY,
+          backup_type TEXT NOT NULL CHECK (backup_type IN ('FULL','DATABASE_ONLY','DOCUMENTS_ONLY')),
+          trigger_type TEXT NOT NULL CHECK (trigger_type IN ('MANUAL','AUTOMATIC','PRE_MIGRATION','PRE_RESTORE','RECOVERY')),
+          status TEXT NOT NULL CHECK (status IN ('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED','DELETED','MISSING')),
+          destination_type TEXT NOT NULL CHECK (destination_type IN ('INTERNAL','EXTERNAL')),
+          destination_display_name TEXT NOT NULL,
+          stored_file_path TEXT,
+          file_name TEXT NOT NULL,
+          format_version INTEGER NOT NULL,
+          encrypted INTEGER NOT NULL CHECK (encrypted IN (0, 1)),
+          file_size INTEGER,
+          file_hash TEXT,
+          database_hash TEXT,
+          migration_version TEXT,
+          application_version TEXT NOT NULL,
+          application_variant TEXT,
+          source_installation_id TEXT,
+          file_count INTEGER NOT NULL DEFAULT 0,
+          document_count INTEGER NOT NULL DEFAULT 0,
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          created_by_user_id TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          is_protected INTEGER NOT NULL CHECK (is_protected IN (0, 1)) DEFAULT 0,
+          protection_reason TEXT,
+          verified_at TEXT,
+          verification_status TEXT CHECK (verification_status IN ('PENDING','VALID','INVALID','WARNING')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (created_by_user_id) REFERENCES app_users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_status ON backup_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_trigger_type ON backup_jobs(trigger_type);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_created_at ON backup_jobs(created_at);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_completed_at ON backup_jobs(completed_at);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_is_protected ON backup_jobs(is_protected);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_file_hash ON backup_jobs(file_hash);
+
+        CREATE TABLE IF NOT EXISTS backup_file_entries (
+          id TEXT PRIMARY KEY,
+          backup_job_id TEXT NOT NULL,
+          relative_path TEXT NOT NULL,
+          category TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          file_hash TEXT NOT NULL,
+          modified_at TEXT,
+          entity_id TEXT,
+          document_type TEXT,
+          is_required INTEGER NOT NULL CHECK (is_required IN (0, 1)),
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (backup_job_id) REFERENCES backup_jobs(id),
+          UNIQUE (backup_job_id, relative_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_file_entries_backup_job_id ON backup_file_entries(backup_job_id);
+        CREATE INDEX IF NOT EXISTS idx_backup_file_entries_category ON backup_file_entries(category);
+
+        CREATE TABLE IF NOT EXISTS backup_settings (
+          id TEXT PRIMARY KEY,
+          installation_id TEXT,
+          automatic_backup_enabled INTEGER NOT NULL CHECK (automatic_backup_enabled IN (0, 1)),
+          frequency TEXT NOT NULL CHECK (frequency IN ('DISABLED','DAILY','WEEKLY','MONTHLY')),
+          preferred_hour INTEGER,
+          backup_type TEXT NOT NULL CHECK (backup_type IN ('FULL','DATABASE_ONLY','DOCUMENTS_ONLY')),
+          destination_type TEXT NOT NULL CHECK (destination_type IN ('INTERNAL','EXTERNAL')),
+          destination_path_stored_securely TEXT,
+          encrypted INTEGER NOT NULL CHECK (encrypted IN (0, 1)),
+          retention_max_count INTEGER NOT NULL,
+          retention_max_days INTEGER,
+          last_backup_at TEXT,
+          next_backup_at TEXT,
+          run_once_per_period INTEGER NOT NULL CHECK (run_once_per_period IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS restore_jobs (
+          id TEXT PRIMARY KEY,
+          backup_job_id TEXT,
+          source_file_name TEXT NOT NULL,
+          source_file_hash TEXT,
+          source_application_version TEXT,
+          source_migration_version TEXT,
+          source_variant TEXT,
+          status TEXT NOT NULL CHECK (status IN ('VALIDATING','READY','RESTORING','COMPLETED','FAILED','ROLLED_BACK','CANCELLED')),
+          pre_restore_backup_job_id TEXT,
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          executed_by_user_id TEXT NOT NULL,
+          error_code TEXT,
+          error_message TEXT,
+          rollback_performed INTEGER NOT NULL CHECK (rollback_performed IN (0, 1)),
+          rollback_succeeded INTEGER CHECK (rollback_succeeded IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (backup_job_id) REFERENCES backup_jobs(id),
+          FOREIGN KEY (pre_restore_backup_job_id) REFERENCES backup_jobs(id),
+          FOREIGN KEY (executed_by_user_id) REFERENCES app_users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_restore_jobs_status ON restore_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_restore_jobs_started_at ON restore_jobs(started_at);
+        CREATE INDEX IF NOT EXISTS idx_restore_jobs_executed_by_user_id ON restore_jobs(executed_by_user_id);
+
+        CREATE TABLE IF NOT EXISTS integrity_check_runs (
+          id TEXT PRIMARY KEY,
+          check_type TEXT NOT NULL CHECK (check_type IN ('DATABASE_QUICK','DATABASE_FULL','DOCUMENTS','BACKUP','TEMPORARIES','SUMMARY')),
+          status TEXT NOT NULL CHECK (status IN ('RUNNING','OK','WARNING','FAILED')),
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          duration_ms INTEGER,
+          checked_items INTEGER NOT NULL DEFAULT 0,
+          problem_count INTEGER NOT NULL DEFAULT 0,
+          report_path TEXT,
+          created_by_user_id TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (created_by_user_id) REFERENCES app_users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_integrity_check_runs_check_type ON integrity_check_runs(check_type);
+        CREATE INDEX IF NOT EXISTS idx_integrity_check_runs_status ON integrity_check_runs(status);
+        CREATE INDEX IF NOT EXISTS idx_integrity_check_runs_started_at ON integrity_check_runs(started_at);
+        CREATE INDEX IF NOT EXISTS idx_integrity_check_runs_completed_at ON integrity_check_runs(completed_at);
+
+        CREATE TABLE IF NOT EXISTS integrity_check_findings (
+          id TEXT PRIMARY KEY,
+          integrity_check_run_id TEXT NOT NULL,
+          finding_type TEXT NOT NULL,
+          severity TEXT NOT NULL CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+          entity_type TEXT,
+          entity_id TEXT,
+          relative_path TEXT,
+          message TEXT NOT NULL,
+          details_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (integrity_check_run_id) REFERENCES integrity_check_runs(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_integrity_findings_run_id ON integrity_check_findings(integrity_check_run_id);
+        CREATE INDEX IF NOT EXISTS idx_integrity_findings_type ON integrity_check_findings(finding_type);
+        CREATE INDEX IF NOT EXISTS idx_integrity_findings_severity ON integrity_check_findings(severity);
+        CREATE INDEX IF NOT EXISTS idx_integrity_findings_entity ON integrity_check_findings(entity_type, entity_id);
+
+        INSERT OR IGNORE INTO backup_settings (id, installation_id, automatic_backup_enabled, frequency, preferred_hour, backup_type, destination_type, destination_path_stored_securely, encrypted, retention_max_count, retention_max_days, last_backup_at, next_backup_at, run_once_per_period, created_at, updated_at)
+        VALUES ('backup-settings-default', NULL, 0, 'DISABLED', 8, 'FULL', 'INTERNAL', NULL, 0, 7, NULL, NULL, NULL, 1, datetime('now'), datetime('now'));
+
+        INSERT OR IGNORE INTO permissions (id, code, name, description, module, risk_level, is_active) VALUES
+          ('perm-backups-view', 'backups.view', 'Ver backups', 'Permite consultar historico de backups.', 'backups', 'LOW', 1),
+          ('perm-backups-create', 'backups.create', 'Criar backups', 'Permite criar backups manuais e automaticos.', 'backups', 'MEDIUM', 1),
+          ('perm-backups-configure', 'backups.configure', 'Configurar backups', 'Permite alterar configuracao de backup automatico.', 'backups', 'HIGH', 1),
+          ('perm-backups-verify', 'backups.verify', 'Verificar backups', 'Permite validar integridade de pacotes de backup.', 'backups', 'MEDIUM', 1),
+          ('perm-backups-restore', 'backups.restore', 'Restaurar backups', 'Permite substituir a instalacao por um backup validado.', 'backups', 'CRITICAL', 1),
+          ('perm-backups-delete', 'backups.delete', 'Apagar backups', 'Permite remover backups nao protegidos.', 'backups', 'HIGH', 1),
+          ('perm-backups-protect', 'backups.protect', 'Proteger backups', 'Permite proteger e desproteger backups contra retencao.', 'backups', 'HIGH', 1),
+          ('perm-integrity-view', 'integrity.view', 'Ver integridade', 'Permite consultar integridade de banco, documentos e backups.', 'integrity', 'LOW', 1),
+          ('perm-integrity-run', 'integrity.run', 'Executar integridade', 'Permite executar verificacoes de integridade.', 'integrity', 'MEDIUM', 1),
+          ('perm-integrity-export', 'integrity.export', 'Exportar integridade', 'Permite gerar relatorios de integridade.', 'integrity', 'MEDIUM', 1),
+          ('perm-retention-manage', 'retention.manage', 'Gerenciar retencao', 'Permite aplicar politicas de retencao de backups e temporarios.', 'backups', 'HIGH', 1),
+          ('perm-temporary-files-cleanup', 'temporary_files.cleanup', 'Limpar temporarios', 'Permite limpar somente arquivos temporarios seguros.', 'integrity', 'HIGH', 1);
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-admin-' || permissions.id, 'role-system-admin', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('backups.view','backups.create','backups.configure','backups.verify','backups.restore','backups.delete','backups.protect','integrity.view','integrity.run','integrity.export','retention.manage','temporary_files.cleanup');
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-fin-' || permissions.id, 'role-finance-manager', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('backups.view','backups.create','backups.verify','integrity.view','integrity.run','integrity.export');
+      `);
+    }
   }
 ];

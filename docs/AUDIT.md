@@ -19,3 +19,7 @@ Campos com nomes contendo `password`, `senha`, `hash`, `salt`, `token` ou `secre
 ## Integridade
 
 O hash usa SHA-256 sobre o conteudo do evento e o hash anterior. A tela `#/audit` mostra o resultado da verificacao da cadeia local.
+
+## Backup e restauracao
+
+Sao auditados inicio, conclusao, falha, verificacao, protecao, exclusao, configuracao, restauracao, rollback, integridade, relatorio e limpeza. Metadados de senha do backup sao sempre sanitizados.

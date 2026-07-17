@@ -93,6 +93,14 @@ A decima primeira etapa adiciona autenticacao local obrigatoria. Na primeira abe
 
 Sessoes ficam no processo principal, com lock, unlock, logout e troca de usuario. Canais IPC passam por politica deny-by-default baseada em roles/permissoes. Use Configuracoes > Usuarios, Configuracoes > Roles e Auditoria para administrar acesso e verificar a trilha de eventos com hash encadeado.
 
+## Backups, Restauracao E Integridade
+
+A decima segunda etapa adiciona backups locais `.cafebackup`, com snapshot consistente do SQLite, documentos, branding, manifesto, hashes e opcao de criptografia AES-256-GCM com senha nao persistida.
+
+Use Configuracoes > Backups para criar backups completos ou somente do banco, escolher destino interno/externo, verificar pacotes, proteger backups e configurar execucao automatica quando o app estiver aberto. Use Configuracoes > Restaurar para validar e restaurar um backup com criacao automatica de backup pre-restauracao. Use Configuracoes > Integridade para verificar banco, documentos, orfaos e gerar relatorio local.
+
+Backup interno nao protege contra perda total do disco; copie backups importantes para outro dispositivo. O app nao envia backups para nuvem e nao executa backups quando estiver fechado.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.

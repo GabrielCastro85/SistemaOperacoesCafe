@@ -117,3 +117,19 @@ A etapa 10 separou o boot do renderer, layout, navegacao, tema e componentes sem
 ## Logos No Public Do Vite
 
 As logos padrao foram colocadas em `public/assets/branding` porque arquivos em `public` sao copiados para o build do renderer. A pasta `assets/branding` continua documentada para material-fonte e substituicoes locais.
+
+## Pacote `.cafebackup`
+
+Backups usam formato proprio com magic bytes, manifesto JSON e payload gzip. A escolha evita expor compactador generico ao renderer e permite validar estrutura, hashes e paths antes de qualquer restauracao.
+
+## Snapshot SQLite
+
+O banco nao e copiado diretamente enquanto aberto. O snapshot usa `better-sqlite3.backup()` e depois `PRAGMA quick_check`, hash SHA-256 e manifesto.
+
+## Criptografia De Backup
+
+Quando ativada, a criptografia protege o payload do pacote com AES-256-GCM e chave derivada por `scrypt`. A senha nao e persistida; isso reduz risco local, mas torna impossivel recuperar backup criptografado sem a senha.
+
+## Retencao Conservadora
+
+Retencao automatica atua sobre backups nao protegidos. Documentos oficiais e historicos permanecem com retencao indefinida por padrao porque prazos fiscais e legais devem ser definidos pela empresa e contabilidade.

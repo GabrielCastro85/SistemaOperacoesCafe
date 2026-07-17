@@ -6,7 +6,11 @@ Estrutura prevista: `database/`, `documents/invoices`, `documents/confirmations`
 
 Atualizacoes manuais nao devem substituir `userData`. Migrations sao executadas automaticamente e nunca recriam o banco se ele ja existir.
 
-Backups completos ainda nao foram implementados. Risco atual: backups dependem de processo manual ate a etapa dedicada.
+Backups completos foram implementados na etapa 12. O pacote `.cafebackup` inclui snapshot consistente do banco, documentos copiados para `userData`, branding, manifesto e hashes. Backups comuns sao sensiveis porque contem dados do banco.
+
+Backups criptografados usam AES-256-GCM com chave derivada por `scrypt`. A senha nao e salva; se for esquecida, nao ha recuperacao.
+
+Backup interno nao protege contra perda total do disco. Backups importantes devem ser copiados para outro dispositivo. O app nao envia backups para nuvem nem executa backup quando fechado.
 
 Arquivos de branding selecionados pelo usuario sao copiados para `userData/settings/branding/<organization-id>/`. O app nao depende do caminho original escolhido e nao grava imagens em Base64 no banco.
 
@@ -35,3 +39,5 @@ Relatorios financeiros sao gerados localmente em `userData/documents/financial-r
 Confirmacoes de negocio sao armazenadas no SQLite local e seus documentos ficam em `userData/documents/confirmations/<organization>/<cnpj>/<confirmacao>/`. O renderer seleciona PDF assinado por dialog do processo principal e recebe apenas token temporario; a copia, o hash SHA-256 e o registro da versao ocorrem no backend.
 
 PDF assinado externamente e arquivado para auditoria, mas o sistema nao confere certificado, cadeia ICP-Brasil, carimbo do tempo ou validade criptografica da assinatura nesta etapa.
+
+Antes de restaurar, o app valida magic bytes, manifesto, hashes, banco e compatibilidade. A restauracao cria backup pre-restauracao protegido, expira sessoes locais e registra auditoria.

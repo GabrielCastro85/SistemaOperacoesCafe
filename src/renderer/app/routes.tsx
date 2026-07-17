@@ -12,6 +12,9 @@ export type AppRouteId =
   | "users"
   | "roles"
   | "audit"
+  | "backups"
+  | "integrity"
+  | "retention"
   | "settings";
 
 export const routeTitleById: Record<AppRouteId, string> = {
@@ -28,5 +31,8 @@ export const routeTitleById: Record<AppRouteId, string> = {
   users: "Usuarios",
   roles: "Roles",
   audit: "Auditoria",
+  backups: "Backups",
+  integrity: "Integridade",
+  retention: "Retencao",
   settings: "Configurações"
 };

@@ -31,7 +31,7 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("012_users_permissions_audit");
+    expect(getCurrentMigration(db)).toBe("013_backups_integrity");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });
@@ -45,7 +45,11 @@ describe("database foundation", () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'deal_confirmation_document_versions'").get()).toMatchObject({ name: "deal_confirmation_document_versions" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'app_users'").get()).toMatchObject({ name: "app_users" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'").get()).toMatchObject({ name: "audit_events" });
-    expect(db.prepare("SELECT COUNT(*) AS total FROM permissions").get()).toMatchObject({ total: 17 });
+    expect(db.prepare("SELECT COUNT(*) AS total FROM permissions").get()).toMatchObject({ total: 29 });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'backup_jobs'").get()).toMatchObject({ name: "backup_jobs" });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'restore_jobs'").get()).toMatchObject({ name: "restore_jobs" });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'integrity_check_runs'").get()).toMatchObject({ name: "integrity_check_runs" });
+    expect(db.prepare("SELECT COUNT(*) AS total FROM permissions WHERE code LIKE 'backups.%' OR code LIKE 'integrity.%' OR code IN ('retention.manage','temporary_files.cleanup')").get()).toMatchObject({ total: 12 });
     db.close();
   });
 

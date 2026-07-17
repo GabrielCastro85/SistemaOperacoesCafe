@@ -9,6 +9,16 @@ export type PermissionRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type LocalSessionStatus = "ACTIVE" | "LOCKED" | "LOGGED_OUT" | "EXPIRED";
 export type AuditResult = "SUCCESS" | "DENIED" | "FAILED";
 export type AuditSeverity = "INFO" | "WARNING" | "CRITICAL";
+export type BackupType = "FULL" | "DATABASE_ONLY" | "DOCUMENTS_ONLY";
+export type BackupTriggerType = "MANUAL" | "AUTOMATIC" | "PRE_MIGRATION" | "PRE_RESTORE" | "RECOVERY";
+export type BackupStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "DELETED" | "MISSING";
+export type BackupDestinationType = "INTERNAL" | "EXTERNAL";
+export type BackupFrequency = "DISABLED" | "DAILY" | "WEEKLY" | "MONTHLY";
+export type BackupVerificationStatus = "PENDING" | "VALID" | "INVALID" | "WARNING";
+export type RestoreStatus = "VALIDATING" | "READY" | "RESTORING" | "COMPLETED" | "FAILED" | "ROLLED_BACK" | "CANCELLED";
+export type IntegrityCheckType = "DATABASE_QUICK" | "DATABASE_FULL" | "DOCUMENTS" | "BACKUP" | "TEMPORARIES" | "SUMMARY";
+export type IntegrityStatus = "RUNNING" | "OK" | "WARNING" | "FAILED";
+export type IntegrityFindingSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export interface Organization {
   id: string;
@@ -213,6 +223,161 @@ export interface AuditIntegrityResult {
   valid: boolean;
   checkedEvents: number;
   firstBrokenEventId: string | null;
+}
+
+export interface BackupJob {
+  id: string;
+  backupType: BackupType;
+  triggerType: BackupTriggerType;
+  status: BackupStatus;
+  destinationType: BackupDestinationType;
+  destinationDisplayName: string;
+  storedFilePath: string | null;
+  fileName: string;
+  formatVersion: number;
+  encrypted: boolean;
+  fileSize: number | null;
+  fileHash: string | null;
+  databaseHash: string | null;
+  migrationVersion: string | null;
+  applicationVersion: string;
+  applicationVariant: AppVariant | null;
+  sourceInstallationId: string | null;
+  fileCount: number;
+  documentCount: number;
+  startedAt: string;
+  completedAt: string | null;
+  createdByUserId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  isProtected: boolean;
+  protectionReason: string | null;
+  verifiedAt: string | null;
+  verificationStatus: BackupVerificationStatus | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackupSettings {
+  id: string;
+  installationId: string | null;
+  automaticBackupEnabled: boolean;
+  frequency: BackupFrequency;
+  preferredHour: number | null;
+  backupType: BackupType;
+  destinationType: BackupDestinationType;
+  destinationPathStoredSecurely: string | null;
+  encrypted: boolean;
+  retentionMaxCount: number;
+  retentionMaxDays: number | null;
+  lastBackupAt: string | null;
+  nextBackupAt: string | null;
+  runOncePerPeriod: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackupManifestFile {
+  relativePath: string;
+  category: string;
+  size: number;
+  sha256: string;
+  modifiedAt: string | null;
+  entityId: string | null;
+  documentType: string | null;
+  required: boolean;
+}
+
+export interface BackupManifest {
+  magic: "OPERACOES_CAFE_BACKUP";
+  formatVersion: number;
+  backupId: string;
+  backupType: BackupType;
+  createdAt: string;
+  completedAt: string;
+  applicationName: string;
+  applicationVersion: string;
+  applicationVariant: AppVariant | null;
+  sourceInstallationId: string | null;
+  databaseMigrationVersion: string;
+  databaseFileName: string;
+  databaseSize: number;
+  databaseHash: string;
+  documentCount: number;
+  totalFileCount: number;
+  totalUncompressedSize: number;
+  organizations: Array<{ id: string; displayName: string }>;
+  legalEntities: Array<{ id: string; organizationId: string; tradeName: string }>;
+  encryption: { enabled: boolean; algorithm: "NONE" | "AES-256-GCM-SCRYPT" };
+  compression: { enabled: boolean; algorithm: "GZIP" };
+  createdByUser: { id: string; username: string; displayName: string } | null;
+  integrityStatus: BackupVerificationStatus;
+  filesManifestPath: string;
+}
+
+export interface RestoreJob {
+  id: string;
+  backupJobId: string | null;
+  sourceFileName: string;
+  sourceFileHash: string | null;
+  sourceApplicationVersion: string | null;
+  sourceMigrationVersion: string | null;
+  sourceVariant: AppVariant | null;
+  status: RestoreStatus;
+  preRestoreBackupJobId: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  executedByUserId: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  rollbackPerformed: boolean;
+  rollbackSucceeded: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrityCheckRun {
+  id: string;
+  checkType: IntegrityCheckType;
+  status: IntegrityStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  checkedItems: number;
+  problemCount: number;
+  reportPath: string | null;
+  createdByUserId: string | null;
+  createdAt: string;
+}
+
+export interface IntegrityFinding {
+  id: string;
+  integrityCheckRunId: string;
+  findingType: string;
+  severity: IntegrityFindingSeverity;
+  entityType: string | null;
+  entityId: string | null;
+  relativePath: string | null;
+  message: string;
+  detailsJson: string;
+  createdAt: string;
+}
+
+export interface BackupInspection {
+  valid: boolean;
+  encrypted: boolean;
+  manifest: BackupManifest | null;
+  fileCount: number;
+  totalSize: number;
+  errors: string[];
+}
+
+export interface BackupProgress {
+  stage: "preparing" | "copying_database" | "verifying_database" | "collecting_documents" | "hashing" | "compressing" | "encrypting" | "validating" | "completed" | "failed" | "cancelled";
+  processedFiles: number;
+  totalFiles: number;
+  processedBytes: number;
+  elapsedMs: number;
 }
 
 export interface OrganizationListItem extends Organization {

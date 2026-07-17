@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.0
+
+- Adicionada migration `013_backups_integrity`.
+- Criadas tabelas de backups, arquivos de backup, configuracoes, restauracoes, verificacoes e findings.
+- Adicionado pacote `.cafebackup` com magic bytes, manifesto, hashes e payload gzip.
+- Adicionado snapshot consistente via `better-sqlite3.backup()` e `PRAGMA quick_check`.
+- Adicionada criptografia opcional AES-256-GCM com chave derivada por `scrypt`.
+- Adicionados backups manual, automatico pendente, retencao, protecao e verificacao.
+- Adicionados fluxos de restauracao com validacao, backup pre-restauracao e expiracao de sessoes.
+- Adicionadas verificacoes de integridade de banco, documentos, orfaos e relatorio JSON.
+- Adicionados IPCs, preload, permissoes, auditoria e telas administrativas.
+- Ampliados testes para 58 casos em 15 arquivos.
+
 ## 0.11.0
 
 - Adicionada migration `012_users_permissions_audit`.

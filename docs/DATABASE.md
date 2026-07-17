@@ -55,3 +55,7 @@ Confirmacoes usam `document_sequences` com tipo `DEAL_CONFIRMATION` para numerac
 Migration `012_users_permissions_audit`: cria `app_users`, `user_credentials`, `user_password_history`, `roles`, `permissions`, `role_permissions`, `user_role_assignments`, `user_role_legal_entity_access`, `local_sessions` e `audit_events`.
 
 Credenciais guardam somente hash `scrypt` versionado e salt aleatorio. Roles e permissoes sao semeadas por IDs estaveis. Sessoes locais registram status ativo, bloqueado, encerrado ou expirado. Auditoria usa metadados sanitizados e cadeia SHA-256 por `previous_hash`/`event_hash`.
+
+Migration `013_backups_integrity`: cria `backup_jobs`, `backup_file_entries`, `backup_settings`, `restore_jobs`, `integrity_check_runs` e `integrity_check_findings`.
+
+Pacotes de backup ficam fora do SQLite, em arquivo `.cafebackup`. O banco registra historico, status, hashes, destino, protecao, verificacao, restauracoes e findings de integridade. Permissoes de backup, restauracao, integridade, retencao e limpeza sao semeadas de forma idempotente.

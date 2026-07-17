@@ -6,6 +6,10 @@ import type {
   AppUser,
   AuditEvent,
   AuditIntegrityResult,
+  BackupInspection,
+  BackupJob,
+  BackupSettings,
+  BackupType,
   AuthSession,
   BootstrapData,
   BrandingAssetKind,
@@ -90,6 +94,34 @@ const IPC_CHANNELS = {
   assignUserRole: "roles:assignUserRole",
   listAuditEvents: "audit:list",
   verifyAuditChain: "audit:verifyChain",
+  listBackups: "backups:list",
+  getBackup: "backups:get",
+  estimateBackup: "backups:estimate",
+  selectBackupDestination: "backups:selectDestination",
+  createBackup: "backups:create",
+  cancelBackup: "backups:cancel",
+  verifyBackup: "backups:verify",
+  protectBackup: "backups:protect",
+  unprotectBackup: "backups:unprotect",
+  deleteBackup: "backups:delete",
+  openBackupLocation: "backups:openLocation",
+  getBackupSettings: "backups:getSettings",
+  updateBackupSettings: "backups:updateSettings",
+  runPendingBackup: "backups:runPending",
+  selectRestoreFile: "restore:selectFile",
+  inspectRestoreBackup: "restore:inspect",
+  validateRestoreBackup: "restore:validate",
+  executeRestore: "restore:execute",
+  getRestoreStatus: "restore:status",
+  cancelRestore: "restore:cancel",
+  getIntegritySummary: "integrity:summary",
+  runQuickIntegrityCheck: "integrity:runQuick",
+  runFullIntegrityCheck: "integrity:runFull",
+  checkDocumentIntegrity: "integrity:checkDocuments",
+  findOrphanFiles: "integrity:findOrphans",
+  generateIntegrityReport: "integrity:generateReport",
+  cleanupTemporaries: "integrity:cleanupTemporaries",
+  listIntegrityHistory: "integrity:history",
   getBootstrapData: "app:getBootstrapData",
   saveInstallationProfile: "app:saveInstallationProfile",
   updateInstallationProfile: "app:updateInstallationProfile",
@@ -372,6 +404,34 @@ export interface OperationsCafeApi {
   assignUserRole: (input: { userId: string; roleId: string; organizationId?: string | null; legalEntityId?: string | null; expiresAt?: string | null }) => Promise<AppUser>;
   listAuditEvents: (filters?: { limit?: number }) => Promise<AuditEvent[]>;
   verifyAuditChain: () => Promise<AuditIntegrityResult>;
+  listBackups: () => Promise<BackupJob[]>;
+  getBackup: (id: string) => Promise<BackupJob>;
+  estimateBackup: (backupType?: BackupType) => Promise<{ estimatedFiles: number; estimatedBytes: number; documentCount: number }>;
+  selectBackupDestination: () => Promise<string | null>;
+  createBackup: (input: { backupType: BackupType; destinationType: "INTERNAL" | "EXTERNAL"; destinationPath?: string | null; encrypted?: boolean; password?: string | null }) => Promise<BackupJob>;
+  cancelBackup: (id: string) => Promise<BackupJob>;
+  verifyBackup: (input: { path: string; password?: string | null }) => Promise<BackupInspection>;
+  protectBackup: (id: string, reason?: string | null) => Promise<BackupJob>;
+  unprotectBackup: (id: string) => Promise<BackupJob>;
+  deleteBackup: (id: string) => Promise<BackupJob>;
+  openBackupLocation: (id: string) => Promise<boolean>;
+  getBackupSettings: () => Promise<BackupSettings>;
+  updateBackupSettings: (input: Partial<BackupSettings>) => Promise<BackupSettings>;
+  runPendingBackup: () => Promise<BackupJob | null>;
+  selectRestoreFile: () => Promise<string | null>;
+  inspectRestoreBackup: (path: string, password?: string | null) => Promise<BackupInspection>;
+  validateRestoreBackup: (path: string, password?: string | null) => Promise<BackupInspection>;
+  executeRestore: (input: { path: string; password?: string | null; currentUserPassword: string; confirmation: string }) => Promise<unknown>;
+  getRestoreStatus: () => Promise<unknown>;
+  cancelRestore: () => Promise<boolean>;
+  getIntegritySummary: () => Promise<unknown>;
+  runQuickIntegrityCheck: () => Promise<unknown>;
+  runFullIntegrityCheck: () => Promise<unknown>;
+  checkDocumentIntegrity: () => Promise<unknown>;
+  findOrphanFiles: () => Promise<unknown>;
+  generateIntegrityReport: () => Promise<unknown>;
+  cleanupTemporaries: () => Promise<unknown>;
+  listIntegrityHistory: () => Promise<unknown[]>;
   getBootstrapData: () => Promise<BootstrapData>;
   saveInstallationProfile: (profile: SaveInstallationProfileInput) => Promise<InstallationProfile>;
   updateInstallationProfile: (profile: SaveInstallationProfileInput & { confirmVariantChange?: boolean }) => Promise<InstallationProfile>;
@@ -651,6 +711,34 @@ const api: OperationsCafeApi = {
   assignUserRole: (input) => ipcRenderer.invoke(IPC_CHANNELS.assignUserRole, input) as Promise<AppUser>,
   listAuditEvents: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listAuditEvents, filters) as Promise<AuditEvent[]>,
   verifyAuditChain: () => ipcRenderer.invoke(IPC_CHANNELS.verifyAuditChain) as Promise<AuditIntegrityResult>,
+  listBackups: () => ipcRenderer.invoke(IPC_CHANNELS.listBackups) as Promise<BackupJob[]>,
+  getBackup: (id) => ipcRenderer.invoke(IPC_CHANNELS.getBackup, id) as Promise<BackupJob>,
+  estimateBackup: (backupType) => ipcRenderer.invoke(IPC_CHANNELS.estimateBackup, { backupType }) as Promise<{ estimatedFiles: number; estimatedBytes: number; documentCount: number }>,
+  selectBackupDestination: () => ipcRenderer.invoke(IPC_CHANNELS.selectBackupDestination) as Promise<string | null>,
+  createBackup: (input) => ipcRenderer.invoke(IPC_CHANNELS.createBackup, input) as Promise<BackupJob>,
+  cancelBackup: (id) => ipcRenderer.invoke(IPC_CHANNELS.cancelBackup, id) as Promise<BackupJob>,
+  verifyBackup: (input) => ipcRenderer.invoke(IPC_CHANNELS.verifyBackup, input) as Promise<BackupInspection>,
+  protectBackup: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.protectBackup, { id, reason }) as Promise<BackupJob>,
+  unprotectBackup: (id) => ipcRenderer.invoke(IPC_CHANNELS.unprotectBackup, id) as Promise<BackupJob>,
+  deleteBackup: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteBackup, id) as Promise<BackupJob>,
+  openBackupLocation: (id) => ipcRenderer.invoke(IPC_CHANNELS.openBackupLocation, id) as Promise<boolean>,
+  getBackupSettings: () => ipcRenderer.invoke(IPC_CHANNELS.getBackupSettings) as Promise<BackupSettings>,
+  updateBackupSettings: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateBackupSettings, input) as Promise<BackupSettings>,
+  runPendingBackup: () => ipcRenderer.invoke(IPC_CHANNELS.runPendingBackup) as Promise<BackupJob | null>,
+  selectRestoreFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectRestoreFile) as Promise<string | null>,
+  inspectRestoreBackup: (path, password) => ipcRenderer.invoke(IPC_CHANNELS.inspectRestoreBackup, { path, password }) as Promise<BackupInspection>,
+  validateRestoreBackup: (path, password) => ipcRenderer.invoke(IPC_CHANNELS.validateRestoreBackup, { path, password }) as Promise<BackupInspection>,
+  executeRestore: (input) => ipcRenderer.invoke(IPC_CHANNELS.executeRestore, input) as Promise<unknown>,
+  getRestoreStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getRestoreStatus) as Promise<unknown>,
+  cancelRestore: () => ipcRenderer.invoke(IPC_CHANNELS.cancelRestore) as Promise<boolean>,
+  getIntegritySummary: () => ipcRenderer.invoke(IPC_CHANNELS.getIntegritySummary) as Promise<unknown>,
+  runQuickIntegrityCheck: () => ipcRenderer.invoke(IPC_CHANNELS.runQuickIntegrityCheck) as Promise<unknown>,
+  runFullIntegrityCheck: () => ipcRenderer.invoke(IPC_CHANNELS.runFullIntegrityCheck) as Promise<unknown>,
+  checkDocumentIntegrity: () => ipcRenderer.invoke(IPC_CHANNELS.checkDocumentIntegrity) as Promise<unknown>,
+  findOrphanFiles: () => ipcRenderer.invoke(IPC_CHANNELS.findOrphanFiles) as Promise<unknown>,
+  generateIntegrityReport: () => ipcRenderer.invoke(IPC_CHANNELS.generateIntegrityReport) as Promise<unknown>,
+  cleanupTemporaries: () => ipcRenderer.invoke(IPC_CHANNELS.cleanupTemporaries) as Promise<unknown>,
+  listIntegrityHistory: () => ipcRenderer.invoke(IPC_CHANNELS.listIntegrityHistory) as Promise<unknown[]>,
   getBootstrapData: () => ipcRenderer.invoke(IPC_CHANNELS.getBootstrapData) as Promise<BootstrapData>,
   saveInstallationProfile: (profile) =>
     ipcRenderer.invoke(IPC_CHANNELS.saveInstallationProfile, profile) as Promise<InstallationProfile>,

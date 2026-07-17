@@ -48,6 +48,8 @@ export const navigationGroups: NavigationGroup[] = [
       { id: "users", label: "Usuarios", legacyMenu: "Usuarios", path: "/settings/users", icon: "◐" },
       { id: "roles", label: "Roles", legacyMenu: "Roles", path: "/settings/roles", icon: "◎" },
       { id: "audit", label: "Auditoria", legacyMenu: "Auditoria", path: "/audit", icon: "▧" },
+      { id: "backups", label: "Backups", legacyMenu: "Backups", path: "/settings/backups", icon: "▣" },
+      { id: "integrity", label: "Integridade", legacyMenu: "Integridade", path: "/settings/integrity", icon: "◈" },
       { id: "settings", label: "Configurações", legacyMenu: "Configuracoes", path: "/settings", icon: "⚙" }
     ]
   }
@@ -75,6 +77,10 @@ export function legacyMenuFromPath(path: string): string {
   if (normalized.startsWith("/finance")) return "Financeiro";
   if (normalized.startsWith("/settings/users")) return "Usuarios";
   if (normalized.startsWith("/settings/roles")) return "Roles";
+  if (normalized.startsWith("/settings/backups")) return "Backups";
+  if (normalized.startsWith("/settings/restore")) return "Backups";
+  if (normalized.startsWith("/settings/integrity")) return "Integridade";
+  if (normalized.startsWith("/settings/retention")) return "Integridade";
   if (normalized.startsWith("/audit")) return "Auditoria";
   if (normalized.startsWith("/settings")) return "Configuracoes";
   return navigationGroups.flatMap((group) => group.items).find((item) => item.path === normalized)?.legacyMenu ?? "Dashboard";

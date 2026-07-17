@@ -21,5 +21,9 @@
 - `billing.manage`
 - `finance.view`, `finance.manage`
 - `confirmations.manage`
+- `backups.view`, `backups.create`, `backups.configure`, `backups.verify`, `backups.restore`, `backups.delete`, `backups.protect`
+- `integrity.view`, `integrity.run`, `integrity.export`
+- `retention.manage`
+- `temporary_files.cleanup`
 
 Toda chamada IPC passa por `getIpcPolicy`. Canais desconhecidos caem em `authenticated`, e testes garantem que todos os canais registrados possuem politica resolvida.
