@@ -79,6 +79,8 @@ A decima etapa iniciou a refatoracao visual do renderer. `src/renderer/App.tsx` 
 
 O app agora possui sidebar recolhivel, topbar com organizacao e CNPJ ativo, tokens visuais, temas Villa/Grao/multiempresa, logos empacotadas em `public/assets/branding`, componentes reutilizaveis e dashboard reorganizado.
 
+A continuacao da etapa 10 migrou Notas e operacoes, importacoes de planilha/XML e Confirmacoes de negocio para paginas reais em `src/renderer/pages/operations`, `src/renderer/pages/imports` e `src/renderer/pages/confirmations`. O `LegacyWorkspace` permanece apenas como casca de composicao e para modulos ainda nao migrados visualmente.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.

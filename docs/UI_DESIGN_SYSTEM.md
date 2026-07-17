@@ -24,6 +24,32 @@ Componentes disponiveis nesta etapa:
 - `Tabs`;
 - `DataTable`.
 
+A continuacao da etapa 10 adicionou:
+
+- `Textarea`;
+- `DateInput`;
+- `CurrencyInput`;
+- `DecimalInput`;
+- `CnpjInput`;
+- `SearchInput`;
+- `IconButton`;
+- `ConfirmationDialog`;
+- `Drawer`;
+- `Stepper`;
+- `Breadcrumb`;
+- `PageHeader`;
+- `Skeleton`;
+- `ProgressBar`;
+- `Pagination`;
+- `FilterBar`;
+- `FileDropzone`;
+- `AttachmentList`;
+- `DocumentPreviewCard`;
+- `DropdownMenu`;
+- `Toast`.
+
+Os fluxos migrados de operacoes e confirmacoes passam a usar `PageHeader`, `Stepper`, componentes de feedback e primitivos compartilhados de secao.
+
 Todos usam classes padronizadas `ui-*`, foco visivel e tokens CSS. O objetivo e migrar gradualmente os formularios e tabelas legados para esses componentes sem alterar regras de negocio.
 
 Tokens principais:

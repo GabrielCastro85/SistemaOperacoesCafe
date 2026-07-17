@@ -11,6 +11,10 @@ Padroes aplicados na etapa 10:
 - controles com altura minima consistente;
 - sidebar recolhivel com `aria-label`;
 - tabelas com cabecalho sem depender de snapshot visual.
+- stepper com `aria-current=step`;
+- dialog e drawer com `role=dialog` e `aria-modal`;
+- progresso com `role=progressbar`;
+- dropzone textual sem depender apenas de icone ou cor.
 
 Responsividade:
 
@@ -25,3 +29,4 @@ Limitacoes restantes:
 - dialogs legados ainda devem migrar de `confirm()`/`alert()` nativos para `Dialog`/`ConfirmationDialog`;
 - formularios extensos ainda devem migrar para stepper completo;
 - testes automatizados de contraste cobrem a funcao de cor legivel, mas nao substituem auditoria visual completa.
+- alguns fluxos migrados ainda usam `prompt()` legado para motivo de cancelamento/reversao; a substituicao completa por `ConfirmationDialog` fica para a migracao final dos formularios.

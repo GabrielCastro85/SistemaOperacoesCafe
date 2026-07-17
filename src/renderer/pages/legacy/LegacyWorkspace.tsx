@@ -17,15 +17,6 @@ import type {
   PartnerContact,
   Product,
   ServiceRateRule,
-  FiscalDocument,
-  FiscalDocumentDetail,
-  WorkbookInspection,
-  SheetPreview,
-  SpreadsheetImportJob,
-  SpreadsheetImportRow,
-  XmlFileInspection,
-  XmlImportJob,
-  XmlImportFile,
   ClientCharge,
   ClientChargeDetail,
   ClientLedgerEntry,
@@ -38,13 +29,12 @@ import type {
   FinancialReportGeneration,
   FinancialReportPreview,
   FinancialSummary,
-  DealClauseTemplate,
-  DealConfirmation,
-  DealConfirmationDetail,
-  DealConfirmationSummary,
-  DealConfirmationTemplate
+  DealConfirmationSummary
 } from "../../../shared/types/domain";
 import { formatCep, formatCnpj, formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
+import { ConfirmationsPage } from "../confirmations/ConfirmationsPage";
+import { OperationsPage } from "../operations/OperationsPage";
+import { legacyMenuFromPath, pathFromLegacyMenu } from "../../app/navigation";
 import { AppLayout } from "../../layouts/AppLayout";
 import "../../styles/index.css";
 
@@ -433,301 +423,6 @@ function ServiceRatesPage({ data }: { data: BootstrapData }): JSX.Element {
           <button className="primary" onClick={() => void saveRule()}>Cadastrar regra</button>
         </FormGrid>
         <div className="table"><div className="table-head rate-grid"><span>Cliente</span><span>Tipo</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span></div>{rules.map((item) => <div key={item.id} className="table-row rate-grid"><span>{partners.find((partner) => partner.id === item.businessPartnerId)?.displayName ?? item.businessPartnerId}</span><span>{scopeLabels[item.operationScope]}</span><span>{products.find((product) => product.id === item.productId)?.name ?? "Todos"}</span><span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span><span>{item.effectiveFrom} ate {item.effectiveTo ?? "sem data final"}</span><span>{item.isActive ? "Vigente" : "Inativa"}</span></div>)}</div>
-      </AdminBlock>
-      <Feedback message={message} />
-    </section>
-  );
-}
-
-function ManualInvoicesPage({ data }: { data: BootstrapData }): JSX.Element {
-  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
-  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [documents, setDocuments] = useState<FiscalDocument[]>([]);
-  const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
-  const [indicators, setIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number } | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [partnerId, setPartnerId] = useState("");
-  const [number, setNumber] = useState("");
-  const [accessKey, setAccessKey] = useState("");
-  const [total, setTotal] = useState("0,00");
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState("1");
-  const [unitPrice, setUnitPrice] = useState("0.0000");
-  const [sacks, setSacks] = useState("1");
-  const [scope, setScope] = useState<OperationScope>("EXTERNAL");
-  const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
-  const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
-  const [preview, setPreview] = useState<SheetPreview | null>(null);
-  const [importJob, setImportJob] = useState<{ job: SpreadsheetImportJob; rows: SpreadsheetImportRow[] } | null>(null);
-  const [importHistory, setImportHistory] = useState<SpreadsheetImportJob[]>([]);
-  const [selectedSheet, setSelectedSheet] = useState("");
-  const [headerRow, setHeaderRow] = useState("1");
-  const [xmlSelections, setXmlSelections] = useState<Array<{ token: string; fileName: string; sizeBytes: number }>>([]);
-  const [xmlQueue, setXmlQueue] = useState<XmlFileInspection[]>([]);
-  const [xmlJob, setXmlJob] = useState<{ job: XmlImportJob; files: XmlImportFile[] } | null>(null);
-  const [xmlHistory, setXmlHistory] = useState<XmlImportJob[]>([]);
-  const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
-
-  const load = useCallback(async () => {
-    const clientPartners = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
-    setPartners(clientPartners);
-    setPartnerId((current) => current || clientPartners[0]?.id || "");
-    const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
-    setProducts(activeProducts);
-    setProductId((current) => current || activeProducts[0]?.id || "");
-    setDocuments(await window.operationsCafe.listFiscalDocuments({ organizationId, status: "all" }));
-    setIndicators(await window.operationsCafe.getOperationalIndicators(organizationId));
-    setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
-    setXmlHistory(await window.operationsCafe.listXmlImportJobs(organizationId));
-  }, [organizationId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const parseCurrency = (value: string): number => Math.round(Number(value.replace(".", "").replace(",", ".")) * 100);
-
-  async function createDocument(): Promise<void> {
-    try {
-      const created = await window.operationsCafe.createFiscalDocument({
-        organizationId,
-        ownLegalEntityId,
-        responsiblePartnerId: partnerId,
-        partnerLegalEntityId: null,
-        accessKey: onlyDigits(accessKey),
-        documentNumber: number,
-        series: null,
-        issueDate: new Date().toISOString().slice(0, 10),
-        totalAmountCents: parseCurrency(total),
-        hasPendingIssues: false,
-        pendingNotes: null,
-        notes: null
-      });
-      setDetail(created);
-      setMessage(created.document.duplicateWarning ?? "Nota criada.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar nota."}`);
-    }
-  }
-
-  async function addItemAndOperation(): Promise<void> {
-    if (!detail) return;
-    try {
-      const item = await window.operationsCafe.addFiscalDocumentItem({
-        fiscalDocumentId: detail.document.id,
-        productId: productId || null,
-        description: products.find((product) => product.id === productId)?.name ?? "Item manual",
-        quantity,
-        unit: "SACK",
-        unitPriceDecimal: unitPrice,
-        totalAmountCents: parseCurrency(total),
-        sacksQuantity: sacks
-      });
-      await window.operationsCafe.addOperation({
-        fiscalDocumentId: detail.document.id,
-        fiscalDocumentItemId: item.id,
-        ownLegalEntityId,
-        responsiblePartnerId: detail.document.responsiblePartnerId,
-        productId: productId || null,
-        operationType,
-        operationScope: scope,
-        operationDate: detail.document.issueDate,
-        quantitySacks: sacks,
-        manualRateValueCents: null,
-        manualOverrideReason: null,
-        notes: null
-      });
-      setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
-      setMessage("Item e operacao adicionados.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao adicionar operacao."}`);
-    }
-  }
-
-  async function overrideFirstOperation(): Promise<void> {
-    if (!detail?.operations[0]) return;
-    const reason = window.prompt("Motivo da alteracao manual do valor por saca");
-    if (!reason) return;
-    await window.operationsCafe.updateOperationManualRate(detail.operations[0].id, 750, reason);
-    setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
-    setMessage("Valor por saca alterado manualmente para R$ 7,50.");
-  }
-
-  async function selectSpreadsheet(): Promise<void> {
-    try {
-      const selected = await window.operationsCafe.selectSpreadsheetFile();
-      if (!selected) return;
-      setWorkbook(selected);
-      setSelectedSheet(selected.sheets[0]?.name ?? "");
-      setMessage("Planilha selecionada.");
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar planilha."}`);
-    }
-  }
-
-  async function previewSpreadsheet(): Promise<void> {
-    if (!workbook || !selectedSheet) return;
-    const sheetPreview = await window.operationsCafe.previewSpreadsheetSheet({ token: workbook.token, sheetName: selectedSheet, headerRow: Number(headerRow) });
-    setPreview(sheetPreview);
-    setMessage("Previa carregada.");
-  }
-
-  async function validateSpreadsheet(): Promise<void> {
-    if (!workbook || !preview || !partnerId) return;
-    const job = await window.operationsCafe.createSpreadsheetImportDraft({
-      organizationId,
-      ownLegalEntityId,
-      mappingTemplateId: null,
-      originalFileName: workbook.fileName,
-      storedFilePath: null,
-      selectedSheetName: selectedSheet,
-      importType: preview.suggestedMapping.clientName ? "GENERAL_SALES" : "CLIENT_INDIVIDUAL",
-      settings: { defaultPartnerId: partnerId, operationType, defaultOperationScope: scope, defaultProductId: productId, defaultDate: new Date().toISOString().slice(0, 10) }
-    });
-    const validated = await window.operationsCafe.validateSpreadsheetImportRows({
-      token: workbook.token,
-      jobId: job.id,
-      sheetName: selectedSheet,
-      headerRow: Number(headerRow),
-      mapping: preview.suggestedMapping,
-      defaults: { defaultPartnerId: partnerId, operationType, defaultOperationScope: scope, defaultProductId: productId, defaultDate: new Date().toISOString().slice(0, 10) }
-    });
-    setImportJob(validated);
-    setMessage("Linhas validadas.");
-  }
-
-  async function executeSpreadsheet(): Promise<void> {
-    if (!workbook || !importJob) return;
-    const executed = await window.operationsCafe.executeSpreadsheetImport({ jobId: importJob.job.id, token: workbook.token, importWarnings: true });
-    setImportJob(executed);
-    setMessage("Importacao processada.");
-    await load();
-  }
-
-  async function prepareXmlImport(source: "single" | "multiple" | "folder"): Promise<void> {
-    try {
-      const selected =
-        source === "single"
-          ? await window.operationsCafe.selectXmlFile()
-          : source === "multiple"
-            ? await window.operationsCafe.selectXmlFiles()
-            : (await window.operationsCafe.selectXmlFolder(includeXmlSubfolders)).files;
-      if (selected.length === 0) return;
-      const inspections = await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token));
-      setXmlSelections(selected);
-      setXmlQueue(inspections);
-      setXmlJob(null);
-      setMessage(`${inspections.length} XML(s) inspecionado(s).`);
-    } catch (errorValue) {
-      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar XML."}`);
-    }
-  }
-
-  async function validateXmlImport(): Promise<void> {
-    if (xmlSelections.length === 0) return;
-    try {
-      const job = await window.operationsCafe.createXmlImportDraft({
-        organizationId,
-        sourceType: xmlSelections.length === 1 ? "FILE" : "MULTIPLE_FILES",
-        selectedFolder: null,
-        includeSubfolders: includeXmlSubfolders,
-        settings: { clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true }
-      });
-      const added = await window.operationsCafe.addXmlImportFiles({ jobId: job.id, tokens: xmlSelections.map((file) => file.token) });
-      const validated = await window.operationsCafe.validateXmlImportJob(added.job.id);
-      setXmlJob(validated);
-      setMessage("Fila XML validada.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao validar XML."}`);
-    }
-  }
-
-  async function executeXmlImport(): Promise<void> {
-    if (!xmlJob) return;
-    try {
-      const executed = await window.operationsCafe.executeXmlImportJob({ jobId: xmlJob.job.id, tokens: xmlSelections.map((file) => file.token) });
-      setXmlJob(executed);
-      setMessage("Importacao XML processada.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao importar XML."}`);
-    }
-  }
-
-  return (
-    <section className="content-section settings">
-      <AdminBlock title="Notas e operacoes manuais">
-        <div className="cards">
-          <article><span>Notas</span><strong>{indicators?.documents ?? 0}</strong></article>
-          <article><span>Pendencias</span><strong>{indicators?.pending ?? 0}</strong></article>
-          <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(indicators?.serviceAmountCents ?? 0)}</strong></article>
-        </div>
-        <FormGrid>
-          <SelectField label="Cliente responsavel" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
-          <TextField label="Numero da nota" value={number} onChange={setNumber} />
-          <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
-          <TextField label="Valor total" value={total} onChange={setTotal} />
-          <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
-        </FormGrid>
-        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span>{doc.status}</span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{doc.duplicateWarning ?? "-"}</span><span><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>)}</div>
-      </AdminBlock>
-      {detail ? <AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
-        <FormGrid>
-          <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
-          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-          <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
-          <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
-          <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
-          <TextField label="Sacas" value={sacks} onChange={setSacks} />
-          <button onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
-          <button onClick={() => void overrideFirstOperation()}>Alterar valor primeira operacao</button>
-          <button onClick={() => window.operationsCafe.confirmFiscalDocument(detail.document.id).then(setDetail).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao confirmar."}`))}>Confirmar</button>
-          <button onClick={() => { const reason = window.prompt("Motivo do cancelamento"); if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then(setDetail); }}>Cancelar</button>
-        </FormGrid>
-        <div className="cards">
-          <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${item.unit}`).join(" | ") || "Nenhum"}</strong></article>
-          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${op.operationScope}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
-          <article><span>Status</span><strong>{detail.document.status}</strong></article>
-        </div>
-      </AdminBlock> : null}
-      <AdminBlock title="Importar planilha">
-        <div className="toolbar">
-          <button onClick={() => void selectSpreadsheet()}>Selecionar planilha</button>
-          <SelectField label="Aba" value={selectedSheet} onChange={setSelectedSheet} options={(workbook?.sheets ?? []).map((sheet) => [sheet.name, `${sheet.name} (${sheet.rowCount} linhas)`])} />
-          <TextField label="Linha de cabecalho" value={headerRow} onChange={setHeaderRow} />
-          <button onClick={() => void previewSpreadsheet()} disabled={!workbook}>Previsualizar</button>
-          <button onClick={() => void validateSpreadsheet()} disabled={!preview}>Validar</button>
-          <button className="primary" onClick={() => void executeSpreadsheet()} disabled={!importJob}>Importar validas</button>
-        </div>
-        {workbook ? <p className="muted">Arquivo: {workbook.fileName} - {Math.round(workbook.sizeBytes / 1024)} KB</p> : null}
-        {preview ? <div className="table"><div className="table-head import-grid"><span>Campo</span><span>Coluna sugerida</span></div>{Object.entries(preview.suggestedMapping).map(([field, column]) => <div key={field} className="table-row import-grid"><span>{field}</span><span>{column}</span></div>)}</div> : null}
-        {importJob ? <div className="cards"><article><span>Total</span><strong>{importJob.job.totalRows}</strong></article><article><span>Validas</span><strong>{importJob.job.validRows}</strong></article><article><span>Erros</span><strong>{importJob.job.errorRows}</strong></article><article><span>Importadas</span><strong>{importJob.job.importedRows}</strong></article></div> : null}
-      </AdminBlock>
-      <AdminBlock title="Historico de importacoes">
-        <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span>{job.status}</span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { const reason = window.prompt("Motivo da reversao"); if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }}>Reverter</button></span></div>)}</div>
-      </AdminBlock>
-      <AdminBlock title="Importar XML NF-e">
-        <div className="toolbar">
-          <button onClick={() => void prepareXmlImport("single")}>Selecionar XML</button>
-          <button onClick={() => void prepareXmlImport("multiple")}>Selecionar varios XMLs</button>
-          <button onClick={() => void prepareXmlImport("folder")}>Selecionar pasta</button>
-          <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
-          <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0}>Validar fila</button>
-          <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob}>Importar XMLs</button>
-        </div>
-        <FormGrid>
-          <SelectField label="Cliente padrao" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
-          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-          <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
-        </FormGrid>
-        {xmlQueue.length ? <div className="table"><div className="table-head xml-grid"><span>Arquivo</span><span>Tipo</span><span>Chave</span><span>Status</span><span>Mensagens</span></div>{xmlQueue.map((file) => <div key={file.token} className="table-row xml-grid"><span>{file.originalFileName}</span><span>{file.xmlType}</span><span>{file.accessKey ?? "-"}</span><span>{file.status}</span><span>{file.errorMessage ?? (file.warnings.join(", ") || "-")}</span></div>)}</div> : null}
-        {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
-      </AdminBlock>
-      <AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span>{job.status}</span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { const reason = window.prompt("Motivo da reversao XML"); if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }}>Reverter</button></span></div>)}</div>
       </AdminBlock>
       <Feedback message={message} />
     </section>
@@ -1454,240 +1149,6 @@ function FinancialPage({ data }: { data: BootstrapData }): JSX.Element {
   );
 }
 
-function DealConfirmationsPage({ data }: { data: BootstrapData }): JSX.Element {
-  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
-  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
-  const [tab, setTab] = useState("Confirmacoes");
-  const [confirmations, setConfirmations] = useState<DealConfirmation[]>([]);
-  const [detail, setDetail] = useState<DealConfirmationDetail | null>(null);
-  const [summary, setSummary] = useState<DealConfirmationSummary | null>(null);
-  const [partners, setPartners] = useState<BusinessPartner[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [templates, setTemplates] = useState<DealConfirmationTemplate[]>([]);
-  const [clauses, setClauses] = useState<DealClauseTemplate[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [sellerId, setSellerId] = useState("");
-  const [buyerId, setBuyerId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState("685");
-  const [price, setPrice] = useState("1000.0000");
-
-  const load = useCallback(async () => {
-    if (!organizationId) return;
-    const [dealList, partnerList, productList, templateList, clauseList, dealSummary] = await Promise.all([
-      window.operationsCafe.listDealConfirmations({ organizationId }),
-      window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }),
-      window.operationsCafe.listProducts({ organizationId, status: "active" }),
-      window.operationsCafe.listDealConfirmationTemplates({ organizationId, status: "all" }),
-      window.operationsCafe.listDealClauseTemplates(organizationId),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
-    ]);
-    setConfirmations(dealList);
-    setPartners(partnerList);
-    setProducts(productList);
-    setTemplates(templateList);
-    setClauses(clauseList);
-    setSummary(dealSummary);
-    setSellerId((current) => current || partnerList.find((item) => item.roles.includes("SELLER"))?.id || partnerList[0]?.id || "");
-    setBuyerId((current) => current || partnerList.find((item) => item.roles.includes("BUYER"))?.id || partnerList[0]?.id || "");
-    setProductId((current) => current || productList[0]?.id || "");
-  }, [organizationId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function createManual(): Promise<void> {
-    try {
-      const draft = await window.operationsCafe.createDealConfirmationDraft({
-        organizationId,
-        ownLegalEntityId,
-        templateId: templates.find((item) => item.isDefault)?.id ?? null,
-        confirmationDate: new Date().toISOString().slice(0, 10),
-        negotiationDate: new Date().toISOString().slice(0, 10),
-        deliveryLocationSnapshot: "Local de entrega a confirmar",
-        deliveryStartDate: null,
-        deliveryEndDate: null,
-        paymentTermsSnapshot: "Condicao comercial a revisar",
-        qualityTermsSnapshot: "Qualidade conforme amostra",
-        generalTermsSnapshot: "Textos demonstrativos devem ser revisados pela empresa",
-        publicNotes: null,
-        internalNotes: null
-      });
-      if (sellerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: sellerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 1 });
-      if (buyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
-      if (productId) await window.operationsCafe.addDealConfirmationItem({
-        dealConfirmationId: draft.confirmation.id,
-        sortOrder: 0,
-        productId,
-        productNameSnapshot: products.find((item) => item.id === productId)?.name ?? "Cafe",
-        productDescriptionSnapshot: null,
-        cropSnapshot: null,
-        qualitySnapshot: "Bebida dura",
-        packagingSnapshot: "Sacas",
-        originSnapshot: null,
-        destinationSnapshot: null,
-        quantitySacksDecimal: quantity,
-        sackWeightKgDecimal: "60",
-        unitPriceDecimal: price,
-        totalAmountCents: null,
-        totalOverrideReason: null,
-        deliveryStartDate: null,
-        deliveryEndDate: null,
-        deliveryLocationSnapshot: "Local de entrega a confirmar",
-        notes: null
-      });
-      await window.operationsCafe.addDealConfirmationClause({ dealConfirmationId: draft.confirmation.id, clauseNumber: "1", title: "Texto demonstrativo", clauseText: "Clausula demonstrativa. O texto definitivo deve ser revisado pela empresa.", sortOrder: 0, isVisible: true });
-      await window.operationsCafe.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: partners.find((item) => item.id === sellerId)?.displayName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
-      await window.operationsCafe.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: partners.find((item) => item.id === buyerId)?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
-      const refreshed = await window.operationsCafe.getDealConfirmation(draft.confirmation.id);
-      setDetail(refreshed);
-      setMessage("Confirmacao manual criada.");
-      await load();
-    } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar confirmacao."}`);
-    }
-  }
-
-  async function openConfirmation(id: string): Promise<void> {
-    setDetail(await window.operationsCafe.getDealConfirmation(id));
-  }
-
-  async function generatePreview(): Promise<void> {
-    if (!detail) return;
-    setDetail(await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id));
-    setMessage("Previa gerada.");
-  }
-
-  async function issue(): Promise<void> {
-    if (!detail) return;
-    setDetail(await window.operationsCafe.issueDealConfirmation(detail.confirmation.id));
-    setMessage("Confirmacao emitida.");
-    await load();
-  }
-
-  async function importSigned(): Promise<void> {
-    if (!detail) return;
-    const selected = await window.operationsCafe.selectSignedDealPdf();
-    if (!selected) return;
-    setDetail(await window.operationsCafe.importSignedDealConfirmationDocument(detail.confirmation.id, { token: selected.token, notes: "Assinatura externa registrada pelo usuario" }));
-    setMessage("PDF assinado importado. O sistema nao valida criptograficamente a assinatura nesta etapa.");
-    await load();
-  }
-
-  async function cancelDeal(): Promise<void> {
-    if (!detail) return;
-    const reason = window.prompt("Motivo formal do cancelamento") ?? "";
-    if (!reason) return;
-    setDetail(await window.operationsCafe.cancelDealConfirmation(detail.confirmation.id, reason));
-    await load();
-  }
-
-  async function replaceDeal(): Promise<void> {
-    if (!detail) return;
-    const reason = window.prompt("Motivo formal da substituicao") ?? "";
-    if (!reason) return;
-    setDetail(await window.operationsCafe.replaceDealConfirmation(detail.confirmation.id, reason));
-    await load();
-  }
-
-  async function createTemplate(): Promise<void> {
-    await window.operationsCafe.createDealConfirmationTemplate({
-      organizationId,
-      ownLegalEntityId: null,
-      name: `Template ${templates.length + 1}`,
-      description: null,
-      title: "Confirmacao de Negocio",
-      subtitle: "Cafe",
-      layoutMode: "STANDARD",
-      defaultPaymentTerms: "Conforme combinado entre as partes.",
-      defaultDeliveryTerms: "Local a definir.",
-      defaultQualityTerms: "Qualidade conforme amostra.",
-      defaultGeneralTerms: "Textos devem ser revisados pela empresa.",
-      showBroker: true,
-      showCommercialValues: true,
-      showItemOrigins: true,
-      showSignatureBlocks: true,
-      signatureBlockCount: 2,
-      isDefault: templates.length === 0,
-      isActive: true
-    });
-    setMessage("Template criado.");
-    await load();
-  }
-
-  async function createClauseTemplate(): Promise<void> {
-    await window.operationsCafe.createDealClauseTemplate({ organizationId, name: `Clausula ${clauses.length + 1}`, title: "Demonstrativa", clauseText: "Texto demonstrativo; revisar antes de usar.", category: "GENERAL", isActive: true });
-    setMessage("Clausula cadastrada na biblioteca.");
-    await load();
-  }
-
-  async function generateReport(format: "PDF" | "EXCEL"): Promise<void> {
-    const report = await window.operationsCafe.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format, filters: { organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
-    setMessage(`Relatorio ${format} gerado: ${report.fileName}`);
-  }
-
-  return (
-    <section className="content-section settings">
-      <div className="settings-tabs">{["Confirmacoes", "Templates", "Clausulas", "Relatorios"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
-      <div className="cards">
-        <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
-        <article><span>Sacas confirmadas</span><strong>{summary?.totalSacksDecimal ?? "0"}</strong></article>
-        <article><span>Valor comercial</span><strong>{formatCurrencyFromCents(summary?.totalCommercialAmountCents ?? 0)}</strong></article>
-        <article><span>Aguardando assinatura</span><strong>{summary?.waitingSignature ?? 0}</strong></article>
-        <article><span>Assinadas</span><strong>{summary?.signed ?? 0}</strong></article>
-        <article><span>Sem NF</span><strong>{summary?.withoutFiscalDocument ?? 0}</strong></article>
-      </div>
-      {tab === "Confirmacoes" && (
-        <>
-          <AdminBlock title="Criacao manual">
-            <FormGrid>
-              <SelectField label="Vendedor" value={sellerId} onChange={setSellerId} options={partners.map((item) => [item.id, item.displayName])} />
-              <SelectField label="Comprador" value={buyerId} onChange={setBuyerId} options={partners.map((item) => [item.id, item.displayName])} />
-              <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
-              <TextField label="Sacas" value={quantity} onChange={setQuantity} />
-              <TextField label="Preco por saca" value={price} onChange={setPrice} />
-              <button className="primary" onClick={() => void createManual()}>Criar confirmacao</button>
-            </FormGrid>
-          </AdminBlock>
-          <div className="table">
-            <div className="table-head confirmation-grid"><span>Numero</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
-            {confirmations.map((item) => <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{item.confirmationDate}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span>{item.status}</span><span>{item.signatureStatus}</span><span><button onClick={() => void openConfirmation(item.id)}>Abrir</button></span></div>)}
-          </div>
-          {detail && (
-            <AdminBlock title="Detalhe da confirmacao">
-              <div className="cards">
-                <article><span>Numero</span><strong>{detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference}</strong></article>
-                <article><span>Itens</span><strong>{detail.items.length}</strong></article>
-                <article><span>Notas</span><strong>{detail.fiscalDocuments.length}</strong></article>
-                <article><span>Operacoes</span><strong>{detail.operations.length}</strong></article>
-                <article><span>Versoes</span><strong>{detail.documents.length}</strong></article>
-                <article><span>Pendencias</span><strong>{detail.pendingIssues.length}</strong></article>
-              </div>
-              <div className="actions">
-                <button onClick={() => void generatePreview()}>Gerar previa</button>
-                <button className="primary" onClick={() => void issue()}>Emitir</button>
-                <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button>
-                <button onClick={() => void importSigned()}>Importar assinada</button>
-                <button onClick={() => void cancelDeal()}>Cancelar</button>
-                <button onClick={() => void replaceDeal()}>Substituir</button>
-              </div>
-              <div className="table">
-                <div className="table-head document-grid"><span>Versao</span><span>Tipo</span><span>Hash</span><span>Arquivo</span><span>Acoes</span></div>
-                {detail.documents.map((item) => <div key={item.id} className="table-row document-grid"><span>{item.versionNumber}</span><span>{item.documentType}</span><span>{item.fileHash.slice(0, 12)}</span><span>{item.originalFileName}</span><span><button onClick={() => void window.operationsCafe.openDealDocument(item.id)}>Abrir</button><button onClick={() => void window.operationsCafe.revealDealDocumentFolder(item.id)}>Pasta</button></span></div>)}
-              </div>
-            </AdminBlock>
-          )}
-        </>
-      )}
-      {tab === "Templates" && <AdminBlock title="Templates de Confirmacao"><div className="actions"><button className="primary" onClick={() => void createTemplate()}>Criar template</button></div><div className="table"><div className="table-head template-grid"><span>Nome</span><span>Layout</span><span>Padrao</span><span>Status</span><span>Acoes</span></div>{templates.map((item) => <div key={item.id} className="table-row template-grid"><span>{item.name}</span><span>{item.layoutMode}</span><span>{item.isDefault ? "Sim" : "Nao"}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span><button onClick={() => void window.operationsCafe.setDefaultDealConfirmationTemplate(item.id).then(() => load())}>Padrao</button><button onClick={() => void window.operationsCafe.duplicateDealConfirmationTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}
-      {tab === "Clausulas" && <AdminBlock title="Biblioteca de Clausulas"><div className="actions"><button className="primary" onClick={() => void createClauseTemplate()}>Criar clausula</button></div><div className="table"><div className="table-head clause-grid"><span>Nome</span><span>Categoria</span><span>Titulo</span><span>Status</span><span>Acoes</span></div>{clauses.map((item) => <div key={item.id} className="table-row clause-grid"><span>{item.name}</span><span>{item.category}</span><span>{item.title ?? "-"}</span><span>{item.isActive ? "Ativa" : "Inativa"}</span><span><button onClick={() => void window.operationsCafe.duplicateDealClauseTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}
-      {tab === "Relatorios" && <AdminBlock title="Relatorios de Confirmacoes"><div className="actions"><button className="primary" onClick={() => void generateReport("PDF")}>Gerar PDF</button><button onClick={() => void generateReport("EXCEL")}>Gerar Excel</button></div></AdminBlock>}
-      <Feedback message={message} />
-    </section>
-  );
-}
-
 function ModulePlaceholder({ title }: { title: string }): JSX.Element {
   return <section className="content-section"><h2>{title}</h2><p>Modulo em desenvolvimento. Esta etapa esta focada em multiempresa, CNPJs, locais e branding.</p></section>;
 }
@@ -1738,7 +1199,7 @@ function Dashboard({ organizations, legalEntities, locations, organizationId }: 
 function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
   const [data, setData] = useState(initialData);
   const [profile, setProfile] = useState(initialData.profile);
-  const [activeMenu, setActiveMenu] = useState("Dashboard");
+  const [activeMenu, setActiveMenu] = useState(() => legacyMenuFromPath(window.location.hash.replace(/^#/, "")));
   const organization = data.organizations.find((item) => item.id === profile?.defaultOrganizationId) ?? data.organizations[0];
   const legalEntity = data.legalEntities.find((item) => item.id === profile?.defaultLegalEntityId);
   const branding = getBrandingConfig(profile?.appVariant ?? "multiempresa");
@@ -1769,14 +1230,25 @@ function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
     await refresh();
   }
 
+  function navigate(menu: string): void {
+    setActiveMenu(menu);
+    window.history.pushState(null, "", `#${pathFromLegacyMenu(menu)}`);
+  }
+
+  useEffect(() => {
+    const handlePopState = (): void => setActiveMenu(legacyMenuFromPath(window.location.hash.replace(/^#/, "")));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const page = useMemo(() => {
     if (activeMenu === "Dashboard") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={organization?.id} />;
-    if (activeMenu === "Notas e operacoes") return <ManualInvoicesPage data={data} />;
+    if (activeMenu === "Notas e operacoes") return <OperationsPage data={data} />;
     if (activeMenu === "Clientes") return <PartnersPage data={data} refresh={refresh} />;
     if (activeMenu === "Regras por saca") return <ServiceRatesPage data={data} />;
     if (activeMenu === "Cobrancas") return <ChargesPage data={data} />;
     if (activeMenu === "Conta-corrente") return <LedgerPage data={data} />;
-    if (activeMenu === "Confirmacoes") return <DealConfirmationsPage data={data} />;
+    if (activeMenu === "Confirmacoes") return <ConfirmationsPage data={data} />;
     if (activeMenu === "Financeiro") return <FinancialPage data={data} />;
     if (activeMenu === "Configuracoes" && profile) return <SettingsPage profile={profile} refresh={refresh} onProfile={setProfile} />;
     return <ModulePlaceholder title={activeMenu} />;
@@ -1793,7 +1265,7 @@ function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
       canSwitchOrganization={Boolean(canSwitchOrg)}
       canSwitchLegalEntity={Boolean(profile?.allowLegalEntitySwitch)}
       version={data.version}
-      onNavigate={setActiveMenu}
+      onNavigate={navigate}
       onOrganizationChange={(id) => void changeOrganization(id)}
       onLegalEntityChange={(id) => void changeLegalEntity(id)}
     >

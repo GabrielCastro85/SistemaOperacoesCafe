@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { Button, DataTable, EmptyState, Input, StatusBadge, Tabs, buildUiTheme, getReadableTextColor } from "../src/renderer/design-system/index.js";
-import { navigationGroups, routeIdFromLegacyMenu } from "../src/renderer/app/navigation.js";
+import { Button, ConfirmationDialog, DataTable, DocumentPreviewCard, EmptyState, FileDropzone, Input, Pagination, ProgressBar, StatusBadge, Stepper, Tabs, buildUiTheme, getReadableTextColor } from "../src/renderer/design-system/index.js";
+import { legacyMenuFromPath, navigationGroups, pathFromLegacyMenu, routeIdFromLegacyMenu } from "../src/renderer/app/navigation.js";
 
 describe("renderer design system", () => {
   it("renders accessible basic controls without browser APIs", () => {
@@ -43,5 +44,38 @@ describe("renderer design system", () => {
     expect(getReadableTextColor("#111111")).toBe("#ffffff");
     expect(navigationGroups.flatMap((group) => group.items).some((item) => item.legacyMenu === "Confirmacoes")).toBe(true);
     expect(routeIdFromLegacyMenu("Financeiro")).toBe("finance");
+    expect(pathFromLegacyMenu("Notas e operacoes")).toBe("/operations");
+    expect(legacyMenuFromPath("/imports/xml/history")).toBe("Notas e operacoes");
+    expect(legacyMenuFromPath("/confirmations/templates")).toBe("Confirmacoes");
+  });
+
+  it("renders migration components for operational workflows", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(Stepper, { activeId: "origin", steps: [{ id: "origin", label: "Origem", status: "current" }] }),
+        React.createElement(FileDropzone, { title: "Arquivo", description: "Selecione ou arraste arquivos." }),
+        React.createElement(ProgressBar, { value: 45, label: "Progresso" }),
+        React.createElement(Pagination, { page: 1, pageCount: 3, onPageChange: () => undefined }),
+        React.createElement(DocumentPreviewCard, { title: "CONF-001.pdf", type: "ISSUED_ORIGINAL", hash: "abcdef1234567890" }),
+        React.createElement(ConfirmationDialog, { open: true, title: "Confirmar", onConfirm: () => undefined, onCancel: () => undefined }, "Deseja continuar?")
+      )
+    );
+
+    expect(html).toContain("Origem");
+    expect(html).toContain("Selecione ou arraste");
+    expect(html).toContain("progressbar");
+    expect(html).toContain("CONF-001.pdf");
+    expect(html).toContain("Deseja continuar?");
+  });
+
+  it("keeps migrated module definitions out of LegacyWorkspace", () => {
+    const legacySource = readFileSync("src/renderer/pages/legacy/LegacyWorkspace.tsx", "utf8");
+
+    expect(legacySource).not.toContain("function ManualInvoicesPage");
+    expect(legacySource).not.toContain("function DealConfirmationsPage");
+    expect(legacySource).toContain("<OperationsPage data={data} />");
+    expect(legacySource).toContain("<ConfirmationsPage data={data} />");
   });
 });

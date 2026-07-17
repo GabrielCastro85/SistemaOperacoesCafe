@@ -106,3 +106,8 @@
 - Adicionadas logos Villa Coffee e Grao & Grao em `public/assets/branding`.
 - Reorganizado Dashboard com blocos operacional, recebimentos, financeiro e confirmacoes.
 - Adicionados testes de design system, tema e navegacao.
+- Migradas Notas e operacoes para `src/renderer/pages/operations`.
+- Criadas estruturas de importacao de planilhas e XML em `src/renderer/pages/imports`.
+- Migradas Confirmacoes de negocio, templates, clausulas e relatorios para `src/renderer/pages/confirmations`.
+- Adicionados Stepper, PageHeader, FileDropzone, DocumentPreviewCard, Drawer, ConfirmationDialog, Pagination, FilterBar, ProgressBar e demais componentes de suporte.
+- Adicionadas rotas hash identificaveis para operacoes, importacoes e confirmacoes.
