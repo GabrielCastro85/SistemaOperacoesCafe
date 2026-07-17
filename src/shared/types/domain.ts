@@ -1547,6 +1547,13 @@ export interface ConfirmationReportGeneration {
 
 export interface Diagnostics {
   appVersion: string;
+  productName?: string;
+  executableName?: string;
+  appId?: string;
+  buildVariant?: AppVariant;
+  architecture?: string;
+  electronVersion?: string;
+  signatureStatus?: "SIGNED" | "UNSIGNED" | "UNKNOWN";
   databasePath: string;
   documentsPath: string;
   activeVariant: AppVariant | null;

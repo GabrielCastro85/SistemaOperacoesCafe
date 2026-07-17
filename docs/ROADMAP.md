@@ -12,5 +12,6 @@
 10. Confirmacoes de negocio. Concluido com rascunhos manuais, criacao por operacoes/notas, participantes, itens, templates, clausulas, pagamentos, signatarios, emissao PDF, assinatura externa, cancelamento, substituicao, dashboard e relatorios.
 11. Interface profissional. Concluida com App.tsx reduzido, design system, layout desktop, sidebar recolhivel, topbar contextual, temas Villa/Grao/multiempresa, logos empacotadas, dashboard reorganizado, dialogs React, rotas diretas para todos os modulos e remocao definitiva do workspace legado.
 12. Backups, restauracao e integridade. Concluido com pacote `.cafebackup`, snapshot SQLite, manifesto, hashes, criptografia opcional, backup automatico pendente, retencao, restauracao segura, integridade de banco/documentos e auditoria.
-13. Dashboard e relatorios consolidados.
-14. Atualizacoes e instalador final.
+13. Distribuicao Windows profissional. Concluido com variantes Villa/Grao/multiempresa, App IDs, executaveis, icones, isolamento de userData, instaladores, manifestos, checksums, smoke tests e documentacao de instalacao.
+14. Dashboard e relatorios consolidados.
+15. Atualizacoes automaticas e assinatura Authenticode final.

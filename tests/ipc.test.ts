@@ -6,6 +6,7 @@ import { initializeDatabase } from "../electron/main/database/database";
 import { createDiagnostics } from "../electron/main/ipc/handlers";
 import { AppRepository } from "../electron/main/services/appRepository";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
+import { buildVariantConfigs } from "../src/shared/buildVariants";
 
 const tempDirs: string[] = [];
 
@@ -30,9 +31,13 @@ describe("diagnostics IPC handler logic", () => {
       allowLegalEntitySwitch: true,
       completedSetup: true
     });
-    const diagnostics = createDiagnostics({ version: "0.1.0", directories, db }, repo);
+    const diagnostics = createDiagnostics({ version: "0.13.0", directories, db, buildVariant: buildVariantConfigs.villa }, repo);
     expect(diagnostics.databaseStatus).toBe("ok");
     expect(diagnostics.activeVariant).toBe("villa");
+    expect(diagnostics.productName).toBe("Villa Coffee");
+    expect(diagnostics.appId).toBe("br.com.operacoescafe.villa");
+    expect(diagnostics.executableName).toBe("VillaCoffeeOperacoes");
+    expect(diagnostics.signatureStatus).toBe("UNSIGNED");
     expect(diagnostics.databasePath).toContain("operations.sqlite");
     db.close();
   });

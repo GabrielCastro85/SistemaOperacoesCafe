@@ -4,7 +4,7 @@ Aplicativo desktop Windows offline-first para operacoes internas de empresas do 
 
 ## Requisitos
 
-- Node.js 22 ou superior.
+- Node.js 20.19.0 ou superior.
 - npm.
 
 ## Comandos
@@ -18,10 +18,17 @@ Aplicativo desktop Windows offline-first para operacoes internas de empresas do 
 - `npm run test:run`
 - `npm run build`
 - `npm run package` prepara pacote Windows em modo diretorio.
+- `npm run package:villa` prepara pacote Windows da Villa Coffee.
+- `npm run package:grao` prepara pacote Windows da Grao & Grao.
+- `npm run release:villa` e `npm run release:grao` geram instaladores NSIS.
+- `npm run release:verify` valida manifestos e checksums.
+- `npm run smoke:packaged` valida artefatos empacotados.
 
 ## Dados Locais
 
 O banco fica em `app.getPath("userData")/database/operations.sqlite`. Documentos ficam em `app.getPath("userData")/documents`. Esses dados nao ficam na pasta de instalacao e devem ser preservados em atualizacoes.
+
+Cada distribuicao Windows possui `userData` proprio. Villa Coffee, Grao & Grao e multiempresa podem coexistir sem compartilhar banco, logs ou documentos.
 
 ## Branding
 
@@ -100,6 +107,12 @@ A decima segunda etapa adiciona backups locais `.cafebackup`, com snapshot consi
 Use Configuracoes > Backups para criar backups completos ou somente do banco, escolher destino interno/externo, verificar pacotes, proteger backups e configurar execucao automatica quando o app estiver aberto. Use Configuracoes > Restaurar para validar e restaurar um backup com criacao automatica de backup pre-restauracao. Use Configuracoes > Integridade para verificar banco, documentos, orfaos e gerar relatorio local.
 
 Backup interno nao protege contra perda total do disco; copie backups importantes para outro dispositivo. O app nao envia backups para nuvem e nao executa backups quando estiver fechado.
+
+## Distribuicao Windows
+
+A decima terceira etapa profissionaliza a distribuicao Windows. `src/shared/buildVariants.ts` centraliza App ID, nome de produto, executavel, icone, artefatos e diretorio `userData` das variantes Villa Coffee, Grao & Grao e multiempresa.
+
+Os scripts em `scripts/release` geram icones `.ico`, empacotam variantes, criam manifestos de release, checksums SHA-256, notas de release e testes smoke de artefatos. A tela Configuracoes > Sobre exibe produto, versao, variante, App ID, executavel, arquitetura, Electron, migration e status de assinatura.
 
 ## Estrutura
 

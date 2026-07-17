@@ -41,3 +41,5 @@ Confirmacoes de negocio sao armazenadas no SQLite local e seus documentos ficam 
 PDF assinado externamente e arquivado para auditoria, mas o sistema nao confere certificado, cadeia ICP-Brasil, carimbo do tempo ou validade criptografica da assinatura nesta etapa.
 
 Antes de restaurar, o app valida magic bytes, manifesto, hashes, banco e compatibilidade. A restauracao cria backup pre-restauracao protegido, expira sessoes locais e registra auditoria.
+
+Distribuicoes Windows usam `userData` isolado por variante. Isso permite instalar Villa Coffee, Grao & Grao e multiempresa na mesma maquina sem misturar bancos, documentos, logs, backups internos ou branding. Atualizacoes devem usar sempre instalador da mesma variante.

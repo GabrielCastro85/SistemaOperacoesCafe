@@ -29,6 +29,13 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
   const legalEntity = bootstrap.legalEntities.find((item) => item.id === profile?.defaultLegalEntityId);
   return {
     appVersion: context.version,
+    productName: context.buildVariant?.productName,
+    executableName: context.buildVariant?.executableName,
+    appId: context.buildVariant?.appId,
+    buildVariant: context.buildVariant?.variant,
+    architecture: process.arch,
+    electronVersion: process.versions.electron,
+    signatureStatus: "UNSIGNED",
     databasePath: context.directories.databasePath,
     documentsPath: context.directories.documentsDir,
     activeVariant: profile?.appVariant ?? null,

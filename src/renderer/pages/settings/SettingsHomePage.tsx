@@ -5,7 +5,7 @@ const groups = [
   { title: "Operacao", items: [["Produtos", "/products"], ["Regras por saca", "/billing/rates"], ["Templates de importacao", "/settings/import-templates"]] },
   { title: "Financeiro", items: [["Categorias", "/finance/categories"], ["Centros de custo", "/finance/cost-centers"], ["Contas financeiras", "/finance/accounts"]] },
   { title: "Documentos", items: [["Templates de confirmacao", "/settings/confirmation-templates"], ["Clausulas", "/settings/clauses"], ["Numeracoes", "/settings/document-sequences"]] },
-  { title: "Sistema", items: [["Perfil da instalacao", "/settings/installation"], ["Diretorios", "/settings/directories"], ["Diagnostico", "/settings/diagnostics"], ["Sistema", "/settings/system"]] },
+  { title: "Sistema", items: [["Perfil da instalacao", "/settings/installation"], ["Diretorios", "/settings/directories"], ["Sobre", "/settings/about"], ["Diagnostico", "/settings/diagnostics"], ["Sistema", "/settings/system"]] },
   { title: "Seguranca e recuperacao", items: [["Backups", "/settings/backups"], ["Criar backup", "/settings/backups/new"], ["Restaurar", "/settings/restore"], ["Integridade", "/settings/integrity"], ["Retencao", "/settings/retention"]] }
 ];
 

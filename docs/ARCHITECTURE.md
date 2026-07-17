@@ -43,3 +43,7 @@ Na conclusao da etapa 10, o workspace legado foi removido. O frontend final fica
 Na etapa 11, autenticacao, sessao, autorizacao e auditoria ficam no processo principal. `AuthService` controla bootstrap do primeiro administrador, login, lock/unlock, logout, roles, permissoes, politicas IPC e auditoria. O renderer recebe apenas `AuthSession` sanitizada via preload e nunca valida permissao como fonte de verdade.
 
 Na etapa 12, `BackupService` fica no processo principal e concentra snapshot SQLite, pacote `.cafebackup`, criptografia, verificacao, retencao, restauracao e integridade. O renderer chama apenas IPCs especificos; selecao de pasta/arquivo ocorre por dialog do main process. O pacote usa magic bytes proprios, manifesto JSON validado, payload gzip e, opcionalmente, AES-256-GCM com chave derivada por `scrypt`.
+
+Na etapa 13, a distribuicao Windows passa a ter variantes de build formais. `src/shared/buildVariants.ts` e `scripts/release/variant-config.mjs` centralizam App ID, produto, executavel, icone, prefixo de artefato e diretorio `userData`. O processo principal aplica esses metadados antes da inicializacao do banco, reforca janela unica, bloqueia novas janelas e exposicoes de navegacao, e publica os metadados no diagnostico.
+
+Os scripts de release ficam em `scripts/release`: geracao de `.ico`, empacotamento por variante, instalador NSIS, manifesto de release, checksums SHA-256 e smoke test de artefatos.

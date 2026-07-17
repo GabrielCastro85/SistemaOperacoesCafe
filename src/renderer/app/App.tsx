@@ -40,6 +40,7 @@ import { ProductsPage } from "../pages/products/ProductsPage";
 import { ServiceRateRulesPage } from "../pages/serviceRates/ServiceRateRulesPage";
 import { BrandingSettingsPage } from "../pages/settings/branding/BrandingSettingsPage";
 import { BackupCreatePage, BackupDetailsPage, BackupsPage, BackupSettingsPage, IntegrityPage, RestorePage, RetentionPage } from "../pages/settings/backups/BackupPages";
+import { AboutPage } from "../pages/settings/about/AboutPage";
 import { DiagnosticsPage } from "../pages/settings/diagnostics/DiagnosticsPage";
 import { DirectoriesPage } from "../pages/settings/directories/DirectoriesPage";
 import { InstallationProfilePage } from "../pages/settings/installation/InstallationProfilePage";
@@ -210,6 +211,7 @@ function renderRoute(
   if (path.startsWith("/settings/locations")) return <LocationsPage {...settingsProps} />;
   if (path.startsWith("/settings/branding")) return <BrandingSettingsPage {...settingsProps} />;
   if (path.startsWith("/settings/installation")) return <InstallationProfilePage {...settingsProps} />;
+  if (path.startsWith("/settings/about")) return <AboutPage />;
   if (path.startsWith("/settings/diagnostics")) return <DiagnosticsPage />;
   if (path.startsWith("/settings/directories")) return <DirectoriesPage />;
   if (path.startsWith("/settings/users")) return <UsersPage />;

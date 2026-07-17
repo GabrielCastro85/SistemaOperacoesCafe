@@ -133,3 +133,11 @@ Quando ativada, a criptografia protege o payload do pacote com AES-256-GCM e cha
 ## Retencao Conservadora
 
 Retencao automatica atua sobre backups nao protegidos. Documentos oficiais e historicos permanecem com retencao indefinida por padrao porque prazos fiscais e legais devem ser definidos pela empresa e contabilidade.
+
+## Variantes Windows Isoladas
+
+Villa Coffee, Grao & Grao e multiempresa possuem App ID, executavel, icone, artefatos e `userData` separados. Essa decisao evita compartilhamento acidental de banco entre empresas, permite instalacoes lado a lado e prepara assinatura/instalador independente por marca.
+
+## Release Com Manifesto E Checksum
+
+Cada empacotamento gera `release-manifest.json`, `SHA256SUMS.txt` e `release-notes.md`. O manifesto nao substitui assinatura de codigo, mas fornece rastreabilidade local de versao, variante, artefato, hash, arquitetura, migration e limitacoes conhecidas.

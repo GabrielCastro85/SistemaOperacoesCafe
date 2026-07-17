@@ -1,12 +1,18 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, session } from "electron";
 import log from "electron-log/main.js";
 import { join } from "node:path";
+import { getBuildVariantConfig } from "../../src/shared/buildVariants.js";
 import { initializeDatabase } from "./database/database.js";
 import { registerIpcHandlers } from "./ipc/handlers.js";
 import { AppRepository } from "./services/appRepository.js";
 import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js";
 
 let mainWindow: BrowserWindow | null = null;
+const buildVariant = getBuildVariantConfig(process.env.OPERACOES_CAFE_VARIANT ?? process.env.VITE_APP_BUILD_VARIANT);
+
+app.setName(buildVariant.displayName);
+app.setAppUserModelId(buildVariant.appId);
+app.setPath("userData", join(app.getPath("appData"), buildVariant.userDataDirectoryName));
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -14,12 +20,21 @@ function createWindow(): void {
     height: 800,
     minWidth: 960,
     minHeight: 640,
-    title: "Operacoes Cafe",
+    title: buildVariant.displayName,
     webPreferences: {
       preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      webSecurity: true,
+      devTools: !app.isPackaged || process.env.OPERACOES_CAFE_ENABLE_DEVTOOLS === "1"
+    }
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith("file://") && !url.startsWith("http://127.0.0.1:")) {
+      event.preventDefault();
     }
   });
 
@@ -53,12 +68,13 @@ function bootstrap(): void {
   log.initialize();
   log.transports.file.resolvePathFn = () => join(directories.logsDir, "main.log");
   const db = initializeDatabase(directories);
-  const context = { version: app.getVersion(), directories, db };
+  const context = { version: app.getVersion(), directories, db, buildVariant };
   const repository = new AppRepository(db, directories);
   registerIpcHandlers(ipcMain, context, repository);
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   bootstrap();
   createWindow();
   app.on("activate", () => {
@@ -67,6 +83,17 @@ app.whenReady().then(() => {
     }
   });
 });
+
+const singleInstance = app.requestSingleInstanceLock({ variant: buildVariant.variant });
+if (!singleInstance) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

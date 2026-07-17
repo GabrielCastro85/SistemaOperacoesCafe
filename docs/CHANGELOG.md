@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.0
+
+- Adicionada fundacao de distribuicao Windows profissional.
+- Criadas configuracoes oficiais para Villa Coffee, Grao & Grao e multiempresa.
+- Adicionados App IDs, nomes de produto, executaveis, icones `.ico` e isolamento de `userData` por variante.
+- Adicionados scripts de empacotamento, instalador NSIS, manifestos de release, notas e checksums SHA-256.
+- Adicionada tela Configuracoes > Sobre com metadados de distribuicao e status de assinatura.
+- Reforcado hardening do processo principal com janela unica, bloqueio de novas janelas, navegacao restrita e permissao negada por padrao.
+- Adicionados guias de instalacao, atualizacao, desinstalacao, release, assinatura e variantes.
+- Adicionados testes de variantes, metadados, icones e documentacao de release.
+
 ## 0.12.0
 
 - Adicionada migration `013_backups_integrity`.

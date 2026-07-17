@@ -19,3 +19,16 @@ A migration `012_users_permissions_audit` cria `app_users`, `user_credentials`, 
 ## Backups
 
 Backups e restauracoes usam permissoes dedicadas. Senhas de backup nao sao armazenadas. Auditoria sanitiza senha, token, hash, salt e segredo. A restauracao completa exige permissao critica `backups.restore` e senha atual do usuario.
+
+## Distribuicao Windows
+
+O processo principal aplica hardening antes de abrir a janela:
+
+- `contextIsolation` permanece ativo.
+- `nodeIntegration` permanece desativado.
+- `webSecurity` permanece ativo.
+- DevTools ficam indisponiveis em build empacotado, exceto quando `OPERACOES_CAFE_ENABLE_DEVTOOLS=1`.
+- Novas janelas sao negadas.
+- Navegacao do renderer e restrita a `file://` em build empacotado e `http://127.0.0.1:` em desenvolvimento.
+- Permissoes de browser sao negadas por padrao.
+- Cada variante define `appId`, nome de produto e `userData` antes do banco ser aberto.

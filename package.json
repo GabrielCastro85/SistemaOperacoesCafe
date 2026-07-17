@@ -1,8 +1,14 @@
 {
   "name": "sistema-operacoes-cafe",
-  "version": "0.1.0",
+  "version": "0.13.0",
   "private": true,
   "description": "Aplicativo desktop offline-first para gerenciamento de operacoes de empresas do ramo de cafe.",
+  "author": "Sistema Operacoes Cafe",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=10"
+  },
   "main": "dist-electron/electron/main/index.js",
   "type": "module",
   "scripts": {
@@ -14,7 +20,20 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "test": "vitest",
     "test:run": "vitest run",
-    "package": "npm run build && electron-builder --win --dir",
+    "generate:icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/generate-icons.ps1",
+    "package": "npm run package:multiempresa",
+    "package:villa": "node scripts/release/package-variant.mjs villa --dir",
+    "package:grao": "node scripts/release/package-variant.mjs grao --dir",
+    "package:multiempresa": "node scripts/release/package-variant.mjs multiempresa --dir",
+    "dist:villa": "node scripts/release/package-variant.mjs villa --installer",
+    "dist:grao": "node scripts/release/package-variant.mjs grao --installer",
+    "dist:multiempresa": "node scripts/release/package-variant.mjs multiempresa --installer",
+    "release:villa": "npm run dist:villa",
+    "release:grao": "npm run dist:grao",
+    "release:multiempresa": "npm run dist:multiempresa",
+    "release:all": "npm run release:villa && npm run release:grao && npm run release:multiempresa",
+    "release:verify": "node scripts/release/verify-release.mjs",
+    "smoke:packaged": "node scripts/release/smoke-packaged.mjs",
     "postpackage": "npm rebuild better-sqlite3",
     "stop:electron": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*SistemaOperacoesCafe*' -and (($_.Name -eq 'electron.exe') -or ($_.Name -eq 'node.exe' -and $_.CommandLine -like '*electron*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\"",
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
@@ -56,8 +75,9 @@
     "vitest": "^2.1.8"
   },
   "build": {
-    "appId": "br.com.operacoescafe.app",
-    "productName": "Operacoes Cafe",
+    "appId": "br.com.operacoescafe.multiempresa",
+    "productName": "Sistema de Operacoes de Cafe",
+    "executableName": "SistemaOperacoesCafe",
     "directories": {
       "output": "release"
     },
@@ -70,7 +90,20 @@
       "node_modules/better-sqlite3/**"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icons/multiempresa.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sistema de Operacoes de Cafe",
+      "uninstallDisplayName": "Sistema de Operacoes de Cafe",
+      "deleteAppDataOnUninstall": false,
+      "language": "1046"
     }
   }
 }
