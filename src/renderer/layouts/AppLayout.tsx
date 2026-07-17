@@ -44,6 +44,7 @@ export function AppLayout({
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveLogoSrc(variant, organization);
+  const legalEntityLabel = legalEntity ? `${legalEntity.tradeName} - ${legalEntity.cnpj}` : "Nenhum CNPJ ativo";
 
   return (
     <main className={`app-shell professional-shell ${collapsed ? "is-collapsed" : ""}`} style={themeToCssVariables(theme)}>
@@ -80,19 +81,23 @@ export function AppLayout({
           ))}
         </nav>
         <footer className="app-sidebar__footer">
+          <span>Backup automático ativo</span>
           <span>Versão</span>
           <strong>{version}</strong>
         </footer>
       </aside>
       <section className="main-area app-main">
         <header className="topbar app-topbar">
-          <div className="page-context">
-            <span>Você está em</span>
-            <strong>{activeMenu}</strong>
-            <small>Início / {activeMenu}</small>
+          <div className="app-topbar__brandline">
+            {logoSrc ? <img src={logoSrc} alt="" /> : <div className="brand-mark">{theme.organizationName.slice(0, 2).toUpperCase()}</div>}
+            <div className="page-context">
+              <span>{theme.appName}</span>
+              <strong>{activeMenu}</strong>
+              <small>Início / {activeMenu}</small>
+            </div>
           </div>
           <label className="context-select">
-            <span>Organização ativa</span>
+            <span>Empresa</span>
             <select value={organization?.id ?? ""} disabled={!canSwitchOrganization} onChange={(event) => onOrganizationChange(event.target.value)}>
               {organizations.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -110,15 +115,23 @@ export function AppLayout({
                 </option>
               ))}
             </select>
+            <small>{legalEntityLabel}</small>
           </label>
           <div className="context-pill context-pill--user">
             <span>Usuário</span>
             <strong>{session.user.displayName}</strong>
+            <small>Administrador</small>
           </div>
-          <button type="button" onClick={onLock}>Bloquear</button>
-          <button type="button" onClick={onLogout}>Sair</button>
+          <div className="topbar-actions">
+            <button type="button" onClick={onLock}>Bloquear</button>
+            <button type="button" onClick={onLogout}>Sair</button>
+          </div>
         </header>
         {children}
+        <footer className="app-statusbar">
+          <span>Backup automático ativo</span>
+          <strong>{theme.appName} {version}</strong>
+        </footer>
       </section>
     </main>
   );

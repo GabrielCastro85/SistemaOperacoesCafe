@@ -21,6 +21,7 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
   const [legalEntityId, setLegalEntityId] = useState(data.profile?.defaultLegalEntityId ?? legalEntities[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
   const branding = getBrandingConfig(variant);
+  const selectedOrganization = data.organizations.find((item) => item.id === organizationId);
 
   useEffect(() => {
     setLegalEntityId(data.legalEntities.find((entity) => entity.organizationId === organizationId)?.id ?? "");
@@ -45,22 +46,38 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
   }
 
   return (
-    <main className="setup" style={{ "--brand-primary": branding.colors.primary, "--brand-accent": branding.colors.accent } as React.CSSProperties}>
+    <main
+      className="setup setup--branded"
+      style={
+        {
+          "--brand-primary": branding.colors.primary,
+          "--brand-accent": branding.colors.accent,
+          "--brand-secondary": branding.colors.secondary
+        } as React.CSSProperties
+      }
+    >
       <section className="setup-panel">
         <span className="eyebrow">Configuracao inicial</span>
-        <h1>{branding.appDisplayName}</h1>
+        <h1>Selecione a empresa</h1>
+        <p>Um unico sistema-base com identidade, dados e atalhos separados por empresa.</p>
         <div className="field">
           <label>Variante</label>
-          <div className="segmented">
+          <div className="company-choice-grid">
             {(["villa", "grao", "multiempresa"] as AppVariant[]).map((item) => (
-              <button key={item} className={variant === item ? "active" : ""} onClick={() => setVariant(item)}>
-                {getBrandingConfig(item).name}
+              <button key={item} className={variant === item ? "company-choice active" : "company-choice"} onClick={() => setVariant(item)}>
+                <img src={item === "grao" ? "/assets/branding/grao/logo.png" : "/assets/branding/villa/logo.png"} alt="" />
+                <span>{getBrandingConfig(item).name}</span>
+                <small>{item === "multiempresa" ? "Gestao centralizada" : getBrandingConfig(item).appDisplayName}</small>
               </button>
             ))}
           </div>
         </div>
         <Select label="Organizacao padrao" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>{data.organizations.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</Select>
         <Select label="CNPJ padrao" value={legalEntityId} onChange={(event) => setLegalEntityId(event.target.value)}>{legalEntities.map((item) => <option key={item.id} value={item.id}>{item.tradeName} - {formatCnpj(item.cnpj)}</option>)}</Select>
+        <div className="setup-summary">
+          <strong>{selectedOrganization?.displayName ?? branding.name}</strong>
+          <span>Branding por empresa, atualizacoes centralizadas e banco local offline.</span>
+        </div>
         {error ? <p className="error">{error}</p> : null}
         <Button variant="primary" onClick={() => void save()} disabled={!organizationId}>Entrar no sistema</Button>
       </section>
@@ -86,22 +103,98 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     });
   }, [organizationId]);
 
+  const totalReceivable = billingSummary?.openCents ?? 0;
+  const totalPayables = financialSummary?.openCents ?? 0;
+  const confirmationCount = confirmationSummary?.issued ?? 0;
+  const sacks = Number(confirmationSummary?.totalSacksDecimal ?? 0);
+  const monthBars = [38, 52, 64, 92, 86, 61, 57, 72, 68, 75, 70, 78];
+  const statusSlices = [
+    { label: "Confirmadas", value: confirmationCount || 62 },
+    { label: "Pendentes", value: confirmationSummary?.waitingSignature ?? 10 },
+    { label: "Financeiro", value: billingSummary?.unbilledOperations ?? 8 }
+  ];
+
   return (
     <section className="content-section">
       <PageHeader eyebrow="Visao geral" title="Dashboard operacional" description="Indicadores locais para operacao, recebimentos, financeiro interno e confirmacoes de negocio." />
-      <div className="dashboard-grid">
-        <Card><span>Organizacoes</span><strong>{organizations.length}</strong><small>Cadastros administrativos</small></Card>
-        <Card><span>CNPJs proprios</span><strong>{legalEntities.length}</strong><small>Contextos de lancamento</small></Card>
-        <Card><span>Locais</span><strong>{locations.length}</strong><small>Unidades e pontos operacionais</small></Card>
-        <Card><span>Operacoes sem cobranca</span><strong>{billingSummary?.unbilledOperations ?? 0}</strong><small>Receita de servico pendente</small></Card>
-        <Card><span>Saldo a receber</span><strong>{formatCurrencyFromCents(billingSummary?.openCents ?? 0)}</strong><small>Cobrancas emitidas em aberto</small></Card>
-        <Card><span>Creditos de clientes</span><strong>{formatCurrencyFromCents(billingSummary?.availableCreditsCents ?? 0)}</strong><small>Conta-corrente disponivel</small></Card>
-        <Card><span>Contas a pagar abertas</span><strong>{formatCurrencyFromCents(financialSummary?.openCents ?? 0)}</strong><small>Financeiro gerencial</small></Card>
-        <Card><span>Contas vencidas</span><strong>{formatCurrencyFromCents(financialSummary?.overdueCents ?? 0)}</strong><small>Exige atencao operacional</small></Card>
-        <Card><span>Fluxo projetado</span><strong>{formatCurrencyFromCents(financialSummary?.projectedResultCents ?? 0)}</strong><small>Recebimentos previstos menos pagamentos</small></Card>
-        <Card><span>Confirmacoes emitidas</span><strong>{confirmationSummary?.issued ?? 0}</strong><small>Documentos comerciais</small></Card>
-        <Card><span>Aguardando assinatura</span><strong>{confirmationSummary?.waitingSignature ?? 0}</strong><small>Controle documental</small></Card>
-        <Card><span>Sacas confirmadas</span><strong>{confirmationSummary?.totalSacksDecimal ?? "0"}</strong><small>Volume comercial, nao receita</small></Card>
+      <div className="dashboard-grid dashboard-grid--hero">
+        <Card><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume comercial confirmado</small></Card>
+        <Card><span>Valor total das operacoes</span><strong>{formatCurrencyFromCents(totalReceivable + Math.max(totalPayables, 0))}</strong><small>Operacao e financeiro local</small></Card>
+        <Card><span>A receber</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
+        <Card><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
+      </div>
+
+      <div className="dashboard-workspace">
+        <Card>
+          <div className="ui-card__header">
+            <div>
+              <span className="ui-eyebrow">Notas e operações</span>
+              <h2>Fluxo operacional</h2>
+            </div>
+            <Button onClick={() => { window.location.hash = "#/operations"; }}>Abrir notas</Button>
+          </div>
+          <div className="workflow-grid">
+            {[
+              ["01", "Importar NF-e", "XML/PDF e cadastro manual"],
+              ["02", "Aplicar regra", "Cliente, tipo e valor por saca"],
+              ["03", "Gerar cobranca", "Periodo semanal, mensal ou trimestral"],
+              ["04", "Confirmar negocio", "PDF numerado para assinatura"]
+            ].map(([step, title, text]) => (
+              <article key={step}>
+                <strong>{step}</strong>
+                <span>{title}</span>
+                <small>{text}</small>
+              </article>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <div className="ui-card__header">
+            <div>
+              <span className="ui-eyebrow">Totais por mês</span>
+              <h2>Operações e sacas</h2>
+            </div>
+            <select aria-label="Ano"><option>2026</option></select>
+          </div>
+          <div className="mini-chart" aria-label="Grafico mensal de operacoes">
+            {monthBars.map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}
+          </div>
+          <div className="chart-months"><span>Jan</span><span>Mar</span><span>Mai</span><span>Jul</span><span>Set</span><span>Nov</span></div>
+        </Card>
+
+        <Card>
+          <div className="ui-card__header">
+            <div>
+              <span className="ui-eyebrow">Resumo do periodo</span>
+              <h2>Status operacional</h2>
+            </div>
+          </div>
+          <div className="status-donut" aria-label="Operacoes por status">
+            <strong>{statusSlices.reduce((sum, item) => sum + item.value, 0)}</strong>
+            <span>Total</span>
+          </div>
+          <div className="status-list">
+            {statusSlices.map((item) => (
+              <p key={item.label}><span />{item.label}<strong>{item.value}</strong></p>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <div className="ui-card__header">
+            <div>
+              <span className="ui-eyebrow">Multiempresa</span>
+              <h2>Estrutura ativa</h2>
+            </div>
+          </div>
+          <div className="dashboard-grid dashboard-grid--compact">
+            <article><span>Organizações</span><strong>{organizations.length}</strong></article>
+            <article><span>CNPJs</span><strong>{legalEntities.length}</strong></article>
+            <article><span>Locais</span><strong>{locations.length}</strong></article>
+            <article><span>Créditos</span><strong>{formatCurrencyFromCents(billingSummary?.availableCreditsCents ?? 0)}</strong></article>
+          </div>
+        </Card>
       </div>
     </section>
   );

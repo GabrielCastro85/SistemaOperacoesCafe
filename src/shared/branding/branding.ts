@@ -37,11 +37,11 @@ const configs: Record<AppVariant, BrandingConfig> = {
     name: "Villa Coffee",
     appDisplayName: "Villa Coffee Operacoes",
     colors: {
-      primary: "#111111",
-      secondary: "#D7B46A",
-      accent: "#2F6B45",
-      surface: "#F6F0E3",
-      text: "#171717"
+      primary: "#0F0D0A",
+      secondary: "#D4A875",
+      accent: "#16B86A",
+      surface: "#F8F0E4",
+      text: "#1B1712"
     },
     logoCandidates: ["assets/branding/villa/logo.png", "assets/branding/villa/logo.svg", "assets/branding/villa/logo.webp"],
     iconCandidates: ["assets/branding/villa/icon.png", "assets/branding/villa/icon.svg", "assets/branding/villa/icon.webp"]
@@ -51,11 +51,11 @@ const configs: Record<AppVariant, BrandingConfig> = {
     name: "Grao & Grao",
     appDisplayName: "Grao & Grao Operacoes",
     colors: {
-      primary: "#1F6F43",
-      secondary: "#F3EFE2",
-      accent: "#6B4A2E",
-      surface: "#FFFFFF",
-      text: "#1D241F"
+      primary: "#073F28",
+      secondary: "#9A7449",
+      accent: "#05B866",
+      surface: "#F7F4EA",
+      text: "#17231C"
     },
     logoCandidates: ["assets/branding/grao/logo.png", "assets/branding/grao/logo.svg", "assets/branding/grao/logo.webp"],
     iconCandidates: ["assets/branding/grao/icon.png", "assets/branding/grao/icon.svg", "assets/branding/grao/icon.webp"]

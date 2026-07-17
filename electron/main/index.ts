@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
 import log from "electron-log/main.js";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getBuildVariantConfig } from "../../src/shared/buildVariants.js";
 import { initializeDatabase } from "./database/database.js";
@@ -8,7 +9,7 @@ import { AppRepository } from "./services/appRepository.js";
 import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js";
 
 let mainWindow: BrowserWindow | null = null;
-const buildVariant = getBuildVariantConfig(process.env.OPERACOES_CAFE_VARIANT ?? process.env.VITE_APP_BUILD_VARIANT);
+const buildVariant = getBuildVariantConfig(resolveRuntimeVariant());
 
 app.setName(buildVariant.displayName);
 app.setAppUserModelId(buildVariant.appId);
@@ -21,6 +22,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 640,
     title: buildVariant.displayName,
+    show: true,
     webPreferences: {
       preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),
       contextIsolation: true,
@@ -40,6 +42,10 @@ function createWindow(): void {
 
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
     log.error("Renderer failed to load", { errorCode, errorDescription, validatedUrl });
+  });
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
+    mainWindow?.focus();
   });
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
@@ -67,6 +73,7 @@ function bootstrap(): void {
   ensureAppDirectories(directories);
   log.initialize();
   log.transports.file.resolvePathFn = () => join(directories.logsDir, "main.log");
+  log.info("Starting application", { variant: buildVariant.variant, appId: buildVariant.appId, userData: directories.userData });
   const db = initializeDatabase(directories);
   const context = { version: app.getVersion(), directories, db, buildVariant };
   const repository = new AppRepository(db, directories);
@@ -74,14 +81,20 @@ function bootstrap(): void {
 }
 
 app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  bootstrap();
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+  try {
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    bootstrap();
+    createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  } catch (error) {
+    log.error("Fatal error during application startup", error);
+    dialog.showErrorBox("Falha ao iniciar", error instanceof Error ? error.message : String(error));
+    app.quit();
+  }
 });
 
 const singleInstance = app.requestSingleInstanceLock({ variant: buildVariant.variant });
@@ -100,3 +113,16 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+function resolveRuntimeVariant(): string | undefined {
+  const envVariant = process.env.OPERACOES_CAFE_VARIANT ?? process.env.VITE_APP_BUILD_VARIANT;
+  if (envVariant) return envVariant;
+  try {
+    const packagePath = join(app.getAppPath(), "package.json");
+    if (!existsSync(packagePath)) return undefined;
+    const metadata = JSON.parse(readFileSync(packagePath, "utf8")) as { operacoesCafeVariant?: string };
+    return metadata.operacoesCafeVariant;
+  } catch {
+    return undefined;
+  }
+}
