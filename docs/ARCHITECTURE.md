@@ -27,3 +27,5 @@ Na oitava etapa, Financeiro segue a mesma fronteira: React nao acessa SQLite nem
 Na conclusao da oitava etapa, anexos e relatorios usam selecao/abertura no processo principal. O renderer recebe tokens temporarios ao selecionar arquivos e IDs internos depois da copia. A geracao de PDF/Excel financeiro fica em `financialFiles`, reutilizando `exceljs` e escrita local sem servicos externos.
 
 Na nona etapa, Confirmacoes de negocio usam IPCs especificos para rascunho, origem por operacao/nota, participantes, itens, clausulas, pagamento, signatarios, emissao, assinatura externa, cancelamento, substituicao, dashboard e relatorios. PDFs e relatorios ficam em `dealConfirmationFiles`, sempre no processo principal, com copia para `userData` e hash persistido.
+
+Na decima etapa, o renderer foi reorganizado. `src/renderer/App.tsx` passou a ser apenas o ponto de montagem React. O workspace funcional anterior foi preservado em `src/renderer/pages/legacy/LegacyWorkspace.tsx` enquanto layout, navegacao, temas e componentes reutilizaveis foram movidos para `app`, `layouts` e `design-system`. Esta etapa nao altera SQLite, migrations ou IPCs.

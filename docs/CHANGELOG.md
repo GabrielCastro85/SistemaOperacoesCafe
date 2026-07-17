@@ -94,3 +94,15 @@
 - Adicionadas previa, emissao numerada, PDF local, hash SHA-256, importacao de PDF assinado externamente, cancelamento e substituicao.
 - Adicionadas telas de listagem, detalhes, templates, clausulas, relatorios e indicadores.
 - Adicionados IPCs e testes para confirmacoes, documentos, assinaturas, relatorios e isolamento multiempresa.
+
+## 0.10.0
+
+- Iniciada refatoracao profissional do frontend.
+- Reduzido `src/renderer/App.tsx` para ponto de montagem React.
+- Criadas estruturas `app`, `layouts`, `design-system`, `components`, `hooks`, `services`, `utils`, `types` e `styles`.
+- Adicionado `AppLayout` com sidebar recolhivel, grupos de navegacao, topbar contextual, organizacao e CNPJ ativo.
+- Adicionados tokens visuais, tema Villa/Grao/multiempresa e funcao de contraste automatico.
+- Adicionados componentes `Button`, `Input`, `Select`, `Card`, `Badge`, `StatusBadge`, `Alert`, `EmptyState`, `LoadingState`, `Tabs` e `DataTable`.
+- Adicionadas logos Villa Coffee e Grao & Grao em `public/assets/branding`.
+- Reorganizado Dashboard com blocos operacional, recebimentos, financeiro e confirmacoes.
+- Adicionados testes de design system, tema e navegacao.

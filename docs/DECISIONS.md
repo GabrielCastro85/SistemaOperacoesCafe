@@ -109,3 +109,11 @@ Participantes e itens salvam snapshots JSON. Essa decisao protege documentos emi
 ## Assinatura Externa Arquivada
 
 PDF assinado externamente e copiado para pasta interna e versionado com hash. A etapa registra o documento e seu status operacional, mas nao tenta validar certificado digital; isso evita uma falsa sensacao de validade juridica enquanto a infraestrutura criptografica completa nao existir.
+
+## Refatoracao Visual Incremental
+
+A etapa 10 separou o boot do renderer, layout, navegacao, tema e componentes sem reescrever regras de negocio. O workspace funcional antigo foi mantido em `pages/legacy` para reduzir risco de regressao; as proximas telas podem migrar gradualmente para paginas menores usando o design system.
+
+## Logos No Public Do Vite
+
+As logos padrao foram colocadas em `public/assets/branding` porque arquivos em `public` sao copiados para o build do renderer. A pasta `assets/branding` continua documentada para material-fonte e substituicoes locais.

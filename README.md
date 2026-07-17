@@ -73,11 +73,17 @@ A nona etapa adiciona Confirmacoes de negocio. O modulo cria confirmacoes manual
 
 PDFs de previa e emissao sao gerados localmente em `userData/documents/confirmations`, com hash SHA-256. PDFs assinados externamente podem ser importados e preservados como nova versao, mas o app nao valida criptograficamente assinatura digital nesta etapa.
 
+## Interface Profissional
+
+A decima etapa iniciou a refatoracao visual do renderer. `src/renderer/App.tsx` ficou responsavel apenas pelo boot React, a navegacao foi centralizada em `src/renderer/app`, o layout desktop em `src/renderer/layouts`, e o design system em `src/renderer/design-system`.
+
+O app agora possui sidebar recolhivel, topbar com organizacao e CNPJ ativo, tokens visuais, temas Villa/Grao/multiempresa, logos empacotadas em `public/assets/branding`, componentes reutilizaveis e dashboard reorganizado.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.
 - `electron/preload`: ponte segura para o renderer.
-- `src/renderer`: interface React.
+- `src/renderer`: interface React, layout, design system e paginas.
 - `src/shared`: tipos, schemas, branding e canais IPC.
 - `src/modules`: modulos atuais e placeholders futuros.
 - `docs`: documentacao de produto e arquitetura.
