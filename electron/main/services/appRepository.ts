@@ -31,6 +31,33 @@ import {
   creditAllocationInputSchema,
   clientPaymentInputSchema,
   paymentAllocationInputSchema,
+  expenseCategoryInputSchema,
+  costCenterInputSchema,
+  financialAccountInputSchema,
+  accountPayableInputSchema,
+  accountPayableAllocationInputSchema,
+  payableRecurringTemplateInputSchema,
+  payableInstallmentGroupInputSchema,
+  payablePaymentInputSchema,
+  payablePaymentAllocationInputSchema,
+  addPayableAttachmentInputSchema,
+  addPayablePaymentAttachmentInputSchema,
+  financialReportInputSchema,
+  financialReportFiltersSchema,
+  confirmationReportInputSchema,
+  dealClauseTemplateInputSchema,
+  dealConfirmationClauseInputSchema,
+  dealConfirmationDraftInputSchema,
+  dealConfirmationItemInputSchema,
+  dealConfirmationListFiltersSchema,
+  dealConfirmationPartyInputSchema,
+  dealConfirmationSignerInputSchema,
+  dealConfirmationSourceInputSchema,
+  dealConfirmationTemplateInputSchema,
+  dealConfirmationUpdateSchema,
+  dealPaymentTermInputSchema,
+  dealSignatureStatusSchema,
+  signedDealDocumentInputSchema,
   saveInstallationProfileSchema,
   updateInstallationProfileSchema
 } from "../../../src/shared/schemas/domainSchemas.js";
@@ -68,6 +95,35 @@ import type {
   ClientLedgerEntry,
   ClientPayment,
   BillingSummary,
+  ExpenseCategory,
+  CostCenter,
+  FinancialAccount,
+  AccountPayable,
+  AccountPayableDetail,
+  PayableRecurringTemplate,
+  PayableInstallmentGroup,
+  PayablePayment,
+  PayableDocumentAttachment,
+  FinancialReportGeneration,
+  FinancialReportPreview,
+  FinancialReportFilters,
+  FinancialSummary,
+  ConfirmationReportGeneration,
+  ConfirmationReportFilters,
+  DealClauseTemplate,
+  DealConfirmation,
+  DealConfirmationClause,
+  DealConfirmationDetail,
+  DealConfirmationDocumentVersion,
+  DealConfirmationItem,
+  DealConfirmationParty,
+  DealConfirmationSigner,
+  DealConfirmationStatus,
+  DealConfirmationSummary,
+  DealConfirmationTemplate,
+  DealPaymentTerm,
+  DealPartyRole,
+  DealPartySnapshot,
   Organization,
   OrganizationListItem
 } from "../../../src/shared/types/domain.js";
@@ -103,13 +159,38 @@ import {
   mapClientCreditAllocation,
   mapClientPayment,
   mapClientPaymentAllocation,
-  mapChargeDocumentVersion
+  mapChargeDocumentVersion,
+  mapExpenseCategory,
+  mapCostCenter,
+  mapFinancialAccount,
+  mapAccountPayable,
+  mapAccountPayableAllocation,
+  mapPayableRecurringTemplate,
+  mapPayableInstallmentGroup,
+  mapPayablePayment,
+  mapPayablePaymentAllocation,
+  mapPayableStatusHistory,
+  mapPayableDocumentAttachment,
+  mapFinancialReportGeneration,
+  mapDealClauseTemplate,
+  mapDealConfirmation,
+  mapDealConfirmationClause,
+  mapDealConfirmationDocumentVersion,
+  mapDealConfirmationItem,
+  mapDealConfirmationParty,
+  mapDealConfirmationSigner,
+  mapDealConfirmationStatusHistory,
+  mapDealConfirmationTemplate,
+  mapDealPaymentTerm
 } from "../database/mappers.js";
-import { divideDecimalText, multiplyDecimalByCents, normalizeDecimalText } from "../../../src/shared/utils/decimal.js";
+import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, normalizeDecimalText } from "../../../src/shared/utils/decimal.js";
 import { generateChargeDocuments } from "./chargeDocuments.js";
+import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
+import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
 import type { AppDirectories } from "../../../src/shared/types/domain.js";
 
 type DbRecord = Record<string, unknown>;
+type DealItemInput = ReturnType<typeof dealConfirmationItemInputSchema.parse> & { totalAmountCents?: number | null };
 
 export class AppRepository {
   constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories) {}
@@ -2011,6 +2092,1863 @@ export class AppRepository {
     if (charge.organizationId !== payment.organizationId || charge.ownLegalEntityId !== payment.ownLegalEntityId || charge.clientPartnerId !== payment.clientPartnerId) throw new Error("Pagamento fora do escopo da cobranca.");
   }
 
+  listExpenseCategories(organizationId: string): ExpenseCategory[] {
+    this.ensureDefaultExpenseCategories(organizationId);
+    return (this.db.prepare("SELECT * FROM expense_categories WHERE organization_id = ? ORDER BY is_active DESC, name").all(organizationId) as DbRecord[]).map(mapExpenseCategory);
+  }
+
+  createExpenseCategory(input: unknown): ExpenseCategory {
+    const data = expenseCategoryInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    if (data.parentCategoryId) this.assertExpenseCategoryScope(data.parentCategoryId, data.organizationId);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO expense_categories (id, organization_id, parent_category_id, name, code, expense_nature, description, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.organizationId, data.parentCategoryId, data.name, data.code, data.expenseNature, data.description, data.isActive ? 1 : 0, now, now);
+    return this.getExpenseCategory(id);
+  }
+
+  updateExpenseCategory(id: string, input: unknown): ExpenseCategory {
+    const current = this.getExpenseCategory(id);
+    const data = expenseCategoryInputSchema.parse(input);
+    if (current.organizationId !== data.organizationId) throw new Error("Categoria fora da organizacao.");
+    if (data.parentCategoryId) {
+      if (data.parentCategoryId === id) throw new Error("Categoria pai invalida.");
+      this.assertExpenseCategoryScope(data.parentCategoryId, data.organizationId);
+      this.assertNoExpenseCategoryCycle(id, data.parentCategoryId);
+    }
+    this.db.prepare("UPDATE expense_categories SET parent_category_id = ?, name = ?, code = ?, expense_nature = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?")
+      .run(data.parentCategoryId, data.name, data.code, data.expenseNature, data.description, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    return this.getExpenseCategory(id);
+  }
+
+  activateExpenseCategory(id: string): ExpenseCategory {
+    this.db.prepare("UPDATE expense_categories SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getExpenseCategory(id);
+  }
+
+  deactivateExpenseCategory(id: string): ExpenseCategory {
+    this.db.prepare("UPDATE expense_categories SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getExpenseCategory(id);
+  }
+
+  getExpenseCategory(id: string): ExpenseCategory {
+    const row = this.db.prepare("SELECT * FROM expense_categories WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Categoria nao encontrada.");
+    return mapExpenseCategory(row);
+  }
+
+  listCostCenters(filters: { organizationId: string; ownLegalEntityId?: string; status?: "active" | "inactive" | "all" }): CostCenter[] {
+    const where = ["organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) {
+      where.push("(own_legal_entity_id = ? OR own_legal_entity_id IS NULL)");
+      params.push(filters.ownLegalEntityId);
+    }
+    return (this.db.prepare(`SELECT * FROM cost_centers WHERE ${where.join(" AND ")} ORDER BY is_active DESC, name`).all(...params) as DbRecord[])
+      .map(mapCostCenter)
+      .filter((item) => this.matchesStatus(item.isActive, filters.status ?? "all"));
+  }
+
+  createCostCenter(input: unknown): CostCenter {
+    const data = costCenterInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    if (data.ownLegalEntityId) this.assertLegalEntityScope(data.ownLegalEntityId, data.organizationId);
+    if (data.locationId) this.assertLocationScope(data.locationId, data.organizationId, data.ownLegalEntityId);
+    if (data.parentCostCenterId) this.assertCostCenterScope(data.parentCostCenterId, data.organizationId);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO cost_centers (id, organization_id, own_legal_entity_id, location_id, parent_cost_center_id, name, code, description, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.organizationId, data.ownLegalEntityId, data.locationId, data.parentCostCenterId, data.name, data.code, data.description, data.isActive ? 1 : 0, now, now);
+    return this.getCostCenter(id);
+  }
+
+  updateCostCenter(id: string, input: unknown): CostCenter {
+    const current = this.getCostCenter(id);
+    const data = costCenterInputSchema.parse(input);
+    if (current.organizationId !== data.organizationId) throw new Error("Centro de custo fora da organizacao.");
+    if (data.ownLegalEntityId) this.assertLegalEntityScope(data.ownLegalEntityId, data.organizationId);
+    if (data.locationId) this.assertLocationScope(data.locationId, data.organizationId, data.ownLegalEntityId);
+    if (data.parentCostCenterId) {
+      if (data.parentCostCenterId === id) throw new Error("Centro pai invalido.");
+      this.assertCostCenterScope(data.parentCostCenterId, data.organizationId);
+      this.assertNoCostCenterCycle(id, data.parentCostCenterId);
+    }
+    this.db.prepare("UPDATE cost_centers SET own_legal_entity_id = ?, location_id = ?, parent_cost_center_id = ?, name = ?, code = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?")
+      .run(data.ownLegalEntityId, data.locationId, data.parentCostCenterId, data.name, data.code, data.description, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    return this.getCostCenter(id);
+  }
+
+  activateCostCenter(id: string): CostCenter {
+    this.db.prepare("UPDATE cost_centers SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getCostCenter(id);
+  }
+
+  deactivateCostCenter(id: string): CostCenter {
+    this.db.prepare("UPDATE cost_centers SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getCostCenter(id);
+  }
+
+  getCostCenter(id: string): CostCenter {
+    const row = this.db.prepare("SELECT * FROM cost_centers WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Centro de custo nao encontrado.");
+    return mapCostCenter(row);
+  }
+
+  listFinancialAccounts(filters: { organizationId: string; ownLegalEntityId?: string; status?: "active" | "inactive" | "all" }): FinancialAccount[] {
+    const where = ["organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) {
+      where.push("own_legal_entity_id = ?");
+      params.push(filters.ownLegalEntityId);
+    }
+    return (this.db.prepare(`SELECT * FROM financial_accounts WHERE ${where.join(" AND ")} ORDER BY is_active DESC, name`).all(...params) as DbRecord[])
+      .map(mapFinancialAccount)
+      .filter((item) => this.matchesStatus(item.isActive, filters.status ?? "all"));
+  }
+
+  createFinancialAccount(input: unknown): FinancialAccount {
+    const data = financialAccountInputSchema.parse(input);
+    this.assertLegalEntityScope(data.ownLegalEntityId, data.organizationId);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO financial_accounts (id, organization_id, own_legal_entity_id, name, account_type, bank_name, branch, account_identifier_masked, pix_key_description, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.organizationId, data.ownLegalEntityId, data.name, data.accountType, data.bankName, data.branch, data.accountIdentifierMasked, data.pixKeyDescription, data.notes, data.isActive ? 1 : 0, now, now);
+    return this.getFinancialAccount(id);
+  }
+
+  updateFinancialAccount(id: string, input: unknown): FinancialAccount {
+    const current = this.getFinancialAccount(id);
+    const data = financialAccountInputSchema.parse(input);
+    if (current.organizationId !== data.organizationId || current.ownLegalEntityId !== data.ownLegalEntityId) throw new Error("Conta financeira fora do escopo.");
+    this.db.prepare("UPDATE financial_accounts SET name = ?, account_type = ?, bank_name = ?, branch = ?, account_identifier_masked = ?, pix_key_description = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?")
+      .run(data.name, data.accountType, data.bankName, data.branch, data.accountIdentifierMasked, data.pixKeyDescription, data.notes, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    return this.getFinancialAccount(id);
+  }
+
+  activateFinancialAccount(id: string): FinancialAccount {
+    this.db.prepare("UPDATE financial_accounts SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getFinancialAccount(id);
+  }
+
+  deactivateFinancialAccount(id: string): FinancialAccount {
+    this.db.prepare("UPDATE financial_accounts SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getFinancialAccount(id);
+  }
+
+  getFinancialAccount(id: string): FinancialAccount {
+    const row = this.db.prepare("SELECT * FROM financial_accounts WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Conta financeira nao encontrada.");
+    return mapFinancialAccount(row);
+  }
+
+  listAccountsPayable(filters: { organizationId: string; ownLegalEntityId?: string; status?: string; supplierPartnerId?: string }): AccountPayable[] {
+    const where = ["organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) {
+      where.push("own_legal_entity_id = ?");
+      params.push(filters.ownLegalEntityId);
+    }
+    if (filters.status) {
+      where.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters.supplierPartnerId) {
+      where.push("supplier_partner_id = ?");
+      params.push(filters.supplierPartnerId);
+    }
+    return (this.db.prepare(`SELECT * FROM accounts_payable WHERE ${where.join(" AND ")} ORDER BY due_date, created_at DESC`).all(...params) as DbRecord[]).map((row) => this.refreshPayableComputedStatus(mapAccountPayable(row)));
+  }
+
+  getAccountPayable(id: string): AccountPayableDetail {
+    const payable = this.getPayable(id);
+    return {
+      payable,
+      allocations: (this.db.prepare("SELECT * FROM account_payable_allocations WHERE account_payable_id = ? ORDER BY created_at").all(id) as DbRecord[]).map(mapAccountPayableAllocation),
+      payments: (this.db.prepare("SELECT * FROM payable_payment_allocations WHERE account_payable_id = ? AND cancelled_at IS NULL ORDER BY allocated_at").all(id) as DbRecord[]).map(mapPayablePaymentAllocation),
+      attachments: (this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ? AND removed_at IS NULL ORDER BY created_at").all(id) as DbRecord[]).map(mapPayableDocumentAttachment),
+      history: (this.db.prepare("SELECT * FROM payable_status_history WHERE account_payable_id = ? ORDER BY changed_at").all(id) as DbRecord[]).map(mapPayableStatusHistory)
+    };
+  }
+
+  createAccountPayableDraft(input: unknown): AccountPayableDetail {
+    const data = accountPayableInputSchema.parse(input);
+    this.assertPayableInputScope(data);
+    const totals = this.calculatePayableAmounts(data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const status = data.amountStatus === "PENDING" ? "DRAFT" : "DRAFT";
+    this.db.prepare(`INSERT INTO accounts_payable (
+      id, organization_id, own_legal_entity_id, supplier_partner_id, supplier_legal_entity_id, payee_name_snapshot, payee_tax_id_snapshot,
+      category_id, default_cost_center_id, default_location_id, source, description, document_type, document_number,
+      competence_date, issue_date, due_date, original_amount_cents, discount_cents, interest_cents, penalty_cents, other_additions_cents,
+      final_amount_cents, paid_amount_cents, open_amount_cents, amount_status, status, notes, internal_notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, status, data.notes, data.internalNotes, now, now);
+    this.recordPayableStatus(id, null, status, "Rascunho criado");
+    return this.getAccountPayable(id);
+  }
+
+  updateAccountPayable(id: string, input: unknown): AccountPayableDetail {
+    const current = this.getPayable(id);
+    if (["PAID", "CANCELLED"].includes(current.status)) throw new Error("Conta paga ou cancelada nao pode ser editada silenciosamente.");
+    const data = accountPayableInputSchema.parse(input);
+    this.assertPayableInputScope(data);
+    if (current.organizationId !== data.organizationId || current.ownLegalEntityId !== data.ownLegalEntityId) throw new Error("Conta fora do escopo.");
+    const totals = this.calculatePayableAmounts(data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, current.paidAmountCents);
+    this.db.prepare(`UPDATE accounts_payable SET supplier_partner_id = ?, supplier_legal_entity_id = ?, payee_name_snapshot = ?, payee_tax_id_snapshot = ?,
+      category_id = ?, default_cost_center_id = ?, default_location_id = ?, source = ?, description = ?, document_type = ?, document_number = ?,
+      competence_date = ?, issue_date = ?, due_date = ?, original_amount_cents = ?, discount_cents = ?, interest_cents = ?, penalty_cents = ?,
+      other_additions_cents = ?, final_amount_cents = ?, open_amount_cents = ?, amount_status = ?, notes = ?, internal_notes = ?, updated_at = ? WHERE id = ?`)
+      .run(data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, data.notes, data.internalNotes, new Date().toISOString(), id);
+    this.refreshPayableStatus(id);
+    return this.getAccountPayable(id);
+  }
+
+  confirmAccountPayable(id: string): AccountPayableDetail {
+    const run = this.db.transaction(() => {
+      const payable = this.getPayable(id);
+      if (payable.amountStatus !== "CONFIRMED" || payable.finalAmountCents === null) throw new Error("Informe valor confirmado antes de abrir a conta.");
+      const next = payable.openAmountCents === 0 ? "PAID" : "OPEN";
+      this.db.prepare("UPDATE accounts_payable SET status = ?, confirmed_at = COALESCE(confirmed_at, ?), updated_at = ? WHERE id = ?").run(next, new Date().toISOString(), new Date().toISOString(), id);
+      this.recordPayableStatus(id, payable.status, next, "Conta confirmada");
+      this.validatePayableAllocations(id);
+    });
+    run();
+    return this.getAccountPayable(id);
+  }
+
+  duplicateAccountPayable(id: string): AccountPayableDetail {
+    const original = this.getPayable(id);
+    return this.createAccountPayableDraft({
+      organizationId: original.organizationId,
+      ownLegalEntityId: original.ownLegalEntityId,
+      supplierPartnerId: original.supplierPartnerId,
+      supplierLegalEntityId: original.supplierLegalEntityId,
+      payeeNameSnapshot: original.payeeNameSnapshot,
+      payeeTaxIdSnapshot: original.payeeTaxIdSnapshot,
+      categoryId: original.categoryId,
+      defaultCostCenterId: original.defaultCostCenterId,
+      defaultLocationId: original.defaultLocationId,
+      source: "MANUAL",
+      description: `${original.description} (copia)`,
+      documentType: original.documentType,
+      documentNumber: null,
+      competenceDate: original.competenceDate,
+      issueDate: original.issueDate,
+      dueDate: original.dueDate,
+      originalAmountCents: original.originalAmountCents,
+      discountCents: original.discountCents,
+      interestCents: original.interestCents,
+      penaltyCents: original.penaltyCents,
+      otherAdditionsCents: original.otherAdditionsCents,
+      amountStatus: original.amountStatus,
+      notes: original.notes,
+      internalNotes: original.internalNotes
+    });
+  }
+
+  findPossiblePayableDuplicates(input: unknown): AccountPayable[] {
+    const data = accountPayableInputSchema.parse(input);
+    const totals = this.calculatePayableAmounts(data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents);
+    const params: unknown[] = [data.organizationId, data.ownLegalEntityId, data.competenceDate, data.dueDate, data.documentNumber ?? "", data.supplierPartnerId ?? "", totals.finalAmountCents ?? data.originalAmountCents ?? -1];
+    return (this.db.prepare(`SELECT * FROM accounts_payable WHERE organization_id = ? AND own_legal_entity_id = ? AND status != 'CANCELLED'
+      AND (competence_date = ? OR due_date = ? OR COALESCE(document_number, '') = ? OR COALESCE(supplier_partner_id, '') = ? OR COALESCE(final_amount_cents, original_amount_cents, -1) = ?)
+      ORDER BY created_at DESC LIMIT 20`).all(...params) as DbRecord[]).map(mapAccountPayable);
+  }
+
+  addPayableAllocation(input: unknown): AccountPayableDetail {
+    const data = accountPayableAllocationInputSchema.parse(input);
+    const payable = this.getPayable(data.accountPayableId);
+    if (payable.status === "PAID") throw new Error("Rateio de conta paga exige ajuste reforcado.");
+    if (data.costCenterId) this.assertCostCenterScope(data.costCenterId, payable.organizationId);
+    if (data.locationId) this.assertLocationScope(data.locationId, payable.organizationId, payable.ownLegalEntityId);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO account_payable_allocations (id, account_payable_id, cost_center_id, location_id, allocation_amount_cents, allocation_basis_points, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, payable.id, data.costCenterId, data.locationId, data.allocationAmountCents, data.allocationBasisPoints, data.description, now, now);
+    this.validatePayableAllocations(payable.id);
+    return this.getAccountPayable(payable.id);
+  }
+
+  removePayableAllocation(id: string): AccountPayableDetail {
+    const row = this.db.prepare("SELECT * FROM account_payable_allocations WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Rateio nao encontrado.");
+    const payableId = String(row.account_payable_id);
+    this.db.prepare("DELETE FROM account_payable_allocations WHERE id = ?").run(id);
+    this.validatePayableAllocations(payableId);
+    return this.getAccountPayable(payableId);
+  }
+
+  contestAccountPayable(id: string, reason: string): AccountPayableDetail {
+    const payable = this.getPayable(id);
+    if (payable.status === "PAID" || payable.status === "CANCELLED") throw new Error("Conta paga ou cancelada nao pode ser contestada.");
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE accounts_payable SET status = 'CONTESTED', contested_at = ?, contest_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
+    this.recordPayableStatus(id, payable.status, "CONTESTED", reason);
+    return this.getAccountPayable(id);
+  }
+
+  cancelAccountPayable(id: string, reason: string): AccountPayableDetail {
+    const run = this.db.transaction(() => {
+      const payable = this.getPayable(id);
+      if (payable.paidAmountCents > 0) throw new Error("Cancele ou estorne pagamentos antes de cancelar esta conta.");
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE accounts_payable SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
+      this.recordPayableStatus(id, payable.status, "CANCELLED", reason);
+    });
+    run();
+    return this.getAccountPayable(id);
+  }
+
+  listPayableRecurringTemplates(organizationId: string): PayableRecurringTemplate[] {
+    return (this.db.prepare("SELECT * FROM payable_recurring_templates WHERE organization_id = ? ORDER BY is_active DESC, description").all(organizationId) as DbRecord[]).map(mapPayableRecurringTemplate);
+  }
+
+  createPayableRecurringTemplate(input: unknown): PayableRecurringTemplate {
+    const data = payableRecurringTemplateInputSchema.parse(input);
+    this.assertRecurringInputScope(data);
+    if (data.amountMode === "FIXED" && data.fixedAmountCents === null) throw new Error("Recorrencia fixa exige valor.");
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO payable_recurring_templates (
+      id, organization_id, own_legal_entity_id, supplier_partner_id, supplier_legal_entity_id, payee_name_snapshot, category_id,
+      default_cost_center_id, default_location_id, description, amount_mode, fixed_amount_cents, estimated_amount_cents, frequency, due_day,
+      generation_lead_days, start_date, end_date, auto_generate_on_open, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.description, data.amountMode, data.fixedAmountCents, data.estimatedAmountCents, data.frequency, data.dueDay, data.generationLeadDays, data.startDate, data.endDate, data.autoGenerateOnOpen ? 1 : 0, data.isActive ? 1 : 0, now, now);
+    return this.getPayableRecurringTemplate(id);
+  }
+
+  getPayableRecurringTemplate(id: string): PayableRecurringTemplate {
+    const row = this.db.prepare("SELECT * FROM payable_recurring_templates WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Recorrencia nao encontrada.");
+    return mapPayableRecurringTemplate(row);
+  }
+
+  previewPayableRecurringGeneration(templateId: string, monthsAhead = 3): Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: string }> {
+    const template = this.getPayableRecurringTemplate(templateId);
+    return this.buildRecurringOccurrences(template, monthsAhead);
+  }
+
+  generatePayableRecurringPeriod(templateId: string, monthsAhead = 3): AccountPayable[] {
+    const run = this.db.transaction(() => {
+      const template = this.getPayableRecurringTemplate(templateId);
+      const created: AccountPayable[] = [];
+      this.buildRecurringOccurrences(template, monthsAhead).forEach((occurrence) => {
+        const existing = this.db.prepare("SELECT id FROM accounts_payable WHERE recurring_template_id = ? AND competence_date = ? AND status != 'CANCELLED'").get(template.id, occurrence.competenceDate);
+        if (existing) return;
+        const detail = this.createAccountPayableDraft({
+          organizationId: template.organizationId,
+          ownLegalEntityId: template.ownLegalEntityId,
+          supplierPartnerId: template.supplierPartnerId,
+          supplierLegalEntityId: template.supplierLegalEntityId,
+          payeeNameSnapshot: template.payeeNameSnapshot,
+          payeeTaxIdSnapshot: null,
+          categoryId: template.categoryId,
+          defaultCostCenterId: template.defaultCostCenterId,
+          defaultLocationId: template.defaultLocationId,
+          source: "RECURRING",
+          description: template.description,
+          documentType: null,
+          documentNumber: null,
+          competenceDate: occurrence.competenceDate,
+          issueDate: null,
+          dueDate: occurrence.dueDate,
+          originalAmountCents: occurrence.amountCents,
+          discountCents: 0,
+          interestCents: 0,
+          penaltyCents: 0,
+          otherAdditionsCents: 0,
+          amountStatus: occurrence.amountStatus,
+          notes: null,
+          internalNotes: null
+        });
+        this.db.prepare("UPDATE accounts_payable SET recurring_template_id = ?, status = ? WHERE id = ?").run(template.id, occurrence.amountStatus === "CONFIRMED" ? "OPEN" : "SCHEDULED", detail.payable.id);
+        created.push(this.getPayable(detail.payable.id));
+      });
+      const last = created.at(-1);
+      if (last) this.db.prepare("UPDATE payable_recurring_templates SET last_generated_competence = ?, updated_at = ? WHERE id = ?").run(last.competenceDate, new Date().toISOString(), template.id);
+      return created;
+    });
+    return run();
+  }
+
+  createPayableInstallmentGroup(input: unknown): { group: PayableInstallmentGroup; payables: AccountPayable[] } {
+    const data = payableInstallmentGroupInputSchema.parse(input);
+    this.assertPayableInputScope({
+      organizationId: data.organizationId,
+      ownLegalEntityId: data.ownLegalEntityId,
+      supplierPartnerId: data.supplierPartnerId,
+      supplierLegalEntityId: data.supplierLegalEntityId,
+      categoryId: data.categoryId,
+      defaultCostCenterId: data.defaultCostCenterId,
+      defaultLocationId: data.defaultLocationId
+    });
+    const run = this.db.transaction(() => {
+      const groupId = randomUUID();
+      const now = new Date().toISOString();
+      this.db.prepare("INSERT INTO payable_installment_groups (id, organization_id, own_legal_entity_id, supplier_partner_id, description, total_amount_cents, installment_count, first_due_date, interval_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(groupId, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.description, data.totalAmountCents, data.installmentCount, data.firstDueDate, data.intervalType, now, now);
+      const amounts = splitCents(data.totalAmountCents, data.installmentCount);
+      const payables: AccountPayable[] = [];
+      amounts.forEach((amount, index) => {
+        const dueDate = data.intervalType === "DAYS_30" ? addDays(data.firstDueDate, index * 30) : addMonthsSafe(data.firstDueDate, index);
+        const detail = this.createAccountPayableDraft({
+          organizationId: data.organizationId,
+          ownLegalEntityId: data.ownLegalEntityId,
+          supplierPartnerId: data.supplierPartnerId,
+          supplierLegalEntityId: data.supplierLegalEntityId,
+          payeeNameSnapshot: data.payeeNameSnapshot,
+          payeeTaxIdSnapshot: null,
+          categoryId: data.categoryId,
+          defaultCostCenterId: data.defaultCostCenterId,
+          defaultLocationId: data.defaultLocationId,
+          source: "INSTALLMENT",
+          description: `${data.description} ${index + 1}/${data.installmentCount}`,
+          documentType: null,
+          documentNumber: `${index + 1}/${data.installmentCount}`,
+          competenceDate: dueDate.slice(0, 8) + "01",
+          issueDate: null,
+          dueDate,
+          originalAmountCents: amount,
+          discountCents: 0,
+          interestCents: 0,
+          penaltyCents: 0,
+          otherAdditionsCents: 0,
+          amountStatus: "CONFIRMED",
+          notes: null,
+          internalNotes: null
+        });
+        this.db.prepare("UPDATE accounts_payable SET installment_group_id = ?, installment_number = ?, installment_count = ?, status = 'OPEN' WHERE id = ?").run(groupId, index + 1, data.installmentCount, detail.payable.id);
+        payables.push(this.getPayable(detail.payable.id));
+      });
+      return { group: this.getPayableInstallmentGroup(groupId), payables };
+    });
+    return run();
+  }
+
+  getPayableInstallmentGroup(id: string): PayableInstallmentGroup {
+    const row = this.db.prepare("SELECT * FROM payable_installment_groups WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Parcelamento nao encontrado.");
+    return mapPayableInstallmentGroup(row);
+  }
+
+  createPayablePayment(input: unknown): PayablePayment {
+    const data = payablePaymentInputSchema.parse(input);
+    this.assertLegalEntityScope(data.ownLegalEntityId, data.organizationId);
+    if (data.financialAccountId) {
+      const account = this.getFinancialAccount(data.financialAccountId);
+      if (account.organizationId !== data.organizationId || account.ownLegalEntityId !== data.ownLegalEntityId) throw new Error("Conta financeira fora do escopo do pagamento.");
+    }
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO payable_payments (id, organization_id, own_legal_entity_id, financial_account_id, payment_date, amount_cents, payment_method, transaction_reference, payee_name_snapshot, notes, attachment_path, attachment_hash, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?)")
+      .run(id, data.organizationId, data.ownLegalEntityId, data.financialAccountId, data.paymentDate, data.amountCents, data.paymentMethod, data.transactionReference, data.payeeNameSnapshot, data.notes, data.attachmentPath, data.attachmentHash, now, now);
+    return this.getPayablePayment(id);
+  }
+
+  allocatePayablePayment(input: unknown): AccountPayableDetail {
+    const data = payablePaymentAllocationInputSchema.parse(input);
+    const run = this.db.transaction(() => {
+      const payment = this.getPayablePayment(data.payablePaymentId);
+      const payable = this.getPayable(data.accountPayableId);
+      if (payment.organizationId !== payable.organizationId || payment.ownLegalEntityId !== payable.ownLegalEntityId) throw new Error("Pagamento fora do escopo da conta.");
+      if (payable.openAmountCents === null) throw new Error("Conta sem valor confirmado.");
+      const allocated = this.sumPayablePaymentAllocated(payment.id);
+      if (allocated + data.amountCents > payment.amountCents) throw new Error("Pagamento sem saldo disponivel.");
+      if (data.amountCents > payable.openAmountCents) throw new Error("Pagamento maior que saldo aberto.");
+      this.db.prepare("INSERT INTO payable_payment_allocations (id, payable_payment_id, account_payable_id, amount_cents, allocated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(randomUUID(), payment.id, payable.id, data.amountCents, new Date().toISOString());
+      this.recalculatePayable(payable.id);
+    });
+    run();
+    return this.getAccountPayable(data.accountPayableId);
+  }
+
+  cancelPayablePayment(id: string, reason: string): PayablePayment {
+    const run = this.db.transaction(() => {
+      const payment = this.getPayablePayment(id);
+      const now = new Date().toISOString();
+      const payableIds = (this.db.prepare("SELECT account_payable_id FROM payable_payment_allocations WHERE payable_payment_id = ? AND cancelled_at IS NULL").all(id) as Array<{ account_payable_id: string }>).map((row) => row.account_payable_id);
+      this.db.prepare("UPDATE payable_payments SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
+      this.db.prepare("UPDATE payable_payment_allocations SET cancelled_at = ?, cancellation_reason = ? WHERE payable_payment_id = ? AND cancelled_at IS NULL").run(now, reason, id);
+      payableIds.forEach((payableId) => this.recalculatePayable(payableId));
+      return payment;
+    });
+    run();
+    return this.getPayablePayment(id);
+  }
+
+  getPayablePayment(id: string): PayablePayment {
+    const row = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Pagamento de conta nao encontrado.");
+    return mapPayablePayment(row);
+  }
+
+  listPayablePayments(filters: { organizationId: string; ownLegalEntityId?: string }): PayablePayment[] {
+    const where = ["organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) {
+      where.push("own_legal_entity_id = ?");
+      params.push(filters.ownLegalEntityId);
+    }
+    return (this.db.prepare(`SELECT * FROM payable_payments WHERE ${where.join(" AND ")} ORDER BY payment_date DESC`).all(...params) as DbRecord[]).map(mapPayablePayment);
+  }
+
+  addPayableAttachment(input: unknown): PayableDocumentAttachment {
+    const data = addPayableAttachmentInputSchema.parse(input);
+    if (!this.directories) throw new Error("Diretorios da aplicacao indisponiveis.");
+    const payable = this.getPayable(data.accountPayableId);
+    const id = randomUUID();
+    const stored = storePayableAttachment({ sourcePath: data.sourcePath ?? "", directories: this.directories, organizationId: payable.organizationId, ownLegalEntityId: payable.ownLegalEntityId, accountPayableId: payable.id, attachmentId: id });
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO payable_document_attachments (
+      id, organization_id, own_legal_entity_id, account_payable_id, payable_payment_id, attachment_kind, attachment_type,
+      original_file_name, stored_file_path, file_hash, mime_type, file_extension, file_size, description, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, NULL, 'PAYABLE_DOCUMENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, payable.organizationId, payable.ownLegalEntityId, payable.id, data.attachmentType, stored.originalFileName, stored.storedFilePath, stored.fileHash, stored.mimeType, stored.fileExtension, stored.fileSize, data.description, now, now);
+    return this.getPayableAttachment(id);
+  }
+
+  addPayablePaymentAttachment(input: unknown): PayableDocumentAttachment {
+    const data = addPayablePaymentAttachmentInputSchema.parse(input);
+    if (!this.directories) throw new Error("Diretorios da aplicacao indisponiveis.");
+    const payment = this.getPayablePayment(data.payablePaymentId);
+    const payableId = this.findFirstPayableForPayment(payment.id);
+    if (!payableId) throw new Error("Pagamento precisa estar alocado antes de anexar comprovante.");
+    const payable = this.getPayable(payableId);
+    if (payable.organizationId !== payment.organizationId || payable.ownLegalEntityId !== payment.ownLegalEntityId) throw new Error("Pagamento fora do escopo da conta.");
+    const id = randomUUID();
+    const stored = storePayableAttachment({ sourcePath: data.sourcePath ?? "", directories: this.directories, organizationId: payable.organizationId, ownLegalEntityId: payable.ownLegalEntityId, accountPayableId: payable.id, payablePaymentId: payment.id, attachmentId: id });
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO payable_document_attachments (
+      id, organization_id, own_legal_entity_id, account_payable_id, payable_payment_id, attachment_kind, attachment_type,
+      original_file_name, stored_file_path, file_hash, mime_type, file_extension, file_size, description, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'PAYMENT_PROOF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, payable.organizationId, payable.ownLegalEntityId, payable.id, payment.id, data.attachmentType, stored.originalFileName, stored.storedFilePath, stored.fileHash, stored.mimeType, stored.fileExtension, stored.fileSize, data.description, now, now);
+    return this.getPayableAttachment(id);
+  }
+
+  listPayableAttachments(accountPayableId: string): PayableDocumentAttachment[] {
+    const payable = this.getPayable(accountPayableId);
+    return (this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ? AND payable_payment_id IS NULL AND removed_at IS NULL ORDER BY created_at DESC").all(payable.id) as DbRecord[]).map(mapPayableDocumentAttachment);
+  }
+
+  listPayablePaymentAttachments(payablePaymentId: string): PayableDocumentAttachment[] {
+    const payment = this.getPayablePayment(payablePaymentId);
+    return (this.db.prepare("SELECT * FROM payable_document_attachments WHERE payable_payment_id = ? AND organization_id = ? AND own_legal_entity_id = ? AND removed_at IS NULL ORDER BY created_at DESC").all(payment.id, payment.organizationId, payment.ownLegalEntityId) as DbRecord[]).map(mapPayableDocumentAttachment);
+  }
+
+  getPayableAttachment(id: string): PayableDocumentAttachment {
+    const row = this.db.prepare("SELECT * FROM payable_document_attachments WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Anexo nao encontrado.");
+    return mapPayableDocumentAttachment(row);
+  }
+
+  getPayableAttachmentPath(id: string): string {
+    const attachment = this.getPayableAttachment(id);
+    if (attachment.removedAt) throw new Error("Anexo removido.");
+    if (attachment.accountPayableId) this.getPayable(attachment.accountPayableId);
+    if (attachment.payablePaymentId) this.getPayablePayment(attachment.payablePaymentId);
+    return attachment.storedFilePath;
+  }
+
+  removePayableAttachment(id: string, reason: string | null): PayableDocumentAttachment {
+    const attachment = this.getPayableAttachment(id);
+    const payable = attachment.accountPayableId ? this.getPayable(attachment.accountPayableId) : null;
+    if (payable && payable.status !== "DRAFT" && !reason?.trim()) throw new Error("Informe motivo para remover anexo de registro confirmado.");
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE payable_document_attachments SET removed_at = ?, removal_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
+    return this.getPayableAttachment(id);
+  }
+
+  previewFinancialReport(input: unknown): FinancialReportPreview {
+    const data = financialReportFiltersSchema.parse(input);
+    const payables = this.queryFinancialReportPayables(data, "ACCOUNTS_PAYABLE");
+    return this.buildFinancialPreview("ACCOUNTS_PAYABLE", data, payables);
+  }
+
+  async generateFinancialReport(input: unknown): Promise<FinancialReportGeneration> {
+    const data = financialReportInputSchema.parse(input);
+    if (!this.directories) throw new Error("Diretorios da aplicacao indisponiveis.");
+    const organization = this.getOrganization(data.filters.organizationId);
+    const ownLegalEntity = data.filters.ownLegalEntityId ? this.getLegalEntity(data.filters.ownLegalEntityId) : null;
+    if (ownLegalEntity && ownLegalEntity.organizationId !== organization.id) throw new Error("CNPJ proprio fora da organizacao.");
+    const payables = this.queryFinancialReportPayables(data.filters, data.reportType);
+    const payments = this.queryFinancialReportPayments(data.filters, data.reportType);
+    const preview = this.buildFinancialPreview(data.reportType, data.filters, payables, payments);
+    const id = randomUUID();
+    const result = await generateFinancialReportFile({
+      directories: this.directories,
+      organization,
+      ownLegalEntity,
+      reportType: data.reportType,
+      format: data.format,
+      filters: data.filters,
+      preview,
+      payables,
+      payments,
+      categories: this.listExpenseCategories(organization.id),
+      locations: this.listLocations({ organizationId: organization.id, status: "all" }),
+      costCenters: this.listCostCenters({ organizationId: organization.id, status: "all" }),
+      partners: this.listBusinessPartners({ organizationId: organization.id, status: "all" }),
+      reportId: id
+    });
+    this.db.prepare("INSERT INTO financial_report_generations (id, organization_id, own_legal_entity_id, report_type, format, filters_json, file_name, stored_file_path, file_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, organization.id, ownLegalEntity?.id ?? null, data.reportType, data.format, JSON.stringify(data.filters), result.fileName, result.storedFilePath, result.fileHash, new Date().toISOString());
+    return this.getFinancialReportGeneration(id);
+  }
+
+  listFinancialReportGenerations(filters: { organizationId: string; ownLegalEntityId?: string | null }): FinancialReportGeneration[] {
+    const where = ["organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) {
+      where.push("own_legal_entity_id = ?");
+      params.push(filters.ownLegalEntityId);
+    }
+    return (this.db.prepare(`SELECT * FROM financial_report_generations WHERE ${where.join(" AND ")} ORDER BY created_at DESC`).all(...params) as DbRecord[]).map(mapFinancialReportGeneration);
+  }
+
+  getFinancialReportGeneration(id: string): FinancialReportGeneration {
+    const row = this.db.prepare("SELECT * FROM financial_report_generations WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Relatorio nao encontrado.");
+    return mapFinancialReportGeneration(row);
+  }
+
+  getFinancialReportPath(id: string): string {
+    return this.getFinancialReportGeneration(id).storedFilePath;
+  }
+
+  getFinancialSummary(organizationId: string): FinancialSummary {
+    this.assertOrganizationWritable(organizationId);
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = today.slice(0, 8) + "01";
+    const monthEnd = endOfMonth(monthStart);
+    const sum = (sql: string, ...params: unknown[]): number => Number((this.db.prepare(sql).get(...params) as { total: number | null }).total ?? 0);
+    const payableThisMonthCents = sum("SELECT COALESCE(SUM(final_amount_cents),0) AS total FROM accounts_payable WHERE organization_id = ? AND status != 'CANCELLED' AND due_date BETWEEN ? AND ?", organizationId, monthStart, monthEnd);
+    const paidThisMonthCents = sum("SELECT COALESCE(SUM(amount_cents),0) AS total FROM payable_payments WHERE organization_id = ? AND status = 'CONFIRMED' AND payment_date BETWEEN ? AND ?", organizationId, monthStart, monthEnd);
+    const openCents = sum("SELECT COALESCE(SUM(open_amount_cents),0) AS total FROM accounts_payable WHERE organization_id = ? AND status NOT IN ('CANCELLED','PAID')", organizationId);
+    const overdueCents = sum("SELECT COALESCE(SUM(open_amount_cents),0) AS total FROM accounts_payable WHERE organization_id = ? AND status != 'CANCELLED' AND open_amount_cents > 0 AND due_date < ?", organizationId, today);
+    const dueNext7DaysCents = sum("SELECT COALESCE(SUM(open_amount_cents),0) AS total FROM accounts_payable WHERE organization_id = ? AND status != 'CANCELLED' AND open_amount_cents > 0 AND due_date BETWEEN ? AND ?", organizationId, today, addDays(today, 7));
+    const fixedExpensesCents = sum("SELECT COALESCE(SUM(ap.final_amount_cents),0) AS total FROM accounts_payable ap JOIN expense_categories ec ON ec.id = ap.category_id WHERE ap.organization_id = ? AND ap.status != 'CANCELLED' AND ec.expense_nature = 'FIXED'", organizationId);
+    const variableExpensesCents = sum("SELECT COALESCE(SUM(ap.final_amount_cents),0) AS total FROM accounts_payable ap JOIN expense_categories ec ON ec.id = ap.category_id WHERE ap.organization_id = ? AND ap.status != 'CANCELLED' AND ec.expense_nature = 'VARIABLE'", organizationId);
+    const byCategory = (this.db.prepare("SELECT ap.category_id, ec.name AS label, COALESCE(SUM(ap.final_amount_cents),0) AS amount FROM accounts_payable ap LEFT JOIN expense_categories ec ON ec.id = ap.category_id WHERE ap.organization_id = ? AND ap.status != 'CANCELLED' GROUP BY ap.category_id, ec.name ORDER BY amount DESC").all(organizationId) as DbRecord[]).map((row) => ({ categoryId: textOrNullLocal(row.category_id), label: String(row.label ?? "Sem categoria"), amountCents: Number(row.amount) }));
+    const byLocation = (this.db.prepare("SELECT ap.default_location_id, COALESCE(l.name, 'Sem local') AS label, COALESCE(SUM(ap.final_amount_cents),0) AS amount FROM accounts_payable ap LEFT JOIN locations l ON l.id = ap.default_location_id WHERE ap.organization_id = ? AND ap.status != 'CANCELLED' GROUP BY ap.default_location_id, l.name ORDER BY amount DESC").all(organizationId) as DbRecord[]).map((row) => ({ locationId: textOrNullLocal(row.default_location_id), label: String(row.label), amountCents: Number(row.amount) }));
+    const byLegalEntity = (this.db.prepare("SELECT ap.own_legal_entity_id, le.trade_name AS label, COALESCE(SUM(ap.final_amount_cents),0) AS amount FROM accounts_payable ap JOIN legal_entities le ON le.id = ap.own_legal_entity_id WHERE ap.organization_id = ? AND ap.status != 'CANCELLED' GROUP BY ap.own_legal_entity_id, le.trade_name ORDER BY amount DESC").all(organizationId) as DbRecord[]).map((row) => ({ ownLegalEntityId: String(row.own_legal_entity_id), label: String(row.label), amountCents: Number(row.amount) }));
+    const receivableOpenCents = this.getBillingSummary(organizationId).openCents;
+    return { payableThisMonthCents, paidThisMonthCents, openCents, overdueCents, dueNext7DaysCents, fixedExpensesCents, variableExpensesCents, byCategory, byLocation, byLegalEntity, projectedResultCents: receivableOpenCents - openCents, receivableOpenCents, payableOpenCents: openCents };
+  }
+
+  private getPayable(id: string): AccountPayable {
+    const row = this.db.prepare("SELECT * FROM accounts_payable WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Conta a pagar nao encontrada.");
+    return this.refreshPayableComputedStatus(mapAccountPayable(row));
+  }
+
+  private ensureDefaultExpenseCategories(organizationId: string): void {
+    this.assertOrganizationWritable(organizationId);
+    const now = new Date().toISOString();
+    const defaults: Array<{ code: string; name: string; nature: string }> = [
+      { code: "RENT", name: "Aluguel", nature: "FIXED" },
+      { code: "WATER", name: "Agua", nature: "VARIABLE" },
+      { code: "POWER", name: "Energia eletrica", nature: "VARIABLE" },
+      { code: "PHONE_INTERNET", name: "Internet e telefone", nature: "FIXED" },
+      { code: "ACCOUNTING", name: "Contabilidade", nature: "FIXED" },
+      { code: "TAXES", name: "Impostos e taxas", nature: "TAX" },
+      { code: "MAINTENANCE", name: "Manutencao", nature: "VARIABLE" },
+      { code: "OFFICE_SUPPLIES", name: "Material de escritorio", nature: "VARIABLE" },
+      { code: "OUTSOURCED_SERVICES", name: "Servicos terceirizados", nature: "OTHER" },
+      { code: "BANK_FEES", name: "Despesas bancarias", nature: "FINANCIAL" },
+      { code: "OTHER_EXPENSES", name: "Outras despesas", nature: "OTHER" }
+    ];
+    defaults.forEach((item) => {
+      const exists = this.db.prepare("SELECT id FROM expense_categories WHERE organization_id = ? AND code = ?").get(organizationId, item.code);
+      if (!exists) {
+        this.db.prepare("INSERT INTO expense_categories (id, organization_id, parent_category_id, name, code, expense_nature, description, is_active, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, NULL, 1, ?, ?)")
+          .run(randomUUID(), organizationId, item.name, item.code, item.nature, now, now);
+      }
+    });
+  }
+
+  private assertExpenseCategoryScope(id: string, organizationId: string): ExpenseCategory {
+    const category = this.getExpenseCategory(id);
+    if (category.organizationId !== organizationId) throw new Error("Categoria fora da organizacao.");
+    return category;
+  }
+
+  private assertCostCenterScope(id: string, organizationId: string): CostCenter {
+    const center = this.getCostCenter(id);
+    if (center.organizationId !== organizationId) throw new Error("Centro de custo fora da organizacao.");
+    return center;
+  }
+
+  private assertLegalEntityScope(id: string, organizationId: string): LegalEntity {
+    const entity = this.getLegalEntity(id);
+    if (entity.organizationId !== organizationId) throw new Error("CNPJ proprio fora da organizacao.");
+    return entity;
+  }
+
+  private assertLocationScope(id: string, organizationId: string, ownLegalEntityId?: string | null): Location {
+    const location = this.getLocation(id);
+    if (location.organizationId !== organizationId) throw new Error("Local fora da organizacao.");
+    if (ownLegalEntityId && location.legalEntityId && location.legalEntityId !== ownLegalEntityId) throw new Error("Local vinculado a outro CNPJ proprio.");
+    return location;
+  }
+
+  private assertNoExpenseCategoryCycle(id: string, parentId: string): void {
+    let current: string | null = parentId;
+    while (current) {
+      if (current === id) throw new Error("Ciclo na hierarquia de categorias.");
+      const row = this.db.prepare("SELECT parent_category_id FROM expense_categories WHERE id = ?").get(current) as { parent_category_id: string | null } | undefined;
+      current = row?.parent_category_id ?? null;
+    }
+  }
+
+  private assertNoCostCenterCycle(id: string, parentId: string): void {
+    let current: string | null = parentId;
+    while (current) {
+      if (current === id) throw new Error("Ciclo na hierarquia de centros de custo.");
+      const row = this.db.prepare("SELECT parent_cost_center_id FROM cost_centers WHERE id = ?").get(current) as { parent_cost_center_id: string | null } | undefined;
+      current = row?.parent_cost_center_id ?? null;
+    }
+  }
+
+  private assertPayableInputScope(data: {
+    organizationId: string;
+    ownLegalEntityId: string;
+    supplierPartnerId: string | null;
+    supplierLegalEntityId?: string | null;
+    categoryId: string;
+    defaultCostCenterId: string | null;
+    defaultLocationId: string | null;
+  }): void {
+    this.assertLegalEntityScope(data.ownLegalEntityId, data.organizationId);
+    this.assertExpenseCategoryScope(data.categoryId, data.organizationId);
+    if (data.defaultCostCenterId) this.assertCostCenterScope(data.defaultCostCenterId, data.organizationId);
+    if (data.defaultLocationId) this.assertLocationScope(data.defaultLocationId, data.organizationId, data.ownLegalEntityId);
+    if (data.supplierPartnerId) {
+      const partner = this.getBusinessPartner(data.supplierPartnerId);
+      if (partner.organizationId !== data.organizationId) throw new Error("Fornecedor fora da organizacao.");
+    }
+    if (data.supplierLegalEntityId) {
+      const legal = this.getPartnerLegalEntity(data.supplierLegalEntityId);
+      if (data.supplierPartnerId && legal.businessPartnerId !== data.supplierPartnerId) throw new Error("Estabelecimento nao pertence ao favorecido.");
+    }
+  }
+
+  private assertRecurringInputScope(data: ReturnType<typeof payableRecurringTemplateInputSchema.parse>): void {
+    this.assertPayableInputScope({
+      organizationId: data.organizationId,
+      ownLegalEntityId: data.ownLegalEntityId,
+      supplierPartnerId: data.supplierPartnerId,
+      supplierLegalEntityId: data.supplierLegalEntityId,
+      categoryId: data.categoryId,
+      defaultCostCenterId: data.defaultCostCenterId,
+      defaultLocationId: data.defaultLocationId
+    });
+  }
+
+  private calculatePayableAmounts(original: number | null, discount: number, interest: number, penalty: number, additions: number, paid = 0): { finalAmountCents: number | null; openAmountCents: number | null } {
+    if (original === null) return { finalAmountCents: null, openAmountCents: null };
+    const finalAmountCents = original - discount + interest + penalty + additions;
+    if (finalAmountCents < 0) throw new Error("Valor final nao pode ser negativo.");
+    const openAmountCents = Math.max(0, finalAmountCents - paid);
+    return { finalAmountCents, openAmountCents };
+  }
+
+  private recalculatePayable(id: string): void {
+    const payable = this.getPayable(id);
+    const paid = Number((this.db.prepare("SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payable_payment_allocations WHERE account_payable_id = ? AND cancelled_at IS NULL").get(id) as { total: number }).total);
+    const totals = this.calculatePayableAmounts(payable.originalAmountCents, payable.discountCents, payable.interestCents, payable.penaltyCents, payable.otherAdditionsCents, paid);
+    let status = payable.status;
+    if (!["DRAFT", "SCHEDULED", "CONTESTED", "CANCELLED"].includes(status) && totals.openAmountCents !== null) {
+      status = totals.openAmountCents === 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "OPEN";
+      if (status === "OPEN" && payable.dueDate < new Date().toISOString().slice(0, 10)) status = "OVERDUE";
+    }
+    this.db.prepare("UPDATE accounts_payable SET paid_amount_cents = ?, open_amount_cents = ?, final_amount_cents = ?, status = ?, updated_at = ? WHERE id = ?")
+      .run(paid, totals.openAmountCents, totals.finalAmountCents, status, new Date().toISOString(), id);
+  }
+
+  private refreshPayableStatus(id: string): void {
+    this.recalculatePayable(id);
+  }
+
+  private refreshPayableComputedStatus(payable: AccountPayable): AccountPayable {
+    if (payable.status === "OPEN" && payable.openAmountCents !== null && payable.openAmountCents > 0 && payable.dueDate < new Date().toISOString().slice(0, 10)) {
+      this.db.prepare("UPDATE accounts_payable SET status = 'OVERDUE', updated_at = ? WHERE id = ?").run(new Date().toISOString(), payable.id);
+      return { ...payable, status: "OVERDUE" };
+    }
+    return payable;
+  }
+
+  private validatePayableAllocations(id: string): void {
+    const payable = this.getPayable(id);
+    const count = Number((this.db.prepare("SELECT COUNT(*) AS total FROM account_payable_allocations WHERE account_payable_id = ?").get(id) as { total: number }).total);
+    if (count === 0 || payable.finalAmountCents === null) return;
+    const total = Number((this.db.prepare("SELECT COALESCE(SUM(allocation_amount_cents), 0) AS total FROM account_payable_allocations WHERE account_payable_id = ?").get(id) as { total: number }).total);
+    if (total !== payable.finalAmountCents) throw new Error("Soma dos rateios deve ser igual ao valor final da conta.");
+  }
+
+  private sumPayablePaymentAllocated(paymentId: string): number {
+    return Number((this.db.prepare("SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payable_payment_allocations WHERE payable_payment_id = ? AND cancelled_at IS NULL").get(paymentId) as { total: number }).total);
+  }
+
+  private recordPayableStatus(id: string, previous: string | null, next: string, reason: string): void {
+    this.db.prepare("INSERT INTO payable_status_history (id, account_payable_id, previous_status, new_status, reason, changed_by_user_id, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), id, previous, next, reason, "usuario-provisorio", new Date().toISOString());
+  }
+
+  private buildRecurringOccurrences(template: PayableRecurringTemplate, monthsAhead: number): Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: "ESTIMATED" | "CONFIRMED" }> {
+    const result: Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: "ESTIMATED" | "CONFIRMED" }> = [];
+    let competence = (template.lastGeneratedCompetence ? addMonthsSafe(template.lastGeneratedCompetence, 1) : template.startDate).slice(0, 8) + "01";
+    for (let index = 0; index < monthsAhead; index += 1) {
+      if (template.endDate && competence > template.endDate) break;
+      const dueDate = withDayOfMonth(competence, template.dueDay);
+      result.push({
+        competenceDate: competence,
+        dueDate,
+        amountCents: template.amountMode === "FIXED" ? template.fixedAmountCents : template.estimatedAmountCents,
+        amountStatus: template.amountMode === "FIXED" ? "CONFIRMED" : "ESTIMATED"
+      });
+      competence = addMonthsSafe(competence, frequencyMonths(template.frequency));
+    }
+    return result;
+  }
+
+  private cleanOptionalTaxId(value: string | null): string | null {
+    return value ? value.replace(/\D/g, "") : null;
+  }
+
+  private findFirstPayableForPayment(paymentId: string): string | null {
+    const row = this.db.prepare("SELECT account_payable_id FROM payable_payment_allocations WHERE payable_payment_id = ? AND cancelled_at IS NULL ORDER BY allocated_at LIMIT 1").get(paymentId) as { account_payable_id: string } | undefined;
+    return row?.account_payable_id ?? null;
+  }
+
+  private queryFinancialReportPayables(filters: FinancialReportFilters, reportType: string): AccountPayable[] {
+    this.assertOrganizationWritable(filters.organizationId);
+    const where = ["ap.organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) {
+      this.assertLegalEntityScope(filters.ownLegalEntityId, filters.organizationId);
+      where.push("ap.own_legal_entity_id = ?");
+      params.push(filters.ownLegalEntityId);
+    }
+    if (filters.dateStart) { where.push("ap.due_date >= ?"); params.push(filters.dateStart); }
+    if (filters.dateEnd) { where.push("ap.due_date <= ?"); params.push(filters.dateEnd); }
+    if (filters.categoryId) { this.assertExpenseCategoryScope(filters.categoryId, filters.organizationId); where.push("ap.category_id = ?"); params.push(filters.categoryId); }
+    if (filters.locationId) { this.assertLocationScope(filters.locationId, filters.organizationId, filters.ownLegalEntityId); where.push("ap.default_location_id = ?"); params.push(filters.locationId); }
+    if (filters.costCenterId) { this.assertCostCenterScope(filters.costCenterId, filters.organizationId); where.push("ap.default_cost_center_id = ?"); params.push(filters.costCenterId); }
+    if (filters.supplierPartnerId) { where.push("ap.supplier_partner_id = ?"); params.push(filters.supplierPartnerId); }
+    if (filters.status) { where.push("ap.status = ?"); params.push(filters.status); } else { where.push("ap.status != 'CANCELLED'"); }
+    if (reportType === "OVERDUE_PAYABLES") { where.push("ap.open_amount_cents > 0 AND ap.due_date < ?"); params.push(new Date().toISOString().slice(0, 10)); }
+    if (reportType === "RECURRING") where.push("ap.recurring_template_id IS NOT NULL");
+    if (reportType === "INSTALLMENTS") where.push("ap.installment_group_id IS NOT NULL");
+    if (reportType === "FIXED_VARIABLE") where.push("ec.expense_nature IN ('FIXED','VARIABLE')");
+    return (this.db.prepare(`SELECT ap.* FROM accounts_payable ap LEFT JOIN expense_categories ec ON ec.id = ap.category_id WHERE ${where.join(" AND ")} ORDER BY ap.due_date, ap.description`).all(...params) as DbRecord[]).map(mapAccountPayable);
+  }
+
+  private queryFinancialReportPayments(filters: FinancialReportFilters, reportType: string): PayablePayment[] {
+    this.assertOrganizationWritable(filters.organizationId);
+    const where = ["organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) { where.push("own_legal_entity_id = ?"); params.push(filters.ownLegalEntityId); }
+    if (filters.dateStart) { where.push("payment_date >= ?"); params.push(filters.dateStart); }
+    if (filters.dateEnd) { where.push("payment_date <= ?"); params.push(filters.dateEnd); }
+    if (reportType !== "PAYMENTS" && reportType !== "PROJECTED_CASH_FLOW") return [];
+    return (this.db.prepare(`SELECT * FROM payable_payments WHERE ${where.join(" AND ")} ORDER BY payment_date`).all(...params) as DbRecord[]).map(mapPayablePayment);
+  }
+
+  private buildFinancialPreview(reportType: FinancialReportPreview["reportType"], filters: FinancialReportFilters, payables: AccountPayable[], payments: PayablePayment[] = []): FinancialReportPreview {
+    const today = new Date().toISOString().slice(0, 10);
+    const totalFinalCents = payables.reduce((sum, item) => sum + (item.finalAmountCents ?? 0), 0);
+    const totalPaidCents = reportType === "PAYMENTS" ? payments.reduce((sum, item) => sum + item.amountCents, 0) : payables.reduce((sum, item) => sum + item.paidAmountCents, 0);
+    const totalOpenCents = payables.reduce((sum, item) => sum + (item.openAmountCents ?? 0), 0);
+    const totalOverdueCents = payables.filter((item) => item.status !== "CANCELLED" && (item.openAmountCents ?? 0) > 0 && item.dueDate < today).reduce((sum, item) => sum + (item.openAmountCents ?? 0), 0);
+    return { reportType, filters, recordCount: reportType === "PAYMENTS" ? payments.length : payables.length, totalFinalCents, totalPaidCents, totalOpenCents, totalOverdueCents };
+  }
+
+  listDealConfirmations(input: unknown = {}): DealConfirmation[] {
+    const filters = dealConfirmationListFiltersSchema.optional().parse(input) ?? {};
+    return (this.db.prepare("SELECT * FROM deal_confirmations ORDER BY confirmation_date DESC, updated_at DESC").all() as DbRecord[])
+      .map(mapDealConfirmation)
+      .filter((item) => this.isOrganizationAllowed(item.organizationId))
+      .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
+      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
+      .filter((item) => !filters.status || filters.status === "all" || item.status === filters.status)
+      .filter((item) => !filters.signatureStatus || filters.signatureStatus === "all" || item.signatureStatus === filters.signatureStatus)
+      .filter((item) => !filters.dateStart || item.confirmationDate >= filters.dateStart)
+      .filter((item) => !filters.dateEnd || item.confirmationDate <= filters.dateEnd)
+      .filter((item) => !filters.productId || this.dealHasProduct(item.id, filters.productId))
+      .filter((item) => filters.withFiscalDocument === undefined || this.dealHasFiscalDocument(item.id) === filters.withFiscalDocument)
+      .filter((item) => filters.withOperation === undefined || this.dealHasOperation(item.id) === filters.withOperation)
+      .filter((item) => this.matchesDealSearch(item.id, filters.search));
+  }
+
+  getDealConfirmation(id: string): DealConfirmationDetail {
+    const row = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Confirmacao nao encontrada.");
+    const confirmation = mapDealConfirmation(row);
+    if (!this.isOrganizationAllowed(confirmation.organizationId)) throw new Error("Confirmacao nao autorizada.");
+    const parties = (this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ? ORDER BY sort_order, party_role").all(id) as DbRecord[]).map(mapDealConfirmationParty);
+    const items = (this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ? ORDER BY sort_order").all(id) as DbRecord[]).map(mapDealConfirmationItem);
+    const operations = (this.db.prepare("SELECT o.* FROM operations o JOIN deal_confirmation_operations dco ON dco.operation_id = o.id WHERE dco.deal_confirmation_id = ? ORDER BY o.operation_date").all(id) as DbRecord[]).map(mapOperation);
+    const fiscalDocuments = (this.db.prepare("SELECT fd.* FROM fiscal_documents fd JOIN deal_confirmation_fiscal_documents dcfd ON dcfd.fiscal_document_id = fd.id WHERE dcfd.deal_confirmation_id = ? ORDER BY fd.issue_date").all(id) as DbRecord[]).map(mapFiscalDocument);
+    const clauses = (this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ? ORDER BY sort_order").all(id) as DbRecord[]).map(mapDealConfirmationClause);
+    const paymentTerms = (this.db.prepare("SELECT * FROM deal_payment_terms WHERE deal_confirmation_id = ? ORDER BY sort_order").all(id) as DbRecord[]).map(mapDealPaymentTerm);
+    const signers = (this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ? ORDER BY signature_order").all(id) as DbRecord[]).map(mapDealConfirmationSigner);
+    const documents = (this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ? ORDER BY version_number").all(id) as DbRecord[]).map(mapDealConfirmationDocumentVersion);
+    const history = (this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ? ORDER BY changed_at").all(id) as DbRecord[]).map(mapDealConfirmationStatusHistory);
+    return { confirmation, parties, items, operations, fiscalDocuments, clauses, paymentTerms, signers, documents, history, pendingIssues: parseDealIssues(confirmation.pendingIssuesJson) };
+  }
+
+  createDealConfirmationDraft(input: unknown): DealConfirmationDetail {
+    const data = dealConfirmationDraftInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    const own = this.getLegalEntity(data.ownLegalEntityId);
+    if (own.organizationId !== data.organizationId) throw new Error("CNPJ proprio pertence a outra organizacao.");
+    if (data.templateId) this.assertDealTemplate(data.templateId, data.organizationId, data.ownLegalEntityId);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const template = data.templateId ? this.getDealConfirmationTemplate(data.templateId) : this.getDefaultDealTemplate(data.organizationId, data.ownLegalEntityId);
+    const trx = this.db.transaction(() => {
+      this.db.prepare(`INSERT INTO deal_confirmations (
+        id, organization_id, own_legal_entity_id, template_id, confirmation_number, temporary_reference,
+        confirmation_date, negotiation_date, status, signature_status, currency_code, total_quantity_sacks_decimal,
+        total_commercial_amount_cents, delivery_location_snapshot, delivery_start_date, delivery_end_date,
+        payment_terms_snapshot, quality_terms_snapshot, general_terms_snapshot, public_notes, internal_notes,
+        template_snapshot_json, pending_issues_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
+        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, `TMP-${now.slice(0, 10).replace(/-/g, "")}-${id.slice(0, 8)}`, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, template ? JSON.stringify(template) : null, now, now);
+      this.addDealPartyInternal({ dealConfirmationId: id, partyRole: "ISSUER", ownLegalEntityId: own.id, businessPartnerId: null, partnerLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 0 });
+      this.recordDealStatus(id, null, "DRAFT", "Rascunho criado");
+    });
+    trx();
+    this.refreshDealTotals(id);
+    return this.getDealConfirmation(id);
+  }
+
+  createDealConfirmationFromOperations(input: unknown): DealConfirmationDetail {
+    const data = dealConfirmationSourceInputSchema.parse(input);
+    if (data.operationIds.length === 0) throw new Error("Selecione ao menos uma operacao.");
+    const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
+    const trx = this.db.transaction(() => {
+      data.operationIds.forEach((operationId) => {
+        this.linkDealOperationInternal(draft.confirmation.id, operationId);
+        const operation = this.getOperation(operationId);
+        const product = operation.productId ? this.getProduct(operation.productId) : null;
+        this.addDealItemInternal({
+          dealConfirmationId: draft.confirmation.id,
+          sortOrder: this.nextDealSortOrder("deal_confirmation_items", draft.confirmation.id),
+          productId: operation.productId,
+          productNameSnapshot: product?.name ?? "Cafe",
+          productDescriptionSnapshot: product?.description ?? null,
+          cropSnapshot: null,
+          qualitySnapshot: null,
+          packagingSnapshot: null,
+          originSnapshot: null,
+          destinationSnapshot: null,
+          quantitySacksDecimal: operation.quantitySacks,
+          sackWeightKgDecimal: product?.defaultSackWeightKg ? normalizeDecimalText(String(product.defaultSackWeightKg)) : "60",
+          unitPriceDecimal: "0",
+          totalAmountCents: null,
+          totalOverrideReason: null,
+          deliveryStartDate: null,
+          deliveryEndDate: null,
+          deliveryLocationSnapshot: null,
+          notes: `Origem: operacao ${operation.id}`
+        });
+      });
+    });
+    trx();
+    this.refreshDealTotals(draft.confirmation.id);
+    return this.getDealConfirmation(draft.confirmation.id);
+  }
+
+  createDealConfirmationFromFiscalDocuments(input: unknown): DealConfirmationDetail {
+    const data = dealConfirmationSourceInputSchema.parse(input);
+    if (data.fiscalDocumentIds.length === 0) throw new Error("Selecione ao menos uma nota.");
+    const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
+    const trx = this.db.transaction(() => {
+      data.fiscalDocumentIds.forEach((documentId) => {
+        this.linkDealFiscalDocumentInternal(draft.confirmation.id, documentId);
+        const detail = this.getFiscalDocument(documentId);
+        detail.items.forEach((item) => {
+          const product = item.productId ? this.getProduct(item.productId) : null;
+          this.addDealItemInternal({
+            dealConfirmationId: draft.confirmation.id,
+            sortOrder: this.nextDealSortOrder("deal_confirmation_items", draft.confirmation.id),
+            productId: item.productId,
+            productNameSnapshot: product?.name ?? item.description,
+            productDescriptionSnapshot: item.description,
+            cropSnapshot: null,
+            qualitySnapshot: null,
+            packagingSnapshot: null,
+            originSnapshot: null,
+            destinationSnapshot: null,
+            quantitySacksDecimal: item.sacksQuantity ?? item.quantity,
+            sackWeightKgDecimal: product?.defaultSackWeightKg ? normalizeDecimalText(String(product.defaultSackWeightKg)) : "60",
+            unitPriceDecimal: item.unitPriceDecimal,
+            totalAmountCents: item.totalAmountCents,
+            totalOverrideReason: "Valor oficial importado da nota fiscal.",
+            deliveryStartDate: null,
+            deliveryEndDate: null,
+            deliveryLocationSnapshot: null,
+            notes: `Origem: NF ${detail.document.documentNumber}`
+          });
+        });
+      });
+    });
+    trx();
+    this.refreshDealTotals(draft.confirmation.id);
+    return this.getDealConfirmation(draft.confirmation.id);
+  }
+
+  duplicateDealConfirmationAsDraft(id: string): DealConfirmationDetail {
+    const source = this.getDealConfirmation(id);
+    const draft = this.createDealConfirmationDraft({
+      organizationId: source.confirmation.organizationId,
+      ownLegalEntityId: source.confirmation.ownLegalEntityId,
+      templateId: source.confirmation.templateId,
+      confirmationDate: new Date().toISOString().slice(0, 10),
+      negotiationDate: source.confirmation.negotiationDate,
+      deliveryLocationSnapshot: source.confirmation.deliveryLocationSnapshot,
+      deliveryStartDate: source.confirmation.deliveryStartDate,
+      deliveryEndDate: source.confirmation.deliveryEndDate,
+      paymentTermsSnapshot: source.confirmation.paymentTermsSnapshot,
+      qualityTermsSnapshot: source.confirmation.qualityTermsSnapshot,
+      generalTermsSnapshot: source.confirmation.generalTermsSnapshot,
+      publicNotes: source.confirmation.publicNotes,
+      internalNotes: source.confirmation.internalNotes
+    });
+    const trx = this.db.transaction(() => {
+      source.parties.filter((party) => party.partyRole !== "ISSUER").forEach((party) => this.addDealPartyInternal({ ...party, dealConfirmationId: draft.confirmation.id }));
+      source.items.forEach((item) => this.addDealItemInternal({ ...item, dealConfirmationId: draft.confirmation.id, totalAmountCents: item.totalWasManuallyOverridden ? item.totalAmountCents : null, totalOverrideReason: item.totalOverrideReason }));
+      source.clauses.forEach((clause) => this.addDealClauseInternal({ ...clause, dealConfirmationId: draft.confirmation.id }));
+      source.paymentTerms.forEach((term) => this.addDealPaymentTermInternal({ ...term, dealConfirmationId: draft.confirmation.id }));
+      source.signers.forEach((signer) => this.addDealSignerInternal({ ...signer, dealConfirmationId: draft.confirmation.id, signatureStatus: "PENDING", signedAt: null }));
+    });
+    trx();
+    this.refreshDealTotals(draft.confirmation.id);
+    return this.getDealConfirmation(draft.confirmation.id);
+  }
+
+  updateDealConfirmationDraft(id: string, input: unknown): DealConfirmationDetail {
+    this.assertDealEditable(id);
+    const data = dealConfirmationUpdateSchema.parse(input);
+    const current = this.getDealConfirmation(id).confirmation;
+    if (data.templateId) this.assertDealTemplate(data.templateId, current.organizationId, current.ownLegalEntityId);
+    this.db.prepare(`UPDATE deal_confirmations SET
+      template_id = COALESCE(@templateId, template_id),
+      confirmation_date = COALESCE(@confirmationDate, confirmation_date),
+      negotiation_date = @negotiationDate,
+      delivery_location_snapshot = @deliveryLocationSnapshot,
+      delivery_start_date = @deliveryStartDate,
+      delivery_end_date = @deliveryEndDate,
+      payment_terms_snapshot = @paymentTermsSnapshot,
+      quality_terms_snapshot = @qualityTermsSnapshot,
+      general_terms_snapshot = @generalTermsSnapshot,
+      public_notes = @publicNotes,
+      internal_notes = @internalNotes,
+      updated_at = @updatedAt
+      WHERE id = @id`)
+      .run({
+        id,
+        templateId: data.templateId ?? current.templateId,
+        confirmationDate: data.confirmationDate ?? current.confirmationDate,
+        negotiationDate: data.negotiationDate ?? current.negotiationDate,
+        deliveryLocationSnapshot: data.deliveryLocationSnapshot ?? current.deliveryLocationSnapshot,
+        deliveryStartDate: data.deliveryStartDate ?? current.deliveryStartDate,
+        deliveryEndDate: data.deliveryEndDate ?? current.deliveryEndDate,
+        paymentTermsSnapshot: data.paymentTermsSnapshot ?? current.paymentTermsSnapshot,
+        qualityTermsSnapshot: data.qualityTermsSnapshot ?? current.qualityTermsSnapshot,
+        generalTermsSnapshot: data.generalTermsSnapshot ?? current.generalTermsSnapshot,
+        publicNotes: data.publicNotes ?? current.publicNotes,
+        internalNotes: data.internalNotes ?? current.internalNotes,
+        updatedAt: new Date().toISOString()
+      });
+    return this.getDealConfirmation(id);
+  }
+
+  addDealConfirmationItem(input: unknown): DealConfirmationItem {
+    const data = dealConfirmationItemInputSchema.parse(input);
+    this.assertDealEditable(data.dealConfirmationId);
+    const item = this.addDealItemInternal(data);
+    this.refreshDealTotals(data.dealConfirmationId);
+    return item;
+  }
+
+  updateDealConfirmationItem(id: string, input: unknown): DealConfirmationItem {
+    const current = this.getDealItem(id);
+    this.assertDealEditable(current.dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_items WHERE id = ?").run(id);
+    const item = this.addDealItemInternal({ ...dealConfirmationItemInputSchema.parse(input), dealConfirmationId: current.dealConfirmationId });
+    this.refreshDealTotals(current.dealConfirmationId);
+    return item;
+  }
+
+  removeDealConfirmationItem(id: string): DealConfirmationDetail {
+    const item = this.getDealItem(id);
+    this.assertDealEditable(item.dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_items WHERE id = ?").run(id);
+    this.refreshDealTotals(item.dealConfirmationId);
+    return this.getDealConfirmation(item.dealConfirmationId);
+  }
+
+  addDealConfirmationParty(input: unknown): DealConfirmationParty {
+    const data = dealConfirmationPartyInputSchema.parse(input);
+    this.assertDealEditable(data.dealConfirmationId);
+    return this.addDealPartyInternal(data);
+  }
+
+  updateDealConfirmationParty(id: string, input: unknown): DealConfirmationParty {
+    const current = this.getDealParty(id);
+    this.assertDealEditable(current.dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_parties WHERE id = ?").run(id);
+    return this.addDealPartyInternal({ ...dealConfirmationPartyInputSchema.parse(input), dealConfirmationId: current.dealConfirmationId });
+  }
+
+  removeDealConfirmationParty(id: string): DealConfirmationDetail {
+    const party = this.getDealParty(id);
+    this.assertDealEditable(party.dealConfirmationId);
+    if (party.partyRole === "ISSUER") throw new Error("Emissora obrigatoria nao pode ser removida.");
+    this.db.prepare("DELETE FROM deal_confirmation_parties WHERE id = ?").run(id);
+    return this.getDealConfirmation(party.dealConfirmationId);
+  }
+
+  linkDealOperation(dealConfirmationId: string, operationId: string): DealConfirmationDetail {
+    this.assertDealEditableOrIssued(dealConfirmationId);
+    this.linkDealOperationInternal(dealConfirmationId, operationId);
+    return this.getDealConfirmation(dealConfirmationId);
+  }
+
+  unlinkDealOperation(dealConfirmationId: string, operationId: string): DealConfirmationDetail {
+    this.assertDealEditable(dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_operations WHERE deal_confirmation_id = ? AND operation_id = ?").run(dealConfirmationId, operationId);
+    return this.getDealConfirmation(dealConfirmationId);
+  }
+
+  linkDealFiscalDocument(dealConfirmationId: string, fiscalDocumentId: string): DealConfirmationDetail {
+    this.assertDealEditableOrIssued(dealConfirmationId);
+    this.linkDealFiscalDocumentInternal(dealConfirmationId, fiscalDocumentId);
+    return this.getDealConfirmation(dealConfirmationId);
+  }
+
+  unlinkDealFiscalDocument(dealConfirmationId: string, fiscalDocumentId: string): DealConfirmationDetail {
+    this.assertDealEditable(dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? AND fiscal_document_id = ?").run(dealConfirmationId, fiscalDocumentId);
+    return this.getDealConfirmation(dealConfirmationId);
+  }
+
+  addDealConfirmationClause(input: unknown): DealConfirmationClause {
+    const data = dealConfirmationClauseInputSchema.parse(input);
+    this.assertDealEditable(data.dealConfirmationId);
+    return this.addDealClauseInternal(data);
+  }
+
+  updateDealConfirmationClause(id: string, input: unknown): DealConfirmationClause {
+    const current = this.getDealClause(id);
+    this.assertDealEditable(current.dealConfirmationId);
+    const data = dealConfirmationClauseInputSchema.parse(input);
+    this.db.prepare("UPDATE deal_confirmation_clauses SET clause_number = ?, title = ?, clause_text = ?, sort_order = ?, is_visible = ?, updated_at = ? WHERE id = ?")
+      .run(data.clauseNumber, data.title, data.clauseText, data.sortOrder, data.isVisible ? 1 : 0, new Date().toISOString(), id);
+    return this.getDealClause(id);
+  }
+
+  removeDealConfirmationClause(id: string): DealConfirmationDetail {
+    const clause = this.getDealClause(id);
+    this.assertDealEditable(clause.dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_clauses WHERE id = ?").run(id);
+    return this.getDealConfirmation(clause.dealConfirmationId);
+  }
+
+  reorderDealConfirmationClauses(dealConfirmationId: string, clauseIds: string[]): DealConfirmationDetail {
+    this.assertDealEditable(dealConfirmationId);
+    const trx = this.db.transaction(() => clauseIds.forEach((id, index) => this.db.prepare("UPDATE deal_confirmation_clauses SET sort_order = ?, updated_at = ? WHERE id = ? AND deal_confirmation_id = ?").run(index, new Date().toISOString(), id, dealConfirmationId)));
+    trx();
+    return this.getDealConfirmation(dealConfirmationId);
+  }
+
+  addDealPaymentTerm(input: unknown): DealPaymentTerm {
+    const data = dealPaymentTermInputSchema.parse(input);
+    this.assertDealEditable(data.dealConfirmationId);
+    const term = this.addDealPaymentTermInternal(data);
+    this.assertDealPaymentPercentages(data.dealConfirmationId);
+    return term;
+  }
+
+  updateDealPaymentTerm(id: string, input: unknown): DealPaymentTerm {
+    const current = this.getDealPaymentTerm(id);
+    this.assertDealEditable(current.dealConfirmationId);
+    const data = dealPaymentTermInputSchema.parse(input);
+    this.db.prepare("UPDATE deal_payment_terms SET sort_order = ?, description = ?, percentage_basis_points = ?, amount_cents = ?, due_date = ?, days_after_event = ?, event_reference = ?, updated_at = ? WHERE id = ?")
+      .run(data.sortOrder, data.description, data.percentageBasisPoints, data.amountCents, data.dueDate, data.daysAfterEvent, data.eventReference, new Date().toISOString(), id);
+    this.assertDealPaymentPercentages(current.dealConfirmationId);
+    return this.getDealPaymentTerm(id);
+  }
+
+  removeDealPaymentTerm(id: string): DealConfirmationDetail {
+    const term = this.getDealPaymentTerm(id);
+    this.assertDealEditable(term.dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_payment_terms WHERE id = ?").run(id);
+    return this.getDealConfirmation(term.dealConfirmationId);
+  }
+
+  addDealSigner(input: unknown): DealConfirmationSigner {
+    const data = dealConfirmationSignerInputSchema.parse(input);
+    this.assertDealEditableOrIssued(data.dealConfirmationId);
+    return this.addDealSignerInternal(data);
+  }
+
+  updateDealSigner(id: string, input: unknown): DealConfirmationSigner {
+    const current = this.getDealSigner(id);
+    this.assertDealEditableOrIssued(current.dealConfirmationId);
+    const data = dealConfirmationSignerInputSchema.parse(input);
+    this.db.prepare("UPDATE deal_confirmation_signers SET party_role = ?, name = ?, document_number = ?, position_title = ?, email = ?, phone = ?, signature_order = ?, signature_status = ?, signed_at = ?, notes = ?, updated_at = ? WHERE id = ?")
+      .run(data.partyRole, data.name, data.documentNumber, data.positionTitle, data.email, data.phone, data.signatureOrder, data.signatureStatus, data.signedAt ?? null, data.notes, new Date().toISOString(), id);
+    this.refreshDealSignatureStatus(current.dealConfirmationId);
+    return this.getDealSigner(id);
+  }
+
+  removeDealSigner(id: string): DealConfirmationDetail {
+    const signer = this.getDealSigner(id);
+    this.assertDealEditable(signer.dealConfirmationId);
+    this.db.prepare("DELETE FROM deal_confirmation_signers WHERE id = ?").run(id);
+    return this.getDealConfirmation(signer.dealConfirmationId);
+  }
+
+  calculateDealTotals(id: string): { totalQuantitySacksDecimal: string; totalCommercialAmountCents: number } {
+    this.refreshDealTotals(id);
+    const deal = this.getDealConfirmation(id).confirmation;
+    return { totalQuantitySacksDecimal: deal.totalQuantitySacksDecimal, totalCommercialAmountCents: deal.totalCommercialAmountCents };
+  }
+
+  listDealPendingIssues(id: string): DealConfirmationDetail["pendingIssues"] {
+    return this.validateDealForIssue(id);
+  }
+
+  submitDealConfirmationForReview(id: string): DealConfirmationDetail {
+    const detail = this.getDealConfirmation(id);
+    if (detail.confirmation.status !== "DRAFT") throw new Error("Somente rascunho pode ir para conferencia.");
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE deal_confirmations SET status = 'PENDING_REVIEW', updated_at = ? WHERE id = ?").run(now, id);
+    this.recordDealStatus(id, "DRAFT", "PENDING_REVIEW", "Enviado para conferencia");
+    return this.getDealConfirmation(id);
+  }
+
+  async generateDealConfirmationPreview(id: string): Promise<DealConfirmationDetail> {
+    return this.generateDealDocument(id, true);
+  }
+
+  async issueDealConfirmation(id: string): Promise<DealConfirmationDetail> {
+    const issues = this.validateDealForIssue(id);
+    if (issues.some((issue) => issue.severity === "critical")) throw new Error(`Pendencias criticas impedem emissao: ${issues.map((issue) => issue.message).join("; ")}`);
+    const before = this.getDealConfirmation(id);
+    if (!["DRAFT", "PENDING_REVIEW"].includes(before.confirmation.status)) throw new Error("Confirmacao ja emitida ou encerrada.");
+    const now = new Date().toISOString();
+    let versionId = "";
+    const trx = this.db.transaction(() => {
+      const number = this.reserveNextDealConfirmationNumber(before.confirmation.organizationId, before.confirmation.ownLegalEntityId, now.slice(0, 4));
+      this.refreshDealTotals(id);
+      this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, status = 'ISSUED', signature_status = 'NOT_SENT', issued_at = ?, updated_at = ?, pending_issues_json = ?, template_snapshot_json = COALESCE(template_snapshot_json, ?) WHERE id = ?")
+        .run(number, now, now, JSON.stringify(issues), JSON.stringify(this.getDefaultDealTemplate(before.confirmation.organizationId, before.confirmation.ownLegalEntityId)), id);
+      this.recordDealStatus(id, before.confirmation.status, "ISSUED", "Confirmacao emitida");
+      versionId = randomUUID();
+    });
+    trx();
+    const generated = await this.generateDealDocumentVersion(id, "ISSUED_ORIGINAL", versionId, false, "Documento original emitido");
+    this.db.prepare("UPDATE deal_confirmations SET issued_document_version_id = ?, updated_at = ? WHERE id = ?").run(generated.id, new Date().toISOString(), id);
+    return this.getDealConfirmation(id);
+  }
+
+  markDealConfirmationSentForSignature(id: string): DealConfirmationDetail {
+    const detail = this.getDealConfirmation(id);
+    if (!["ISSUED", "SENT_FOR_SIGNATURE"].includes(detail.confirmation.status)) throw new Error("Somente confirmacao emitida pode ser enviada para assinatura.");
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE deal_confirmations SET status = 'SENT_FOR_SIGNATURE', signature_status = 'WAITING_SIGNATURE', sent_for_signature_at = COALESCE(sent_for_signature_at, ?), updated_at = ? WHERE id = ?").run(now, now, id);
+    this.recordDealStatus(id, detail.confirmation.status, "SENT_FOR_SIGNATURE", "Envio externo para assinatura registrado");
+    return this.getDealConfirmation(id);
+  }
+
+  importSignedDealConfirmationDocument(id: string, input: unknown): DealConfirmationDetail {
+    if (!this.directories) throw new Error("Diretorios locais nao configurados.");
+    const data = signedDealDocumentInputSchema.parse(input);
+    const sourcePath = data.sourcePath;
+    if (!sourcePath) throw new Error("Caminho do PDF assinado nao informado.");
+    const detail = this.getDealConfirmation(id);
+    if (!["ISSUED", "SENT_FOR_SIGNATURE", "SIGNED"].includes(detail.confirmation.status)) throw new Error("Somente confirmacao emitida recebe PDF assinado.");
+    const versionId = randomUUID();
+    const stored = storeSignedDealConfirmationPdf({ sourcePath, directories: this.directories, organizationId: detail.confirmation.organizationId, ownLegalEntityId: detail.confirmation.ownLegalEntityId, confirmationId: id, versionId });
+    const existing = detail.documents.find((doc) => doc.fileHash === stored.fileHash);
+    if (existing) throw new Error("Este PDF ja esta registrado na confirmacao.");
+    const now = new Date().toISOString();
+    const version = this.nextDealDocumentVersion(id);
+    this.db.prepare("UPDATE deal_confirmation_document_versions SET is_current = 0 WHERE deal_confirmation_id = ? AND document_type = 'SIGNED_EXTERNAL'").run(id);
+    this.db.prepare(`INSERT INTO deal_confirmation_document_versions (
+      id, deal_confirmation_id, version_number, document_type, original_file_name, stored_file_path,
+      mime_type, file_size, file_hash, generated_by_system, is_current, notes, created_at
+    ) VALUES (?, ?, ?, 'SIGNED_EXTERNAL', ?, ?, ?, ?, ?, 0, 1, ?, ?)`)
+      .run(versionId, id, version, stored.originalFileName, stored.storedFilePath, stored.mimeType, stored.fileSize, stored.fileHash, data.notes ?? "Assinatura registrada externamente", now);
+    this.db.prepare("UPDATE deal_confirmations SET signed_document_version_id = ?, status = 'SIGNED', signature_status = 'SIGNED', signed_at = ?, updated_at = ? WHERE id = ?").run(versionId, now, now, id);
+    this.recordDealStatus(id, detail.confirmation.status, "SIGNED", "PDF assinado externamente importado");
+    return this.getDealConfirmation(id);
+  }
+
+  updateDealSignatureStatus(id: string, signatureStatus: unknown): DealConfirmationDetail {
+    const status = dealSignatureStatusSchema.parse(signatureStatus);
+    const detail = this.getDealConfirmation(id);
+    if (detail.confirmation.status === "CANCELLED" || detail.confirmation.status === "REPLACED") throw new Error("Confirmacao encerrada nao pode alterar assinatura.");
+    const nextStatus: DealConfirmationStatus = status === "SIGNED" ? "SIGNED" : detail.confirmation.status;
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE deal_confirmations SET signature_status = ?, status = ?, signed_at = CASE WHEN ? = 'SIGNED' THEN COALESCE(signed_at, ?) ELSE signed_at END, updated_at = ? WHERE id = ?").run(status, nextStatus, status, now, now, id);
+    this.recordDealStatus(id, detail.confirmation.status, nextStatus, `Status de assinatura: ${status}`);
+    return this.getDealConfirmation(id);
+  }
+
+  cancelDealConfirmation(id: string, reason: string): DealConfirmationDetail {
+    if (!reason.trim()) throw new Error("Motivo de cancelamento obrigatorio.");
+    const detail = this.getDealConfirmation(id);
+    if (detail.confirmation.status === "CANCELLED") return detail;
+    if (detail.confirmation.status === "REPLACED") throw new Error("Confirmacao substituida nao pode ser cancelada novamente.");
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE deal_confirmations SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
+    this.recordDealStatus(id, detail.confirmation.status, "CANCELLED", reason);
+    return this.getDealConfirmation(id);
+  }
+
+  replaceDealConfirmation(id: string, reason: string): DealConfirmationDetail {
+    if (!reason.trim()) throw new Error("Motivo de substituicao obrigatorio.");
+    const replacement = this.duplicateDealConfirmationAsDraft(id);
+    const detail = this.getDealConfirmation(id);
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE deal_confirmations SET status = 'REPLACED', replaced_by_confirmation_id = ?, updated_at = ? WHERE id = ?").run(replacement.confirmation.id, now, id);
+    this.recordDealStatus(id, detail.confirmation.status, "REPLACED", reason);
+    return replacement;
+  }
+
+  listDealConfirmationTemplates(filters: { organizationId?: string; ownLegalEntityId?: string; status?: "active" | "inactive" | "all" } = {}): DealConfirmationTemplate[] {
+    return (this.db.prepare("SELECT * FROM deal_confirmation_templates ORDER BY name, version DESC").all() as DbRecord[])
+      .map(mapDealConfirmationTemplate)
+      .filter((item) => this.isOrganizationAllowed(item.organizationId))
+      .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
+      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
+      .filter((item) => this.matchesStatus(item.isActive, filters.status));
+  }
+
+  getDealConfirmationTemplate(id: string): DealConfirmationTemplate {
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_templates WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Template de confirmacao nao encontrado.");
+    const template = mapDealConfirmationTemplate(row);
+    if (!this.isOrganizationAllowed(template.organizationId)) throw new Error("Template nao autorizado.");
+    return template;
+  }
+
+  createDealConfirmationTemplate(input: unknown): DealConfirmationTemplate {
+    const data = dealConfirmationTemplateInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    if (data.ownLegalEntityId) {
+      const own = this.getLegalEntity(data.ownLegalEntityId);
+      if (own.organizationId !== data.organizationId) throw new Error("CNPJ do template pertence a outra organizacao.");
+    }
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const trx = this.db.transaction(() => {
+      if (data.isDefault) this.clearDefaultDealTemplate(data.organizationId, data.ownLegalEntityId);
+      this.db.prepare(`INSERT INTO deal_confirmation_templates (
+        id, organization_id, own_legal_entity_id, name, description, version, title, subtitle, layout_mode,
+        default_payment_terms, default_delivery_terms, default_quality_terms, default_general_terms,
+        show_broker, show_commercial_values, show_item_origins, show_signature_blocks, signature_block_count,
+        is_default, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, data.organizationId, data.ownLegalEntityId, data.name, data.description, data.title, data.subtitle, data.layoutMode, data.defaultPaymentTerms, data.defaultDeliveryTerms, data.defaultQualityTerms, data.defaultGeneralTerms, data.showBroker ? 1 : 0, data.showCommercialValues ? 1 : 0, data.showItemOrigins ? 1 : 0, data.showSignatureBlocks ? 1 : 0, data.signatureBlockCount, data.isDefault ? 1 : 0, data.isActive ? 1 : 0, now, now);
+    });
+    trx();
+    return this.getDealConfirmationTemplate(id);
+  }
+
+  updateDealConfirmationTemplate(id: string, input: unknown): DealConfirmationTemplate {
+    const current = this.getDealConfirmationTemplate(id);
+    const data = dealConfirmationTemplateInputSchema.parse(input);
+    if (current.organizationId !== data.organizationId) throw new Error("Nao e permitido mover template entre organizacoes.");
+    const trx = this.db.transaction(() => {
+      if (data.isDefault) this.clearDefaultDealTemplate(data.organizationId, data.ownLegalEntityId, id);
+      this.db.prepare(`UPDATE deal_confirmation_templates SET own_legal_entity_id = ?, name = ?, description = ?, version = version + 1, title = ?, subtitle = ?, layout_mode = ?,
+        default_payment_terms = ?, default_delivery_terms = ?, default_quality_terms = ?, default_general_terms = ?,
+        show_broker = ?, show_commercial_values = ?, show_item_origins = ?, show_signature_blocks = ?, signature_block_count = ?,
+        is_default = ?, is_active = ?, updated_at = ? WHERE id = ?`)
+        .run(data.ownLegalEntityId, data.name, data.description, data.title, data.subtitle, data.layoutMode, data.defaultPaymentTerms, data.defaultDeliveryTerms, data.defaultQualityTerms, data.defaultGeneralTerms, data.showBroker ? 1 : 0, data.showCommercialValues ? 1 : 0, data.showItemOrigins ? 1 : 0, data.showSignatureBlocks ? 1 : 0, data.signatureBlockCount, data.isDefault ? 1 : 0, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    });
+    trx();
+    return this.getDealConfirmationTemplate(id);
+  }
+
+  duplicateDealConfirmationTemplate(id: string): DealConfirmationTemplate {
+    const source = this.getDealConfirmationTemplate(id);
+    return this.createDealConfirmationTemplate({ ...source, name: `${source.name} (copia)`, isDefault: false, isActive: true });
+  }
+
+  setDefaultDealConfirmationTemplate(id: string): DealConfirmationTemplate {
+    const template = this.getDealConfirmationTemplate(id);
+    const trx = this.db.transaction(() => {
+      this.clearDefaultDealTemplate(template.organizationId, template.ownLegalEntityId, id);
+      this.db.prepare("UPDATE deal_confirmation_templates SET is_default = 1, is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    });
+    trx();
+    return this.getDealConfirmationTemplate(id);
+  }
+
+  activateDealConfirmationTemplate(id: string): DealConfirmationTemplate {
+    this.getDealConfirmationTemplate(id);
+    this.db.prepare("UPDATE deal_confirmation_templates SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getDealConfirmationTemplate(id);
+  }
+
+  deactivateDealConfirmationTemplate(id: string): DealConfirmationTemplate {
+    this.getDealConfirmationTemplate(id);
+    this.db.prepare("UPDATE deal_confirmation_templates SET is_active = 0, is_default = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getDealConfirmationTemplate(id);
+  }
+
+  previewDealConfirmationTemplate(id: string): DealConfirmationTemplate {
+    return this.getDealConfirmationTemplate(id);
+  }
+
+  listDealClauseTemplates(organizationId: string): DealClauseTemplate[] {
+    this.assertOrganizationWritable(organizationId);
+    return (this.db.prepare("SELECT * FROM deal_clause_templates WHERE organization_id = ? ORDER BY category, name").all(organizationId) as DbRecord[]).map(mapDealClauseTemplate);
+  }
+
+  getDealClauseTemplate(id: string): DealClauseTemplate {
+    const row = this.db.prepare("SELECT * FROM deal_clause_templates WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Clausula da biblioteca nao encontrada.");
+    const clause = mapDealClauseTemplate(row);
+    if (!this.isOrganizationAllowed(clause.organizationId)) throw new Error("Clausula nao autorizada.");
+    return clause;
+  }
+
+  createDealClauseTemplate(input: unknown): DealClauseTemplate {
+    const data = dealClauseTemplateInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO deal_clause_templates (id, organization_id, name, title, clause_text, category, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.organizationId, data.name, data.title, data.clauseText, data.category, data.isActive ? 1 : 0, now, now);
+    return this.getDealClauseTemplate(id);
+  }
+
+  updateDealClauseTemplate(id: string, input: unknown): DealClauseTemplate {
+    const current = this.getDealClauseTemplate(id);
+    const data = dealClauseTemplateInputSchema.parse(input);
+    if (current.organizationId !== data.organizationId) throw new Error("Nao e permitido mover clausula entre organizacoes.");
+    this.db.prepare("UPDATE deal_clause_templates SET name = ?, title = ?, clause_text = ?, category = ?, is_active = ?, updated_at = ? WHERE id = ?")
+      .run(data.name, data.title, data.clauseText, data.category, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    return this.getDealClauseTemplate(id);
+  }
+
+  duplicateDealClauseTemplate(id: string): DealClauseTemplate {
+    const source = this.getDealClauseTemplate(id);
+    return this.createDealClauseTemplate({ ...source, name: `${source.name} (copia)`, isActive: true });
+  }
+
+  activateDealClauseTemplate(id: string): DealClauseTemplate {
+    this.getDealClauseTemplate(id);
+    this.db.prepare("UPDATE deal_clause_templates SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getDealClauseTemplate(id);
+  }
+
+  deactivateDealClauseTemplate(id: string): DealClauseTemplate {
+    this.getDealClauseTemplate(id);
+    this.db.prepare("UPDATE deal_clause_templates SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    return this.getDealClauseTemplate(id);
+  }
+
+  previewDealConfirmationNumber(organizationId: string, ownLegalEntityId: string): string {
+    this.assertOrganizationWritable(organizationId);
+    const own = this.getLegalEntity(ownLegalEntityId);
+    if (own.organizationId !== organizationId) throw new Error("CNPJ proprio pertence a outra organizacao.");
+    const year = Number(new Date().toISOString().slice(0, 4));
+    const row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord | undefined;
+    const prefix = String(row?.prefix ?? `CONF-${year}-`);
+    const padding = Number(row?.padding ?? 4);
+    const next = Number(row?.current_number ?? 0) + 1;
+    return `${prefix}${String(next).padStart(padding, "0")}`;
+  }
+
+  reserveDealConfirmationNumber(organizationId: string, ownLegalEntityId: string): string {
+    return this.reserveNextDealConfirmationNumber(organizationId, ownLegalEntityId, new Date().toISOString().slice(0, 4));
+  }
+
+  getDealConfirmationSummary(input: unknown): DealConfirmationSummary {
+    const filters = confirmationReportInputSchema.shape.filters.parse(input);
+    const details = this.queryDealConfirmationDetails(filters);
+    const active = details.filter((detail) => detail.confirmation.status !== "CANCELLED" && detail.confirmation.status !== "REPLACED");
+    return {
+      confirmations: details.length,
+      totalSacksDecimal: this.sumDecimals(active.map((detail) => detail.confirmation.totalQuantitySacksDecimal)),
+      totalCommercialAmountCents: active.reduce((sum, detail) => sum + detail.confirmation.totalCommercialAmountCents, 0),
+      drafts: details.filter((detail) => detail.confirmation.status === "DRAFT").length,
+      pendingReview: details.filter((detail) => detail.confirmation.status === "PENDING_REVIEW").length,
+      issued: details.filter((detail) => detail.confirmation.status === "ISSUED").length,
+      waitingSignature: details.filter((detail) => detail.confirmation.signatureStatus === "WAITING_SIGNATURE").length,
+      signed: details.filter((detail) => detail.confirmation.status === "SIGNED").length,
+      cancelled: details.filter((detail) => detail.confirmation.status === "CANCELLED").length,
+      withoutFiscalDocument: details.filter((detail) => detail.fiscalDocuments.length === 0).length,
+      withoutOperation: details.filter((detail) => detail.operations.length === 0).length
+    };
+  }
+
+  async generateConfirmationReport(input: unknown): Promise<ConfirmationReportGeneration> {
+    if (!this.directories) throw new Error("Diretorios locais nao configurados.");
+    const data = confirmationReportInputSchema.parse(input);
+    const organization = this.getOrganization(data.filters.organizationId);
+    const ownLegalEntity = data.filters.ownLegalEntityId ? this.getLegalEntity(data.filters.ownLegalEntityId) : null;
+    const result = await generateDealConfirmationReportFile({
+      directories: this.directories,
+      organization,
+      ownLegalEntity,
+      reportType: data.reportType,
+      format: data.format,
+      filters: data.filters,
+      confirmations: this.queryDealConfirmationDetails(data.filters),
+      partners: this.listBusinessPartners({ organizationId: data.filters.organizationId }),
+      reportId: randomUUID()
+    });
+    return { ...result, format: data.format };
+  }
+
+  getDealDocumentVersion(id: string): DealConfirmationDocumentVersion {
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Versao documental nao encontrada.");
+    const version = mapDealConfirmationDocumentVersion(row);
+    this.getDealConfirmation(version.dealConfirmationId);
+    return version;
+  }
+
+  listDealDocumentVersions(id: string): DealConfirmationDocumentVersion[] {
+    return this.getDealConfirmation(id).documents;
+  }
+
+  getDealDocumentPath(versionId: string): string {
+    return this.getDealDocumentVersion(versionId).storedFilePath;
+  }
+
+  calculateDealDocumentHash(versionId: string): string {
+    return this.getDealDocumentVersion(versionId).fileHash;
+  }
+
+  validateSignedDealPdf(versionId: string): { validPdfStored: boolean; cryptographicSignatureValidated: false; message: string } {
+    const version = this.getDealDocumentVersion(versionId);
+    return { validPdfStored: version.mimeType === "application/pdf" && version.documentType === "SIGNED_EXTERNAL", cryptographicSignatureValidated: false, message: "PDF armazenado; assinatura externa nao foi validada criptograficamente nesta etapa." };
+  }
+
+  private assertDealEditable(id: string): DealConfirmationDetail {
+    const detail = this.getDealConfirmation(id);
+    if (!["DRAFT", "PENDING_REVIEW"].includes(detail.confirmation.status)) throw new Error("Confirmacao emitida, assinada, cancelada ou substituida nao pode ser editada.");
+    return detail;
+  }
+
+  private assertDealEditableOrIssued(id: string): DealConfirmationDetail {
+    const detail = this.getDealConfirmation(id);
+    if (["CANCELLED", "REPLACED"].includes(detail.confirmation.status)) throw new Error("Confirmacao encerrada nao pode ser alterada.");
+    return detail;
+  }
+
+  private getDealItem(id: string): DealConfirmationItem {
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_items WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Item da confirmacao nao encontrado.");
+    return mapDealConfirmationItem(row);
+  }
+
+  private getDealParty(id: string): DealConfirmationParty {
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Participante da confirmacao nao encontrado.");
+    return mapDealConfirmationParty(row);
+  }
+
+  private getDealClause(id: string): DealConfirmationClause {
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Clausula da confirmacao nao encontrada.");
+    return mapDealConfirmationClause(row);
+  }
+
+  private getDealPaymentTerm(id: string): DealPaymentTerm {
+    const row = this.db.prepare("SELECT * FROM deal_payment_terms WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Condicao de pagamento nao encontrada.");
+    return mapDealPaymentTerm(row);
+  }
+
+  private getDealSigner(id: string): DealConfirmationSigner {
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Assinante nao encontrado.");
+    return mapDealConfirmationSigner(row);
+  }
+
+  private assertDealTemplate(id: string, organizationId: string, ownLegalEntityId: string): void {
+    const template = this.getDealConfirmationTemplate(id);
+    if (template.organizationId !== organizationId) throw new Error("Template pertence a outra organizacao.");
+    if (template.ownLegalEntityId && template.ownLegalEntityId !== ownLegalEntityId) throw new Error("Template pertence a outro CNPJ proprio.");
+    if (!template.isActive) throw new Error("Template inativo.");
+  }
+
+  private getDefaultDealTemplate(organizationId: string, ownLegalEntityId: string): DealConfirmationTemplate | null {
+    return this.listDealConfirmationTemplates({ organizationId, status: "active" }).find((template) => template.ownLegalEntityId === ownLegalEntityId && template.isDefault)
+      ?? this.listDealConfirmationTemplates({ organizationId, status: "active" }).find((template) => template.ownLegalEntityId === null && template.isDefault)
+      ?? null;
+  }
+
+  private clearDefaultDealTemplate(organizationId: string, ownLegalEntityId: string | null, exceptId?: string): void {
+    if (ownLegalEntityId) {
+      this.db.prepare("UPDATE deal_confirmation_templates SET is_default = 0 WHERE organization_id = ? AND own_legal_entity_id = ? AND id <> ?").run(organizationId, ownLegalEntityId, exceptId ?? "");
+    } else {
+      this.db.prepare("UPDATE deal_confirmation_templates SET is_default = 0 WHERE organization_id = ? AND own_legal_entity_id IS NULL AND id <> ?").run(organizationId, exceptId ?? "");
+    }
+  }
+
+  private addDealPartyInternal(data: Partial<DealConfirmationParty> & ReturnType<typeof dealConfirmationPartyInputSchema.parse>): DealConfirmationParty {
+    const detail = this.getDealConfirmation(data.dealConfirmationId);
+    const snapshot = this.buildDealPartySnapshot(data, detail.confirmation.organizationId, detail.confirmation.ownLegalEntityId);
+    if (data.partyRole === "ISSUER" && data.ownLegalEntityId !== detail.confirmation.ownLegalEntityId) throw new Error("Emissora deve ser o CNPJ proprio da confirmacao.");
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO deal_confirmation_parties (
+      id, deal_confirmation_id, party_role, business_partner_id, partner_legal_entity_id,
+      own_legal_entity_id, manual_name, snapshot_json, representative_name, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.dealConfirmationId, data.partyRole, data.businessPartnerId ?? null, data.partnerLegalEntityId ?? null, data.ownLegalEntityId ?? null, data.manualName ?? null, JSON.stringify(snapshot), data.representativeName ?? null, data.sortOrder ?? 0, now, now);
+    return this.getDealParty(id);
+  }
+
+  private buildDealPartySnapshot(data: Partial<DealConfirmationParty> & ReturnType<typeof dealConfirmationPartyInputSchema.parse>, organizationId: string, ownLegalEntityId: string): DealPartySnapshot {
+    if (data.ownLegalEntityId) {
+      const own = this.getLegalEntity(data.ownLegalEntityId);
+      if (own.organizationId !== organizationId || data.ownLegalEntityId !== ownLegalEntityId) throw new Error("CNPJ proprio incompativel com a confirmacao.");
+      return { name: own.tradeName, legalName: own.legalName, taxId: own.cnpj, stateRegistration: own.stateRegistration, addressLine: own.addressLine, addressNumber: own.addressNumber, addressComplement: own.addressComplement, district: own.district, city: own.city, state: own.state, postalCode: own.postalCode, phone: own.phone, email: own.email, representativeName: data.representativeName ?? null, role: data.partyRole };
+    }
+    if (data.businessPartnerId) {
+      const partner = this.getBusinessPartner(data.businessPartnerId);
+      if (partner.organizationId !== organizationId) throw new Error("Participante pertence a outra organizacao.");
+      const entity = data.partnerLegalEntityId ? this.getPartnerLegalEntity(data.partnerLegalEntityId) : this.listPartnerLegalEntities(partner.id).find((item) => item.isPrimary) ?? null;
+      if (entity && entity.businessPartnerId !== partner.id) throw new Error("Estabelecimento pertence a outro parceiro.");
+      return { name: entity?.tradeName ?? partner.displayName, legalName: entity?.legalName ?? null, taxId: entity?.cnpj ?? null, stateRegistration: entity?.stateRegistration ?? null, addressLine: entity?.addressLine ?? null, addressNumber: entity?.addressNumber ?? null, addressComplement: entity?.addressComplement ?? null, district: entity?.district ?? null, city: entity?.city ?? null, state: entity?.state ?? null, postalCode: entity?.postalCode ?? null, phone: entity?.phone ?? null, email: entity?.email ?? null, representativeName: data.representativeName ?? null, role: data.partyRole };
+    }
+    if (!data.manualName) throw new Error("Participante manual exige nome.");
+    return { name: data.manualName, legalName: null, taxId: null, stateRegistration: null, addressLine: null, addressNumber: null, addressComplement: null, district: null, city: null, state: null, postalCode: null, phone: null, email: null, representativeName: data.representativeName ?? null, role: data.partyRole };
+  }
+
+  private addDealItemInternal(data: DealItemInput): DealConfirmationItem {
+    const detail = this.getDealConfirmation(data.dealConfirmationId);
+    if (data.productId) {
+      const product = this.getProduct(data.productId);
+      if (product.organizationId !== detail.confirmation.organizationId) throw new Error("Produto pertence a outra organizacao.");
+    }
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const quantity = normalizeDecimalText(data.quantitySacksDecimal);
+    const sackWeight = normalizeDecimalText(data.sackWeightKgDecimal);
+    const unitPrice = normalizeDecimalText(data.unitPriceDecimal);
+    const calculated = multiplyDecimalTextsToCents(quantity, unitPrice);
+    const override = data.totalAmountCents !== null && data.totalAmountCents !== undefined && data.totalAmountCents !== calculated;
+    if (override && !data.totalOverrideReason) throw new Error("Total manual divergente exige justificativa.");
+    const totalWeight = multiplyDecimalTexts(quantity, sackWeight);
+    this.db.prepare(`INSERT INTO deal_confirmation_items (
+      id, deal_confirmation_id, sort_order, product_id, product_name_snapshot, product_description_snapshot,
+      crop_snapshot, quality_snapshot, packaging_snapshot, origin_snapshot, destination_snapshot,
+      quantity_sacks_decimal, sack_weight_kg_decimal, total_weight_kg_decimal, unit_price_decimal,
+      calculated_total_amount_cents, total_amount_cents, total_was_manually_overridden, total_override_reason,
+      delivery_start_date, delivery_end_date, delivery_location_snapshot, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.dealConfirmationId, data.sortOrder, data.productId, data.productNameSnapshot, data.productDescriptionSnapshot, data.cropSnapshot, data.qualitySnapshot, data.packagingSnapshot, data.originSnapshot, data.destinationSnapshot, quantity, sackWeight, totalWeight, unitPrice, calculated, data.totalAmountCents ?? calculated, override ? 1 : 0, override ? data.totalOverrideReason : null, data.deliveryStartDate, data.deliveryEndDate, data.deliveryLocationSnapshot, data.notes, now, now);
+    return this.getDealItem(id);
+  }
+
+  private addDealClauseInternal(data: Partial<DealConfirmationClause> & ReturnType<typeof dealConfirmationClauseInputSchema.parse>): DealConfirmationClause {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO deal_confirmation_clauses (id, deal_confirmation_id, clause_number, title, clause_text, sort_order, is_visible, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.dealConfirmationId, data.clauseNumber, data.title, data.clauseText, data.sortOrder, data.isVisible ? 1 : 0, now, now);
+    return this.getDealClause(id);
+  }
+
+  private addDealPaymentTermInternal(data: Partial<DealPaymentTerm> & ReturnType<typeof dealPaymentTermInputSchema.parse>): DealPaymentTerm {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO deal_payment_terms (id, deal_confirmation_id, sort_order, description, percentage_basis_points, amount_cents, due_date, days_after_event, event_reference, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.dealConfirmationId, data.sortOrder, data.description, data.percentageBasisPoints, data.amountCents, data.dueDate, data.daysAfterEvent, data.eventReference, now, now);
+    return this.getDealPaymentTerm(id);
+  }
+
+  private addDealSignerInternal(data: Partial<DealConfirmationSigner> & ReturnType<typeof dealConfirmationSignerInputSchema.parse>): DealConfirmationSigner {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare("INSERT INTO deal_confirmation_signers (id, deal_confirmation_id, party_role, name, document_number, position_title, email, phone, signature_order, signature_status, signed_at, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.dealConfirmationId, data.partyRole, data.name, data.documentNumber, data.positionTitle, data.email, data.phone, data.signatureOrder, data.signatureStatus, data.signedAt ?? null, data.notes, now, now);
+    this.refreshDealSignatureStatus(data.dealConfirmationId);
+    return this.getDealSigner(id);
+  }
+
+  private linkDealOperationInternal(dealConfirmationId: string, operationId: string): void {
+    const deal = this.getDealConfirmation(dealConfirmationId).confirmation;
+    const operation = this.getOperation(operationId);
+    if (operation.organizationId !== deal.organizationId) throw new Error("Operacao pertence a outra organizacao.");
+    if (operation.ownLegalEntityId !== deal.ownLegalEntityId) throw new Error("Operacao pertence a outro CNPJ proprio.");
+    this.db.prepare("INSERT OR IGNORE INTO deal_confirmation_operations (id, deal_confirmation_id, operation_id, created_at) VALUES (?, ?, ?, ?)").run(randomUUID(), dealConfirmationId, operationId, new Date().toISOString());
+  }
+
+  private linkDealFiscalDocumentInternal(dealConfirmationId: string, fiscalDocumentId: string): void {
+    const deal = this.getDealConfirmation(dealConfirmationId).confirmation;
+    const document = this.getFiscalDocument(fiscalDocumentId).document;
+    if (document.organizationId !== deal.organizationId) throw new Error("Nota pertence a outra organizacao.");
+    if (document.ownLegalEntityId !== deal.ownLegalEntityId) throw new Error("Nota pertence a outro CNPJ proprio.");
+    this.db.prepare("INSERT OR IGNORE INTO deal_confirmation_fiscal_documents (id, deal_confirmation_id, fiscal_document_id, created_at) VALUES (?, ?, ?, ?)").run(randomUUID(), dealConfirmationId, fiscalDocumentId, new Date().toISOString());
+  }
+
+  private refreshDealTotals(id: string): void {
+    const items = (this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ?").all(id) as DbRecord[]).map(mapDealConfirmationItem);
+    const totalSacks = this.sumDecimals(items.map((item) => item.quantitySacksDecimal));
+    const totalCents = items.reduce((sum, item) => sum + item.totalAmountCents, 0);
+    this.db.prepare("UPDATE deal_confirmations SET total_quantity_sacks_decimal = ?, total_commercial_amount_cents = ?, updated_at = ? WHERE id = ?").run(totalSacks, totalCents, new Date().toISOString(), id);
+  }
+
+  private validateDealForIssue(id: string): DealConfirmationDetail["pendingIssues"] {
+    const detail = this.getDealConfirmation(id);
+    const issues: DealConfirmationDetail["pendingIssues"] = [];
+    const has = (role: DealPartyRole): boolean => detail.parties.some((party) => party.partyRole === role);
+    if (!has("ISSUER")) issues.push({ code: "ISSUER_MISSING", severity: "critical", message: "Emissora ausente." });
+    if (!has("SELLER")) issues.push({ code: "SELLER_MISSING", severity: "critical", message: "Vendedor ausente." });
+    if (!has("BUYER")) issues.push({ code: "BUYER_MISSING", severity: "critical", message: "Comprador ausente." });
+    if (detail.items.length === 0) issues.push({ code: "ITEMS_MISSING", severity: "critical", message: "Nenhum item informado." });
+    detail.items.forEach((item) => {
+      if (decimalTextToScaled(item.quantitySacksDecimal) <= 0n) issues.push({ code: "INVALID_QUANTITY", severity: "critical", message: "Quantidade invalida." });
+      if (decimalTextToScaled(item.sackWeightKgDecimal) <= 0n) issues.push({ code: "INVALID_SACK_WEIGHT", severity: "critical", message: "Peso da saca invalido." });
+      if (item.totalWasManuallyOverridden && !item.totalOverrideReason) issues.push({ code: "TOTAL_OVERRIDE_REASON", severity: "critical", message: "Override de total sem justificativa." });
+    });
+    if (!detail.confirmation.paymentTermsSnapshot && detail.paymentTerms.length === 0) issues.push({ code: "PAYMENT_MISSING", severity: "warning", message: "Condicao de pagamento ausente." });
+    if (!detail.confirmation.deliveryLocationSnapshot && detail.items.every((item) => !item.deliveryLocationSnapshot)) issues.push({ code: "DELIVERY_MISSING", severity: "warning", message: "Entrega/descarga ausente." });
+    if (detail.clauses.length === 0) issues.push({ code: "CLAUSES_NOT_REVIEWED", severity: "warning", message: "Clausulas nao revisadas." });
+    this.db.prepare("UPDATE deal_confirmations SET pending_issues_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(issues), new Date().toISOString(), id);
+    return issues;
+  }
+
+  private assertDealPaymentPercentages(id: string): void {
+    const terms = this.getDealConfirmation(id).paymentTerms;
+    const withPercent = terms.filter((term) => term.percentageBasisPoints !== null);
+    if (withPercent.length > 0) {
+      const total = withPercent.reduce((sum, term) => sum + (term.percentageBasisPoints ?? 0), 0);
+      if (total !== 10000) throw new Error("Quando percentuais forem usados, a soma deve ser 100%.");
+    }
+  }
+
+  private refreshDealSignatureStatus(id: string): void {
+    const detail = this.getDealConfirmation(id);
+    const statuses = detail.signers.map((signer) => signer.signatureStatus);
+    const signatureStatus = statuses.length === 0 || statuses.every((status) => status === "NOT_REQUIRED") ? "NOT_APPLICABLE" : statuses.every((status) => status === "SIGNED_EXTERNALLY" || status === "NOT_REQUIRED") ? "SIGNED" : statuses.some((status) => status === "SIGNED_EXTERNALLY") ? "PARTIALLY_SIGNED" : statuses.some((status) => status === "REJECTED") ? "REJECTED" : detail.confirmation.signatureStatus;
+    this.db.prepare("UPDATE deal_confirmations SET signature_status = ?, updated_at = ? WHERE id = ?").run(signatureStatus, new Date().toISOString(), id);
+  }
+
+  private recordDealStatus(id: string, previousStatus: DealConfirmationStatus | null, newStatus: DealConfirmationStatus, reason: string | null): void {
+    this.db.prepare("INSERT INTO deal_confirmation_status_history (id, deal_confirmation_id, previous_status, new_status, reason, changed_by_user_id, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), id, previousStatus, newStatus, reason, "usuario-provisorio", new Date().toISOString());
+  }
+
+  private reserveNextDealConfirmationNumber(organizationId: string, ownLegalEntityId: string, yearText: string): string {
+    const year = Number(yearText);
+    const now = new Date().toISOString();
+    let row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord | undefined;
+    if (!row) {
+      const own = this.getLegalEntity(ownLegalEntityId);
+      const prefix = own.documentPrefix ? `${own.documentPrefix}-${year}-` : `CONF-${year}-`;
+      this.db.prepare("INSERT INTO document_sequences (id, organization_id, own_legal_entity_id, document_type, year, prefix, current_number, padding, is_active, created_at, updated_at) VALUES (?, ?, ?, 'DEAL_CONFIRMATION', ?, ?, 0, 4, 1, ?, ?)")
+        .run(randomUUID(), organizationId, ownLegalEntityId, year, prefix, now, now);
+      row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord;
+    }
+    const next = Number(row.current_number) + 1;
+    this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(next, now, row.id);
+    return `${String(row.prefix ?? "")}${String(next).padStart(Number(row.padding), "0")}`;
+  }
+
+  private async generateDealDocument(id: string, draft: boolean): Promise<DealConfirmationDetail> {
+    const versionId = randomUUID();
+    const documentType = draft ? "GENERATED_DRAFT" : "ISSUED_ORIGINAL";
+    await this.generateDealDocumentVersion(id, documentType, versionId, draft, draft ? "Previa com marca d'agua" : "Documento emitido");
+    return this.getDealConfirmation(id);
+  }
+
+  private async generateDealDocumentVersion(id: string, documentType: DealConfirmationDocumentVersion["documentType"], versionId: string, draft: boolean, notes: string): Promise<DealConfirmationDocumentVersion> {
+    if (!this.directories) throw new Error("Diretorios locais nao configurados.");
+    const detail = this.getDealConfirmation(id);
+    const organization = this.getOrganization(detail.confirmation.organizationId);
+    const ownLegalEntity = this.getLegalEntity(detail.confirmation.ownLegalEntityId);
+    const stored = generateDealConfirmationPdf({ directories: this.directories, organization, ownLegalEntity, detail, versionId, draft });
+    const version = this.nextDealDocumentVersion(id);
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE deal_confirmation_document_versions SET is_current = 0 WHERE deal_confirmation_id = ? AND document_type = ?").run(id, documentType);
+    this.db.prepare(`INSERT INTO deal_confirmation_document_versions (
+      id, deal_confirmation_id, version_number, document_type, original_file_name, stored_file_path,
+      mime_type, file_size, file_hash, generated_by_system, is_current, notes, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`)
+      .run(versionId, id, version, documentType, stored.originalFileName, stored.storedFilePath, stored.mimeType, stored.fileSize, stored.fileHash, notes, now);
+    return this.getDealDocumentVersion(versionId);
+  }
+
+  private nextDealDocumentVersion(id: string): number {
+    const row = this.db.prepare("SELECT COALESCE(MAX(version_number), 0) AS version FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ?").get(id) as { version: number };
+    return Number(row.version) + 1;
+  }
+
+  private nextDealSortOrder(table: "deal_confirmation_items", dealConfirmationId: string): number {
+    const row = this.db.prepare(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM ${table} WHERE deal_confirmation_id = ?`).get(dealConfirmationId) as { next: number };
+    return Number(row.next);
+  }
+
+  private dealHasProduct(id: string, productId: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM deal_confirmation_items WHERE deal_confirmation_id = ? AND product_id = ? LIMIT 1").get(id, productId));
+  }
+
+  private dealHasFiscalDocument(id: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? LIMIT 1").get(id));
+  }
+
+  private dealHasOperation(id: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM deal_confirmation_operations WHERE deal_confirmation_id = ? LIMIT 1").get(id));
+  }
+
+  private matchesDealSearch(id: string, search?: string): boolean {
+    if (!search?.trim()) return true;
+    const detail = this.getDealConfirmation(id);
+    const values = [
+      detail.confirmation.confirmationNumber ?? "",
+      detail.confirmation.temporaryReference,
+      detail.confirmation.publicNotes ?? "",
+      ...detail.items.map((item) => item.productNameSnapshot),
+      ...detail.parties.map((party) => {
+        try { return String((JSON.parse(party.snapshotJson) as { name?: string; taxId?: string }).name ?? "") + " " + String((JSON.parse(party.snapshotJson) as { taxId?: string }).taxId ?? ""); } catch { return party.manualName ?? ""; }
+      })
+    ];
+    return this.matchesSearch(values, search);
+  }
+
+  private queryDealConfirmationDetails(filters: ConfirmationReportFilters): DealConfirmationDetail[] {
+    return this.listDealConfirmations({
+      organizationId: filters.organizationId,
+      ownLegalEntityId: filters.ownLegalEntityId ?? undefined,
+      dateStart: filters.dateStart ?? undefined,
+      dateEnd: filters.dateEnd ?? undefined,
+      status: filters.status ? (filters.status as DealConfirmationStatus) : undefined,
+      signatureStatus: filters.signatureStatus ? (filters.signatureStatus as DealConfirmation["signatureStatus"]) : undefined,
+      productId: filters.productId ?? undefined
+    }).map((confirmation) => this.getDealConfirmation(confirmation.id))
+      .filter((detail) => !filters.sellerPartnerId || detail.parties.some((party) => party.partyRole === "SELLER" && party.businessPartnerId === filters.sellerPartnerId))
+      .filter((detail) => !filters.buyerPartnerId || detail.parties.some((party) => party.partyRole === "BUYER" && party.businessPartnerId === filters.buyerPartnerId));
+  }
+
+  private sumDecimals(values: string[]): string {
+    const total = values.reduce((sum, value) => sum + decimalTextToScaled(value), 0n);
+    const scale = 1_000_000n;
+    const whole = total / scale;
+    const fraction = (total % scale).toString().padStart(6, "0").replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+  }
+
   private matchesStatus(isActive: boolean, status: "active" | "inactive" | "all" = "all"): boolean {
     return status === "all" || (status === "active" ? isActive : !isActive);
   }
@@ -2296,8 +4234,79 @@ function parseLocalDate(value: string): Date {
   return new Date(year, month - 1, day);
 }
 
+function multiplyDecimalTexts(left: string, right: string): string {
+  const scale = 1_000_000n;
+  const result = (decimalTextToScaled(left) * decimalTextToScaled(right) + scale / 2n) / scale;
+  const whole = result / scale;
+  const fraction = (result % scale).toString().padStart(6, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+function multiplyDecimalTextsToCents(quantity: string, unitPriceDecimal: string): number {
+  const scale = 1_000_000n;
+  const centsScale = 100n;
+  const quantityScaled = decimalTextToScaled(quantity);
+  const priceScaled = decimalTextToScaled(unitPriceDecimal);
+  const numerator = quantityScaled * priceScaled * centsScale;
+  const denominator = scale * scale;
+  return Number((numerator + denominator / 2n) / denominator);
+}
+
+function parseDealIssues(value: string): DealConfirmationDetail["pendingIssues"] {
+  try {
+    const parsed = JSON.parse(value) as DealConfirmationDetail["pendingIssues"];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function isoDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function addDays(value: string, days: number): string {
+  const date = parseLocalDate(value);
+  date.setDate(date.getDate() + days);
+  return isoDate(date);
+}
+
+function addMonthsSafe(value: string, months: number): string {
+  const date = parseLocalDate(value);
+  const day = date.getDate();
+  const target = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, lastDay));
+  return isoDate(target);
+}
+
+function withDayOfMonth(value: string, day: number): string {
+  const date = parseLocalDate(value);
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  return isoDate(new Date(date.getFullYear(), date.getMonth(), Math.min(day, lastDay)));
+}
+
+function endOfMonth(value: string): string {
+  const date = parseLocalDate(value);
+  return isoDate(new Date(date.getFullYear(), date.getMonth() + 1, 0));
+}
+
+function frequencyMonths(frequency: string): number {
+  if (frequency === "BIMONTHLY") return 2;
+  if (frequency === "QUARTERLY") return 3;
+  if (frequency === "SEMIANNUAL") return 6;
+  if (frequency === "ANNUAL") return 12;
+  return 1;
+}
+
+function splitCents(total: number, count: number): number[] {
+  const base = Math.floor(total / count);
+  const remainder = total - base * count;
+  return Array.from({ length: count }, (_, index) => base + (index === count - 1 ? remainder : 0));
+}
+
+function textOrNullLocal(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function periodFor(reference: Date, periodicity: string, closingWeekday: number, closingDay: number): { periodStart: string; periodEnd: string; label: string } {

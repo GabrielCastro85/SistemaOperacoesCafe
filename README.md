@@ -59,6 +59,20 @@ A setima etapa adiciona cobrancas por periodo e conta-corrente do cliente. Use C
 
 Use Conta-corrente para registrar adiantamentos e consultar lancamentos do cliente. Pagamentos podem ser registrados pela tela de Cobrancas e alocados parcial ou totalmente, atualizando o saldo aberto da cobranca.
 
+## Financeiro E Contas A Pagar
+
+A oitava etapa adiciona o modulo Financeiro para controle gerencial interno de despesas e contas a pagar. Ele reutiliza organizacoes, CNPJs proprios, locais e parceiros existentes, cria categorias, centros de custo, contas financeiras, lancamentos manuais, recorrencias, parcelamentos, rateios, pagamentos e indicadores de fluxo projetado.
+
+Valores financeiros permanecem em centavos inteiros. Competencia, emissao, vencimento e pagamento sao datas de calendario `YYYY-MM-DD`, sem conversao UTC. O modulo nao possui integracao bancaria, contabilidade oficial, Open Finance, boletos ou Pix automatico.
+
+A conclusao da etapa 8 adiciona anexos e comprovantes com copia segura para `userData/documents/accounts-payable`, hash SHA-256, abertura por ID interno e remocao logica. Tambem adiciona relatorios gerenciais PDF/Excel em `userData/documents/financial-reports`, com historico de geracao.
+
+## Confirmacoes De Negocio
+
+A nona etapa adiciona Confirmacoes de negocio. O modulo cria confirmacoes manualmente ou a partir de operacoes/notas, registra comprador, vendedor e demais participantes com snapshot, aceita itens com decimal exato, clausulas, condicoes de pagamento, entrega, signatarios, numeracao sequencial e versoes de documento.
+
+PDFs de previa e emissao sao gerados localmente em `userData/documents/confirmations`, com hash SHA-256. PDFs assinados externamente podem ser importados e preservados como nova versao, mas o app nao valida criptograficamente assinatura digital nesta etapa.
+
 ## Estrutura
 
 - `electron/main`: banco, migrations, IPC e filesystem.

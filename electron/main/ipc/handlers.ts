@@ -1,4 +1,4 @@
-import { dialog, type IpcMain } from "electron";
+import { dialog, shell, type IpcMain } from "electron";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -17,6 +17,8 @@ import { inspectXmlFile, safeXmlTargetName } from "../services/xmlNfeService.js"
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
+const payableAttachmentTokens = new Map<string, string>();
+const signedDealPdfTokens = new Map<string, string>();
 
 export function createDiagnostics(context: AppContext, repository: AppRepository): Diagnostics {
   const profile = repository.getInstallationProfile();
@@ -447,6 +449,251 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   ipcMain.handle(IPC_CHANNELS.createClientPayment, (_event, payload: unknown) => repository.createClientPayment(payload));
   ipcMain.handle(IPC_CHANNELS.allocateClientPayment, (_event, payload: unknown) => repository.allocatePayment(payload));
   ipcMain.handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) => repository.getBillingSummary(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listExpenseCategories, (_event, payload: unknown) => repository.listExpenseCategories(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createExpenseCategory, (_event, payload: unknown) => repository.createExpenseCategory(payload));
+  ipcMain.handle(IPC_CHANNELS.updateExpenseCategory, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateExpenseCategory(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activateExpenseCategory, (_event, payload: unknown) => repository.activateExpenseCategory(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateExpenseCategory, (_event, payload: unknown) => repository.deactivateExpenseCategory(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listCostCenters, (_event, payload: unknown) => repository.listCostCenters(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createCostCenter, (_event, payload: unknown) => repository.createCostCenter(payload));
+  ipcMain.handle(IPC_CHANNELS.updateCostCenter, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateCostCenter(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activateCostCenter, (_event, payload: unknown) => repository.activateCostCenter(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateCostCenter, (_event, payload: unknown) => repository.deactivateCostCenter(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listFinancialAccounts, (_event, payload: unknown) => repository.listFinancialAccounts(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createFinancialAccount, (_event, payload: unknown) => repository.createFinancialAccount(payload));
+  ipcMain.handle(IPC_CHANNELS.updateFinancialAccount, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateFinancialAccount(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.activateFinancialAccount, (_event, payload: unknown) => repository.activateFinancialAccount(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateFinancialAccount, (_event, payload: unknown) => repository.deactivateFinancialAccount(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listAccountsPayable, (_event, payload: unknown) => repository.listAccountsPayable(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional(), status: z.string().optional(), supplierPartnerId: z.string().uuid().optional() }).parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.getAccountPayable, (_event, payload: unknown) => repository.getAccountPayable(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createAccountPayableDraft, (_event, payload: unknown) => repository.createAccountPayableDraft(payload));
+  ipcMain.handle(IPC_CHANNELS.updateAccountPayable, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateAccountPayable(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.confirmAccountPayable, (_event, payload: unknown) => repository.confirmAccountPayable(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.duplicateAccountPayable, (_event, payload: unknown) => repository.duplicateAccountPayable(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.findPossiblePayableDuplicates, (_event, payload: unknown) => repository.findPossiblePayableDuplicates(payload));
+  ipcMain.handle(IPC_CHANNELS.addPayableAllocation, (_event, payload: unknown) => repository.addPayableAllocation(payload));
+  ipcMain.handle(IPC_CHANNELS.removePayableAllocation, (_event, payload: unknown) => repository.removePayableAllocation(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.contestAccountPayable, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
+    return repository.contestAccountPayable(data.id, data.reason);
+  });
+  ipcMain.handle(IPC_CHANNELS.cancelAccountPayable, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
+    return repository.cancelAccountPayable(data.id, data.reason);
+  });
+  ipcMain.handle(IPC_CHANNELS.listPayableRecurringTemplates, (_event, payload: unknown) => repository.listPayableRecurringTemplates(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createPayableRecurringTemplate, (_event, payload: unknown) => repository.createPayableRecurringTemplate(payload));
+  ipcMain.handle(IPC_CHANNELS.previewPayableRecurringGeneration, (_event, payload: unknown) => {
+    const data = z.object({ templateId: z.string().uuid(), monthsAhead: z.number().int().min(1).max(24).optional() }).parse(payload);
+    return repository.previewPayableRecurringGeneration(data.templateId, data.monthsAhead);
+  });
+  ipcMain.handle(IPC_CHANNELS.generatePayableRecurringPeriod, (_event, payload: unknown) => {
+    const data = z.object({ templateId: z.string().uuid(), monthsAhead: z.number().int().min(1).max(24).optional() }).parse(payload);
+    return repository.generatePayableRecurringPeriod(data.templateId, data.monthsAhead);
+  });
+  ipcMain.handle(IPC_CHANNELS.createPayableInstallmentGroup, (_event, payload: unknown) => repository.createPayableInstallmentGroup(payload));
+  ipcMain.handle(IPC_CHANNELS.getPayableInstallmentGroup, (_event, payload: unknown) => repository.getPayableInstallmentGroup(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createPayablePayment, (_event, payload: unknown) => repository.createPayablePayment(payload));
+  ipcMain.handle(IPC_CHANNELS.allocatePayablePayment, (_event, payload: unknown) => repository.allocatePayablePayment(payload));
+  ipcMain.handle(IPC_CHANNELS.cancelPayablePayment, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
+    return repository.cancelPayablePayment(data.id, data.reason);
+  });
+  ipcMain.handle(IPC_CHANNELS.listPayablePayments, (_event, payload: unknown) => repository.listPayablePayments(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional() }).parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.getFinancialSummary, (_event, payload: unknown) => repository.getFinancialSummary(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.selectPayableAttachment, async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Documentos", extensions: ["pdf", "png", "jpg", "jpeg", "webp"] }] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const filePath = result.filePaths[0];
+    const token = randomUUID();
+    payableAttachmentTokens.set(token, filePath);
+    return { token, fileName: basename(filePath), sizeBytes: statSync(filePath).size };
+  });
+  ipcMain.handle(IPC_CHANNELS.addPayableAttachment, (_event, payload: unknown) => {
+    const data = z.object({ token: z.string().uuid(), accountPayableId: z.string().uuid(), attachmentType: z.string(), description: z.string().nullable() }).parse(payload);
+    const sourcePath = payableAttachmentTokens.get(data.token);
+    if (!sourcePath) throw new Error("Arquivo selecionado expirou.");
+    return repository.addPayableAttachment({ ...data, sourcePath });
+  });
+  ipcMain.handle(IPC_CHANNELS.addPayablePaymentAttachment, (_event, payload: unknown) => {
+    const data = z.object({ token: z.string().uuid(), payablePaymentId: z.string().uuid(), attachmentType: z.string(), description: z.string().nullable() }).parse(payload);
+    const sourcePath = payableAttachmentTokens.get(data.token);
+    if (!sourcePath) throw new Error("Arquivo selecionado expirou.");
+    return repository.addPayablePaymentAttachment({ ...data, sourcePath });
+  });
+  ipcMain.handle(IPC_CHANNELS.listPayableAttachments, (_event, payload: unknown) => repository.listPayableAttachments(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listPayablePaymentAttachments, (_event, payload: unknown) => repository.listPayablePaymentAttachments(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.openPayableAttachment, async (_event, payload: unknown) => {
+    const filePath = repository.getPayableAttachmentPath(z.string().uuid().parse(payload));
+    const result = await shell.openPath(filePath);
+    if (result) throw new Error(result);
+    return true;
+  });
+  ipcMain.handle(IPC_CHANNELS.removePayableAttachment, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().nullable() }).parse(payload);
+    return repository.removePayableAttachment(data.id, data.reason);
+  });
+  ipcMain.handle(IPC_CHANNELS.previewFinancialReport, (_event, payload: unknown) => repository.previewFinancialReport(payload));
+  ipcMain.handle(IPC_CHANNELS.generateFinancialReport, (_event, payload: unknown) => repository.generateFinancialReport(payload));
+  ipcMain.handle(IPC_CHANNELS.listFinancialReports, (_event, payload: unknown) => repository.listFinancialReportGenerations(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.openFinancialReport, async (_event, payload: unknown) => {
+    const filePath = repository.getFinancialReportPath(z.string().uuid().parse(payload));
+    const result = await shell.openPath(filePath);
+    if (result) throw new Error(result);
+    return true;
+  });
+  ipcMain.handle(IPC_CHANNELS.listDealConfirmations, (_event, payload: unknown) => repository.listDealConfirmations(payload));
+  ipcMain.handle(IPC_CHANNELS.getDealConfirmation, (_event, payload: unknown) => repository.getDealConfirmation(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createDealConfirmationDraft, (_event, payload: unknown) => repository.createDealConfirmationDraft(payload));
+  ipcMain.handle(IPC_CHANNELS.createDealConfirmationFromOperations, (_event, payload: unknown) => repository.createDealConfirmationFromOperations(payload));
+  ipcMain.handle(IPC_CHANNELS.createDealConfirmationFromFiscalDocuments, (_event, payload: unknown) => repository.createDealConfirmationFromFiscalDocuments(payload));
+  ipcMain.handle(IPC_CHANNELS.duplicateDealConfirmationAsDraft, (_event, payload: unknown) => repository.duplicateDealConfirmationAsDraft(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.updateDealConfirmationDraft, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealConfirmationDraft(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.addDealConfirmationItem, (_event, payload: unknown) => repository.addDealConfirmationItem(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealConfirmationItem, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealConfirmationItem(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.removeDealConfirmationItem, (_event, payload: unknown) => repository.removeDealConfirmationItem(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.addDealConfirmationParty, (_event, payload: unknown) => repository.addDealConfirmationParty(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealConfirmationParty, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealConfirmationParty(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.removeDealConfirmationParty, (_event, payload: unknown) => repository.removeDealConfirmationParty(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.linkDealOperation, (_event, payload: unknown) => {
+    const data = z.object({ dealConfirmationId: z.string().uuid(), operationId: z.string().uuid() }).parse(payload);
+    return repository.linkDealOperation(data.dealConfirmationId, data.operationId);
+  });
+  ipcMain.handle(IPC_CHANNELS.unlinkDealOperation, (_event, payload: unknown) => {
+    const data = z.object({ dealConfirmationId: z.string().uuid(), operationId: z.string().uuid() }).parse(payload);
+    return repository.unlinkDealOperation(data.dealConfirmationId, data.operationId);
+  });
+  ipcMain.handle(IPC_CHANNELS.linkDealFiscalDocument, (_event, payload: unknown) => {
+    const data = z.object({ dealConfirmationId: z.string().uuid(), fiscalDocumentId: z.string().uuid() }).parse(payload);
+    return repository.linkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
+  });
+  ipcMain.handle(IPC_CHANNELS.unlinkDealFiscalDocument, (_event, payload: unknown) => {
+    const data = z.object({ dealConfirmationId: z.string().uuid(), fiscalDocumentId: z.string().uuid() }).parse(payload);
+    return repository.unlinkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
+  });
+  ipcMain.handle(IPC_CHANNELS.addDealConfirmationClause, (_event, payload: unknown) => repository.addDealConfirmationClause(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealConfirmationClause, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealConfirmationClause(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.removeDealConfirmationClause, (_event, payload: unknown) => repository.removeDealConfirmationClause(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.reorderDealConfirmationClauses, (_event, payload: unknown) => {
+    const data = z.object({ dealConfirmationId: z.string().uuid(), clauseIds: z.array(z.string().uuid()) }).parse(payload);
+    return repository.reorderDealConfirmationClauses(data.dealConfirmationId, data.clauseIds);
+  });
+  ipcMain.handle(IPC_CHANNELS.addDealPaymentTerm, (_event, payload: unknown) => repository.addDealPaymentTerm(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealPaymentTerm, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealPaymentTerm(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.removeDealPaymentTerm, (_event, payload: unknown) => repository.removeDealPaymentTerm(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.addDealSigner, (_event, payload: unknown) => repository.addDealSigner(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealSigner, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealSigner(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.removeDealSigner, (_event, payload: unknown) => repository.removeDealSigner(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.calculateDealTotals, (_event, payload: unknown) => repository.calculateDealTotals(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.validateDealForIssue, (_event, payload: unknown) => repository.listDealPendingIssues(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.submitDealConfirmationForReview, (_event, payload: unknown) => repository.submitDealConfirmationForReview(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.generateDealConfirmationPreview, (_event, payload: unknown) => repository.generateDealConfirmationPreview(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.issueDealConfirmation, (_event, payload: unknown) => repository.issueDealConfirmation(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.markDealConfirmationSentForSignature, (_event, payload: unknown) => repository.markDealConfirmationSentForSignature(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.importSignedDealConfirmationDocument, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.object({ token: z.string().uuid().optional(), sourcePath: z.string().optional(), notes: z.string().nullable().optional() }) }).parse(payload);
+    const sourcePath = data.input.sourcePath ?? (data.input.token ? signedDealPdfTokens.get(data.input.token) : undefined);
+    if (!sourcePath) throw new Error("PDF assinado selecionado expirou.");
+    return repository.importSignedDealConfirmationDocument(data.id, { ...data.input, sourcePath });
+  });
+  ipcMain.handle(IPC_CHANNELS.updateDealSignatureStatus, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), signatureStatus: z.string() }).parse(payload);
+    return repository.updateDealSignatureStatus(data.id, data.signatureStatus);
+  });
+  ipcMain.handle(IPC_CHANNELS.cancelDealConfirmation, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
+    return repository.cancelDealConfirmation(data.id, data.reason);
+  });
+  ipcMain.handle(IPC_CHANNELS.replaceDealConfirmation, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
+    return repository.replaceDealConfirmation(data.id, data.reason);
+  });
+  ipcMain.handle(IPC_CHANNELS.listDealPendingIssues, (_event, payload: unknown) => repository.listDealPendingIssues(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listDealConfirmationTemplates, (_event, payload: unknown) =>
+    repository.listDealConfirmationTemplates(z.object({ organizationId: z.string().uuid().optional(), ownLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
+  );
+  ipcMain.handle(IPC_CHANNELS.getDealConfirmationTemplate, (_event, payload: unknown) => repository.getDealConfirmationTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createDealConfirmationTemplate, (_event, payload: unknown) => repository.createDealConfirmationTemplate(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealConfirmationTemplate, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealConfirmationTemplate(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.duplicateDealConfirmationTemplate, (_event, payload: unknown) => repository.duplicateDealConfirmationTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.setDefaultDealConfirmationTemplate, (_event, payload: unknown) => repository.setDefaultDealConfirmationTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.activateDealConfirmationTemplate, (_event, payload: unknown) => repository.activateDealConfirmationTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateDealConfirmationTemplate, (_event, payload: unknown) => repository.deactivateDealConfirmationTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.previewDealConfirmationTemplate, (_event, payload: unknown) => repository.previewDealConfirmationTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listDealClauseTemplates, (_event, payload: unknown) => repository.listDealClauseTemplates(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.getDealClauseTemplate, (_event, payload: unknown) => repository.getDealClauseTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.createDealClauseTemplate, (_event, payload: unknown) => repository.createDealClauseTemplate(payload));
+  ipcMain.handle(IPC_CHANNELS.updateDealClauseTemplate, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updateDealClauseTemplate(data.id, data.input);
+  });
+  ipcMain.handle(IPC_CHANNELS.duplicateDealClauseTemplate, (_event, payload: unknown) => repository.duplicateDealClauseTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.activateDealClauseTemplate, (_event, payload: unknown) => repository.activateDealClauseTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.deactivateDealClauseTemplate, (_event, payload: unknown) => repository.deactivateDealClauseTemplate(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.listDealDocumentVersions, (_event, payload: unknown) => repository.listDealDocumentVersions(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.getDealDocumentVersion, (_event, payload: unknown) => repository.getDealDocumentVersion(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.openDealDocument, async (_event, payload: unknown) => {
+    const result = await shell.openPath(repository.getDealDocumentPath(z.string().uuid().parse(payload)));
+    if (result) throw new Error(result);
+    return true;
+  });
+  ipcMain.handle(IPC_CHANNELS.revealDealDocumentFolder, (_event, payload: unknown) => {
+    shell.showItemInFolder(repository.getDealDocumentPath(z.string().uuid().parse(payload)));
+    return true;
+  });
+  ipcMain.handle(IPC_CHANNELS.validateSignedDealPdf, (_event, payload: unknown) => repository.validateSignedDealPdf(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.calculateDealDocumentHash, (_event, payload: unknown) => repository.calculateDealDocumentHash(z.string().uuid().parse(payload)));
+  ipcMain.handle(IPC_CHANNELS.previewDealConfirmationNumber, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid() }).parse(payload);
+    return repository.previewDealConfirmationNumber(data.organizationId, data.ownLegalEntityId);
+  });
+  ipcMain.handle(IPC_CHANNELS.reserveDealConfirmationNumber, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid() }).parse(payload);
+    return repository.reserveDealConfirmationNumber(data.organizationId, data.ownLegalEntityId);
+  });
+  ipcMain.handle(IPC_CHANNELS.generateConfirmationReport, (_event, payload: unknown) => repository.generateConfirmationReport(payload));
+  ipcMain.handle(IPC_CHANNELS.getDealConfirmationSummary, (_event, payload: unknown) => repository.getDealConfirmationSummary(payload));
+  ipcMain.handle(IPC_CHANNELS.selectSignedDealPdf, async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "PDF assinado", extensions: ["pdf"] }] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const filePath = result.filePaths[0];
+    const token = randomUUID();
+    signedDealPdfTokens.set(token, filePath);
+    return { token, fileName: basename(filePath), sizeBytes: statSync(filePath).size };
+  });
 }
 
 function registerXmlPaths(paths: string[]): Array<{ token: string; fileName: string; sizeBytes: number }> {

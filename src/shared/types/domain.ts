@@ -96,6 +96,8 @@ export interface AppDirectories {
   confirmationsDir: string;
   chargesDir: string;
   attachmentsDir: string;
+  accountsPayableDir: string;
+  financialReportsDir: string;
   signedDir: string;
   spreadsheetImportsDir: string;
   xmlImportsDir: string;
@@ -740,6 +742,541 @@ export interface BillingSummary {
   unbilledOperations: number;
   unbilledSacks: string;
   billedSacks: string;
+}
+
+export type ExpenseNature = "FIXED" | "VARIABLE" | "TAX" | "PERSONNEL" | "FINANCIAL" | "INVESTMENT" | "OTHER";
+export type FinancialAccountType = "BANK_ACCOUNT" | "CASH" | "DIGITAL_WALLET" | "OTHER";
+export type AccountPayableSource = "MANUAL" | "RECURRING" | "INSTALLMENT" | "IMPORT";
+export type PayableAmountStatus = "PENDING" | "ESTIMATED" | "CONFIRMED";
+export type AccountPayableStatus = "DRAFT" | "SCHEDULED" | "OPEN" | "PARTIALLY_PAID" | "PAID" | "OVERDUE" | "CONTESTED" | "CANCELLED";
+export type RecurringAmountMode = "FIXED" | "VARIABLE";
+export type PayableFrequency = "MONTHLY" | "BIMONTHLY" | "QUARTERLY" | "SEMIANNUAL" | "ANNUAL" | "CUSTOM";
+export type InstallmentIntervalType = "MONTHLY" | "DAYS_30" | "CUSTOM";
+export type PayablePaymentMethod = "PIX" | "BANK_TRANSFER" | "BOLETO" | "CASH" | "CHECK" | "CARD" | "DIRECT_DEBIT" | "OFFSET" | "OTHER";
+export type PayablePaymentStatus = "CONFIRMED" | "CANCELLED";
+export type PayableAttachmentType = "INVOICE" | "BILL" | "CONTRACT" | "RECEIPT" | "SUPPORTING_DOCUMENT" | "OTHER";
+export type FinancialReportType = "ACCOUNTS_PAYABLE" | "OVERDUE_PAYABLES" | "PAYMENTS" | "BY_LEGAL_ENTITY" | "BY_LOCATION" | "BY_COST_CENTER" | "BY_CATEGORY" | "BY_SUPPLIER" | "FIXED_VARIABLE" | "RECURRING" | "INSTALLMENTS" | "PROJECTED_CASH_FLOW";
+export type FinancialReportFormat = "PDF" | "EXCEL";
+
+export interface ExpenseCategory {
+  id: string;
+  organizationId: string;
+  parentCategoryId: string | null;
+  name: string;
+  code: string | null;
+  expenseNature: ExpenseNature;
+  description: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CostCenter {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string | null;
+  locationId: string | null;
+  parentCostCenterId: string | null;
+  name: string;
+  code: string | null;
+  description: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FinancialAccount {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  name: string;
+  accountType: FinancialAccountType;
+  bankName: string | null;
+  branch: string | null;
+  accountIdentifierMasked: string | null;
+  pixKeyDescription: string | null;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountPayable {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  supplierPartnerId: string | null;
+  supplierLegalEntityId: string | null;
+  payeeNameSnapshot: string;
+  payeeTaxIdSnapshot: string | null;
+  categoryId: string;
+  defaultCostCenterId: string | null;
+  defaultLocationId: string | null;
+  recurringTemplateId: string | null;
+  installmentGroupId: string | null;
+  installmentNumber: number | null;
+  installmentCount: number | null;
+  source: AccountPayableSource;
+  description: string;
+  documentType: string | null;
+  documentNumber: string | null;
+  competenceDate: string;
+  issueDate: string | null;
+  dueDate: string;
+  originalAmountCents: number | null;
+  discountCents: number;
+  interestCents: number;
+  penaltyCents: number;
+  otherAdditionsCents: number;
+  finalAmountCents: number | null;
+  paidAmountCents: number;
+  openAmountCents: number | null;
+  amountStatus: PayableAmountStatus;
+  status: AccountPayableStatus;
+  notes: string | null;
+  internalNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  contestedAt: string | null;
+  contestReason: string | null;
+}
+
+export interface AccountPayableAllocation {
+  id: string;
+  accountPayableId: string;
+  costCenterId: string | null;
+  locationId: string | null;
+  allocationAmountCents: number;
+  allocationBasisPoints: number | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PayableRecurringTemplate {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  supplierPartnerId: string | null;
+  supplierLegalEntityId: string | null;
+  payeeNameSnapshot: string;
+  categoryId: string;
+  defaultCostCenterId: string | null;
+  defaultLocationId: string | null;
+  description: string;
+  amountMode: RecurringAmountMode;
+  fixedAmountCents: number | null;
+  estimatedAmountCents: number | null;
+  frequency: PayableFrequency;
+  dueDay: number;
+  generationLeadDays: number;
+  startDate: string;
+  endDate: string | null;
+  autoGenerateOnOpen: boolean;
+  lastGeneratedCompetence: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PayableInstallmentGroup {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  supplierPartnerId: string | null;
+  description: string;
+  totalAmountCents: number;
+  installmentCount: number;
+  firstDueDate: string;
+  intervalType: InstallmentIntervalType;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+}
+
+export interface PayablePayment {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  financialAccountId: string | null;
+  paymentDate: string;
+  amountCents: number;
+  paymentMethod: PayablePaymentMethod;
+  transactionReference: string | null;
+  payeeNameSnapshot: string;
+  notes: string | null;
+  attachmentPath: string | null;
+  attachmentHash: string | null;
+  status: PayablePaymentStatus;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+}
+
+export interface PayablePaymentAllocation {
+  id: string;
+  payablePaymentId: string;
+  accountPayableId: string;
+  amountCents: number;
+  allocatedAt: string;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+}
+
+export interface PayableStatusHistory {
+  id: string;
+  accountPayableId: string;
+  previousStatus: AccountPayableStatus | null;
+  newStatus: AccountPayableStatus;
+  reason: string | null;
+  changedByUserId: string | null;
+  changedAt: string;
+}
+
+export interface PayableDocumentAttachment {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  accountPayableId: string | null;
+  payablePaymentId: string | null;
+  attachmentKind: "PAYABLE_DOCUMENT" | "PAYMENT_PROOF" | "OTHER";
+  attachmentType: PayableAttachmentType;
+  originalFileName: string;
+  storedFilePath: string;
+  fileHash: string;
+  mimeType: string;
+  fileExtension: string;
+  fileSize: number;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  removedAt: string | null;
+  removalReason: string | null;
+}
+
+export interface AccountPayableDetail {
+  payable: AccountPayable;
+  allocations: AccountPayableAllocation[];
+  payments: PayablePaymentAllocation[];
+  attachments: PayableDocumentAttachment[];
+  history: PayableStatusHistory[];
+}
+
+export interface FinancialSummary {
+  payableThisMonthCents: number;
+  paidThisMonthCents: number;
+  openCents: number;
+  overdueCents: number;
+  dueNext7DaysCents: number;
+  fixedExpensesCents: number;
+  variableExpensesCents: number;
+  byCategory: Array<{ categoryId: string | null; label: string; amountCents: number }>;
+  byLocation: Array<{ locationId: string | null; label: string; amountCents: number }>;
+  byLegalEntity: Array<{ ownLegalEntityId: string; label: string; amountCents: number }>;
+  projectedResultCents: number;
+  receivableOpenCents: number;
+  payableOpenCents: number;
+}
+
+export interface FinancialReportFilters {
+  organizationId: string;
+  ownLegalEntityId: string | null;
+  dateStart: string | null;
+  dateEnd: string | null;
+  categoryId: string | null;
+  locationId: string | null;
+  costCenterId: string | null;
+  supplierPartnerId: string | null;
+  status: string | null;
+}
+
+export interface FinancialReportPreview {
+  reportType: FinancialReportType;
+  filters: FinancialReportFilters;
+  recordCount: number;
+  totalFinalCents: number;
+  totalPaidCents: number;
+  totalOpenCents: number;
+  totalOverdueCents: number;
+}
+
+export interface FinancialReportGeneration {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string | null;
+  reportType: FinancialReportType;
+  format: FinancialReportFormat;
+  filtersJson: string;
+  fileName: string;
+  storedFilePath: string;
+  fileHash: string;
+  createdAt: string;
+}
+
+export type DealConfirmationStatus = "DRAFT" | "PENDING_REVIEW" | "ISSUED" | "SENT_FOR_SIGNATURE" | "SIGNED" | "CANCELLED" | "REPLACED";
+export type DealSignatureStatus = "NOT_APPLICABLE" | "NOT_SENT" | "WAITING_SIGNATURE" | "PARTIALLY_SIGNED" | "SIGNED" | "REJECTED";
+export type DealPartyRole = "ISSUER" | "BROKER" | "SELLER" | "BUYER" | "DELIVERY_RECIPIENT" | "OTHER";
+export type DealSignerRole = "ISSUER" | "BROKER" | "SELLER" | "BUYER" | "WITNESS" | "OTHER";
+export type DealSignerStatus = "PENDING" | "SIGNED_EXTERNALLY" | "REJECTED" | "NOT_REQUIRED";
+export type DealTemplateLayoutMode = "STANDARD" | "COMPACT" | "DETAILED";
+export type DealClauseCategory = "PAYMENT" | "DELIVERY" | "QUALITY" | "RESPONSIBILITY" | "CANCELLATION" | "GENERAL" | "OTHER";
+export type DealDocumentType = "GENERATED_DRAFT" | "ISSUED_ORIGINAL" | "SIGNED_EXTERNAL" | "SUPPORTING_DOCUMENT" | "CANCELLED_COPY" | "REPLACEMENT_COPY";
+export type ConfirmationReportType = "CONFIRMATIONS_PERIOD" | "BY_SELLER" | "BY_BUYER" | "BY_PRODUCT" | "BY_STATUS" | "BY_SIGNATURE" | "WITHOUT_FISCAL_DOCUMENT" | "WITHOUT_OPERATION";
+export type ConfirmationReportFormat = "PDF" | "EXCEL";
+
+export interface DealPartySnapshot {
+  name: string;
+  legalName: string | null;
+  taxId: string | null;
+  stateRegistration: string | null;
+  addressLine: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  district: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  phone: string | null;
+  email: string | null;
+  representativeName: string | null;
+  role: DealPartyRole;
+}
+
+export interface DealConfirmation {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  templateId: string | null;
+  confirmationNumber: string | null;
+  temporaryReference: string;
+  confirmationDate: string;
+  negotiationDate: string | null;
+  status: DealConfirmationStatus;
+  signatureStatus: DealSignatureStatus;
+  currencyCode: string;
+  totalQuantitySacksDecimal: string;
+  totalCommercialAmountCents: number;
+  deliveryLocationSnapshot: string | null;
+  deliveryStartDate: string | null;
+  deliveryEndDate: string | null;
+  paymentTermsSnapshot: string | null;
+  qualityTermsSnapshot: string | null;
+  generalTermsSnapshot: string | null;
+  publicNotes: string | null;
+  internalNotes: string | null;
+  templateSnapshotJson: string | null;
+  pendingIssuesJson: string;
+  issuedDocumentVersionId: string | null;
+  signedDocumentVersionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  issuedAt: string | null;
+  sentForSignatureAt: string | null;
+  signedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  replacedByConfirmationId: string | null;
+}
+
+export interface DealConfirmationParty {
+  id: string;
+  dealConfirmationId: string;
+  partyRole: DealPartyRole;
+  businessPartnerId: string | null;
+  partnerLegalEntityId: string | null;
+  ownLegalEntityId: string | null;
+  manualName: string | null;
+  snapshotJson: string;
+  representativeName: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealConfirmationItem {
+  id: string;
+  dealConfirmationId: string;
+  sortOrder: number;
+  productId: string | null;
+  productNameSnapshot: string;
+  productDescriptionSnapshot: string | null;
+  cropSnapshot: string | null;
+  qualitySnapshot: string | null;
+  packagingSnapshot: string | null;
+  originSnapshot: string | null;
+  destinationSnapshot: string | null;
+  quantitySacksDecimal: string;
+  sackWeightKgDecimal: string;
+  totalWeightKgDecimal: string | null;
+  unitPriceDecimal: string;
+  calculatedTotalAmountCents: number;
+  totalAmountCents: number;
+  totalWasManuallyOverridden: boolean;
+  totalOverrideReason: string | null;
+  deliveryStartDate: string | null;
+  deliveryEndDate: string | null;
+  deliveryLocationSnapshot: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealConfirmationTemplate {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string | null;
+  name: string;
+  description: string | null;
+  version: number;
+  title: string;
+  subtitle: string | null;
+  layoutMode: DealTemplateLayoutMode;
+  defaultPaymentTerms: string | null;
+  defaultDeliveryTerms: string | null;
+  defaultQualityTerms: string | null;
+  defaultGeneralTerms: string | null;
+  showBroker: boolean;
+  showCommercialValues: boolean;
+  showItemOrigins: boolean;
+  showSignatureBlocks: boolean;
+  signatureBlockCount: number;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealConfirmationClause {
+  id: string;
+  dealConfirmationId: string;
+  clauseNumber: string | null;
+  title: string | null;
+  clauseText: string;
+  sortOrder: number;
+  isVisible: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealClauseTemplate {
+  id: string;
+  organizationId: string;
+  name: string;
+  title: string | null;
+  clauseText: string;
+  category: DealClauseCategory;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealPaymentTerm {
+  id: string;
+  dealConfirmationId: string;
+  sortOrder: number;
+  description: string;
+  percentageBasisPoints: number | null;
+  amountCents: number | null;
+  dueDate: string | null;
+  daysAfterEvent: number | null;
+  eventReference: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealConfirmationSigner {
+  id: string;
+  dealConfirmationId: string;
+  partyRole: DealSignerRole;
+  name: string;
+  documentNumber: string | null;
+  positionTitle: string | null;
+  email: string | null;
+  phone: string | null;
+  signatureOrder: number;
+  signatureStatus: DealSignerStatus;
+  signedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealConfirmationDocumentVersion {
+  id: string;
+  dealConfirmationId: string;
+  versionNumber: number;
+  documentType: DealDocumentType;
+  originalFileName: string;
+  storedFilePath: string;
+  mimeType: string;
+  fileSize: number;
+  fileHash: string;
+  generatedBySystem: boolean;
+  isCurrent: boolean;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface DealConfirmationStatusHistory {
+  id: string;
+  dealConfirmationId: string;
+  previousStatus: DealConfirmationStatus | null;
+  newStatus: DealConfirmationStatus;
+  reason: string | null;
+  changedByUserId: string | null;
+  changedAt: string;
+}
+
+export interface DealConfirmationDetail {
+  confirmation: DealConfirmation;
+  parties: DealConfirmationParty[];
+  items: DealConfirmationItem[];
+  operations: Operation[];
+  fiscalDocuments: FiscalDocument[];
+  clauses: DealConfirmationClause[];
+  paymentTerms: DealPaymentTerm[];
+  signers: DealConfirmationSigner[];
+  documents: DealConfirmationDocumentVersion[];
+  history: DealConfirmationStatusHistory[];
+  pendingIssues: Array<{ code: string; severity: "critical" | "warning"; message: string }>;
+}
+
+export interface DealConfirmationSummary {
+  confirmations: number;
+  totalSacksDecimal: string;
+  totalCommercialAmountCents: number;
+  drafts: number;
+  pendingReview: number;
+  issued: number;
+  waitingSignature: number;
+  signed: number;
+  cancelled: number;
+  withoutFiscalDocument: number;
+  withoutOperation: number;
+}
+
+export interface ConfirmationReportFilters {
+  organizationId: string;
+  ownLegalEntityId: string | null;
+  dateStart: string | null;
+  dateEnd: string | null;
+  sellerPartnerId: string | null;
+  buyerPartnerId: string | null;
+  productId: string | null;
+  status: string | null;
+  signatureStatus: string | null;
+}
+
+export interface ConfirmationReportGeneration {
+  fileName: string;
+  storedFilePath: string;
+  fileHash: string;
+  format: ConfirmationReportFormat;
 }
 
 export interface Diagnostics {

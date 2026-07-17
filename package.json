@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:electron": "npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "dev:electron": "npm run stop:electron && npm run build && npm run rebuild:electron && electron .",
     "build": "npm run typecheck && npm run build:electron && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "lint": "eslint .",
@@ -15,7 +15,12 @@
     "test": "vitest",
     "test:run": "vitest run",
     "package": "npm run build && electron-builder --win --dir",
-    "postpackage": "npm rebuild better-sqlite3"
+    "postpackage": "npm rebuild better-sqlite3",
+    "stop:electron": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*SistemaOperacoesCafe*' -and (($_.Name -eq 'electron.exe') -or ($_.Name -eq 'node.exe' -and $_.CommandLine -like '*electron*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\"",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:node": "npm rebuild better-sqlite3",
+    "pretest": "npm run rebuild:node",
+    "pretest:run": "npm run rebuild:node"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

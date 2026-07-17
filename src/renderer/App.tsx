@@ -30,7 +30,20 @@ import type {
   ClientCharge,
   ClientChargeDetail,
   ClientLedgerEntry,
-  BillingSummary
+  BillingSummary,
+  ExpenseCategory,
+  CostCenter,
+  FinancialAccount,
+  AccountPayable,
+  PayableDocumentAttachment,
+  FinancialReportGeneration,
+  FinancialReportPreview,
+  FinancialSummary,
+  DealClauseTemplate,
+  DealConfirmation,
+  DealConfirmationDetail,
+  DealConfirmationSummary,
+  DealConfirmationTemplate
 } from "../shared/types/domain";
 import { formatCep, formatCnpj, formatCurrencyFromCents, formatDateBr, onlyDigits } from "../shared/utils/format";
 import "./styles.css";
@@ -1166,6 +1179,516 @@ function LedgerPage({ data }: { data: BootstrapData }): JSX.Element {
   );
 }
 
+function FinancialPage({ data }: { data: BootstrapData }): JSX.Element {
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const [tab, setTab] = useState("Visao geral");
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
+  const [payables, setPayables] = useState<AccountPayable[]>([]);
+  const [attachments, setAttachments] = useState<PayableDocumentAttachment[]>([]);
+  const [reports, setReports] = useState<FinancialReportGeneration[]>([]);
+  const [reportPreview, setReportPreview] = useState<FinancialReportPreview | null>(null);
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [summary, setSummary] = useState<FinancialSummary | null>(null);
+  const [message, setMessage] = useState("");
+  const [payee, setPayee] = useState("Fornecedor avulso");
+  const [description, setDescription] = useState("Aluguel do escritorio");
+  const [amount, setAmount] = useState("100000");
+  const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [categoryId, setCategoryId] = useState("");
+  const [costCenterId, setCostCenterId] = useState("");
+  const [financialAccountId, setFinancialAccountId] = useState("");
+  const [selectedPayableId, setSelectedPayableId] = useState("");
+  const [reportType, setReportType] = useState("ACCOUNTS_PAYABLE");
+
+  const load = useCallback(async () => {
+    if (!organizationId || !ownLegalEntityId) return;
+    const [loadedCategories, loadedCenters, loadedAccounts, loadedPayables, loadedPartners, loadedSummary, loadedReports] = await Promise.all([
+      window.operationsCafe.listExpenseCategories(organizationId),
+      window.operationsCafe.listCostCenters({ organizationId, ownLegalEntityId, status: "all" }),
+      window.operationsCafe.listFinancialAccounts({ organizationId, ownLegalEntityId, status: "all" }),
+      window.operationsCafe.listAccountsPayable({ organizationId, ownLegalEntityId }),
+      window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }),
+      window.operationsCafe.getFinancialSummary(organizationId),
+      window.operationsCafe.listFinancialReports({ organizationId, ownLegalEntityId })
+    ]);
+    setCategories(loadedCategories);
+    setCostCenters(loadedCenters);
+    setAccounts(loadedAccounts);
+    setPayables(loadedPayables);
+    setPartners(loadedPartners.filter((partner) => partner.roles.some((role) => ["SUPPLIER", "SERVICE_PROVIDER", "OTHER"].includes(role))));
+    setSummary(loadedSummary);
+    setReports(loadedReports);
+    setCategoryId((current) => current || loadedCategories[0]?.id || "");
+    setCostCenterId((current) => current || loadedCenters[0]?.id || "");
+    setFinancialAccountId((current) => current || loadedAccounts[0]?.id || "");
+    const selected = selectedPayableId || loadedPayables[0]?.id || "";
+    setSelectedPayableId(selected);
+    if (selected) setAttachments(await window.operationsCafe.listPayableAttachments(selected));
+  }, [organizationId, ownLegalEntityId, selectedPayableId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function createCategory(): Promise<void> {
+    await window.operationsCafe.createExpenseCategory({ organizationId, parentCategoryId: null, name: description || "Nova categoria", code: null, expenseNature: "OTHER", description: null, isActive: true });
+    setMessage("Categoria cadastrada.");
+    await load();
+  }
+
+  async function createCostCenter(): Promise<void> {
+    await window.operationsCafe.createCostCenter({ organizationId, ownLegalEntityId, locationId: null, parentCostCenterId: null, name: description || "Centro de custo", code: null, description: null, isActive: true });
+    setMessage("Centro de custo cadastrado.");
+    await load();
+  }
+
+  async function createFinancialAccount(): Promise<void> {
+    await window.operationsCafe.createFinancialAccount({ organizationId, ownLegalEntityId, name: description || "Conta financeira", accountType: "BANK_ACCOUNT", bankName: null, branch: null, accountIdentifierMasked: null, pixKeyDescription: null, notes: null, isActive: true });
+    setMessage("Conta financeira cadastrada.");
+    await load();
+  }
+
+  async function createPayable(confirm = false): Promise<void> {
+    const category = categoryId || categories[0]?.id;
+    if (!category) throw new Error("Cadastre uma categoria antes de lancar conta.");
+    const detail = await window.operationsCafe.createAccountPayableDraft({
+      organizationId,
+      ownLegalEntityId,
+      supplierPartnerId: null,
+      supplierLegalEntityId: null,
+      payeeNameSnapshot: payee,
+      payeeTaxIdSnapshot: null,
+      categoryId: category,
+      defaultCostCenterId: costCenterId || null,
+      defaultLocationId: null,
+      source: "MANUAL",
+      description,
+      documentType: null,
+      documentNumber: null,
+      competenceDate: dueDate.slice(0, 8) + "01",
+      issueDate: null,
+      dueDate,
+      originalAmountCents: Number(amount),
+      discountCents: 0,
+      interestCents: 0,
+      penaltyCents: 0,
+      otherAdditionsCents: 0,
+      amountStatus: "CONFIRMED",
+      notes: null,
+      internalNotes: null
+    });
+    if (confirm) await window.operationsCafe.confirmAccountPayable(detail.payable.id);
+    setMessage(confirm ? "Conta lancada e confirmada." : "Rascunho de conta criado.");
+    await load();
+  }
+
+  async function createRecurring(): Promise<void> {
+    const category = categoryId || categories[0]?.id;
+    if (!category) throw new Error("Cadastre uma categoria antes de criar recorrencia.");
+    const template = await window.operationsCafe.createPayableRecurringTemplate({
+      organizationId,
+      ownLegalEntityId,
+      supplierPartnerId: null,
+      supplierLegalEntityId: null,
+      payeeNameSnapshot: payee,
+      categoryId: category,
+      defaultCostCenterId: costCenterId || null,
+      defaultLocationId: null,
+      description,
+      amountMode: "FIXED",
+      fixedAmountCents: Number(amount),
+      estimatedAmountCents: null,
+      frequency: "MONTHLY",
+      dueDay: Number(dueDate.slice(-2)),
+      generationLeadDays: 7,
+      startDate: dueDate.slice(0, 8) + "01",
+      endDate: null,
+      autoGenerateOnOpen: false,
+      isActive: true
+    });
+    await window.operationsCafe.generatePayableRecurringPeriod(template.id, 3);
+    setMessage("Recorrencia criada e proximas contas geradas.");
+    await load();
+  }
+
+  async function createInstallments(): Promise<void> {
+    const category = categoryId || categories[0]?.id;
+    if (!category) throw new Error("Cadastre uma categoria antes de criar parcelamento.");
+    await window.operationsCafe.createPayableInstallmentGroup({
+      organizationId,
+      ownLegalEntityId,
+      supplierPartnerId: null,
+      supplierLegalEntityId: null,
+      payeeNameSnapshot: payee,
+      categoryId: category,
+      defaultCostCenterId: costCenterId || null,
+      defaultLocationId: null,
+      description,
+      totalAmountCents: Number(amount),
+      installmentCount: 3,
+      firstDueDate: dueDate,
+      intervalType: "MONTHLY"
+    });
+    setMessage("Parcelamento em 3 vezes criado.");
+    await load();
+  }
+
+  async function payFirstOpen(): Promise<void> {
+    const payable = payables.find((item) => item.openAmountCents && item.openAmountCents > 0);
+    if (!payable) return;
+    const payment = await window.operationsCafe.createPayablePayment({ organizationId, ownLegalEntityId, financialAccountId: financialAccountId || null, paymentDate: new Date().toISOString().slice(0, 10), amountCents: payable.openAmountCents, paymentMethod: "PIX", transactionReference: null, payeeNameSnapshot: payable.payeeNameSnapshot, notes: null, attachmentPath: null, attachmentHash: null });
+    await window.operationsCafe.allocatePayablePayment({ payablePaymentId: payment.id, accountPayableId: payable.id, amountCents: payable.openAmountCents });
+    setMessage("Pagamento registrado.");
+    await load();
+  }
+
+  async function attachToSelectedPayable(): Promise<void> {
+    if (!selectedPayableId) return;
+    const selected = await window.operationsCafe.selectPayableAttachment();
+    if (!selected) return;
+    await window.operationsCafe.addPayableAttachment({ token: selected.token, accountPayableId: selectedPayableId, attachmentType: "BILL", description: "Documento anexado pelo Financeiro" });
+    setMessage("Documento anexado.");
+    setAttachments(await window.operationsCafe.listPayableAttachments(selectedPayableId));
+  }
+
+  async function openAttachment(id: string): Promise<void> {
+    await window.operationsCafe.openPayableAttachment(id);
+  }
+
+  async function removeAttachment(id: string): Promise<void> {
+    const reason = window.prompt("Motivo da remocao/cancelamento do anexo") ?? "";
+    await window.operationsCafe.removePayableAttachment(id, reason || null);
+    if (selectedPayableId) setAttachments(await window.operationsCafe.listPayableAttachments(selectedPayableId));
+  }
+
+  async function refreshReportPreview(): Promise<void> {
+    const filters = { organizationId, ownLegalEntityId, dateStart: null, dateEnd: null, categoryId: null, locationId: null, costCenterId: null, supplierPartnerId: null, status: null };
+    setReportPreview(await window.operationsCafe.previewFinancialReport(filters));
+  }
+
+  async function generateReport(format: "PDF" | "EXCEL"): Promise<void> {
+    const filters = { organizationId, ownLegalEntityId, dateStart: null, dateEnd: null, categoryId: null, locationId: null, costCenterId: null, supplierPartnerId: null, status: null };
+    const report = await window.operationsCafe.generateFinancialReport({ reportType, format, filters });
+    setMessage(`Relatorio ${format} gerado.`);
+    setReports(await window.operationsCafe.listFinancialReports({ organizationId, ownLegalEntityId }));
+    await window.operationsCafe.openFinancialReport(report.id);
+  }
+
+  return (
+    <section className="content-section settings">
+      <div className="settings-tabs">{["Visao geral", "Contas a pagar", "Cadastros", "Recorrencias e parcelas", "Pagamentos", "Relatorios"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
+      <div className="cards">
+        <article><span>A pagar no mes</span><strong>{formatCurrencyFromCents(summary?.payableThisMonthCents ?? 0)}</strong></article>
+        <article><span>Pago no mes</span><strong>{formatCurrencyFromCents(summary?.paidThisMonthCents ?? 0)}</strong></article>
+        <article><span>Saldo em aberto</span><strong>{formatCurrencyFromCents(summary?.openCents ?? 0)}</strong></article>
+        <article><span>Vencido</span><strong>{formatCurrencyFromCents(summary?.overdueCents ?? 0)}</strong></article>
+        <article><span>Proximos 7 dias</span><strong>{formatCurrencyFromCents(summary?.dueNext7DaysCents ?? 0)}</strong></article>
+        <article><span>Fluxo projetado</span><strong>{formatCurrencyFromCents(summary?.projectedResultCents ?? 0)}</strong></article>
+      </div>
+      {tab !== "Visao geral" && (
+        <AdminBlock title="Lancamento rapido">
+          <FormGrid>
+            <TextField label="Favorecido" value={payee} onChange={setPayee} />
+            <TextField label="Descricao" value={description} onChange={setDescription} />
+            <TextField label="Valor em centavos" value={amount} onChange={setAmount} />
+            <TextField label="Vencimento" value={dueDate} onChange={setDueDate} />
+            <SelectField label="Categoria" value={categoryId} onChange={setCategoryId} options={categories.map((item) => [item.id, item.name])} />
+            <SelectField label="Centro de custo" value={costCenterId} onChange={setCostCenterId} options={[["", "Sem centro"], ...costCenters.map((item) => [item.id, item.name] as [string, string])]} />
+          </FormGrid>
+          <div className="actions">
+            <button className="primary" onClick={() => void createPayable(true)}>Lancar conta</button>
+            <button onClick={() => void createPayable(false)}>Salvar rascunho</button>
+            <button onClick={() => void createRecurring()}>Criar recorrencia</button>
+            <button onClick={() => void createInstallments()}>Parcelar em 3x</button>
+          </div>
+        </AdminBlock>
+      )}
+      {tab === "Contas a pagar" && (
+        <AdminBlock title="Contas a pagar">
+          <FormGrid>
+            <SelectField label="Conta selecionada" value={selectedPayableId} onChange={(value) => { setSelectedPayableId(value); void window.operationsCafe.listPayableAttachments(value).then(setAttachments); }} options={payables.map((item) => [item.id, `${item.dueDate} - ${item.description}`])} />
+            <button className="primary" onClick={() => void attachToSelectedPayable()}>Anexar documento</button>
+          </FormGrid>
+          <div className="table"><div className="table-head payable-grid"><span>Vencimento</span><span>Descricao</span><span>Favorecido</span><span>Categoria</span><span>Total</span><span>Pago</span><span>Saldo</span><span>Status</span></div>{payables.map((item) => <div key={item.id} className="table-row payable-grid"><span>{item.dueDate}</span><span>{item.description}</span><span>{item.payeeNameSnapshot}</span><span>{categories.find((category) => category.id === item.categoryId)?.name ?? item.categoryId}</span><span>{formatCurrencyFromCents(item.finalAmountCents ?? 0)}</span><span>{formatCurrencyFromCents(item.paidAmountCents)}</span><span>{formatCurrencyFromCents(item.openAmountCents ?? 0)}</span><span>{item.status}</span></div>)}</div>
+          <h3>Documentos</h3>
+          {attachments.length === 0 ? <p>Nenhum documento anexado.</p> : <div className="table"><div className="table-head attachment-grid"><span>Tipo</span><span>Arquivo</span><span>Tamanho</span><span>Data</span><span>Descricao</span><span>Acoes</span></div>{attachments.map((item) => <div key={item.id} className="table-row attachment-grid"><span>{item.attachmentType}</span><span>{item.originalFileName}</span><span>{Math.round(item.fileSize / 1024)} KB</span><span>{item.createdAt.slice(0, 10)}</span><span>{item.description ?? "-"}</span><span><button onClick={() => void openAttachment(item.id)}>Abrir</button><button onClick={() => void removeAttachment(item.id)}>Remover</button></span></div>)}</div>}
+        </AdminBlock>
+      )}
+      {tab === "Cadastros" && (
+        <div className="settings">
+          <AdminBlock title="Categorias"><div className="actions"><button onClick={() => void createCategory()}>Criar categoria pelo campo descricao</button></div><div className="table"><div className="table-head finance-catalog-grid"><span>Nome</span><span>Codigo</span><span>Natureza</span><span>Status</span></div>{categories.map((item) => <div key={item.id} className="table-row finance-catalog-grid"><span>{item.name}</span><span>{item.code ?? "-"}</span><span>{item.expenseNature}</span><span>{item.isActive ? "Ativa" : "Inativa"}</span></div>)}</div></AdminBlock>
+          <AdminBlock title="Centros de custo"><div className="actions"><button onClick={() => void createCostCenter()}>Criar centro pelo campo descricao</button></div><div className="table"><div className="table-head finance-catalog-grid"><span>Nome</span><span>Codigo</span><span>CNPJ</span><span>Status</span></div>{costCenters.map((item) => <div key={item.id} className="table-row finance-catalog-grid"><span>{item.name}</span><span>{item.code ?? "-"}</span><span>{data.legalEntities.find((entity) => entity.id === item.ownLegalEntityId)?.tradeName ?? "-"}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span></div>)}</div></AdminBlock>
+          <AdminBlock title="Contas financeiras"><div className="actions"><button onClick={() => void createFinancialAccount()}>Criar conta pelo campo descricao</button></div><div className="table"><div className="table-head finance-catalog-grid"><span>Nome</span><span>Tipo</span><span>Banco</span><span>Status</span></div>{accounts.map((item) => <div key={item.id} className="table-row finance-catalog-grid"><span>{item.name}</span><span>{item.accountType}</span><span>{item.bankName ?? "-"}</span><span>{item.isActive ? "Ativa" : "Inativa"}</span></div>)}</div></AdminBlock>
+        </div>
+      )}
+      {tab === "Recorrencias e parcelas" && (
+        <AdminBlock title="Historico de geracao">
+          <p>{payables.filter((item) => item.source === "RECURRING").length} contas recorrentes geradas. {payables.filter((item) => item.source === "INSTALLMENT").length} parcelas geradas.</p>
+        </AdminBlock>
+      )}
+      {tab === "Pagamentos" && (
+        <AdminBlock title="Pagamentos">
+          <SelectField label="Conta financeira" value={financialAccountId} onChange={setFinancialAccountId} options={[["", "Sem conta"], ...accounts.map((item) => [item.id, item.name] as [string, string])]} />
+          <div className="actions"><button className="primary" onClick={() => void payFirstOpen()}>Pagar primeira conta em aberto</button></div>
+          <p>{partners.length} fornecedores/prestadores ativos disponiveis nos cadastros de parceiros.</p>
+        </AdminBlock>
+      )}
+      {tab === "Relatorios" && (
+        <AdminBlock title="Relatorios financeiros">
+          <FormGrid>
+            <SelectField label="Tipo" value={reportType} onChange={setReportType} options={[["ACCOUNTS_PAYABLE", "Contas a pagar"], ["OVERDUE_PAYABLES", "Vencidas"], ["PAYMENTS", "Pagamentos"], ["BY_CATEGORY", "Por categoria"], ["BY_LOCATION", "Por local"], ["BY_COST_CENTER", "Por centro"], ["BY_SUPPLIER", "Por fornecedor"], ["FIXED_VARIABLE", "Fixas e variaveis"], ["RECURRING", "Recorrentes"], ["INSTALLMENTS", "Parcelamentos"], ["PROJECTED_CASH_FLOW", "Fluxo projetado"]]} />
+            <button onClick={() => void refreshReportPreview()}>Atualizar previa</button>
+            <button className="primary" onClick={() => void generateReport("PDF")}>Gerar PDF</button>
+            <button onClick={() => void generateReport("EXCEL")}>Gerar Excel</button>
+          </FormGrid>
+          <div className="cards">
+            <article><span>Registros</span><strong>{reportPreview?.recordCount ?? payables.length}</strong></article>
+            <article><span>Total</span><strong>{formatCurrencyFromCents(reportPreview?.totalFinalCents ?? 0)}</strong></article>
+            <article><span>Saldo</span><strong>{formatCurrencyFromCents(reportPreview?.totalOpenCents ?? 0)}</strong></article>
+          </div>
+          <div className="table"><div className="table-head report-grid"><span>Data</span><span>Tipo</span><span>Formato</span><span>Arquivo</span><span>Acoes</span></div>{reports.map((item) => <div key={item.id} className="table-row report-grid"><span>{item.createdAt.slice(0, 10)}</span><span>{item.reportType}</span><span>{item.format}</span><span>{item.fileName}</span><span><button onClick={() => void window.operationsCafe.openFinancialReport(item.id)}>Abrir</button></span></div>)}</div>
+        </AdminBlock>
+      )}
+      <Feedback message={message} />
+    </section>
+  );
+}
+
+function DealConfirmationsPage({ data }: { data: BootstrapData }): JSX.Element {
+  const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const [tab, setTab] = useState("Confirmacoes");
+  const [confirmations, setConfirmations] = useState<DealConfirmation[]>([]);
+  const [detail, setDetail] = useState<DealConfirmationDetail | null>(null);
+  const [summary, setSummary] = useState<DealConfirmationSummary | null>(null);
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [templates, setTemplates] = useState<DealConfirmationTemplate[]>([]);
+  const [clauses, setClauses] = useState<DealClauseTemplate[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [sellerId, setSellerId] = useState("");
+  const [buyerId, setBuyerId] = useState("");
+  const [productId, setProductId] = useState("");
+  const [quantity, setQuantity] = useState("685");
+  const [price, setPrice] = useState("1000.0000");
+
+  const load = useCallback(async () => {
+    if (!organizationId) return;
+    const [dealList, partnerList, productList, templateList, clauseList, dealSummary] = await Promise.all([
+      window.operationsCafe.listDealConfirmations({ organizationId }),
+      window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }),
+      window.operationsCafe.listProducts({ organizationId, status: "active" }),
+      window.operationsCafe.listDealConfirmationTemplates({ organizationId, status: "all" }),
+      window.operationsCafe.listDealClauseTemplates(organizationId),
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
+    ]);
+    setConfirmations(dealList);
+    setPartners(partnerList);
+    setProducts(productList);
+    setTemplates(templateList);
+    setClauses(clauseList);
+    setSummary(dealSummary);
+    setSellerId((current) => current || partnerList.find((item) => item.roles.includes("SELLER"))?.id || partnerList[0]?.id || "");
+    setBuyerId((current) => current || partnerList.find((item) => item.roles.includes("BUYER"))?.id || partnerList[0]?.id || "");
+    setProductId((current) => current || productList[0]?.id || "");
+  }, [organizationId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function createManual(): Promise<void> {
+    try {
+      const draft = await window.operationsCafe.createDealConfirmationDraft({
+        organizationId,
+        ownLegalEntityId,
+        templateId: templates.find((item) => item.isDefault)?.id ?? null,
+        confirmationDate: new Date().toISOString().slice(0, 10),
+        negotiationDate: new Date().toISOString().slice(0, 10),
+        deliveryLocationSnapshot: "Local de entrega a confirmar",
+        deliveryStartDate: null,
+        deliveryEndDate: null,
+        paymentTermsSnapshot: "Condicao comercial a revisar",
+        qualityTermsSnapshot: "Qualidade conforme amostra",
+        generalTermsSnapshot: "Textos demonstrativos devem ser revisados pela empresa",
+        publicNotes: null,
+        internalNotes: null
+      });
+      if (sellerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: sellerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 1 });
+      if (buyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+      if (productId) await window.operationsCafe.addDealConfirmationItem({
+        dealConfirmationId: draft.confirmation.id,
+        sortOrder: 0,
+        productId,
+        productNameSnapshot: products.find((item) => item.id === productId)?.name ?? "Cafe",
+        productDescriptionSnapshot: null,
+        cropSnapshot: null,
+        qualitySnapshot: "Bebida dura",
+        packagingSnapshot: "Sacas",
+        originSnapshot: null,
+        destinationSnapshot: null,
+        quantitySacksDecimal: quantity,
+        sackWeightKgDecimal: "60",
+        unitPriceDecimal: price,
+        totalAmountCents: null,
+        totalOverrideReason: null,
+        deliveryStartDate: null,
+        deliveryEndDate: null,
+        deliveryLocationSnapshot: "Local de entrega a confirmar",
+        notes: null
+      });
+      await window.operationsCafe.addDealConfirmationClause({ dealConfirmationId: draft.confirmation.id, clauseNumber: "1", title: "Texto demonstrativo", clauseText: "Clausula demonstrativa. O texto definitivo deve ser revisado pela empresa.", sortOrder: 0, isVisible: true });
+      await window.operationsCafe.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: partners.find((item) => item.id === sellerId)?.displayName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+      await window.operationsCafe.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: partners.find((item) => item.id === buyerId)?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+      const refreshed = await window.operationsCafe.getDealConfirmation(draft.confirmation.id);
+      setDetail(refreshed);
+      setMessage("Confirmacao manual criada.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar confirmacao."}`);
+    }
+  }
+
+  async function openConfirmation(id: string): Promise<void> {
+    setDetail(await window.operationsCafe.getDealConfirmation(id));
+  }
+
+  async function generatePreview(): Promise<void> {
+    if (!detail) return;
+    setDetail(await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id));
+    setMessage("Previa gerada.");
+  }
+
+  async function issue(): Promise<void> {
+    if (!detail) return;
+    setDetail(await window.operationsCafe.issueDealConfirmation(detail.confirmation.id));
+    setMessage("Confirmacao emitida.");
+    await load();
+  }
+
+  async function importSigned(): Promise<void> {
+    if (!detail) return;
+    const selected = await window.operationsCafe.selectSignedDealPdf();
+    if (!selected) return;
+    setDetail(await window.operationsCafe.importSignedDealConfirmationDocument(detail.confirmation.id, { token: selected.token, notes: "Assinatura externa registrada pelo usuario" }));
+    setMessage("PDF assinado importado. O sistema nao valida criptograficamente a assinatura nesta etapa.");
+    await load();
+  }
+
+  async function cancelDeal(): Promise<void> {
+    if (!detail) return;
+    const reason = window.prompt("Motivo formal do cancelamento") ?? "";
+    if (!reason) return;
+    setDetail(await window.operationsCafe.cancelDealConfirmation(detail.confirmation.id, reason));
+    await load();
+  }
+
+  async function replaceDeal(): Promise<void> {
+    if (!detail) return;
+    const reason = window.prompt("Motivo formal da substituicao") ?? "";
+    if (!reason) return;
+    setDetail(await window.operationsCafe.replaceDealConfirmation(detail.confirmation.id, reason));
+    await load();
+  }
+
+  async function createTemplate(): Promise<void> {
+    await window.operationsCafe.createDealConfirmationTemplate({
+      organizationId,
+      ownLegalEntityId: null,
+      name: `Template ${templates.length + 1}`,
+      description: null,
+      title: "Confirmacao de Negocio",
+      subtitle: "Cafe",
+      layoutMode: "STANDARD",
+      defaultPaymentTerms: "Conforme combinado entre as partes.",
+      defaultDeliveryTerms: "Local a definir.",
+      defaultQualityTerms: "Qualidade conforme amostra.",
+      defaultGeneralTerms: "Textos devem ser revisados pela empresa.",
+      showBroker: true,
+      showCommercialValues: true,
+      showItemOrigins: true,
+      showSignatureBlocks: true,
+      signatureBlockCount: 2,
+      isDefault: templates.length === 0,
+      isActive: true
+    });
+    setMessage("Template criado.");
+    await load();
+  }
+
+  async function createClauseTemplate(): Promise<void> {
+    await window.operationsCafe.createDealClauseTemplate({ organizationId, name: `Clausula ${clauses.length + 1}`, title: "Demonstrativa", clauseText: "Texto demonstrativo; revisar antes de usar.", category: "GENERAL", isActive: true });
+    setMessage("Clausula cadastrada na biblioteca.");
+    await load();
+  }
+
+  async function generateReport(format: "PDF" | "EXCEL"): Promise<void> {
+    const report = await window.operationsCafe.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format, filters: { organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
+    setMessage(`Relatorio ${format} gerado: ${report.fileName}`);
+  }
+
+  return (
+    <section className="content-section settings">
+      <div className="settings-tabs">{["Confirmacoes", "Templates", "Clausulas", "Relatorios"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
+      <div className="cards">
+        <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
+        <article><span>Sacas confirmadas</span><strong>{summary?.totalSacksDecimal ?? "0"}</strong></article>
+        <article><span>Valor comercial</span><strong>{formatCurrencyFromCents(summary?.totalCommercialAmountCents ?? 0)}</strong></article>
+        <article><span>Aguardando assinatura</span><strong>{summary?.waitingSignature ?? 0}</strong></article>
+        <article><span>Assinadas</span><strong>{summary?.signed ?? 0}</strong></article>
+        <article><span>Sem NF</span><strong>{summary?.withoutFiscalDocument ?? 0}</strong></article>
+      </div>
+      {tab === "Confirmacoes" && (
+        <>
+          <AdminBlock title="Criacao manual">
+            <FormGrid>
+              <SelectField label="Vendedor" value={sellerId} onChange={setSellerId} options={partners.map((item) => [item.id, item.displayName])} />
+              <SelectField label="Comprador" value={buyerId} onChange={setBuyerId} options={partners.map((item) => [item.id, item.displayName])} />
+              <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
+              <TextField label="Sacas" value={quantity} onChange={setQuantity} />
+              <TextField label="Preco por saca" value={price} onChange={setPrice} />
+              <button className="primary" onClick={() => void createManual()}>Criar confirmacao</button>
+            </FormGrid>
+          </AdminBlock>
+          <div className="table">
+            <div className="table-head confirmation-grid"><span>Numero</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
+            {confirmations.map((item) => <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{item.confirmationDate}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span>{item.status}</span><span>{item.signatureStatus}</span><span><button onClick={() => void openConfirmation(item.id)}>Abrir</button></span></div>)}
+          </div>
+          {detail && (
+            <AdminBlock title="Detalhe da confirmacao">
+              <div className="cards">
+                <article><span>Numero</span><strong>{detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference}</strong></article>
+                <article><span>Itens</span><strong>{detail.items.length}</strong></article>
+                <article><span>Notas</span><strong>{detail.fiscalDocuments.length}</strong></article>
+                <article><span>Operacoes</span><strong>{detail.operations.length}</strong></article>
+                <article><span>Versoes</span><strong>{detail.documents.length}</strong></article>
+                <article><span>Pendencias</span><strong>{detail.pendingIssues.length}</strong></article>
+              </div>
+              <div className="actions">
+                <button onClick={() => void generatePreview()}>Gerar previa</button>
+                <button className="primary" onClick={() => void issue()}>Emitir</button>
+                <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button>
+                <button onClick={() => void importSigned()}>Importar assinada</button>
+                <button onClick={() => void cancelDeal()}>Cancelar</button>
+                <button onClick={() => void replaceDeal()}>Substituir</button>
+              </div>
+              <div className="table">
+                <div className="table-head document-grid"><span>Versao</span><span>Tipo</span><span>Hash</span><span>Arquivo</span><span>Acoes</span></div>
+                {detail.documents.map((item) => <div key={item.id} className="table-row document-grid"><span>{item.versionNumber}</span><span>{item.documentType}</span><span>{item.fileHash.slice(0, 12)}</span><span>{item.originalFileName}</span><span><button onClick={() => void window.operationsCafe.openDealDocument(item.id)}>Abrir</button><button onClick={() => void window.operationsCafe.revealDealDocumentFolder(item.id)}>Pasta</button></span></div>)}
+              </div>
+            </AdminBlock>
+          )}
+        </>
+      )}
+      {tab === "Templates" && <AdminBlock title="Templates de Confirmacao"><div className="actions"><button className="primary" onClick={() => void createTemplate()}>Criar template</button></div><div className="table"><div className="table-head template-grid"><span>Nome</span><span>Layout</span><span>Padrao</span><span>Status</span><span>Acoes</span></div>{templates.map((item) => <div key={item.id} className="table-row template-grid"><span>{item.name}</span><span>{item.layoutMode}</span><span>{item.isDefault ? "Sim" : "Nao"}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span><button onClick={() => void window.operationsCafe.setDefaultDealConfirmationTemplate(item.id).then(() => load())}>Padrao</button><button onClick={() => void window.operationsCafe.duplicateDealConfirmationTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}
+      {tab === "Clausulas" && <AdminBlock title="Biblioteca de Clausulas"><div className="actions"><button className="primary" onClick={() => void createClauseTemplate()}>Criar clausula</button></div><div className="table"><div className="table-head clause-grid"><span>Nome</span><span>Categoria</span><span>Titulo</span><span>Status</span><span>Acoes</span></div>{clauses.map((item) => <div key={item.id} className="table-row clause-grid"><span>{item.name}</span><span>{item.category}</span><span>{item.title ?? "-"}</span><span>{item.isActive ? "Ativa" : "Inativa"}</span><span><button onClick={() => void window.operationsCafe.duplicateDealClauseTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}
+      {tab === "Relatorios" && <AdminBlock title="Relatorios de Confirmacoes"><div className="actions"><button className="primary" onClick={() => void generateReport("PDF")}>Gerar PDF</button><button onClick={() => void generateReport("EXCEL")}>Gerar Excel</button></div></AdminBlock>}
+      <Feedback message={message} />
+    </section>
+  );
+}
+
 function ModulePlaceholder({ title }: { title: string }): JSX.Element {
   return <section className="content-section"><h2>{title}</h2><p>Modulo em desenvolvimento. Esta etapa esta focada em multiempresa, CNPJs, locais e branding.</p></section>;
 }
@@ -1233,6 +1756,8 @@ function Shell({ initialData }: { initialData: BootstrapData }): JSX.Element {
     if (activeMenu === "Regras por saca") return <ServiceRatesPage data={data} />;
     if (activeMenu === "Cobrancas") return <ChargesPage data={data} />;
     if (activeMenu === "Conta-corrente") return <LedgerPage data={data} />;
+    if (activeMenu === "Confirmacoes") return <DealConfirmationsPage data={data} />;
+    if (activeMenu === "Financeiro") return <FinancialPage data={data} />;
     if (activeMenu === "Configuracoes" && profile) return <SettingsPage profile={profile} refresh={refresh} onProfile={setProfile} />;
     return <ModulePlaceholder title={activeMenu} />;
   }, [activeMenu, data, profile, refresh, organization?.id]);

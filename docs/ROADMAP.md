@@ -8,7 +8,7 @@
 6. Importacao individual e multipla de XML. Concluido com NF-e offline, eventos, mesclagem, aliases de produto, regras de classificacao e reversao.
 7. Cobrancas por periodo. Concluido com selecao/reserva de operacoes, ajustes, creditos, emissao numerada, PDF/Excel/imagem e indicadores.
 8. Conta-corrente do cliente. Concluido parcialmente com adiantamentos, creditos, lancamentos, pagamentos e alocacoes.
-9. Financeiro e contas a pagar.
-10. Confirmacoes de negocio.
-11. Dashboard e relatorios.
+9. Financeiro e contas a pagar. Concluido com categorias, centros de custo, contas financeiras, contas manuais, recorrencias, parcelamentos, rateios, pagamentos, anexos, comprovantes, relatorios PDF/Excel e dashboard projetado.
+10. Confirmacoes de negocio. Concluido com rascunhos manuais, criacao por operacoes/notas, participantes, itens, templates, clausulas, pagamentos, signatarios, emissao PDF, assinatura externa, cancelamento, substituicao, dashboard e relatorios.
+11. Dashboard e relatorios consolidados.
 12. Backups, auditoria e atualizacoes.

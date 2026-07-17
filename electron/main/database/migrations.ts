@@ -1181,5 +1181,623 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_operations_client_charge_id ON operations(client_charge_id);
       `);
     }
+  },
+  {
+    name: "009_accounts_payable",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS expense_categories (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          parent_category_id TEXT,
+          name TEXT NOT NULL,
+          code TEXT,
+          expense_nature TEXT NOT NULL CHECK (expense_nature IN ('FIXED','VARIABLE','TAX','PERSONNEL','FINANCIAL','INVESTMENT','OTHER')),
+          description TEXT,
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (parent_category_id) REFERENCES expense_categories(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_expense_categories_organization_id ON expense_categories(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_expense_categories_parent_category_id ON expense_categories(parent_category_id);
+        CREATE INDEX IF NOT EXISTS idx_expense_categories_is_active ON expense_categories(is_active);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_code_unique ON expense_categories(organization_id, code) WHERE code IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS cost_centers (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT,
+          location_id TEXT,
+          parent_cost_center_id TEXT,
+          name TEXT NOT NULL,
+          code TEXT,
+          description TEXT,
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (location_id) REFERENCES locations(id),
+          FOREIGN KEY (parent_cost_center_id) REFERENCES cost_centers(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cost_centers_organization_id ON cost_centers(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_cost_centers_own_legal_entity_id ON cost_centers(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_cost_centers_location_id ON cost_centers(location_id);
+        CREATE INDEX IF NOT EXISTS idx_cost_centers_is_active ON cost_centers(is_active);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_centers_code_unique ON cost_centers(organization_id, code) WHERE code IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS financial_accounts (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          account_type TEXT NOT NULL CHECK (account_type IN ('BANK_ACCOUNT','CASH','DIGITAL_WALLET','OTHER')),
+          bank_name TEXT,
+          branch TEXT,
+          account_identifier_masked TEXT,
+          pix_key_description TEXT,
+          notes TEXT,
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_financial_accounts_organization_id ON financial_accounts(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_accounts_own_legal_entity_id ON financial_accounts(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_accounts_is_active ON financial_accounts(is_active);
+
+        CREATE TABLE IF NOT EXISTS payable_recurring_templates (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          supplier_partner_id TEXT,
+          supplier_legal_entity_id TEXT,
+          payee_name_snapshot TEXT NOT NULL,
+          category_id TEXT NOT NULL,
+          default_cost_center_id TEXT,
+          default_location_id TEXT,
+          description TEXT NOT NULL,
+          amount_mode TEXT NOT NULL CHECK (amount_mode IN ('FIXED','VARIABLE')),
+          fixed_amount_cents INTEGER,
+          estimated_amount_cents INTEGER,
+          frequency TEXT NOT NULL CHECK (frequency IN ('MONTHLY','BIMONTHLY','QUARTERLY','SEMIANNUAL','ANNUAL','CUSTOM')),
+          due_day INTEGER NOT NULL,
+          generation_lead_days INTEGER NOT NULL,
+          start_date TEXT NOT NULL,
+          end_date TEXT,
+          auto_generate_on_open INTEGER NOT NULL CHECK (auto_generate_on_open IN (0, 1)),
+          last_generated_competence TEXT,
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (supplier_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (supplier_legal_entity_id) REFERENCES partner_legal_entities(id),
+          FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+          FOREIGN KEY (default_cost_center_id) REFERENCES cost_centers(id),
+          FOREIGN KEY (default_location_id) REFERENCES locations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_payable_recurring_templates_organization_id ON payable_recurring_templates(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_recurring_templates_own_legal_entity_id ON payable_recurring_templates(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_recurring_templates_is_active ON payable_recurring_templates(is_active);
+        CREATE INDEX IF NOT EXISTS idx_payable_recurring_templates_last_generated ON payable_recurring_templates(last_generated_competence);
+
+        CREATE TABLE IF NOT EXISTS payable_installment_groups (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          supplier_partner_id TEXT,
+          description TEXT NOT NULL,
+          total_amount_cents INTEGER NOT NULL,
+          installment_count INTEGER NOT NULL,
+          first_due_date TEXT NOT NULL,
+          interval_type TEXT NOT NULL CHECK (interval_type IN ('MONTHLY','DAYS_30','CUSTOM')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          cancelled_at TEXT,
+          cancellation_reason TEXT,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (supplier_partner_id) REFERENCES business_partners(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_payable_installment_groups_organization_id ON payable_installment_groups(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_installment_groups_own_legal_entity_id ON payable_installment_groups(own_legal_entity_id);
+
+        CREATE TABLE IF NOT EXISTS accounts_payable (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          supplier_partner_id TEXT,
+          supplier_legal_entity_id TEXT,
+          payee_name_snapshot TEXT NOT NULL,
+          payee_tax_id_snapshot TEXT,
+          category_id TEXT NOT NULL,
+          default_cost_center_id TEXT,
+          default_location_id TEXT,
+          recurring_template_id TEXT,
+          installment_group_id TEXT,
+          installment_number INTEGER,
+          installment_count INTEGER,
+          source TEXT NOT NULL CHECK (source IN ('MANUAL','RECURRING','INSTALLMENT','IMPORT')),
+          description TEXT NOT NULL,
+          document_type TEXT,
+          document_number TEXT,
+          competence_date TEXT NOT NULL,
+          issue_date TEXT,
+          due_date TEXT NOT NULL,
+          original_amount_cents INTEGER,
+          discount_cents INTEGER NOT NULL DEFAULT 0,
+          interest_cents INTEGER NOT NULL DEFAULT 0,
+          penalty_cents INTEGER NOT NULL DEFAULT 0,
+          other_additions_cents INTEGER NOT NULL DEFAULT 0,
+          final_amount_cents INTEGER,
+          paid_amount_cents INTEGER NOT NULL DEFAULT 0,
+          open_amount_cents INTEGER,
+          amount_status TEXT NOT NULL CHECK (amount_status IN ('PENDING','ESTIMATED','CONFIRMED')),
+          status TEXT NOT NULL CHECK (status IN ('DRAFT','SCHEDULED','OPEN','PARTIALLY_PAID','PAID','OVERDUE','CONTESTED','CANCELLED')),
+          notes TEXT,
+          internal_notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          confirmed_at TEXT,
+          cancelled_at TEXT,
+          cancellation_reason TEXT,
+          contested_at TEXT,
+          contest_reason TEXT,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (supplier_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (supplier_legal_entity_id) REFERENCES partner_legal_entities(id),
+          FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+          FOREIGN KEY (default_cost_center_id) REFERENCES cost_centers(id),
+          FOREIGN KEY (default_location_id) REFERENCES locations(id),
+          FOREIGN KEY (recurring_template_id) REFERENCES payable_recurring_templates(id),
+          FOREIGN KEY (installment_group_id) REFERENCES payable_installment_groups(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_organization_id ON accounts_payable(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_own_legal_entity_id ON accounts_payable(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_supplier_partner_id ON accounts_payable(supplier_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_category_id ON accounts_payable(category_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_default_cost_center_id ON accounts_payable(default_cost_center_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_default_location_id ON accounts_payable(default_location_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_competence_date ON accounts_payable(competence_date);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_due_date ON accounts_payable(due_date);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_status ON accounts_payable(status);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_recurring_template_id ON accounts_payable(recurring_template_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_installment_group_id ON accounts_payable(installment_group_id);
+        CREATE INDEX IF NOT EXISTS idx_accounts_payable_source ON accounts_payable(source);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_payable_recurring_competence_unique ON accounts_payable(recurring_template_id, competence_date) WHERE recurring_template_id IS NOT NULL AND status != 'CANCELLED';
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_payable_installment_unique ON accounts_payable(installment_group_id, installment_number) WHERE installment_group_id IS NOT NULL AND installment_number IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS account_payable_allocations (
+          id TEXT PRIMARY KEY,
+          account_payable_id TEXT NOT NULL,
+          cost_center_id TEXT,
+          location_id TEXT,
+          allocation_amount_cents INTEGER NOT NULL,
+          allocation_basis_points INTEGER,
+          description TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (account_payable_id) REFERENCES accounts_payable(id),
+          FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id),
+          FOREIGN KEY (location_id) REFERENCES locations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_payable_allocations_payable_id ON account_payable_allocations(account_payable_id);
+        CREATE INDEX IF NOT EXISTS idx_account_payable_allocations_cost_center_id ON account_payable_allocations(cost_center_id);
+        CREATE INDEX IF NOT EXISTS idx_account_payable_allocations_location_id ON account_payable_allocations(location_id);
+
+        CREATE TABLE IF NOT EXISTS payable_payments (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          financial_account_id TEXT,
+          payment_date TEXT NOT NULL,
+          amount_cents INTEGER NOT NULL,
+          payment_method TEXT NOT NULL CHECK (payment_method IN ('PIX','BANK_TRANSFER','BOLETO','CASH','CHECK','CARD','DIRECT_DEBIT','OFFSET','OTHER')),
+          transaction_reference TEXT,
+          payee_name_snapshot TEXT NOT NULL,
+          notes TEXT,
+          attachment_path TEXT,
+          attachment_hash TEXT,
+          status TEXT NOT NULL CHECK (status IN ('CONFIRMED','CANCELLED')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          cancelled_at TEXT,
+          cancellation_reason TEXT,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (financial_account_id) REFERENCES financial_accounts(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_payable_payments_organization_id ON payable_payments(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_payments_own_legal_entity_id ON payable_payments(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_payments_payment_date ON payable_payments(payment_date);
+        CREATE INDEX IF NOT EXISTS idx_payable_payments_status ON payable_payments(status);
+
+        CREATE TABLE IF NOT EXISTS payable_payment_allocations (
+          id TEXT PRIMARY KEY,
+          payable_payment_id TEXT NOT NULL,
+          account_payable_id TEXT NOT NULL,
+          amount_cents INTEGER NOT NULL,
+          allocated_at TEXT NOT NULL,
+          cancelled_at TEXT,
+          cancellation_reason TEXT,
+          FOREIGN KEY (payable_payment_id) REFERENCES payable_payments(id),
+          FOREIGN KEY (account_payable_id) REFERENCES accounts_payable(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_payable_payment_allocations_payment_id ON payable_payment_allocations(payable_payment_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_payment_allocations_payable_id ON payable_payment_allocations(account_payable_id);
+
+        CREATE TABLE IF NOT EXISTS payable_status_history (
+          id TEXT PRIMARY KEY,
+          account_payable_id TEXT NOT NULL,
+          previous_status TEXT,
+          new_status TEXT NOT NULL,
+          reason TEXT,
+          changed_by_user_id TEXT,
+          changed_at TEXT NOT NULL,
+          FOREIGN KEY (account_payable_id) REFERENCES accounts_payable(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_payable_status_history_payable_id ON payable_status_history(account_payable_id);
+
+        CREATE TABLE IF NOT EXISTS payable_document_attachments (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          account_payable_id TEXT,
+          payable_payment_id TEXT,
+          attachment_kind TEXT NOT NULL CHECK (attachment_kind IN ('PAYABLE_DOCUMENT','PAYMENT_PROOF','OTHER')),
+          original_file_name TEXT NOT NULL,
+          stored_file_path TEXT NOT NULL,
+          file_hash TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (account_payable_id) REFERENCES accounts_payable(id),
+          FOREIGN KEY (payable_payment_id) REFERENCES payable_payments(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_payable_document_attachments_payable_id ON payable_document_attachments(account_payable_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_document_attachments_payment_id ON payable_document_attachments(payable_payment_id);
+      `);
+    }
+  },
+  {
+    name: "010_financial_attachments_reports",
+    up: (db) => {
+      const columns = (table: string): string[] =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
+      const attachmentColumns = columns("payable_document_attachments");
+      if (!attachmentColumns.includes("attachment_type")) db.exec("ALTER TABLE payable_document_attachments ADD COLUMN attachment_type TEXT NOT NULL DEFAULT 'OTHER' CHECK (attachment_type IN ('INVOICE','BILL','CONTRACT','RECEIPT','SUPPORTING_DOCUMENT','OTHER'))");
+      if (!attachmentColumns.includes("file_extension")) db.exec("ALTER TABLE payable_document_attachments ADD COLUMN file_extension TEXT NOT NULL DEFAULT ''");
+      if (!attachmentColumns.includes("description")) db.exec("ALTER TABLE payable_document_attachments ADD COLUMN description TEXT");
+      if (!attachmentColumns.includes("updated_at")) db.exec("ALTER TABLE payable_document_attachments ADD COLUMN updated_at TEXT");
+      if (!attachmentColumns.includes("removed_at")) db.exec("ALTER TABLE payable_document_attachments ADD COLUMN removed_at TEXT");
+      if (!attachmentColumns.includes("removal_reason")) db.exec("ALTER TABLE payable_document_attachments ADD COLUMN removal_reason TEXT");
+      db.exec(`
+        UPDATE payable_document_attachments SET updated_at = COALESCE(updated_at, created_at) WHERE updated_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_payable_document_attachments_organization_id ON payable_document_attachments(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_payable_document_attachments_removed_at ON payable_document_attachments(removed_at);
+        CREATE TABLE IF NOT EXISTS financial_report_generations (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT,
+          report_type TEXT NOT NULL CHECK (report_type IN ('ACCOUNTS_PAYABLE','OVERDUE_PAYABLES','PAYMENTS','BY_LEGAL_ENTITY','BY_LOCATION','BY_COST_CENTER','BY_CATEGORY','BY_SUPPLIER','FIXED_VARIABLE','RECURRING','INSTALLMENTS','PROJECTED_CASH_FLOW')),
+          format TEXT NOT NULL CHECK (format IN ('PDF','EXCEL')),
+          filters_json TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          stored_file_path TEXT NOT NULL,
+          file_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_financial_report_generations_organization_id ON financial_report_generations(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_report_generations_own_legal_entity_id ON financial_report_generations(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_financial_report_generations_type ON financial_report_generations(report_type);
+        CREATE INDEX IF NOT EXISTS idx_financial_report_generations_created_at ON financial_report_generations(created_at);
+      `);
+    }
+  },
+  {
+    name: "011_deal_confirmations",
+    up: (db) => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_document_sequences_unique;
+        CREATE TABLE IF NOT EXISTS document_sequences_v2 (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          document_type TEXT NOT NULL CHECK (document_type IN ('CLIENT_CHARGE','DEAL_CONFIRMATION')),
+          year INTEGER,
+          prefix TEXT,
+          current_number INTEGER NOT NULL,
+          padding INTEGER NOT NULL,
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id)
+        );
+        INSERT OR IGNORE INTO document_sequences_v2 (
+          id, organization_id, own_legal_entity_id, document_type, year, prefix,
+          current_number, padding, is_active, created_at, updated_at
+        )
+        SELECT id, organization_id, own_legal_entity_id, document_type, year, prefix,
+          current_number, padding, is_active, created_at, updated_at
+        FROM document_sequences;
+        DROP TABLE IF EXISTS document_sequences;
+        ALTER TABLE document_sequences_v2 RENAME TO document_sequences;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_document_sequences_unique ON document_sequences(organization_id, own_legal_entity_id, document_type, COALESCE(year, 0), COALESCE(prefix, '')) WHERE is_active = 1;
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_templates (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT,
+          name TEXT NOT NULL,
+          description TEXT,
+          version INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          subtitle TEXT,
+          layout_mode TEXT NOT NULL CHECK (layout_mode IN ('STANDARD','COMPACT','DETAILED')),
+          default_payment_terms TEXT,
+          default_delivery_terms TEXT,
+          default_quality_terms TEXT,
+          default_general_terms TEXT,
+          show_broker INTEGER NOT NULL CHECK (show_broker IN (0, 1)),
+          show_commercial_values INTEGER NOT NULL CHECK (show_commercial_values IN (0, 1)),
+          show_item_origins INTEGER NOT NULL CHECK (show_item_origins IN (0, 1)),
+          show_signature_blocks INTEGER NOT NULL CHECK (show_signature_blocks IN (0, 1)),
+          signature_block_count INTEGER NOT NULL,
+          is_default INTEGER NOT NULL CHECK (is_default IN (0, 1)),
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_templates_organization_id ON deal_confirmation_templates(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_templates_own_legal_entity_id ON deal_confirmation_templates(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_templates_is_default ON deal_confirmation_templates(is_default);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_templates_is_active ON deal_confirmation_templates(is_active);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_deal_confirmation_templates_default_org ON deal_confirmation_templates(organization_id) WHERE own_legal_entity_id IS NULL AND is_default = 1 AND is_active = 1;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_deal_confirmation_templates_default_entity ON deal_confirmation_templates(organization_id, own_legal_entity_id) WHERE own_legal_entity_id IS NOT NULL AND is_default = 1 AND is_active = 1;
+
+        CREATE TABLE IF NOT EXISTS deal_clause_templates (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          title TEXT,
+          clause_text TEXT NOT NULL,
+          category TEXT NOT NULL CHECK (category IN ('PAYMENT','DELIVERY','QUALITY','RESPONSIBILITY','CANCELLATION','GENERAL','OTHER')),
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_clause_templates_organization_id ON deal_clause_templates(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_clause_templates_category ON deal_clause_templates(category);
+        CREATE INDEX IF NOT EXISTS idx_deal_clause_templates_is_active ON deal_clause_templates(is_active);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmations (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT NOT NULL,
+          template_id TEXT,
+          confirmation_number TEXT,
+          temporary_reference TEXT NOT NULL,
+          confirmation_date TEXT NOT NULL,
+          negotiation_date TEXT,
+          status TEXT NOT NULL CHECK (status IN ('DRAFT','PENDING_REVIEW','ISSUED','SENT_FOR_SIGNATURE','SIGNED','CANCELLED','REPLACED')),
+          signature_status TEXT NOT NULL CHECK (signature_status IN ('NOT_APPLICABLE','NOT_SENT','WAITING_SIGNATURE','PARTIALLY_SIGNED','SIGNED','REJECTED')),
+          currency_code TEXT NOT NULL,
+          total_quantity_sacks_decimal TEXT NOT NULL,
+          total_commercial_amount_cents INTEGER NOT NULL,
+          delivery_location_snapshot TEXT,
+          delivery_start_date TEXT,
+          delivery_end_date TEXT,
+          payment_terms_snapshot TEXT,
+          quality_terms_snapshot TEXT,
+          general_terms_snapshot TEXT,
+          public_notes TEXT,
+          internal_notes TEXT,
+          template_snapshot_json TEXT,
+          pending_issues_json TEXT NOT NULL DEFAULT '[]',
+          issued_document_version_id TEXT,
+          signed_document_version_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          issued_at TEXT,
+          sent_for_signature_at TEXT,
+          signed_at TEXT,
+          cancelled_at TEXT,
+          cancellation_reason TEXT,
+          replaced_by_confirmation_id TEXT,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (template_id) REFERENCES deal_confirmation_templates(id),
+          FOREIGN KEY (replaced_by_confirmation_id) REFERENCES deal_confirmations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_organization_id ON deal_confirmations(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_own_legal_entity_id ON deal_confirmations(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_confirmation_number ON deal_confirmations(confirmation_number);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_confirmation_date ON deal_confirmations(confirmation_date);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_status ON deal_confirmations(status);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_signature_status ON deal_confirmations(signature_status);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmations_replaced_by ON deal_confirmations(replaced_by_confirmation_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_deal_confirmations_number_unique ON deal_confirmations(organization_id, own_legal_entity_id, confirmation_number) WHERE confirmation_number IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_parties (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          party_role TEXT NOT NULL CHECK (party_role IN ('ISSUER','BROKER','SELLER','BUYER','DELIVERY_RECIPIENT','OTHER')),
+          business_partner_id TEXT,
+          partner_legal_entity_id TEXT,
+          own_legal_entity_id TEXT,
+          manual_name TEXT,
+          snapshot_json TEXT NOT NULL,
+          representative_name TEXT,
+          sort_order INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id),
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (partner_legal_entity_id) REFERENCES partner_legal_entities(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_parties_deal_id ON deal_confirmation_parties(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_parties_role ON deal_confirmation_parties(party_role);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_parties_partner_id ON deal_confirmation_parties(business_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_parties_partner_legal_entity_id ON deal_confirmation_parties(partner_legal_entity_id);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_items (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          sort_order INTEGER NOT NULL,
+          product_id TEXT,
+          product_name_snapshot TEXT NOT NULL,
+          product_description_snapshot TEXT,
+          crop_snapshot TEXT,
+          quality_snapshot TEXT,
+          packaging_snapshot TEXT,
+          origin_snapshot TEXT,
+          destination_snapshot TEXT,
+          quantity_sacks_decimal TEXT NOT NULL,
+          sack_weight_kg_decimal TEXT NOT NULL,
+          total_weight_kg_decimal TEXT,
+          unit_price_decimal TEXT NOT NULL,
+          calculated_total_amount_cents INTEGER NOT NULL,
+          total_amount_cents INTEGER NOT NULL,
+          total_was_manually_overridden INTEGER NOT NULL CHECK (total_was_manually_overridden IN (0, 1)),
+          total_override_reason TEXT,
+          delivery_start_date TEXT,
+          delivery_end_date TEXT,
+          delivery_location_snapshot TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id),
+          FOREIGN KEY (product_id) REFERENCES products(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_items_deal_id ON deal_confirmation_items(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_items_product_id ON deal_confirmation_items(product_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_items_sort_order ON deal_confirmation_items(deal_confirmation_id, sort_order);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_operations (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          operation_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id),
+          FOREIGN KEY (operation_id) REFERENCES operations(id),
+          UNIQUE (deal_confirmation_id, operation_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_operations_deal_id ON deal_confirmation_operations(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_operations_operation_id ON deal_confirmation_operations(operation_id);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_fiscal_documents (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          fiscal_document_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id),
+          FOREIGN KEY (fiscal_document_id) REFERENCES fiscal_documents(id),
+          UNIQUE (deal_confirmation_id, fiscal_document_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_fiscal_documents_deal_id ON deal_confirmation_fiscal_documents(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_fiscal_documents_document_id ON deal_confirmation_fiscal_documents(fiscal_document_id);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_clauses (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          clause_number TEXT,
+          title TEXT,
+          clause_text TEXT NOT NULL,
+          sort_order INTEGER NOT NULL,
+          is_visible INTEGER NOT NULL CHECK (is_visible IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_clauses_deal_id ON deal_confirmation_clauses(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_clauses_sort_order ON deal_confirmation_clauses(deal_confirmation_id, sort_order);
+
+        CREATE TABLE IF NOT EXISTS deal_payment_terms (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          sort_order INTEGER NOT NULL,
+          description TEXT NOT NULL,
+          percentage_basis_points INTEGER,
+          amount_cents INTEGER,
+          due_date TEXT,
+          days_after_event INTEGER,
+          event_reference TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_payment_terms_deal_id ON deal_payment_terms(deal_confirmation_id);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_signers (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          party_role TEXT NOT NULL CHECK (party_role IN ('ISSUER','BROKER','SELLER','BUYER','WITNESS','OTHER')),
+          name TEXT NOT NULL,
+          document_number TEXT,
+          position_title TEXT,
+          email TEXT,
+          phone TEXT,
+          signature_order INTEGER NOT NULL,
+          signature_status TEXT NOT NULL CHECK (signature_status IN ('PENDING','SIGNED_EXTERNALLY','REJECTED','NOT_REQUIRED')),
+          signed_at TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_signers_deal_id ON deal_confirmation_signers(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_signers_status ON deal_confirmation_signers(signature_status);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_document_versions (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          version_number INTEGER NOT NULL,
+          document_type TEXT NOT NULL CHECK (document_type IN ('GENERATED_DRAFT','ISSUED_ORIGINAL','SIGNED_EXTERNAL','SUPPORTING_DOCUMENT','CANCELLED_COPY','REPLACEMENT_COPY')),
+          original_file_name TEXT NOT NULL,
+          stored_file_path TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          file_hash TEXT NOT NULL,
+          generated_by_system INTEGER NOT NULL CHECK (generated_by_system IN (0, 1)),
+          is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id),
+          UNIQUE (deal_confirmation_id, version_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_documents_deal_id ON deal_confirmation_document_versions(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_documents_type ON deal_confirmation_document_versions(document_type);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_documents_hash ON deal_confirmation_document_versions(file_hash);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_documents_current ON deal_confirmation_document_versions(deal_confirmation_id, document_type, is_current);
+
+        CREATE TABLE IF NOT EXISTS deal_confirmation_status_history (
+          id TEXT PRIMARY KEY,
+          deal_confirmation_id TEXT NOT NULL,
+          previous_status TEXT,
+          new_status TEXT NOT NULL,
+          reason TEXT,
+          changed_by_user_id TEXT,
+          changed_at TEXT NOT NULL,
+          FOREIGN KEY (deal_confirmation_id) REFERENCES deal_confirmations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_status_history_deal_id ON deal_confirmation_status_history(deal_confirmation_id);
+        CREATE INDEX IF NOT EXISTS idx_deal_confirmation_status_history_changed_at ON deal_confirmation_status_history(changed_at);
+      `);
+    }
   }
 ];

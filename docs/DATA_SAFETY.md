@@ -23,3 +23,15 @@ O parser rejeita XML vazio, maior que 10 MB, malformado, com DTD/DOCTYPE, entida
 Cobrancas geradas ficam em `userData/documents/charges/<charge-id>/`, com PDF, planilha Excel e imagem resumida. A cobranca emitida guarda snapshot JSON dos dados usados na emissao e versiona documentos para preservar historico mesmo quando cadastros mudarem depois.
 
 Cancelamentos e substituicoes sao logicos. Operacoes reservadas por rascunho podem ser liberadas; cobrancas emitidas canceladas mantem trilha em `charge_status_history`, lancamentos de conta-corrente e documentos ja gerados.
+
+Contas a pagar, pagamentos e rateios sao locais no SQLite. Cancelamento de conta ou pagamento e logico, com motivo e historico em `payable_status_history`. Anexos financeiros possuem tabela propria para caminho interno, hash, tamanho e tipo; a copia segura de arquivos ainda deve evoluir para um fluxo visual completo.
+
+O modulo financeiro nao armazena senha, token bancario, credencial, nem numero completo de conta quando nao necessario. Identificadores de contas financeiras devem ser mascarados ou descritivos.
+
+Anexos financeiros aceitam PDF, PNG, JPG, JPEG e WebP ate 15 MB. O processo principal valida existencia, tamanho e extensao, calcula SHA-256 e copia o arquivo para `userData/documents/accounts-payable/<organization>/<cnpj>/<conta>/...`. A interface abre anexos e relatorios somente por ID interno; caminhos arbitrarios do renderer nao sao aceitos para abertura.
+
+Relatorios financeiros sao gerados localmente em `userData/documents/financial-reports/<organization>/<cnpj-ou-all>/<ano>/<report-id>/`, sem sobrescrever geracoes anteriores.
+
+Confirmacoes de negocio sao armazenadas no SQLite local e seus documentos ficam em `userData/documents/confirmations/<organization>/<cnpj>/<confirmacao>/`. O renderer seleciona PDF assinado por dialog do processo principal e recebe apenas token temporario; a copia, o hash SHA-256 e o registro da versao ocorrem no backend.
+
+PDF assinado externamente e arquivado para auditoria, mas o sistema nao confere certificado, cadeia ICP-Brasil, carimbo do tempo ou validade criptografica da assinatura nesta etapa.

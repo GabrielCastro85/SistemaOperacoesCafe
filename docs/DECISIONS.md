@@ -77,3 +77,35 @@ Adiantamentos, creditos, cobrancas e pagamentos usam um livro auxiliar em `clien
 ## Documentos De Cobranca Locais
 
 PDF, Excel e imagem sao gerados localmente e versionados. O banco salva caminhos e hash do PDF, enquanto a cobranca emitida salva snapshot JSON para que documentos futuros possam ser reemitidos com os mesmos dados operacionais.
+
+## Financeiro Gerencial Interno
+
+Contas a pagar foram modeladas separadamente da conta-corrente de clientes. Essa decisao evita misturar contas a receber e despesas internas, mas permite um dashboard projetado que calcula recebimentos previstos menos pagamentos previstos.
+
+## Centro De Custo Separado De Local
+
+`Location` continua representando lugar fisico. `CostCenter` representa atribuicao gerencial do custo, podendo apontar para local e CNPJ proprio, mas tambem existir como Administrativo, Diretoria ou Fiscal.
+
+## Parcelas E Centavos
+
+Parcelamentos dividem o valor total em centavos inteiros. Qualquer diferenca e aplicada de forma deterministica na ultima parcela, garantindo que a soma das parcelas seja exatamente igual ao total informado.
+
+## Anexos Financeiros Por ID
+
+Anexos sao copiados para pasta interna e abertos por ID, nao por caminho enviado pelo renderer. Essa decisao reduz risco de path traversal e mantem o app independente do arquivo original escolhido pelo usuario.
+
+## Relatorios Gerenciais Versionados
+
+Cada PDF ou Excel financeiro gera uma nova entrada em `financial_report_generations`. Relatorios nao sao sobrescritos silenciosamente; filtros e hash ficam registrados para auditoria local.
+
+## Confirmacao Como Documento Operacional
+
+Confirmacao de negocio foi modelada fora de cobrancas e fora de contas a pagar. Ela referencia operacoes e notas quando existirem, mas tambem aceita rascunho manual para negocios que ainda nao nasceram de documento fiscal.
+
+## Snapshots Em Confirmacoes
+
+Participantes e itens salvam snapshots JSON. Essa decisao protege documentos emitidos contra mudancas futuras em parceiros, CNPJs, produtos ou regras comerciais.
+
+## Assinatura Externa Arquivada
+
+PDF assinado externamente e copiado para pasta interna e versionado com hash. A etapa registra o documento e seu status operacional, mas nao tenta validar certificado digital; isso evita uma falsa sensacao de validade juridica enquanto a infraestrutura criptografica completa nao existir.

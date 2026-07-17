@@ -19,3 +19,9 @@ A quinta etapa adiciona importacao assistida de planilhas Excel `.xlsx` para his
 A sexta etapa adiciona importacao local de XMLs de NF-e. Ela suporta arquivo unico, multiplos arquivos e pasta, cria fila de processamento, diferencia nota autorizada de eventos, extrai dados fiscais, determina CNPJ proprio, registra eventos de cancelamento e carta de correcao, mescla XML com notas manuais ou de planilha por chave e reutiliza itens, operacoes e regras por saca ja existentes.
 
 A setima etapa adiciona cobrancas por periodo e conta-corrente do cliente. Ela permite sugerir janelas mensal, quinzenal, semanal ou personalizada, selecionar operacoes confirmadas ainda nao cobradas, reservar operacoes em rascunho, aplicar ajustes, adiantamentos e creditos, emitir cobranca numerada, gerar PDF/Excel/imagem e registrar pagamentos parciais ou totais.
+
+A oitava etapa adiciona Financeiro e contas a pagar. O modulo controla despesas internas por organizacao, CNPJ proprio, local, centro de custo, categoria e favorecido, com contas manuais, recorrentes, parceladas, rateadas e pagas parcial ou totalmente.
+
+A conclusao da oitava etapa adiciona anexos de contas, comprovantes de pagamento e relatorios financeiros PDF/Excel, mantendo tudo offline e armazenado em pastas internas do usuario.
+
+A nona etapa adiciona Confirmacoes de negocio. O usuario pode criar uma confirmacao manual ou a partir de operacoes/notas, revisar participantes, itens, clausulas, pagamento, entrega e signatarios, gerar previa, emitir PDF numerado, importar PDF assinado externamente, cancelar, substituir e consultar indicadores basicos.

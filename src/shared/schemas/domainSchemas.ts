@@ -501,3 +501,356 @@ export const paymentAllocationInputSchema = z.object({
   clientChargeId: z.string().uuid(),
   amountCents: z.number().int().positive()
 });
+
+export const expenseNatureSchema = z.enum(["FIXED", "VARIABLE", "TAX", "PERSONNEL", "FINANCIAL", "INVESTMENT", "OTHER"]);
+export const financialAccountTypeSchema = z.enum(["BANK_ACCOUNT", "CASH", "DIGITAL_WALLET", "OTHER"]);
+export const accountPayableSourceSchema = z.enum(["MANUAL", "RECURRING", "INSTALLMENT", "IMPORT"]);
+export const payableAmountStatusSchema = z.enum(["PENDING", "ESTIMATED", "CONFIRMED"]);
+export const accountPayableStatusSchema = z.enum(["DRAFT", "SCHEDULED", "OPEN", "PARTIALLY_PAID", "PAID", "OVERDUE", "CONTESTED", "CANCELLED"]);
+export const recurringAmountModeSchema = z.enum(["FIXED", "VARIABLE"]);
+export const payableFrequencySchema = z.enum(["MONTHLY", "BIMONTHLY", "QUARTERLY", "SEMIANNUAL", "ANNUAL", "CUSTOM"]);
+export const installmentIntervalTypeSchema = z.enum(["MONTHLY", "DAYS_30", "CUSTOM"]);
+export const payablePaymentMethodSchema = z.enum(["PIX", "BANK_TRANSFER", "BOLETO", "CASH", "CHECK", "CARD", "DIRECT_DEBIT", "OFFSET", "OTHER"]);
+
+const payableDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const nonNegativeCents = z.number().int().min(0);
+
+export const expenseCategoryInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  parentCategoryId: z.string().uuid().nullable(),
+  name: z.string().trim().min(1),
+  code: nullableText,
+  expenseNature: expenseNatureSchema,
+  description: nullableText,
+  isActive: z.boolean()
+});
+
+export const costCenterInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable(),
+  locationId: z.string().uuid().nullable(),
+  parentCostCenterId: z.string().uuid().nullable(),
+  name: z.string().trim().min(1),
+  code: nullableText,
+  description: nullableText,
+  isActive: z.boolean()
+});
+
+export const financialAccountInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  name: z.string().trim().min(1),
+  accountType: financialAccountTypeSchema,
+  bankName: nullableText,
+  branch: nullableText,
+  accountIdentifierMasked: nullableText,
+  pixKeyDescription: nullableText,
+  notes: nullableText,
+  isActive: z.boolean()
+});
+
+export const accountPayableInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  supplierPartnerId: z.string().uuid().nullable(),
+  supplierLegalEntityId: z.string().uuid().nullable(),
+  payeeNameSnapshot: z.string().trim().min(1),
+  payeeTaxIdSnapshot: nullableText,
+  categoryId: z.string().uuid(),
+  defaultCostCenterId: z.string().uuid().nullable(),
+  defaultLocationId: z.string().uuid().nullable(),
+  source: accountPayableSourceSchema.default("MANUAL"),
+  description: z.string().trim().min(1),
+  documentType: nullableText,
+  documentNumber: nullableText,
+  competenceDate: payableDate,
+  issueDate: payableDate.nullable(),
+  dueDate: payableDate,
+  originalAmountCents: nonNegativeCents.nullable(),
+  discountCents: nonNegativeCents,
+  interestCents: nonNegativeCents,
+  penaltyCents: nonNegativeCents,
+  otherAdditionsCents: nonNegativeCents,
+  amountStatus: payableAmountStatusSchema,
+  notes: nullableText,
+  internalNotes: nullableText
+});
+
+export const accountPayableAllocationInputSchema = z.object({
+  accountPayableId: z.string().uuid(),
+  costCenterId: z.string().uuid().nullable(),
+  locationId: z.string().uuid().nullable(),
+  allocationAmountCents: nonNegativeCents,
+  allocationBasisPoints: z.number().int().min(0).max(10000).nullable(),
+  description: nullableText
+});
+
+export const payableRecurringTemplateInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  supplierPartnerId: z.string().uuid().nullable(),
+  supplierLegalEntityId: z.string().uuid().nullable(),
+  payeeNameSnapshot: z.string().trim().min(1),
+  categoryId: z.string().uuid(),
+  defaultCostCenterId: z.string().uuid().nullable(),
+  defaultLocationId: z.string().uuid().nullable(),
+  description: z.string().trim().min(1),
+  amountMode: recurringAmountModeSchema,
+  fixedAmountCents: nonNegativeCents.nullable(),
+  estimatedAmountCents: nonNegativeCents.nullable(),
+  frequency: payableFrequencySchema,
+  dueDay: z.number().int().min(1).max(31),
+  generationLeadDays: z.number().int().min(0).max(370),
+  startDate: payableDate,
+  endDate: payableDate.nullable(),
+  autoGenerateOnOpen: z.boolean(),
+  isActive: z.boolean()
+});
+
+export const payableInstallmentGroupInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  supplierPartnerId: z.string().uuid().nullable(),
+  supplierLegalEntityId: z.string().uuid().nullable(),
+  payeeNameSnapshot: z.string().trim().min(1),
+  categoryId: z.string().uuid(),
+  defaultCostCenterId: z.string().uuid().nullable(),
+  defaultLocationId: z.string().uuid().nullable(),
+  description: z.string().trim().min(1),
+  totalAmountCents: z.number().int().positive(),
+  installmentCount: z.number().int().positive().max(120),
+  firstDueDate: payableDate,
+  intervalType: installmentIntervalTypeSchema
+});
+
+export const payablePaymentInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  financialAccountId: z.string().uuid().nullable(),
+  paymentDate: payableDate,
+  amountCents: z.number().int().positive(),
+  paymentMethod: payablePaymentMethodSchema,
+  transactionReference: nullableText,
+  payeeNameSnapshot: z.string().trim().min(1),
+  notes: nullableText,
+  attachmentPath: nullableText,
+  attachmentHash: nullableText
+});
+
+export const payablePaymentAllocationInputSchema = z.object({
+  payablePaymentId: z.string().uuid(),
+  accountPayableId: z.string().uuid(),
+  amountCents: z.number().int().positive()
+});
+
+export const payableAttachmentTypeSchema = z.enum(["INVOICE", "BILL", "CONTRACT", "RECEIPT", "SUPPORTING_DOCUMENT", "OTHER"]);
+export const financialReportTypeSchema = z.enum(["ACCOUNTS_PAYABLE", "OVERDUE_PAYABLES", "PAYMENTS", "BY_LEGAL_ENTITY", "BY_LOCATION", "BY_COST_CENTER", "BY_CATEGORY", "BY_SUPPLIER", "FIXED_VARIABLE", "RECURRING", "INSTALLMENTS", "PROJECTED_CASH_FLOW"]);
+export const financialReportFormatSchema = z.enum(["PDF", "EXCEL"]);
+
+export const addPayableAttachmentInputSchema = z.object({
+  token: z.string().uuid().optional(),
+  sourcePath: z.string().min(1).optional(),
+  accountPayableId: z.string().uuid(),
+  attachmentType: payableAttachmentTypeSchema,
+  description: nullableText
+}).refine((data) => Boolean(data.token || data.sourcePath), "Informe token ou caminho de origem.");
+
+export const addPayablePaymentAttachmentInputSchema = z.object({
+  token: z.string().uuid().optional(),
+  sourcePath: z.string().min(1).optional(),
+  payablePaymentId: z.string().uuid(),
+  attachmentType: payableAttachmentTypeSchema,
+  description: nullableText
+}).refine((data) => Boolean(data.token || data.sourcePath), "Informe token ou caminho de origem.");
+
+export const financialReportFiltersSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable(),
+  dateStart: payableDate.nullable(),
+  dateEnd: payableDate.nullable(),
+  categoryId: z.string().uuid().nullable(),
+  locationId: z.string().uuid().nullable(),
+  costCenterId: z.string().uuid().nullable(),
+  supplierPartnerId: z.string().uuid().nullable(),
+  status: nullableText
+});
+
+export const financialReportInputSchema = z.object({
+  reportType: financialReportTypeSchema,
+  format: financialReportFormatSchema,
+  filters: financialReportFiltersSchema
+});
+
+export const dealConfirmationStatusSchema = z.enum(["DRAFT", "PENDING_REVIEW", "ISSUED", "SENT_FOR_SIGNATURE", "SIGNED", "CANCELLED", "REPLACED"]);
+export const dealSignatureStatusSchema = z.enum(["NOT_APPLICABLE", "NOT_SENT", "WAITING_SIGNATURE", "PARTIALLY_SIGNED", "SIGNED", "REJECTED"]);
+export const dealPartyRoleSchema = z.enum(["ISSUER", "BROKER", "SELLER", "BUYER", "DELIVERY_RECIPIENT", "OTHER"]);
+export const dealSignerRoleSchema = z.enum(["ISSUER", "BROKER", "SELLER", "BUYER", "WITNESS", "OTHER"]);
+export const dealSignerStatusSchema = z.enum(["PENDING", "SIGNED_EXTERNALLY", "REJECTED", "NOT_REQUIRED"]);
+export const dealTemplateLayoutModeSchema = z.enum(["STANDARD", "COMPACT", "DETAILED"]);
+export const dealClauseCategorySchema = z.enum(["PAYMENT", "DELIVERY", "QUALITY", "RESPONSIBILITY", "CANCELLATION", "GENERAL", "OTHER"]);
+export const dealDocumentTypeSchema = z.enum(["GENERATED_DRAFT", "ISSUED_ORIGINAL", "SIGNED_EXTERNAL", "SUPPORTING_DOCUMENT", "CANCELLED_COPY", "REPLACEMENT_COPY"]);
+export const confirmationReportTypeSchema = z.enum(["CONFIRMATIONS_PERIOD", "BY_SELLER", "BY_BUYER", "BY_PRODUCT", "BY_STATUS", "BY_SIGNATURE", "WITHOUT_FISCAL_DOCUMENT", "WITHOUT_OPERATION"]);
+export const confirmationReportFormatSchema = z.enum(["PDF", "EXCEL"]);
+
+const positiveDecimalTextSchema = decimalTextSchema.refine((value) => BigInt(value.split(".")[0]) > 0n || !/^0(?:\.0{1,6})?$/.test(value), "Decimal deve ser maior que zero.");
+
+const dealConfirmationDraftInputBaseSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  templateId: z.string().uuid().nullable().optional(),
+  confirmationDate: payableDate,
+  negotiationDate: payableDate.nullable().optional(),
+  deliveryLocationSnapshot: nullableText.optional(),
+  deliveryStartDate: payableDate.nullable().optional(),
+  deliveryEndDate: payableDate.nullable().optional(),
+  paymentTermsSnapshot: nullableText.optional(),
+  qualityTermsSnapshot: nullableText.optional(),
+  generalTermsSnapshot: nullableText.optional(),
+  publicNotes: nullableText.optional(),
+  internalNotes: nullableText.optional()
+});
+
+export const dealConfirmationDraftInputSchema = dealConfirmationDraftInputBaseSchema.refine((data) => !data.deliveryStartDate || !data.deliveryEndDate || data.deliveryEndDate >= data.deliveryStartDate, "Periodo de entrega invalido.");
+
+export const dealConfirmationUpdateSchema = dealConfirmationDraftInputBaseSchema.omit({ organizationId: true, ownLegalEntityId: true }).partial();
+
+export const dealConfirmationPartyInputSchema = z.object({
+  dealConfirmationId: z.string().uuid(),
+  partyRole: dealPartyRoleSchema,
+  businessPartnerId: z.string().uuid().nullable().optional(),
+  partnerLegalEntityId: z.string().uuid().nullable().optional(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
+  manualName: nullableText.optional(),
+  representativeName: nullableText.optional(),
+  sortOrder: z.number().int().min(0).default(0)
+}).refine((data) => Boolean(data.ownLegalEntityId || data.businessPartnerId || data.manualName), "Informe cadastro ou participante manual.");
+
+export const dealConfirmationItemInputSchema = z.object({
+  dealConfirmationId: z.string().uuid(),
+  sortOrder: z.number().int().min(0),
+  productId: z.string().uuid().nullable(),
+  productNameSnapshot: z.string().trim().min(1),
+  productDescriptionSnapshot: nullableText,
+  cropSnapshot: nullableText,
+  qualitySnapshot: nullableText,
+  packagingSnapshot: nullableText,
+  originSnapshot: nullableText,
+  destinationSnapshot: nullableText,
+  quantitySacksDecimal: positiveDecimalTextSchema,
+  sackWeightKgDecimal: positiveDecimalTextSchema,
+  unitPriceDecimal: decimalTextSchema,
+  totalAmountCents: z.number().int().min(0).nullable().optional(),
+  totalOverrideReason: nullableText.optional(),
+  deliveryStartDate: payableDate.nullable(),
+  deliveryEndDate: payableDate.nullable(),
+  deliveryLocationSnapshot: nullableText,
+  notes: nullableText
+}).refine((data) => !data.totalAmountCents || data.totalOverrideReason, "Override de total exige justificativa.");
+
+export const dealConfirmationTemplateInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable(),
+  name: z.string().trim().min(1),
+  description: nullableText,
+  title: z.string().trim().min(1),
+  subtitle: nullableText,
+  layoutMode: dealTemplateLayoutModeSchema,
+  defaultPaymentTerms: nullableText,
+  defaultDeliveryTerms: nullableText,
+  defaultQualityTerms: nullableText,
+  defaultGeneralTerms: nullableText,
+  showBroker: z.boolean(),
+  showCommercialValues: z.boolean(),
+  showItemOrigins: z.boolean(),
+  showSignatureBlocks: z.boolean(),
+  signatureBlockCount: z.number().int().min(0).max(8),
+  isDefault: z.boolean(),
+  isActive: z.boolean()
+});
+
+export const dealClauseTemplateInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  name: z.string().trim().min(1),
+  title: nullableText,
+  clauseText: z.string().trim().min(1).max(8000),
+  category: dealClauseCategorySchema,
+  isActive: z.boolean()
+});
+
+export const dealConfirmationClauseInputSchema = z.object({
+  dealConfirmationId: z.string().uuid(),
+  clauseNumber: nullableText,
+  title: nullableText,
+  clauseText: z.string().trim().min(1).max(8000),
+  sortOrder: z.number().int().min(0),
+  isVisible: z.boolean()
+});
+
+export const dealPaymentTermInputSchema = z.object({
+  dealConfirmationId: z.string().uuid(),
+  sortOrder: z.number().int().min(0),
+  description: z.string().trim().min(1),
+  percentageBasisPoints: z.number().int().min(0).max(10000).nullable(),
+  amountCents: z.number().int().min(0).nullable(),
+  dueDate: payableDate.nullable(),
+  daysAfterEvent: z.number().int().min(0).nullable(),
+  eventReference: nullableText
+});
+
+export const dealConfirmationSignerInputSchema = z.object({
+  dealConfirmationId: z.string().uuid(),
+  partyRole: dealSignerRoleSchema,
+  name: z.string().trim().min(1),
+  documentNumber: nullableText,
+  positionTitle: nullableText,
+  email: z.string().trim().email().nullable(),
+  phone: nullableText,
+  signatureOrder: z.number().int().min(0),
+  signatureStatus: dealSignerStatusSchema,
+  signedAt: z.string().datetime().nullable().optional(),
+  notes: nullableText
+});
+
+export const dealConfirmationListFiltersSchema = z.object({
+  organizationId: z.string().uuid().optional(),
+  ownLegalEntityId: z.string().uuid().optional(),
+  search: z.string().optional(),
+  status: dealConfirmationStatusSchema.or(z.literal("all")).optional(),
+  signatureStatus: dealSignatureStatusSchema.or(z.literal("all")).optional(),
+  productId: z.string().uuid().optional(),
+  withFiscalDocument: z.boolean().optional(),
+  withOperation: z.boolean().optional(),
+  dateStart: payableDate.optional(),
+  dateEnd: payableDate.optional()
+});
+
+export const dealConfirmationSourceInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  operationIds: z.array(z.string().uuid()).default([]),
+  fiscalDocumentIds: z.array(z.string().uuid()).default([])
+});
+
+export const signedDealDocumentInputSchema = z.object({
+  token: z.string().uuid().optional(),
+  sourcePath: z.string().min(1).optional(),
+  notes: nullableText.optional()
+}).refine((data) => Boolean(data.token || data.sourcePath), "Informe token ou caminho do PDF assinado.");
+
+export const confirmationReportFiltersSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable(),
+  dateStart: payableDate.nullable(),
+  dateEnd: payableDate.nullable(),
+  sellerPartnerId: z.string().uuid().nullable(),
+  buyerPartnerId: z.string().uuid().nullable(),
+  productId: z.string().uuid().nullable(),
+  status: nullableText,
+  signatureStatus: nullableText
+});
+
+export const confirmationReportInputSchema = z.object({
+  reportType: confirmationReportTypeSchema,
+  format: confirmationReportFormatSchema,
+  filters: confirmationReportFiltersSchema
+});

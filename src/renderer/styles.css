@@ -357,6 +357,38 @@ input {
   grid-template-columns: 120px 150px 1.5fr 170px 120px 120px 110px;
 }
 
+.payable-grid {
+  grid-template-columns: 110px minmax(190px, 1fr) minmax(150px, 1fr) minmax(130px, 1fr) 110px 100px 100px 130px;
+}
+
+.finance-catalog-grid {
+  grid-template-columns: minmax(190px, 1fr) 120px 150px 100px;
+}
+
+.attachment-grid {
+  grid-template-columns: 150px minmax(180px, 1fr) 90px 110px minmax(160px, 1fr) 150px;
+}
+
+.report-grid {
+  grid-template-columns: 110px 1.4fr 100px minmax(160px, 1fr) 90px;
+}
+
+.confirmation-grid {
+  grid-template-columns: minmax(150px, 1fr) 110px 110px 140px 130px 150px 90px;
+}
+
+.document-grid {
+  grid-template-columns: 80px 170px 140px minmax(170px, 1fr) 150px;
+}
+
+.template-grid {
+  grid-template-columns: minmax(180px, 1fr) 120px 90px 100px 160px;
+}
+
+.clause-grid {
+  grid-template-columns: minmax(180px, 1fr) 140px minmax(160px, 1fr) 100px 100px;
+}
+
 .inline-check {
   display: inline-flex;
   align-items: center;

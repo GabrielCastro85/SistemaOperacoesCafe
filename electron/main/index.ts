@@ -16,18 +16,34 @@ function createWindow(): void {
     minHeight: 640,
     title: "Operacoes Cafe",
     webPreferences: {
-      preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.js"),
+      preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false
     }
   });
 
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
+    log.error("Renderer failed to load", { errorCode, errorDescription, validatedUrl });
+  });
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    log.error("Renderer process gone", details);
+  });
+
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    log.info("Renderer console", { level, message, line, sourceId });
+  });
+
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl);
+    void mainWindow.loadURL(devServerUrl).catch((error: unknown) => {
+      log.error("Failed to load dev server", error);
+    });
   } else {
-    void mainWindow.loadFile(join(app.getAppPath(), "dist", "index.html"));
+    void mainWindow.loadFile(join(app.getAppPath(), "dist", "index.html")).catch((error: unknown) => {
+      log.error("Failed to load renderer file", error);
+    });
   }
 }
 

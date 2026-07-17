@@ -70,3 +70,27 @@
 - Adicionada geracao local de PDF, Excel e imagem de resumo da cobranca.
 - Adicionadas telas de Cobrancas e Conta-corrente, alem de indicadores de cobranca no Dashboard.
 - Ampliados testes para periodo, reserva, credito, emissao de documentos, pagamento parcial e liberacao de operacao.
+
+## 0.8.0
+
+- Adicionada migration `009_accounts_payable`.
+- Criado modulo Financeiro com visao geral, contas a pagar, cadastros, recorrencias, parcelamentos e pagamentos.
+- Criadas categorias de despesa idempotentes, centros de custo e contas financeiras.
+- Criadas contas a pagar manuais com competencia, vencimento, valores em centavos, status e historico.
+- Adicionados rateios por centro/local, recorrencias mensais e parcelamentos com divisao exata de centavos.
+- Adicionados pagamentos de contas com alocacao parcial ou total e recalculo automatico de saldo/status.
+- Adicionado dashboard financeiro com totais a pagar, pagos, vencidos, proximos vencimentos e fluxo projetado.
+- Adicionada migration `010_financial_attachments_reports`.
+- Adicionados anexos de contas, comprovantes de pagamento, copia interna, hash SHA-256 e abertura segura por ID.
+- Adicionados relatorios financeiros gerenciais em PDF e Excel, historico de geracao e armazenamento versionado.
+- Ampliados testes para financeiro, migration, categorias, centros, contas financeiras, contas a pagar, recorrencias, parcelas e pagamentos.
+
+## 0.9.0
+
+- Adicionada migration `011_deal_confirmations`.
+- Criado modulo de Confirmacoes de negocio com criacao manual, por operacoes e por notas fiscais.
+- Criadas tabelas de templates, clausulas, confirmacoes, participantes, itens, vinculos, pagamentos, signatarios, versoes de documento e historico de status.
+- Adicionados decimais exatos para quantidades e precos comerciais com mais de duas casas.
+- Adicionadas previa, emissao numerada, PDF local, hash SHA-256, importacao de PDF assinado externamente, cancelamento e substituicao.
+- Adicionadas telas de listagem, detalhes, templates, clausulas, relatorios e indicadores.
+- Adicionados IPCs e testes para confirmacoes, documentos, assinaturas, relatorios e isolamento multiempresa.

@@ -30,6 +30,28 @@ import type {
   ClientPaymentAllocation,
   DocumentSequence,
   ChargeDocumentVersion,
+  ExpenseCategory,
+  CostCenter,
+  FinancialAccount,
+  AccountPayable,
+  AccountPayableAllocation,
+  PayableRecurringTemplate,
+  PayableInstallmentGroup,
+  PayablePayment,
+  PayablePaymentAllocation,
+  PayableStatusHistory,
+  PayableDocumentAttachment,
+  FinancialReportGeneration,
+  DealClauseTemplate,
+  DealConfirmation,
+  DealConfirmationClause,
+  DealConfirmationDocumentVersion,
+  DealConfirmationItem,
+  DealConfirmationParty,
+  DealConfirmationSigner,
+  DealConfirmationStatusHistory,
+  DealConfirmationTemplate,
+  DealPaymentTerm,
   Organization
 } from "../../../src/shared/types/domain.js";
 
@@ -683,5 +705,448 @@ export function mapChargeDocumentVersion(row: DbRecord): ChargeDocumentVersion {
     imageFilePath: textOrNull(row.image_file_path),
     imageFileHash: textOrNull(row.image_file_hash),
     createdAt: String(row.created_at)
+  };
+}
+
+export function mapExpenseCategory(row: DbRecord): ExpenseCategory {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    parentCategoryId: textOrNull(row.parent_category_id),
+    name: String(row.name),
+    code: textOrNull(row.code),
+    expenseNature: String(row.expense_nature) as ExpenseCategory["expenseNature"],
+    description: textOrNull(row.description),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapCostCenter(row: DbRecord): CostCenter {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    locationId: textOrNull(row.location_id),
+    parentCostCenterId: textOrNull(row.parent_cost_center_id),
+    name: String(row.name),
+    code: textOrNull(row.code),
+    description: textOrNull(row.description),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapFinancialAccount(row: DbRecord): FinancialAccount {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    name: String(row.name),
+    accountType: String(row.account_type) as FinancialAccount["accountType"],
+    bankName: textOrNull(row.bank_name),
+    branch: textOrNull(row.branch),
+    accountIdentifierMasked: textOrNull(row.account_identifier_masked),
+    pixKeyDescription: textOrNull(row.pix_key_description),
+    notes: textOrNull(row.notes),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapAccountPayable(row: DbRecord): AccountPayable {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    supplierPartnerId: textOrNull(row.supplier_partner_id),
+    supplierLegalEntityId: textOrNull(row.supplier_legal_entity_id),
+    payeeNameSnapshot: String(row.payee_name_snapshot),
+    payeeTaxIdSnapshot: textOrNull(row.payee_tax_id_snapshot),
+    categoryId: String(row.category_id),
+    defaultCostCenterId: textOrNull(row.default_cost_center_id),
+    defaultLocationId: textOrNull(row.default_location_id),
+    recurringTemplateId: textOrNull(row.recurring_template_id),
+    installmentGroupId: textOrNull(row.installment_group_id),
+    installmentNumber: typeof row.installment_number === "number" ? row.installment_number : null,
+    installmentCount: typeof row.installment_count === "number" ? row.installment_count : null,
+    source: String(row.source) as AccountPayable["source"],
+    description: String(row.description),
+    documentType: textOrNull(row.document_type),
+    documentNumber: textOrNull(row.document_number),
+    competenceDate: String(row.competence_date),
+    issueDate: textOrNull(row.issue_date),
+    dueDate: String(row.due_date),
+    originalAmountCents: typeof row.original_amount_cents === "number" ? row.original_amount_cents : null,
+    discountCents: Number(row.discount_cents),
+    interestCents: Number(row.interest_cents),
+    penaltyCents: Number(row.penalty_cents),
+    otherAdditionsCents: Number(row.other_additions_cents),
+    finalAmountCents: typeof row.final_amount_cents === "number" ? row.final_amount_cents : null,
+    paidAmountCents: Number(row.paid_amount_cents),
+    openAmountCents: typeof row.open_amount_cents === "number" ? row.open_amount_cents : null,
+    amountStatus: String(row.amount_status) as AccountPayable["amountStatus"],
+    status: String(row.status) as AccountPayable["status"],
+    notes: textOrNull(row.notes),
+    internalNotes: textOrNull(row.internal_notes),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    confirmedAt: textOrNull(row.confirmed_at),
+    cancelledAt: textOrNull(row.cancelled_at),
+    cancellationReason: textOrNull(row.cancellation_reason),
+    contestedAt: textOrNull(row.contested_at),
+    contestReason: textOrNull(row.contest_reason)
+  };
+}
+
+export function mapAccountPayableAllocation(row: DbRecord): AccountPayableAllocation {
+  return {
+    id: String(row.id),
+    accountPayableId: String(row.account_payable_id),
+    costCenterId: textOrNull(row.cost_center_id),
+    locationId: textOrNull(row.location_id),
+    allocationAmountCents: Number(row.allocation_amount_cents),
+    allocationBasisPoints: typeof row.allocation_basis_points === "number" ? row.allocation_basis_points : null,
+    description: textOrNull(row.description),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapPayableRecurringTemplate(row: DbRecord): PayableRecurringTemplate {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    supplierPartnerId: textOrNull(row.supplier_partner_id),
+    supplierLegalEntityId: textOrNull(row.supplier_legal_entity_id),
+    payeeNameSnapshot: String(row.payee_name_snapshot),
+    categoryId: String(row.category_id),
+    defaultCostCenterId: textOrNull(row.default_cost_center_id),
+    defaultLocationId: textOrNull(row.default_location_id),
+    description: String(row.description),
+    amountMode: String(row.amount_mode) as PayableRecurringTemplate["amountMode"],
+    fixedAmountCents: typeof row.fixed_amount_cents === "number" ? row.fixed_amount_cents : null,
+    estimatedAmountCents: typeof row.estimated_amount_cents === "number" ? row.estimated_amount_cents : null,
+    frequency: String(row.frequency) as PayableRecurringTemplate["frequency"],
+    dueDay: Number(row.due_day),
+    generationLeadDays: Number(row.generation_lead_days),
+    startDate: String(row.start_date),
+    endDate: textOrNull(row.end_date),
+    autoGenerateOnOpen: bool(row.auto_generate_on_open),
+    lastGeneratedCompetence: textOrNull(row.last_generated_competence),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapPayableInstallmentGroup(row: DbRecord): PayableInstallmentGroup {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    supplierPartnerId: textOrNull(row.supplier_partner_id),
+    description: String(row.description),
+    totalAmountCents: Number(row.total_amount_cents),
+    installmentCount: Number(row.installment_count),
+    firstDueDate: String(row.first_due_date),
+    intervalType: String(row.interval_type) as PayableInstallmentGroup["intervalType"],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    cancelledAt: textOrNull(row.cancelled_at),
+    cancellationReason: textOrNull(row.cancellation_reason)
+  };
+}
+
+export function mapPayablePayment(row: DbRecord): PayablePayment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    financialAccountId: textOrNull(row.financial_account_id),
+    paymentDate: String(row.payment_date),
+    amountCents: Number(row.amount_cents),
+    paymentMethod: String(row.payment_method) as PayablePayment["paymentMethod"],
+    transactionReference: textOrNull(row.transaction_reference),
+    payeeNameSnapshot: String(row.payee_name_snapshot),
+    notes: textOrNull(row.notes),
+    attachmentPath: textOrNull(row.attachment_path),
+    attachmentHash: textOrNull(row.attachment_hash),
+    status: String(row.status) as PayablePayment["status"],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    cancelledAt: textOrNull(row.cancelled_at),
+    cancellationReason: textOrNull(row.cancellation_reason)
+  };
+}
+
+export function mapPayablePaymentAllocation(row: DbRecord): PayablePaymentAllocation {
+  return {
+    id: String(row.id),
+    payablePaymentId: String(row.payable_payment_id),
+    accountPayableId: String(row.account_payable_id),
+    amountCents: Number(row.amount_cents),
+    allocatedAt: String(row.allocated_at),
+    cancelledAt: textOrNull(row.cancelled_at),
+    cancellationReason: textOrNull(row.cancellation_reason)
+  };
+}
+
+export function mapPayableStatusHistory(row: DbRecord): PayableStatusHistory {
+  return {
+    id: String(row.id),
+    accountPayableId: String(row.account_payable_id),
+    previousStatus: textOrNull(row.previous_status) as PayableStatusHistory["previousStatus"],
+    newStatus: String(row.new_status) as PayableStatusHistory["newStatus"],
+    reason: textOrNull(row.reason),
+    changedByUserId: textOrNull(row.changed_by_user_id),
+    changedAt: String(row.changed_at)
+  };
+}
+
+export function mapPayableDocumentAttachment(row: DbRecord): PayableDocumentAttachment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    accountPayableId: textOrNull(row.account_payable_id),
+    payablePaymentId: textOrNull(row.payable_payment_id),
+    attachmentKind: String(row.attachment_kind) as PayableDocumentAttachment["attachmentKind"],
+    attachmentType: String(row.attachment_type ?? "OTHER") as PayableDocumentAttachment["attachmentType"],
+    originalFileName: String(row.original_file_name),
+    storedFilePath: String(row.stored_file_path),
+    fileHash: String(row.file_hash),
+    mimeType: String(row.mime_type),
+    fileExtension: String(row.file_extension ?? ""),
+    fileSize: Number(row.file_size),
+    description: textOrNull(row.description),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at ?? row.created_at),
+    removedAt: textOrNull(row.removed_at),
+    removalReason: textOrNull(row.removal_reason)
+  };
+}
+
+export function mapFinancialReportGeneration(row: DbRecord): FinancialReportGeneration {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    reportType: String(row.report_type) as FinancialReportGeneration["reportType"],
+    format: String(row.format) as FinancialReportGeneration["format"],
+    filtersJson: String(row.filters_json),
+    fileName: String(row.file_name),
+    storedFilePath: String(row.stored_file_path),
+    fileHash: String(row.file_hash),
+    createdAt: String(row.created_at)
+  };
+}
+
+export function mapDealConfirmation(row: DbRecord): DealConfirmation {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: String(row.own_legal_entity_id),
+    templateId: textOrNull(row.template_id),
+    confirmationNumber: textOrNull(row.confirmation_number),
+    temporaryReference: String(row.temporary_reference),
+    confirmationDate: String(row.confirmation_date),
+    negotiationDate: textOrNull(row.negotiation_date),
+    status: row.status as DealConfirmation["status"],
+    signatureStatus: row.signature_status as DealConfirmation["signatureStatus"],
+    currencyCode: String(row.currency_code),
+    totalQuantitySacksDecimal: String(row.total_quantity_sacks_decimal),
+    totalCommercialAmountCents: Number(row.total_commercial_amount_cents),
+    deliveryLocationSnapshot: textOrNull(row.delivery_location_snapshot),
+    deliveryStartDate: textOrNull(row.delivery_start_date),
+    deliveryEndDate: textOrNull(row.delivery_end_date),
+    paymentTermsSnapshot: textOrNull(row.payment_terms_snapshot),
+    qualityTermsSnapshot: textOrNull(row.quality_terms_snapshot),
+    generalTermsSnapshot: textOrNull(row.general_terms_snapshot),
+    publicNotes: textOrNull(row.public_notes),
+    internalNotes: textOrNull(row.internal_notes),
+    templateSnapshotJson: textOrNull(row.template_snapshot_json),
+    pendingIssuesJson: String(row.pending_issues_json ?? "[]"),
+    issuedDocumentVersionId: textOrNull(row.issued_document_version_id),
+    signedDocumentVersionId: textOrNull(row.signed_document_version_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    issuedAt: textOrNull(row.issued_at),
+    sentForSignatureAt: textOrNull(row.sent_for_signature_at),
+    signedAt: textOrNull(row.signed_at),
+    cancelledAt: textOrNull(row.cancelled_at),
+    cancellationReason: textOrNull(row.cancellation_reason),
+    replacedByConfirmationId: textOrNull(row.replaced_by_confirmation_id)
+  };
+}
+
+export function mapDealConfirmationParty(row: DbRecord): DealConfirmationParty {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    partyRole: row.party_role as DealConfirmationParty["partyRole"],
+    businessPartnerId: textOrNull(row.business_partner_id),
+    partnerLegalEntityId: textOrNull(row.partner_legal_entity_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    manualName: textOrNull(row.manual_name),
+    snapshotJson: String(row.snapshot_json),
+    representativeName: textOrNull(row.representative_name),
+    sortOrder: Number(row.sort_order),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealConfirmationItem(row: DbRecord): DealConfirmationItem {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    sortOrder: Number(row.sort_order),
+    productId: textOrNull(row.product_id),
+    productNameSnapshot: String(row.product_name_snapshot),
+    productDescriptionSnapshot: textOrNull(row.product_description_snapshot),
+    cropSnapshot: textOrNull(row.crop_snapshot),
+    qualitySnapshot: textOrNull(row.quality_snapshot),
+    packagingSnapshot: textOrNull(row.packaging_snapshot),
+    originSnapshot: textOrNull(row.origin_snapshot),
+    destinationSnapshot: textOrNull(row.destination_snapshot),
+    quantitySacksDecimal: String(row.quantity_sacks_decimal),
+    sackWeightKgDecimal: String(row.sack_weight_kg_decimal),
+    totalWeightKgDecimal: textOrNull(row.total_weight_kg_decimal),
+    unitPriceDecimal: String(row.unit_price_decimal),
+    calculatedTotalAmountCents: Number(row.calculated_total_amount_cents),
+    totalAmountCents: Number(row.total_amount_cents),
+    totalWasManuallyOverridden: bool(row.total_was_manually_overridden),
+    totalOverrideReason: textOrNull(row.total_override_reason),
+    deliveryStartDate: textOrNull(row.delivery_start_date),
+    deliveryEndDate: textOrNull(row.delivery_end_date),
+    deliveryLocationSnapshot: textOrNull(row.delivery_location_snapshot),
+    notes: textOrNull(row.notes),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealConfirmationTemplate(row: DbRecord): DealConfirmationTemplate {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    name: String(row.name),
+    description: textOrNull(row.description),
+    version: Number(row.version),
+    title: String(row.title),
+    subtitle: textOrNull(row.subtitle),
+    layoutMode: row.layout_mode as DealConfirmationTemplate["layoutMode"],
+    defaultPaymentTerms: textOrNull(row.default_payment_terms),
+    defaultDeliveryTerms: textOrNull(row.default_delivery_terms),
+    defaultQualityTerms: textOrNull(row.default_quality_terms),
+    defaultGeneralTerms: textOrNull(row.default_general_terms),
+    showBroker: bool(row.show_broker),
+    showCommercialValues: bool(row.show_commercial_values),
+    showItemOrigins: bool(row.show_item_origins),
+    showSignatureBlocks: bool(row.show_signature_blocks),
+    signatureBlockCount: Number(row.signature_block_count),
+    isDefault: bool(row.is_default),
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealConfirmationClause(row: DbRecord): DealConfirmationClause {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    clauseNumber: textOrNull(row.clause_number),
+    title: textOrNull(row.title),
+    clauseText: String(row.clause_text),
+    sortOrder: Number(row.sort_order),
+    isVisible: bool(row.is_visible),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealClauseTemplate(row: DbRecord): DealClauseTemplate {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    name: String(row.name),
+    title: textOrNull(row.title),
+    clauseText: String(row.clause_text),
+    category: row.category as DealClauseTemplate["category"],
+    isActive: bool(row.is_active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealPaymentTerm(row: DbRecord): DealPaymentTerm {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    sortOrder: Number(row.sort_order),
+    description: String(row.description),
+    percentageBasisPoints: row.percentage_basis_points === null || row.percentage_basis_points === undefined ? null : Number(row.percentage_basis_points),
+    amountCents: row.amount_cents === null || row.amount_cents === undefined ? null : Number(row.amount_cents),
+    dueDate: textOrNull(row.due_date),
+    daysAfterEvent: row.days_after_event === null || row.days_after_event === undefined ? null : Number(row.days_after_event),
+    eventReference: textOrNull(row.event_reference),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealConfirmationSigner(row: DbRecord): DealConfirmationSigner {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    partyRole: row.party_role as DealConfirmationSigner["partyRole"],
+    name: String(row.name),
+    documentNumber: textOrNull(row.document_number),
+    positionTitle: textOrNull(row.position_title),
+    email: textOrNull(row.email),
+    phone: textOrNull(row.phone),
+    signatureOrder: Number(row.signature_order),
+    signatureStatus: row.signature_status as DealConfirmationSigner["signatureStatus"],
+    signedAt: textOrNull(row.signed_at),
+    notes: textOrNull(row.notes),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapDealConfirmationDocumentVersion(row: DbRecord): DealConfirmationDocumentVersion {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    versionNumber: Number(row.version_number),
+    documentType: row.document_type as DealConfirmationDocumentVersion["documentType"],
+    originalFileName: String(row.original_file_name),
+    storedFilePath: String(row.stored_file_path),
+    mimeType: String(row.mime_type),
+    fileSize: Number(row.file_size),
+    fileHash: String(row.file_hash),
+    generatedBySystem: bool(row.generated_by_system),
+    isCurrent: bool(row.is_current),
+    notes: textOrNull(row.notes),
+    createdAt: String(row.created_at)
+  };
+}
+
+export function mapDealConfirmationStatusHistory(row: DbRecord): DealConfirmationStatusHistory {
+  return {
+    id: String(row.id),
+    dealConfirmationId: String(row.deal_confirmation_id),
+    previousStatus: row.previous_status ? (row.previous_status as DealConfirmationStatusHistory["previousStatus"]) : null,
+    newStatus: row.new_status as DealConfirmationStatusHistory["newStatus"],
+    reason: textOrNull(row.reason),
+    changedByUserId: textOrNull(row.changed_by_user_id),
+    changedAt: String(row.changed_at)
   };
 }

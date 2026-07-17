@@ -31,7 +31,7 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("008_client_charges_ledger");
+    expect(getCurrentMigration(db)).toBe("011_deal_confirmations");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });
@@ -39,6 +39,10 @@ describe("database foundation", () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'spreadsheet_import_jobs'").get()).toMatchObject({ name: "spreadsheet_import_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'xml_import_jobs'").get()).toMatchObject({ name: "xml_import_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'client_charges'").get()).toMatchObject({ name: "client_charges" });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accounts_payable'").get()).toMatchObject({ name: "accounts_payable" });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'financial_report_generations'").get()).toMatchObject({ name: "financial_report_generations" });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'deal_confirmations'").get()).toMatchObject({ name: "deal_confirmations" });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'deal_confirmation_document_versions'").get()).toMatchObject({ name: "deal_confirmation_document_versions" });
     db.close();
   });
 

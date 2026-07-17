@@ -2,10 +2,6 @@
 
 Organizacao e a marca/grupo, como Villa Coffee ou Grao & Grao. CNPJ e o estabelecimento legal vinculado a uma organizacao. Local e uma unidade operacional que pode ou nao estar ligada a um CNPJ.
 
-Notas e operacoes futuras deverao aceitar cadastro manual e importacao de XML. Cobrancas por periodo, valores por saca, adiantamentos, descontos e conta-corrente do cliente ainda nao foram implementados.
-
-Confirmacao de negocio, contas a pagar, despesas por local/CNPJ, importacao multipla de XML e anexos ficam reservados para etapas futuras.
-
 CNPJ deve ser armazenado sem formatacao. Datas sao persistidas em ISO 8601 UTC e exibidas em padrao brasileiro apenas na interface.
 
 Novos CNPJs ativos exigem CNPJ valido por digitos verificadores. Cadastros incompletos podem ser salvos como rascunho para preservar dados demonstrativos ou pendentes. Locais pertencem obrigatoriamente a uma organizacao e so podem ser vinculados a CNPJs da mesma organizacao.
@@ -41,3 +37,25 @@ Periodos sugeridos podem ser mensal, quinzenal, semanal ou personalizado. O valo
 Adiantamentos, creditos, cobrancas emitidas e pagamentos geram lancamentos de conta-corrente. Pagamentos podem ser alocados parcialmente, e a cobranca muda para emitida, parcialmente paga, paga, vencida ou cancelada conforme datas e saldos.
 
 Numeracao de cobranca e sequencial por organizacao, CNPJ proprio, ano e tipo de documento. A emissao grava snapshot imutavel dos dados usados, gera versao de documento e preserva caminho/hash dos arquivos locais para auditoria.
+
+Financeiro controla despesas internas e contas a pagar, separado de cobrancas de clientes. Toda conta pertence a uma organizacao e a um CNPJ proprio. Local e o lugar fisico; centro de custo e a classificacao gerencial do gasto.
+
+Categorias de despesa podem ser fixas, variaveis, impostos, pessoal, financeiras, investimento ou outras. Centros de custo e categorias podem ter hierarquia, sem ciclos, e sao desativados logicamente quando deixam de ser usados.
+
+Valor final de conta a pagar e calculado no backend: valor original menos desconto, mais juros, multa e outros acrescimos. Saldo aberto e valor final menos pagamentos confirmados. Dinheiro usa centavos inteiros; o renderer nao define totais finais.
+
+Recorrencias geram contas idempotentes por competencia. Valor fixo gera conta confirmada; valor variavel pode nascer estimado ou prevista. Parcelamentos distribuem centavos de forma deterministica, colocando a diferenca na ultima parcela.
+
+Pagamentos de contas podem ser parciais ou totais e podem ser alocados a contas do mesmo CNPJ proprio. Conta aberta vencida vira vencida ao listar/visualizar. Conta paga ou cancelada nao deve ser editada silenciosamente.
+
+Anexos de contas e comprovantes de pagamento sao documentos auxiliares, nao alteram valores financeiros. Arquivos de registros confirmados exigem motivo para remocao logica. Abertura de arquivos ocorre somente por ID de anexo ou relatorio ja registrado.
+
+Relatorios financeiros sao gerenciais. Filtros sao validados no backend e registros cancelados sao ignorados quando o filtro nao pedir status especifico. Fluxo projetado mostra recebimentos previstos menos pagamentos previstos, sem representar saldo bancario real.
+
+Confirmacoes de negocio podem nascer manualmente, de operacoes ou de notas fiscais. Uma confirmacao pertence a uma organizacao e a um CNPJ proprio, tem cliente responsavel, direcao compra/venda, classificacao interna/externa, comprador, vendedor e demais participantes opcionais com snapshot.
+
+Itens de confirmacao usam decimal exato em texto para quantidade e preco comercial, permitindo mais de duas casas decimais. O valor total por item e calculado em centavos no backend. A soma dos itens alimenta o subtotal da confirmacao; o renderer nao define totais finais.
+
+Confirmacao emitida recebe numero sequencial por organizacao, CNPJ proprio, ano e tipo. Depois de emitida, itens, participantes, clausulas, pagamentos e signatarios nao sao editados silenciosamente. Alteracoes relevantes exigem cancelamento ou substituicao por novo rascunho.
+
+Previa, emissao e PDF assinado importado geram versoes em `deal_confirmation_document_versions`, com hash SHA-256. Importar PDF assinado preserva o arquivo externo copiado para pasta interna, mas a validacao criptografica da assinatura nao e realizada.

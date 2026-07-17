@@ -37,3 +37,17 @@ Migration `008_client_charges_ledger`: adiciona `billing_status` e `client_charg
 Cada operacao confirmada pode estar `UNBILLED`, `RESERVED` ou `BILLED`. A tabela `client_charge_operations` mantem historico e possui indice unico parcial para impedir que a mesma operacao esteja reservada em duas cobrancas abertas ao mesmo tempo.
 
 Valores financeiros continuam em centavos inteiros. Quantidades de sacas usadas na cobranca sao snapshots decimais em texto, preservando o valor operacional original. Cobrancas emitidas guardam `snapshot_json`, numero sequencial por organizacao/CNPJ/ano em `document_sequences` e caminhos dos arquivos gerados em `userData/documents/charges`.
+
+Migration `009_accounts_payable`: cria `expense_categories`, `cost_centers`, `financial_accounts`, `accounts_payable`, `account_payable_allocations`, `payable_recurring_templates`, `payable_installment_groups`, `payable_payments`, `payable_payment_allocations`, `payable_status_history` e `payable_document_attachments`.
+
+Categorias e centros de custo possuem codigo unico por organizacao quando informado e desativacao logica. Contas a pagar possuem competencia, vencimento, valor original, descontos, juros, multa, acrescimos, valor final calculado, pago e aberto. Recorrencias possuem unicidade por modelo e competencia; parcelamentos possuem unicidade por grupo e numero da parcela.
+
+Pagamentos de contas sao separados de contas a receber de clientes. Alocacoes de pagamento permitem pagamento parcial ou total, mas nao podem ultrapassar o saldo disponivel do pagamento nem o saldo aberto da conta. Rateios devem somar o valor final da conta quando existirem.
+
+Migration `010_financial_attachments_reports`: complementa `payable_document_attachments` com tipo de anexo, extensao, descricao, atualizacao e remocao logica, e cria `financial_report_generations`.
+
+Relatorios gerados registram organizacao, CNPJ proprio opcional, tipo, formato, filtros JSON, nome, caminho interno, hash SHA-256 e data de criacao. Anexos removidos mantem historico por `removed_at` e `removal_reason`.
+
+Migration `011_deal_confirmations`: cria `deal_confirmation_templates`, `deal_clause_templates`, `deal_confirmations`, `deal_confirmation_parties`, `deal_confirmation_items`, `deal_confirmation_operations`, `deal_confirmation_fiscal_documents`, `deal_confirmation_clauses`, `deal_payment_terms`, `deal_confirmation_signers`, `deal_confirmation_document_versions` e `deal_confirmation_status_history`.
+
+Confirmacoes usam `document_sequences` com tipo `DEAL_CONFIRMATION` para numeracao por organizacao, CNPJ proprio e ano. Participantes e itens preservam snapshots em JSON para que a confirmacao emitida continue auditavel mesmo se cadastros mudarem. Quantidades e precos comerciais usam texto decimal normalizado; totais financeiros derivados ficam em centavos inteiros.

@@ -21,3 +21,9 @@ Na quinta etapa, a leitura de Excel fica no processo principal com `exceljs`. O 
 Na sexta etapa, XMLs seguem o mesmo isolamento. O renderer solicita selecao ao processo principal e recebe tokens temporarios, fila e resumo. O parsing usa `fast-xml-parser` no processo principal com validacoes previas de tamanho, DTD/ENTITY, raiz, profundidade e chave. A confirmacao copia os arquivos para `userData/documents/invoices/xml-imports/<job-id>/`.
 
 Na setima etapa, cobrancas e conta-corrente continuam concentradas no processo principal. O renderer aciona IPCs tipados para periodos, operacoes elegiveis, rascunhos, ajustes, creditos, emissao, cancelamento, pagamentos e resumo. A geracao de PDF, Excel e imagem fica em `chargeDocuments`, gravando arquivos locais em `userData/documents/charges/<charge-id>/` e retornando apenas metadados persistidos.
+
+Na oitava etapa, Financeiro segue a mesma fronteira: React nao acessa SQLite nem filesystem. IPCs especificos acionam `AppRepository`, que valida escopo, recalcula dinheiro em centavos e usa transacoes para contas, recorrencias, parcelamentos, rateios e pagamentos. Contas a pagar ficam isoladas de contas a receber para evitar dupla contagem no fluxo projetado.
+
+Na conclusao da oitava etapa, anexos e relatorios usam selecao/abertura no processo principal. O renderer recebe tokens temporarios ao selecionar arquivos e IDs internos depois da copia. A geracao de PDF/Excel financeiro fica em `financialFiles`, reutilizando `exceljs` e escrita local sem servicos externos.
+
+Na nona etapa, Confirmacoes de negocio usam IPCs especificos para rascunho, origem por operacao/nota, participantes, itens, clausulas, pagamento, signatarios, emissao, assinatura externa, cancelamento, substituicao, dashboard e relatorios. PDFs e relatorios ficam em `dealConfirmationFiles`, sempre no processo principal, com copia para `userData` e hash persistido.
