@@ -26,5 +26,6 @@ export * from "./components/Stepper";
 export * from "./components/Tabs";
 export * from "./components/Textarea";
 export * from "./components/Toast";
+export * from "./components/UtilityComponents";
 export * from "./theme/theme";
 export * from "./tokens/tokens";

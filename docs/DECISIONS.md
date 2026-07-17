@@ -112,7 +112,7 @@ PDF assinado externamente e copiado para pasta interna e versionado com hash. A 
 
 ## Refatoracao Visual Incremental
 
-A etapa 10 separou o boot do renderer, layout, navegacao, tema e componentes sem reescrever regras de negocio. O workspace funcional antigo foi mantido em `pages/legacy` para reduzir risco de regressao; as proximas telas podem migrar gradualmente para paginas menores usando o design system.
+A etapa 10 separou o boot do renderer, layout, navegacao, tema e componentes sem reescrever regras de negocio. Ao fim da etapa, todos os modulos foram migrados para paginas diretas por dominio e o workspace funcional antigo foi removido.
 
 ## Logos No Public Do Vite
 

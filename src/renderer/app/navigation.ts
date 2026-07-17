@@ -39,12 +39,17 @@ export const navigationGroups: NavigationGroup[] = [
     title: "Financeiro",
     items: [
       { id: "finance", label: "Visão financeira", legacyMenu: "Financeiro", path: "/finance", icon: "▣" },
-      { id: "reports", label: "Relatórios", legacyMenu: "Relatorios", path: "/reports", icon: "▤" }
+      { id: "reports", label: "Relatórios", legacyMenu: "Relatorios", path: "/finance/reports", icon: "▤" }
     ]
   },
   {
     title: "Administração",
-    items: [{ id: "settings", label: "Configurações", legacyMenu: "Configuracoes", path: "/settings", icon: "⚙" }]
+    items: [
+      { id: "users", label: "Usuarios", legacyMenu: "Usuarios", path: "/settings/users", icon: "◐" },
+      { id: "roles", label: "Roles", legacyMenu: "Roles", path: "/settings/roles", icon: "◎" },
+      { id: "audit", label: "Auditoria", legacyMenu: "Auditoria", path: "/audit", icon: "▧" },
+      { id: "settings", label: "Configurações", legacyMenu: "Configuracoes", path: "/settings", icon: "⚙" }
+    ]
   }
 ];
 
@@ -66,5 +71,11 @@ export function legacyMenuFromPath(path: string): string {
   if (normalized.startsWith("/confirmations")) return "Confirmacoes";
   if (normalized.startsWith("/charges")) return "Cobrancas";
   if (normalized.startsWith("/client-ledger")) return "Conta-corrente";
+  if (normalized.startsWith("/finance/reports")) return "Relatorios";
+  if (normalized.startsWith("/finance")) return "Financeiro";
+  if (normalized.startsWith("/settings/users")) return "Usuarios";
+  if (normalized.startsWith("/settings/roles")) return "Roles";
+  if (normalized.startsWith("/audit")) return "Auditoria";
+  if (normalized.startsWith("/settings")) return "Configuracoes";
   return navigationGroups.flatMap((group) => group.items).find((item) => item.path === normalized)?.legacyMenu ?? "Dashboard";
 }

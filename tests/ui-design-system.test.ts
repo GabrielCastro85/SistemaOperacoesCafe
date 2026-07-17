@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Button, ConfirmationDialog, DataTable, DocumentPreviewCard, EmptyState, FileDropzone, Input, Pagination, ProgressBar, StatusBadge, Stepper, Tabs, buildUiTheme, getReadableTextColor } from "../src/renderer/design-system/index.js";
 import { legacyMenuFromPath, navigationGroups, pathFromLegacyMenu, routeIdFromLegacyMenu } from "../src/renderer/app/navigation.js";
@@ -76,18 +76,11 @@ describe("renderer design system", () => {
     expect(html).toContain("Deseja continuar?");
   });
 
-  it("keeps migrated module definitions out of LegacyWorkspace", () => {
-    const legacySource = readFileSync("src/renderer/pages/legacy/LegacyWorkspace.tsx", "utf8");
+  it("keeps all migrated routes out of LegacyWorkspace", () => {
     const appSource = readFileSync("src/renderer/app/App.tsx", "utf8");
 
-    expect(legacySource).not.toContain("function ManualInvoicesPage");
-    expect(legacySource).not.toContain("function DealConfirmationsPage");
-    expect(legacySource).not.toContain("export function PartnersPage");
-    expect(legacySource).not.toContain("export function ServiceRatesPage");
-    expect(legacySource).not.toContain("export function ChargesPage");
-    expect(legacySource).not.toContain("export function LedgerPage");
-    expect(legacySource).not.toContain("<OperationsPage data={data} />");
-    expect(legacySource).not.toContain("<ConfirmationsPage data={data} />");
+    expect(existsSync("src/renderer/pages/legacy/LegacyWorkspace.tsx")).toBe(false);
+    expect(appSource).not.toContain("LegacyWorkspace");
     expect(appSource).toContain('path.startsWith("/operations")');
     expect(appSource).toContain('path.startsWith("/partners")');
     expect(appSource).toContain('path.startsWith("/products")');
@@ -95,6 +88,19 @@ describe("renderer design system", () => {
     expect(appSource).toContain('path.startsWith("/charges")');
     expect(appSource).toContain('path.startsWith("/client-ledger")');
     expect(appSource).toContain('path.startsWith("/confirmations")');
+    expect(appSource).toContain('path.startsWith("/finance/payables")');
+    expect(appSource).toContain('path.startsWith("/finance/recurring")');
+    expect(appSource).toContain('path.startsWith("/finance/installments")');
+    expect(appSource).toContain('path.startsWith("/finance/payments")');
+    expect(appSource).toContain('path.startsWith("/finance/calendar")');
+    expect(appSource).toContain('path.startsWith("/finance/categories")');
+    expect(appSource).toContain('path.startsWith("/finance/reports")');
+    expect(appSource).toContain('path.startsWith("/settings/organizations")');
+    expect(appSource).toContain('path.startsWith("/settings/legal-entities")');
+    expect(appSource).toContain('path.startsWith("/settings/locations")');
+    expect(appSource).toContain('path.startsWith("/settings/branding")');
+    expect(appSource).toContain('path.startsWith("/settings/diagnostics")');
+    expect(appSource).toContain("<NotFoundPage />");
   });
 
   it("uses the React dialog provider instead of native or manual DOM dialogs", () => {

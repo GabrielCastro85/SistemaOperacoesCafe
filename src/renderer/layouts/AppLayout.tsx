@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import type { AppVariant, LegalEntity, Organization } from "../../shared/types/domain";
+import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
 
@@ -13,9 +13,12 @@ export interface AppLayoutProps {
   canSwitchOrganization: boolean;
   canSwitchLegalEntity: boolean;
   version: string;
+  session: AuthSession;
   onNavigate: (menu: string) => void;
   onOrganizationChange: (organizationId: string) => void;
   onLegalEntityChange: (legalEntityId: string) => void;
+  onLock: () => void;
+  onLogout: () => void;
   children: ReactNode;
 }
 
@@ -29,9 +32,12 @@ export function AppLayout({
   canSwitchOrganization,
   canSwitchLegalEntity,
   version,
+  session,
   onNavigate,
   onOrganizationChange,
   onLegalEntityChange,
+  onLock,
+  onLogout,
   children
 }: AppLayoutProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
@@ -107,8 +113,10 @@ export function AppLayout({
           </label>
           <div className="context-pill context-pill--user">
             <span>Usuário</span>
-            <strong>Usuário provisório</strong>
+            <strong>{session.user.displayName}</strong>
           </div>
+          <button type="button" onClick={onLock}>Bloquear</button>
+          <button type="button" onClick={onLogout}>Sair</button>
         </header>
         {children}
       </section>

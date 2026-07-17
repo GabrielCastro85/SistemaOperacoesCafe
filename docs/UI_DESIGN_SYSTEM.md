@@ -47,6 +47,15 @@ A continuacao da etapa 10 adicionou:
 - `DocumentPreviewCard`;
 - `DropdownMenu`;
 - `Toast`.
+- `MonthInput`;
+- `PercentageInput`;
+- `TreeView`;
+- `Timeline`;
+- `CalendarGrid`;
+- `DefinitionList`;
+- `CopyButton`;
+- `PageSection`;
+- `SplitButton`.
 
 Os fluxos migrados de operacoes e confirmacoes passam a usar `PageHeader`, `Stepper`, componentes de feedback e primitivos compartilhados de secao.
 
@@ -61,6 +70,8 @@ Foram criadas estruturas visuais dedicadas para:
 - `src/renderer/pages/serviceRates/components`, `forms` e `hooks`;
 - `src/renderer/pages/charges/components`, `forms` e `hooks`;
 - `src/renderer/pages/clientLedger/components`, `forms` e `hooks`.
+
+Na conclusao da etapa 10, as estruturas `src/renderer/pages/finance` e `src/renderer/pages/settings` tambem passaram a usar paginas diretas, hooks especificos, forms de negocio e componentes do design system. Arvores de categorias/centros, calendario financeiro, timeline de contas, definicoes de diagnostico, anexos e relatorios reutilizam componentes genericos.
 
 Todos usam classes padronizadas `ui-*`, foco visivel e tokens CSS. O objetivo e migrar gradualmente os formularios e tabelas legados para esses componentes sem alterar regras de negocio.
 

@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ActiveContext,
+  AppPermission,
+  AppRole,
+  AppUser,
+  AuditEvent,
+  AuditIntegrityResult,
+  AuthSession,
   BootstrapData,
   BrandingAssetKind,
   BusinessPartner,
@@ -68,6 +74,22 @@ import type { saveInstallationProfileSchema } from "../../src/shared/schemas/dom
 import type { z } from "zod";
 
 const IPC_CHANNELS = {
+  authNeedsBootstrap: "auth:needsBootstrap",
+  authBootstrapAdmin: "auth:bootstrapAdmin",
+  authLogin: "auth:login",
+  authCurrentSession: "auth:currentSession",
+  authLock: "auth:lock",
+  authUnlock: "auth:unlock",
+  authLogout: "auth:logout",
+  authChangePassword: "auth:changePassword",
+  listUsers: "users:list",
+  createUser: "users:create",
+  updateUser: "users:update",
+  listRoles: "roles:list",
+  listPermissions: "roles:listPermissions",
+  assignUserRole: "roles:assignUserRole",
+  listAuditEvents: "audit:list",
+  verifyAuditChain: "audit:verifyChain",
   getBootstrapData: "app:getBootstrapData",
   saveInstallationProfile: "app:saveInstallationProfile",
   updateInstallationProfile: "app:updateInstallationProfile",
@@ -334,6 +356,22 @@ const IPC_CHANNELS = {
 type SaveInstallationProfileInput = z.infer<typeof saveInstallationProfileSchema>;
 
 export interface OperationsCafeApi {
+  authNeedsBootstrap: () => Promise<boolean>;
+  authBootstrapAdmin: (input: { displayName: string; username: string; email?: string | null; password: string }) => Promise<AuthSession>;
+  authLogin: (input: { username: string; password: string }) => Promise<AuthSession>;
+  authCurrentSession: () => Promise<AuthSession | null>;
+  authLock: () => Promise<AuthSession | null>;
+  authUnlock: (password: string) => Promise<AuthSession>;
+  authLogout: () => Promise<void>;
+  authChangePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+  listUsers: () => Promise<AppUser[]>;
+  createUser: (input: { displayName: string; username: string; email?: string | null; password: string; mustChangePassword?: boolean }) => Promise<AppUser>;
+  updateUser: (input: { id: string; displayName?: string; email?: string | null; status?: AppUser["status"]; mustChangePassword?: boolean }) => Promise<AppUser>;
+  listRoles: () => Promise<AppRole[]>;
+  listPermissions: () => Promise<AppPermission[]>;
+  assignUserRole: (input: { userId: string; roleId: string; organizationId?: string | null; legalEntityId?: string | null; expiresAt?: string | null }) => Promise<AppUser>;
+  listAuditEvents: (filters?: { limit?: number }) => Promise<AuditEvent[]>;
+  verifyAuditChain: () => Promise<AuditIntegrityResult>;
   getBootstrapData: () => Promise<BootstrapData>;
   saveInstallationProfile: (profile: SaveInstallationProfileInput) => Promise<InstallationProfile>;
   updateInstallationProfile: (profile: SaveInstallationProfileInput & { confirmVariantChange?: boolean }) => Promise<InstallationProfile>;
@@ -597,6 +635,22 @@ export interface OperationsCafeApi {
 }
 
 const api: OperationsCafeApi = {
+  authNeedsBootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.authNeedsBootstrap) as Promise<boolean>,
+  authBootstrapAdmin: (input) => ipcRenderer.invoke(IPC_CHANNELS.authBootstrapAdmin, input) as Promise<AuthSession>,
+  authLogin: (input) => ipcRenderer.invoke(IPC_CHANNELS.authLogin, input) as Promise<AuthSession>,
+  authCurrentSession: () => ipcRenderer.invoke(IPC_CHANNELS.authCurrentSession) as Promise<AuthSession | null>,
+  authLock: () => ipcRenderer.invoke(IPC_CHANNELS.authLock) as Promise<AuthSession | null>,
+  authUnlock: (password) => ipcRenderer.invoke(IPC_CHANNELS.authUnlock, password) as Promise<AuthSession>,
+  authLogout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout) as Promise<void>,
+  authChangePassword: (input) => ipcRenderer.invoke(IPC_CHANNELS.authChangePassword, input) as Promise<void>,
+  listUsers: () => ipcRenderer.invoke(IPC_CHANNELS.listUsers) as Promise<AppUser[]>,
+  createUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUser, input) as Promise<AppUser>,
+  updateUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateUser, input) as Promise<AppUser>,
+  listRoles: () => ipcRenderer.invoke(IPC_CHANNELS.listRoles) as Promise<AppRole[]>,
+  listPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.listPermissions) as Promise<AppPermission[]>,
+  assignUserRole: (input) => ipcRenderer.invoke(IPC_CHANNELS.assignUserRole, input) as Promise<AppUser>,
+  listAuditEvents: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listAuditEvents, filters) as Promise<AuditEvent[]>,
+  verifyAuditChain: () => ipcRenderer.invoke(IPC_CHANNELS.verifyAuditChain) as Promise<AuditIntegrityResult>,
   getBootstrapData: () => ipcRenderer.invoke(IPC_CHANNELS.getBootstrapData) as Promise<BootstrapData>,
   saveInstallationProfile: (profile) =>
     ipcRenderer.invoke(IPC_CHANNELS.saveInstallationProfile, profile) as Promise<InstallationProfile>,

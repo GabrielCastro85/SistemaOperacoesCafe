@@ -50,7 +50,7 @@ Rotas hash identificaveis adicionadas:
 
 Enquanto nao ha roteador externo, `legacyMenuFromPath` e `pathFromLegacyMenu` mantem compatibilidade entre a navegacao nova e os menus funcionais existentes.
 
-Na etapa 10.2, as rotas de operacoes, importacoes e confirmacoes deixaram de ser renderizadas pelo `LegacyWorkspace`. `App.tsx` roteia diretamente:
+Na etapa 10.2, `App.tsx` passou a rotear diretamente:
 
 - `#/operations*` para `OperationsPage`;
 - `#/imports/spreadsheets*` para paginas de planilha;
@@ -65,4 +65,8 @@ Na continuacao da etapa 10, `App.tsx` tambem passou a rotear diretamente:
 - `#/charges*` para `ChargesPage`;
 - `#/client-ledger*` para `ClientLedgerPage`.
 
-`LegacyWorkspace` permanece apenas como origem temporaria de `FinancialPage`, `Reports` via Financeiro e `SettingsPage`.
+Na conclusao da etapa 10, nenhuma rota depende de workspace legado. Rotas financeiras diretas incluem `#/finance`, `#/finance/payables`, `#/finance/payables/new`, `#/finance/recurring`, `#/finance/installments`, `#/finance/payments`, `#/finance/calendar`, `#/finance/categories`, `#/finance/cost-centers`, `#/finance/accounts`, `#/finance/reports` e `#/finance/reports/history`.
+
+Rotas administrativas diretas incluem `#/settings`, `#/settings/organizations`, `#/settings/legal-entities`, `#/settings/locations`, `#/settings/branding`, `#/settings/installation`, `#/settings/diagnostics`, `#/settings/directories`, `#/settings/document-sequences`, `#/settings/import-templates`, `#/settings/confirmation-templates`, `#/settings/clauses` e `#/settings/system`.
+
+Rota desconhecida renderiza `NotFoundPage` com retorno ao Dashboard.

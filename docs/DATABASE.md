@@ -51,3 +51,7 @@ Relatorios gerados registram organizacao, CNPJ proprio opcional, tipo, formato, 
 Migration `011_deal_confirmations`: cria `deal_confirmation_templates`, `deal_clause_templates`, `deal_confirmations`, `deal_confirmation_parties`, `deal_confirmation_items`, `deal_confirmation_operations`, `deal_confirmation_fiscal_documents`, `deal_confirmation_clauses`, `deal_payment_terms`, `deal_confirmation_signers`, `deal_confirmation_document_versions` e `deal_confirmation_status_history`.
 
 Confirmacoes usam `document_sequences` com tipo `DEAL_CONFIRMATION` para numeracao por organizacao, CNPJ proprio e ano. Participantes e itens preservam snapshots em JSON para que a confirmacao emitida continue auditavel mesmo se cadastros mudarem. Quantidades e precos comerciais usam texto decimal normalizado; totais financeiros derivados ficam em centavos inteiros.
+
+Migration `012_users_permissions_audit`: cria `app_users`, `user_credentials`, `user_password_history`, `roles`, `permissions`, `role_permissions`, `user_role_assignments`, `user_role_legal_entity_access`, `local_sessions` e `audit_events`.
+
+Credenciais guardam somente hash `scrypt` versionado e salt aleatorio. Roles e permissoes sao semeadas por IDs estaveis. Sessoes locais registram status ativo, bloqueado, encerrado ou expirado. Auditoria usa metadados sanitizados e cadeia SHA-256 por `previous_hash`/`event_hash`.

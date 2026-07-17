@@ -1179,6 +1179,157 @@ table th {
   color: var(--muted);
 }
 
+.ui-page-section {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.ui-page-section > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.ui-page-section h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.ui-page-section p,
+.ui-tree small,
+.ui-calendar small,
+.ui-timeline span {
+  color: var(--muted);
+}
+
+.ui-tree,
+.ui-timeline,
+.ui-calendar,
+.ui-definition-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ui-tree__item,
+.ui-calendar article,
+.ui-definition-list > div,
+.ui-timeline li {
+  padding: 10px 12px;
+  border: 1px solid #e0dbcf;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.ui-tree__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ui-calendar {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.ui-definition-list dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ui-definition-list dd {
+  margin: 2px 0 0;
+  font-weight: 700;
+}
+
+.ui-split-button {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.auth-shell,
+.lock-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #f4f0e7;
+}
+
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(20, 18, 15, 0.82);
+}
+
+.auth-panel {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 28px;
+  border: 1px solid #d8d0c1;
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 18px 48px rgba(35, 29, 21, 0.18);
+}
+
+.auth-panel h1,
+.auth-panel p {
+  margin: 0;
+}
+
+.auth-eyebrow {
+  color: var(--brand-primary);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.auth-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-panel input,
+.auth-panel select {
+  min-height: 38px;
+  border: 1px solid #d8d0c1;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fff;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-error {
+  padding: 10px 12px;
+  border: 1px solid #e6b8aa;
+  border-radius: 6px;
+  background: #fff2ee;
+  color: #9a3412;
+  font-size: 13px;
+}
+
+.users-grid {
+  grid-template-columns: 1.3fr 1fr 1.3fr 0.8fr 1.4fr;
+}
+
+.permissions-grid {
+  grid-template-columns: 0.8fr 1.4fr 0.7fr 2fr;
+}
+
+.audit-grid {
+  grid-template-columns: 1.1fr 1fr 1.4fr 0.8fr 0.8fr;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;

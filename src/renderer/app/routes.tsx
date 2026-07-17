@@ -9,6 +9,9 @@ export type AppRouteId =
   | "confirmations"
   | "finance"
   | "reports"
+  | "users"
+  | "roles"
+  | "audit"
   | "settings";
 
 export const routeTitleById: Record<AppRouteId, string> = {
@@ -22,5 +25,8 @@ export const routeTitleById: Record<AppRouteId, string> = {
   confirmations: "Confirmações de negócio",
   finance: "Financeiro",
   reports: "Relatórios",
+  users: "Usuarios",
+  roles: "Roles",
+  audit: "Auditoria",
   settings: "Configurações"
 };

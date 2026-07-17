@@ -1799,5 +1799,195 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_deal_confirmation_status_history_changed_at ON deal_confirmation_status_history(changed_at);
       `);
     }
+  },
+  {
+    name: "012_users_permissions_audit",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_users (
+          id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL,
+          username TEXT NOT NULL,
+          normalized_username TEXT NOT NULL UNIQUE,
+          email TEXT,
+          status TEXT NOT NULL CHECK (status IN ('ACTIVE','INACTIVE','LOCKED')),
+          must_change_password INTEGER NOT NULL CHECK (must_change_password IN (0, 1)),
+          failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+          locked_at TEXT,
+          last_login_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_app_users_status ON app_users(status);
+        CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email);
+
+        CREATE TABLE IF NOT EXISTS user_credentials (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL UNIQUE,
+          credential_format TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          password_changed_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES app_users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_password_history (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          credential_format TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES app_users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_password_history_user_id ON user_password_history(user_id);
+
+        CREATE TABLE IF NOT EXISTS roles (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          description TEXT,
+          scope_type TEXT NOT NULL CHECK (scope_type IN ('GLOBAL','ORGANIZATION','LEGAL_ENTITY')),
+          is_system INTEGER NOT NULL CHECK (is_system IN (0, 1)),
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS permissions (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          description TEXT,
+          module TEXT NOT NULL,
+          risk_level TEXT NOT NULL CHECK (risk_level IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1))
+        );
+        CREATE INDEX IF NOT EXISTS idx_permissions_module ON permissions(module);
+
+        CREATE TABLE IF NOT EXISTS role_permissions (
+          id TEXT PRIMARY KEY,
+          role_id TEXT NOT NULL,
+          permission_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (role_id) REFERENCES roles(id),
+          FOREIGN KEY (permission_id) REFERENCES permissions(id),
+          UNIQUE (role_id, permission_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_role_assignments (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          role_id TEXT NOT NULL,
+          organization_id TEXT,
+          legal_entity_id TEXT,
+          assigned_at TEXT NOT NULL,
+          expires_at TEXT,
+          is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+          FOREIGN KEY (user_id) REFERENCES app_users(id),
+          FOREIGN KEY (role_id) REFERENCES roles(id),
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_role_assignments_user_id ON user_role_assignments(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_role_assignments_scope ON user_role_assignments(organization_id, legal_entity_id);
+
+        CREATE TABLE IF NOT EXISTS user_role_legal_entity_access (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          organization_id TEXT NOT NULL,
+          legal_entity_id TEXT,
+          access_mode TEXT NOT NULL CHECK (access_mode IN ('ALL','SPECIFIC')),
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES app_users(id),
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (legal_entity_id) REFERENCES legal_entities(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_legal_entity_access_user_id ON user_role_legal_entity_access(user_id);
+
+        CREATE TABLE IF NOT EXISTS local_sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('ACTIVE','LOCKED','LOGGED_OUT','EXPIRED')),
+          created_at TEXT NOT NULL,
+          last_activity_at TEXT NOT NULL,
+          locked_at TEXT,
+          logout_at TEXT,
+          expires_at TEXT,
+          machine_name TEXT,
+          FOREIGN KEY (user_id) REFERENCES app_users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_local_sessions_user_id ON local_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_local_sessions_status ON local_sessions(status);
+
+        CREATE TABLE IF NOT EXISTS audit_events (
+          id TEXT PRIMARY KEY,
+          occurred_at TEXT NOT NULL,
+          actor_user_id TEXT,
+          actor_username TEXT,
+          session_id TEXT,
+          action TEXT NOT NULL,
+          entity_type TEXT,
+          entity_id TEXT,
+          organization_id TEXT,
+          legal_entity_id TEXT,
+          result TEXT NOT NULL CHECK (result IN ('SUCCESS','DENIED','FAILED')),
+          severity TEXT NOT NULL CHECK (severity IN ('INFO','WARNING','CRITICAL')),
+          reason TEXT,
+          metadata_json TEXT NOT NULL,
+          previous_hash TEXT,
+          event_hash TEXT NOT NULL,
+          FOREIGN KEY (actor_user_id) REFERENCES app_users(id),
+          FOREIGN KEY (session_id) REFERENCES local_sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at);
+        CREATE INDEX IF NOT EXISTS idx_audit_events_actor_user_id ON audit_events(actor_user_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_events_action ON audit_events(action);
+
+        INSERT OR IGNORE INTO roles (id, code, name, description, scope_type, is_system, is_active, created_at, updated_at) VALUES
+          ('role-system-admin', 'SYSTEM_ADMIN', 'Administrador do sistema', 'Acesso total, incluindo usuarios, roles e auditoria.', 'GLOBAL', 1, 1, datetime('now'), datetime('now')),
+          ('role-ops-manager', 'OPERATIONS_MANAGER', 'Gestor operacional', 'Gerencia notas, operacoes, importacoes e confirmacoes.', 'ORGANIZATION', 1, 1, datetime('now'), datetime('now')),
+          ('role-finance-manager', 'FINANCE_MANAGER', 'Gestor financeiro', 'Gerencia cobrancas, conta-corrente, contas a pagar e relatorios.', 'ORGANIZATION', 1, 1, datetime('now'), datetime('now')),
+          ('role-operator', 'OPERATOR', 'Operador', 'Lanca e consulta rotinas do dia a dia.', 'LEGAL_ENTITY', 1, 1, datetime('now'), datetime('now')),
+          ('role-viewer', 'VIEWER', 'Consulta', 'Acesso somente leitura.', 'LEGAL_ENTITY', 1, 1, datetime('now'), datetime('now'));
+
+        INSERT OR IGNORE INTO permissions (id, code, name, description, module, risk_level, is_active) VALUES
+          ('perm-system-bootstrap', 'system.bootstrap', 'Criar primeiro administrador', 'Permite concluir a criacao local inicial.', 'system', 'CRITICAL', 1),
+          ('perm-system-view', 'system.view', 'Ver sistema', 'Permite abrir diagnosticos e contexto do app.', 'system', 'LOW', 1),
+          ('perm-settings-manage', 'settings.manage', 'Gerenciar configuracoes', 'Permite alterar organizacoes, filiais e parametrizacoes.', 'settings', 'HIGH', 1),
+          ('perm-users-view', 'users.view', 'Ver usuarios', 'Permite listar usuarios e perfis.', 'access', 'MEDIUM', 1),
+          ('perm-users-manage', 'users.manage', 'Gerenciar usuarios', 'Permite criar, alterar, bloquear e reativar usuarios.', 'access', 'CRITICAL', 1),
+          ('perm-roles-view', 'roles.view', 'Ver roles', 'Permite consultar matriz de permissoes.', 'access', 'MEDIUM', 1),
+          ('perm-roles-manage', 'roles.manage', 'Gerenciar roles', 'Permite alterar atribuicoes de roles.', 'access', 'CRITICAL', 1),
+          ('perm-audit-view', 'audit.view', 'Ver auditoria', 'Permite consultar trilha de auditoria.', 'audit', 'HIGH', 1),
+          ('perm-operations-view', 'operations.view', 'Ver operacoes', 'Permite consultar notas e operacoes.', 'operations', 'LOW', 1),
+          ('perm-operations-manage', 'operations.manage', 'Gerenciar operacoes', 'Permite criar, confirmar e cancelar notas/operacoes.', 'operations', 'HIGH', 1),
+          ('perm-imports-manage', 'imports.manage', 'Gerenciar importacoes', 'Permite importar e reverter XML/planilhas.', 'operations', 'HIGH', 1),
+          ('perm-commercial-view', 'commercial.view', 'Ver cadastros comerciais', 'Permite consultar parceiros, produtos e regras.', 'commercial', 'LOW', 1),
+          ('perm-commercial-manage', 'commercial.manage', 'Gerenciar cadastros comerciais', 'Permite alterar parceiros, produtos e regras.', 'commercial', 'HIGH', 1),
+          ('perm-billing-manage', 'billing.manage', 'Gerenciar cobrancas', 'Permite emitir cobrancas e lancar recebimentos.', 'billing', 'HIGH', 1),
+          ('perm-finance-view', 'finance.view', 'Ver financeiro', 'Permite consultar financeiro e relatórios.', 'finance', 'MEDIUM', 1),
+          ('perm-finance-manage', 'finance.manage', 'Gerenciar financeiro', 'Permite criar contas a pagar, pagamentos e anexos.', 'finance', 'HIGH', 1),
+          ('perm-confirmations-manage', 'confirmations.manage', 'Gerenciar confirmacoes', 'Permite emitir, cancelar e substituir confirmacoes.', 'confirmations', 'HIGH', 1);
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-admin-' || permissions.id, 'role-system-admin', permissions.id, datetime('now') FROM permissions;
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-ops-' || permissions.id, 'role-ops-manager', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('system.view','operations.view','operations.manage','imports.manage','commercial.view','commercial.manage','billing.manage','confirmations.manage','finance.view');
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-fin-' || permissions.id, 'role-finance-manager', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('system.view','commercial.view','operations.view','billing.manage','finance.view','finance.manage','audit.view');
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-op-' || permissions.id, 'role-operator', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('system.view','operations.view','operations.manage','commercial.view','finance.view');
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-view-' || permissions.id, 'role-viewer', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('system.view','operations.view','commercial.view','finance.view','roles.view');
+      `);
+    }
   }
 ];

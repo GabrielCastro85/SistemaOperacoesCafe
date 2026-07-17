@@ -79,11 +79,19 @@ A decima etapa iniciou a refatoracao visual do renderer. `src/renderer/App.tsx` 
 
 O app agora possui sidebar recolhivel, topbar com organizacao e CNPJ ativo, tokens visuais, temas Villa/Grao/multiempresa, logos empacotadas em `public/assets/branding`, componentes reutilizaveis e dashboard reorganizado.
 
-A continuacao da etapa 10 migrou Notas e operacoes, importacoes de planilha/XML e Confirmacoes de negocio para paginas reais em `src/renderer/pages/operations`, `src/renderer/pages/imports` e `src/renderer/pages/confirmations`. O `LegacyWorkspace` permanece apenas como casca de composicao e para modulos ainda nao migrados visualmente.
+A continuacao da etapa 10 migrou Notas e operacoes, importacoes de planilha/XML e Confirmacoes de negocio para paginas reais em `src/renderer/pages/operations`, `src/renderer/pages/imports` e `src/renderer/pages/confirmations`.
 
-A etapa 10.2 removeu essa casca para os modulos migrados: as rotas hash agora sao resolvidas diretamente em `src/renderer/app/App.tsx`, envolvidas por `AppLayout`. `LegacyWorkspace` nao compoe mais Operacoes, importacoes ou Confirmacoes; ele apenas exporta paginas legadas ainda pendentes de migracao.
+A etapa 10.2 removeu essa casca para os modulos migrados: as rotas hash agora sao resolvidas diretamente em `src/renderer/app/App.tsx`, envolvidas por `AppLayout`.
 
-A continuacao da etapa 10 tambem migrou Clientes e parceiros, Produtos, Regras por saca, Cobrancas e Conta-corrente para paginas diretas em `src/renderer/pages/partners`, `products`, `serviceRates`, `charges` e `clientLedger`. `LegacyWorkspace` fica temporariamente restrito a Financeiro, Relatorios e Configuracoes/admin.
+A continuacao da etapa 10 tambem migrou Clientes e parceiros, Produtos, Regras por saca, Cobrancas e Conta-corrente para paginas diretas em `src/renderer/pages/partners`, `products`, `serviceRates`, `charges` e `clientLedger`.
+
+A conclusao da etapa 10 removeu definitivamente o workspace legado. Financeiro, Contas a pagar, Recorrencias, Parcelamentos, Pagamentos, Cadastros financeiros, Relatorios e Configuracoes agora possuem rotas diretas em `src/renderer/pages/finance` e `src/renderer/pages/settings`. Rota desconhecida abre uma pagina "Nao encontrada".
+
+## Usuarios, Permissoes E Auditoria
+
+A decima primeira etapa adiciona autenticacao local obrigatoria. Na primeira abertura sem usuario ativo, o app cria um administrador definido pelo operador, sem senha padrao. Senhas usam hash `scrypt` versionado com salt aleatorio e comparacao segura.
+
+Sessoes ficam no processo principal, com lock, unlock, logout e troca de usuario. Canais IPC passam por politica deny-by-default baseada em roles/permissoes. Use Configuracoes > Usuarios, Configuracoes > Roles e Auditoria para administrar acesso e verificar a trilha de eventos com hash encadeado.
 
 ## Estrutura
 

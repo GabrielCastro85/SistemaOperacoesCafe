@@ -33,3 +33,5 @@ Limitacoes restantes:
 Na etapa 10.2, chamadas funcionais nativas de prompt, alert e confirm foram removidas do renderer. Acoes que precisam de texto ou decisao usam dialogs locais em `src/renderer/utils/dialogs.ts`, mantendo label, Escape e foco inicial.
 
 Na continuacao da etapa 10, os dialogs passaram a ser renderizados por `DialogProvider` dentro da arvore React principal, sem criacao manual de elementos DOM.
+
+Na conclusao da etapa 10, financeiro e configuracoes usam `DataTable`, `TreeView`, `CalendarGrid`, `DefinitionList`, `Timeline`, `PageHeader`, `FilterBar`, `Stepper`, `Alert`, `AttachmentList` e dialogs React. Status, vencimentos e pagamentos sao expostos por texto e nao apenas por cor.

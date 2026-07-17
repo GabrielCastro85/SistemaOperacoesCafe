@@ -1,0 +1,10 @@
+import type { BootstrapData, Location } from "../../../../shared/types/domain";
+import { Select } from "../../../design-system";
+import { TextField } from "../../../components/forms/LegacyFields";
+import { FormGrid } from "../../../components/layout/SectionPrimitives";
+import { locationLabels } from "../settingsModels";
+
+export function LocationForm({ data, form, onChange }: { data: BootstrapData; form: Omit<Location, "id" | "createdAt" | "updatedAt">; onChange: (form: Omit<Location, "id" | "createdAt" | "updatedAt">) => void }): JSX.Element {
+  const orgEntities = data.legalEntities.filter((item) => item.organizationId === form.organizationId);
+  return <FormGrid><Select label="Organizacao" value={form.organizationId} onChange={(event) => onChange({ ...form, organizationId: event.target.value, legalEntityId: null })}>{data.organizations.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</Select><Select label="CNPJ vinculado" value={form.legalEntityId ?? ""} onChange={(event) => onChange({ ...form, legalEntityId: event.target.value || null })}><option value="">Sem CNPJ</option>{orgEntities.map((item) => <option key={item.id} value={item.id}>{item.tradeName}</option>)}</Select><TextField label="Nome" value={form.name} onChange={(value) => onChange({ ...form, name: value })} required /><Select label="Tipo" value={form.type} onChange={(event) => onChange({ ...form, type: event.target.value as Location["type"] })}>{Object.entries(locationLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</Select><TextField label="Cidade" value={form.city ?? ""} onChange={(value) => onChange({ ...form, city: value || null })} /><TextField label="UF" value={form.state ?? ""} onChange={(value) => onChange({ ...form, state: value.toUpperCase() || null })} /><TextField label="Descricao" value={form.description ?? ""} onChange={(value) => onChange({ ...form, description: value || null })} /><label className="checkbox"><input type="checkbox" checked={form.isActive} onChange={(event) => onChange({ ...form, isActive: event.target.checked })} /> Ativo</label></FormGrid>;
+}

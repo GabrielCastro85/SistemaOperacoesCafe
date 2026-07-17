@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import type { BootstrapData, InstallationProfile } from "../../shared/types/domain";
+import type { AuthSession, BootstrapData, InstallationProfile } from "../../shared/types/domain";
 import { AppLayout } from "../layouts/AppLayout";
+import "../styles/index.css";
+import { AuditPage } from "../pages/audit/AuditPage";
+import { AccessDeniedPage, FirstAdminSetupPage, LockScreen, LoginPage } from "../pages/auth/AuthPages";
 import { ConfirmationsPage } from "../pages/confirmations/ConfirmationsPage";
 import { ConfirmationReportsPage } from "../pages/confirmations/ConfirmationReportsPage";
 import { ClauseLibraryPage } from "../pages/confirmations/ClauseLibraryPage";
@@ -14,18 +17,45 @@ import { XmlImportHistoryPage } from "../pages/imports/xml/XmlImportHistoryPage"
 import { XmlImportPage } from "../pages/imports/xml/XmlImportPage";
 import { ChargesPage } from "../pages/charges/ChargesPage";
 import { ClientLedgerPage } from "../pages/clientLedger/ClientLedgerPage";
-import {
-  Dashboard,
-  FinancialPage,
-  ModulePlaceholder,
-  SettingsPage,
-  SetupWizard,
-  Splash
-} from "../pages/legacy/LegacyWorkspace";
+import { Dashboard, NotFoundPage, SetupWizard, Splash } from "../pages/appStates/AppStatePages";
+import { CostCentersPage } from "../pages/finance/CostCentersPage";
+import { ExpenseCategoriesPage } from "../pages/finance/ExpenseCategoriesPage";
+import { FinanceOverviewPage } from "../pages/finance/FinanceOverviewPage";
+import { FinancialAccountsPage } from "../pages/finance/FinancialAccountsPage";
+import { FinancialCalendarPage } from "../pages/finance/FinancialCalendarPage";
+import { FinancialReportHistoryPage } from "../pages/finance/FinancialReportHistoryPage";
+import { FinancialReportsPage } from "../pages/finance/FinancialReportsPage";
+import { InstallmentGroupDetailsPage } from "../pages/finance/InstallmentGroupDetailsPage";
+import { InstallmentGroupsPage } from "../pages/finance/InstallmentGroupsPage";
+import { PayableCreatePage } from "../pages/finance/PayableCreatePage";
+import { PayableDetailsPage } from "../pages/finance/PayableDetailsPage";
+import { PayablePaymentDetailsPage } from "../pages/finance/PayablePaymentDetailsPage";
+import { PayablePaymentsPage } from "../pages/finance/PayablePaymentsPage";
+import { PayablesPage } from "../pages/finance/PayablesPage";
+import { RecurringPayableDetailsPage } from "../pages/finance/RecurringPayableDetailsPage";
+import { RecurringPayablesPage } from "../pages/finance/RecurringPayablesPage";
 import { OperationsPage } from "../pages/operations/OperationsPage";
 import { PartnersPage } from "../pages/partners/PartnersPage";
 import { ProductsPage } from "../pages/products/ProductsPage";
 import { ServiceRateRulesPage } from "../pages/serviceRates/ServiceRateRulesPage";
+import { BrandingSettingsPage } from "../pages/settings/branding/BrandingSettingsPage";
+import { DiagnosticsPage } from "../pages/settings/diagnostics/DiagnosticsPage";
+import { DirectoriesPage } from "../pages/settings/directories/DirectoriesPage";
+import { InstallationProfilePage } from "../pages/settings/installation/InstallationProfilePage";
+import { LegalEntitiesPage } from "../pages/settings/legalEntities/LegalEntitiesPage";
+import { LegalEntityCreatePage } from "../pages/settings/legalEntities/LegalEntityCreatePage";
+import { LegalEntityDetailsPage } from "../pages/settings/legalEntities/LegalEntityDetailsPage";
+import { LocationCreatePage } from "../pages/settings/locations/LocationCreatePage";
+import { LocationDetailsPage } from "../pages/settings/locations/LocationDetailsPage";
+import { LocationsPage } from "../pages/settings/locations/LocationsPage";
+import { OrganizationCreatePage } from "../pages/settings/organizations/OrganizationCreatePage";
+import { OrganizationDetailsPage } from "../pages/settings/organizations/OrganizationDetailsPage";
+import { OrganizationsPage } from "../pages/settings/organizations/OrganizationsPage";
+import { DocumentSequencesPage } from "../pages/settings/sequences/DocumentSequencesPage";
+import { SettingsHomePage } from "../pages/settings/SettingsHomePage";
+import { SystemSettingsPage } from "../pages/settings/SystemSettingsPage";
+import { RolesPage } from "../pages/settings/roles/RolesPage";
+import { UsersPage } from "../pages/settings/users/UsersPage";
 import { legacyMenuFromPath, pathFromLegacyMenu } from "./navigation";
 import { AppProviders } from "./providers";
 
@@ -40,6 +70,8 @@ export default function App(): JSX.Element {
 function RoutedApp(): JSX.Element {
   const [data, setData] = useState<BootstrapData | null>(null);
   const [profile, setProfile] = useState<InstallationProfile | null>(null);
+  const [needsBootstrap, setNeedsBootstrap] = useState<boolean | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [path, setPath] = useState(() => currentPath());
 
   const refresh = useCallback(async (): Promise<BootstrapData> => {
@@ -50,7 +82,11 @@ function RoutedApp(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    void Promise.all([window.operationsCafe.authNeedsBootstrap(), window.operationsCafe.authCurrentSession()]).then(([bootstrapRequired, currentSession]) => {
+      setNeedsBootstrap(bootstrapRequired);
+      setSession(currentSession);
+      if (!bootstrapRequired && currentSession?.status === "ACTIVE") void refresh();
+    });
   }, [refresh]);
 
   useEffect(() => {
@@ -63,6 +99,9 @@ function RoutedApp(): JSX.Element {
     };
   }, []);
 
+  if (needsBootstrap === null) return <Splash />;
+  if (needsBootstrap) return <FirstAdminSetupPage onSession={(nextSession) => { setNeedsBootstrap(false); setSession(nextSession); void refresh(); }} />;
+  if (!session) return <LoginPage onSession={(nextSession) => { setSession(nextSession); void refresh(); }} />;
   if (!data) return <Splash />;
   if (!profile?.completedSetup) return <SetupWizard data={data} onSaved={setProfile} />;
 
@@ -90,7 +129,7 @@ function RoutedApp(): JSX.Element {
     setPath(nextPath);
   }
 
-  const page = renderRoute(path, data, profile, refresh, setProfile);
+  const page = canOpenRoute(path, session) ? renderRoute(path, data, profile, refresh, setProfile) : <AccessDeniedPage />;
 
   return (
     <AppLayout
@@ -103,11 +142,15 @@ function RoutedApp(): JSX.Element {
       canSwitchOrganization={canSwitchOrg}
       canSwitchLegalEntity={Boolean(profile.allowLegalEntitySwitch)}
       version={data.version}
+      session={session}
       onNavigate={navigate}
       onOrganizationChange={(id) => void changeOrganization(id)}
       onLegalEntityChange={(id) => void changeLegalEntity(id)}
+      onLock={() => void window.operationsCafe.authLock().then((nextSession) => setSession(nextSession))}
+      onLogout={() => void window.operationsCafe.authLogout().then(() => setSession(null))}
     >
       {page}
+      {session.status === "LOCKED" ? <LockScreen session={session} onSession={setSession} /> : null}
     </AppLayout>
   );
 }
@@ -136,12 +179,62 @@ function renderRoute(
   if (path.startsWith("/billing/rates") || path.startsWith("/rates")) return <ServiceRateRulesPage data={data} />;
   if (path.startsWith("/charges")) return <ChargesPage data={data} />;
   if (path.startsWith("/client-ledger")) return <ClientLedgerPage data={data} />;
-  if (path.startsWith("/finance")) return <FinancialPage data={data} />;
-  if (path.startsWith("/settings")) return <SettingsPage profile={profile} refresh={refresh} onProfile={setProfile} />;
-  if (path.startsWith("/reports")) return <ModulePlaceholder title="Relatórios" />;
-  return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={data.profile?.defaultOrganizationId ?? undefined} />;
+  if (path.startsWith("/finance/payables/new")) return <PayableCreatePage data={data} />;
+  if (path.startsWith("/finance/payables/")) return <PayableDetailsPage data={data} id={routeTail(path, "/finance/payables/")} />;
+  if (path.startsWith("/finance/payables")) return <PayablesPage data={data} />;
+  if (path.startsWith("/finance/recurring/new")) return <RecurringPayablesPage data={data} />;
+  if (path.startsWith("/finance/recurring/")) return <RecurringPayableDetailsPage data={data} id={routeTail(path, "/finance/recurring/")} />;
+  if (path.startsWith("/finance/recurring")) return <RecurringPayablesPage data={data} />;
+  if (path.startsWith("/finance/installments/")) return <InstallmentGroupDetailsPage data={data} id={routeTail(path, "/finance/installments/")} />;
+  if (path.startsWith("/finance/installments")) return <InstallmentGroupsPage data={data} />;
+  if (path.startsWith("/finance/payments/")) return <PayablePaymentDetailsPage data={data} id={routeTail(path, "/finance/payments/")} />;
+  if (path.startsWith("/finance/payments")) return <PayablePaymentsPage data={data} />;
+  if (path.startsWith("/finance/calendar")) return <FinancialCalendarPage data={data} />;
+  if (path.startsWith("/finance/categories")) return <ExpenseCategoriesPage data={data} />;
+  if (path.startsWith("/finance/cost-centers")) return <CostCentersPage data={data} />;
+  if (path.startsWith("/finance/accounts")) return <FinancialAccountsPage data={data} />;
+  if (path.startsWith("/finance/reports/history")) return <FinancialReportHistoryPage data={data} />;
+  if (path.startsWith("/finance/reports/")) return <FinancialReportHistoryPage data={data} id={routeTail(path, "/finance/reports/")} />;
+  if (path.startsWith("/finance/reports") || path.startsWith("/reports")) return <FinancialReportsPage data={data} />;
+  if (path.startsWith("/finance")) return <FinanceOverviewPage data={data} />;
+  const settingsProps = { data, profile, refresh, onProfile: setProfile };
+  if (path.startsWith("/settings/organizations/new")) return <OrganizationCreatePage {...settingsProps} />;
+  if (path.startsWith("/settings/organizations/")) return <OrganizationDetailsPage {...settingsProps} />;
+  if (path.startsWith("/settings/organizations")) return <OrganizationsPage {...settingsProps} />;
+  if (path.startsWith("/settings/legal-entities/new")) return <LegalEntityCreatePage {...settingsProps} />;
+  if (path.startsWith("/settings/legal-entities/")) return <LegalEntityDetailsPage {...settingsProps} />;
+  if (path.startsWith("/settings/legal-entities")) return <LegalEntitiesPage {...settingsProps} />;
+  if (path.startsWith("/settings/locations/new")) return <LocationCreatePage {...settingsProps} />;
+  if (path.startsWith("/settings/locations/")) return <LocationDetailsPage {...settingsProps} />;
+  if (path.startsWith("/settings/locations")) return <LocationsPage {...settingsProps} />;
+  if (path.startsWith("/settings/branding")) return <BrandingSettingsPage {...settingsProps} />;
+  if (path.startsWith("/settings/installation")) return <InstallationProfilePage {...settingsProps} />;
+  if (path.startsWith("/settings/diagnostics")) return <DiagnosticsPage />;
+  if (path.startsWith("/settings/directories")) return <DirectoriesPage />;
+  if (path.startsWith("/settings/users")) return <UsersPage />;
+  if (path.startsWith("/settings/roles")) return <RolesPage />;
+  if (path.startsWith("/settings/document-sequences")) return <DocumentSequencesPage {...settingsProps} />;
+  if (path.startsWith("/settings/import-templates")) return <SpreadsheetMappingTemplatesPage />;
+  if (path.startsWith("/settings/confirmation-templates")) return <ConfirmationTemplatesPage templates={[]} />;
+  if (path.startsWith("/settings/clauses")) return <ClauseLibraryPage clauses={[]} />;
+  if (path.startsWith("/settings/system")) return <SystemSettingsPage />;
+  if (path.startsWith("/audit")) return <AuditPage />;
+  if (path.startsWith("/settings")) return <SettingsHomePage />;
+  if (path === "/dashboard" || path === "/") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={data.profile?.defaultOrganizationId ?? undefined} />;
+  return <NotFoundPage />;
+}
+
+function canOpenRoute(path: string, session: AuthSession): boolean {
+  if (path.startsWith("/audit")) return session.permissions.includes("audit.view");
+  if (path.startsWith("/settings/users")) return session.permissions.includes("users.view");
+  if (path.startsWith("/settings/roles")) return session.permissions.includes("roles.view");
+  return true;
 }
 
 function currentPath(): string {
   return window.location.hash.replace(/^#/, "") || "/dashboard";
+}
+
+function routeTail(path: string, prefix: string): string | null {
+  return path.slice(prefix.length).split("/")[0] || null;
 }

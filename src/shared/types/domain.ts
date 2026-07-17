@@ -3,6 +3,12 @@ export type ThemeMode = "light" | "dark";
 export type LocationType = "OFFICE" | "BRANCH" | "WAREHOUSE" | "PROPERTY" | "STORAGE" | "OTHER";
 export type UserRole = "ADMIN" | "OPERATOR" | "VIEWER";
 export type ValueType = "string" | "number" | "boolean" | "json";
+export type AppUserStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
+export type RoleScopeType = "GLOBAL" | "ORGANIZATION" | "LEGAL_ENTITY";
+export type PermissionRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type LocalSessionStatus = "ACTIVE" | "LOCKED" | "LOGGED_OUT" | "EXPIRED";
+export type AuditResult = "SUCCESS" | "DENIED" | "FAILED";
+export type AuditSeverity = "INFO" | "WARNING" | "CRITICAL";
 
 export interface Organization {
   id: string;
@@ -112,6 +118,101 @@ export interface BootstrapData {
   organizations: Organization[];
   legalEntities: LegalEntity[];
   locations: Location[];
+}
+
+export interface AppUser {
+  id: string;
+  displayName: string;
+  username: string;
+  normalizedUsername: string;
+  email: string | null;
+  status: AppUserStatus;
+  mustChangePassword: boolean;
+  failedLoginAttempts: number;
+  lockedAt: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppRole {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  scopeType: RoleScopeType;
+  isSystem: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppPermission {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  module: string;
+  riskLevel: PermissionRiskLevel;
+  isActive: boolean;
+}
+
+export interface UserRoleAssignment {
+  id: string;
+  userId: string;
+  roleId: string;
+  organizationId: string | null;
+  legalEntityId: string | null;
+  assignedAt: string;
+  expiresAt: string | null;
+  isActive: boolean;
+}
+
+export interface UserLegalEntityAccess {
+  id: string;
+  userId: string;
+  organizationId: string;
+  legalEntityId: string | null;
+  accessMode: "ALL" | "SPECIFIC";
+  createdAt: string;
+}
+
+export interface AuthSession {
+  id: string;
+  user: AppUser;
+  status: LocalSessionStatus;
+  permissions: string[];
+  roles: AppRole[];
+  organizationIds: string[];
+  legalEntityIds: string[];
+  createdAt: string;
+  lastActivityAt: string;
+  lockedAt: string | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  occurredAt: string;
+  actorUserId: string | null;
+  actorUsername: string | null;
+  sessionId: string | null;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  organizationId: string | null;
+  legalEntityId: string | null;
+  result: AuditResult;
+  severity: AuditSeverity;
+  reason: string | null;
+  metadataJson: string;
+  previousHash: string | null;
+  eventHash: string;
+}
+
+export interface AuditIntegrityResult {
+  valid: boolean;
+  checkedEvents: number;
+  firstBrokenEventId: string | null;
 }
 
 export interface OrganizationListItem extends Organization {

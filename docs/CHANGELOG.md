@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0
+
+- Adicionada migration `012_users_permissions_audit`.
+- Criadas tabelas de usuarios, credenciais, roles, permissoes, atribuicoes, escopo por CNPJ, sessoes locais e auditoria.
+- Adicionado bootstrap do primeiro administrador sem senha padrao.
+- Adicionado hash de senha com `crypto.scrypt`, salt aleatorio, formato versionado e comparacao segura.
+- Adicionados lock, unlock, logout, troca de usuario e sessao mantida no processo principal.
+- Adicionada politica IPC deny-by-default com testes de cobertura para todos os canais.
+- Adicionadas telas `LoginPage`, `LockScreen`, Usuarios, Roles, Auditoria e Acesso negado.
+- Adicionada auditoria com sanitizacao e hash chain.
+
 ## 0.1.0
 
 - Criada fundacao Electron, React, TypeScript e Vite.
@@ -112,10 +123,14 @@
 - Adicionados Stepper, PageHeader, FileDropzone, DocumentPreviewCard, Drawer, ConfirmationDialog, Pagination, FilterBar, ProgressBar e demais componentes de suporte.
 - Adicionadas rotas hash identificaveis para operacoes, importacoes e confirmacoes.
 - Roteadas diretamente as paginas de operacoes, importacoes e confirmacoes pelo `src/renderer/app/App.tsx`.
-- Removido o shell/default do `LegacyWorkspace`; ele permanece apenas para paginas ainda legadas.
+- Removido o shell/default legado durante a migracao gradual.
 - Removidas chamadas funcionais nativas de prompt, alert e confirm do renderer.
 - Adicionado `src/renderer/utils/dialogs.ts` para decisoes e entrada de motivo em acoes legadas/migradas.
 - Roteadas diretamente as paginas de Clientes e parceiros, Produtos, Regras por saca, Cobrancas e Conta-corrente.
 - Criadas estruturas `components`, `forms` e `hooks` para parceiros, produtos, regras de servico, cobrancas e conta-corrente.
-- Restringido o `LegacyWorkspace` aos modulos Financeiro, Relatorios e Configuracoes/admin ainda pendentes de migracao visual.
 - Substituido o helper de dialog por `DialogProvider` React registrado em `AppProviders`, sem `document.createElement`.
+- Migrados Financeiro, Contas a pagar, Recorrencias, Parcelamentos, Pagamentos, Cadastros financeiros, Relatorios e Configuracoes para rotas diretas.
+- Criadas estruturas `src/renderer/pages/finance` e `src/renderer/pages/settings` com paginas, componentes, formularios, hooks e dialogs especificos.
+- Adicionados componentes genericos `MonthInput`, `PercentageInput`, `TreeView`, `Timeline`, `CalendarGrid`, `DefinitionList`, `CopyButton`, `PageSection` e `SplitButton`.
+- Removidos arquivo e pasta do workspace legado.
+- Adicionada `NotFoundPage` para rotas desconhecidas.
