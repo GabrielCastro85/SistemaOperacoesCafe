@@ -48,6 +48,14 @@ describe("local authentication and authorization", () => {
     expect(session.permissions).toContain("audit.view");
   });
 
+  it("accepts local passwords without complexity rules", async () => {
+    const auth = createAuthService();
+    await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "1" });
+    auth.logout();
+    const session = await auth.login({ username: "admin", password: "1" });
+    expect(session.status).toBe("ACTIVE");
+  });
+
   it("opens, locks, unlocks and logs out a local session", async () => {
     const auth = createAuthService();
     await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
@@ -69,6 +77,17 @@ describe("local authentication and authorization", () => {
     expect(events[0].metadataJson).toContain("[REDACTED]");
     expect(events[0].metadataJson).toContain("visible");
     expect(auth.verifyAuditChain()).toMatchObject({ valid: true });
+  });
+
+  it("preserves email on status-only user updates (lock/unlock/deactivate)", async () => {
+    const auth = createAuthService();
+    await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
+    const created = await auth.createUser({ displayName: "Usuario Teste", username: "teste", email: "teste@local.test", password: "Senha@12345", mustChangePassword: false });
+    expect(created.email).toBe("teste@local.test");
+    const locked = auth.updateUser({ id: created.id, status: "LOCKED" });
+    expect(locked.email).toBe("teste@local.test");
+    const reactivated = auth.updateUser({ id: created.id, status: "ACTIVE" });
+    expect(reactivated.email).toBe("teste@local.test");
   });
 
   it("defines a deny-by-default policy for every IPC channel", () => {

@@ -93,11 +93,7 @@ function deriveScrypt(password: string, salt: Buffer, keyLength: number): Promis
 
 export function validatePasswordPolicy(password: string): string[] {
   const issues: string[] = [];
-  if (password.length < 10) issues.push("A senha deve ter pelo menos 10 caracteres.");
-  if (!/[A-Z]/.test(password)) issues.push("Inclua ao menos uma letra maiuscula.");
-  if (!/[a-z]/.test(password)) issues.push("Inclua ao menos uma letra minuscula.");
-  if (!/\d/.test(password)) issues.push("Inclua ao menos um numero.");
-  if (!/[^A-Za-z0-9]/.test(password)) issues.push("Inclua ao menos um simbolo.");
+  if (password.length === 0) issues.push("Informe uma senha.");
   return issues;
 }
 
@@ -270,7 +266,7 @@ export class AuthService {
     const data = parseObject(input);
     const id = readString(data, "id");
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE app_users SET display_name = COALESCE(?, display_name), email = ?, status = COALESCE(?, status), must_change_password = COALESCE(?, must_change_password), updated_at = ? WHERE id = ?")
+    this.db.prepare("UPDATE app_users SET display_name = COALESCE(?, display_name), email = COALESCE(?, email), status = COALESCE(?, status), must_change_password = COALESCE(?, must_change_password), updated_at = ? WHERE id = ?")
       .run(optionalString(data, "displayName"), optionalString(data, "email"), optionalString(data, "status"), optionalBoolean(data, "mustChangePassword"), now, id);
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "users.update", entityType: "app_user", entityId: id, result: "SUCCESS", severity: "WARNING" });
     return this.getUser(id);

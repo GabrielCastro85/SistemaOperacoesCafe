@@ -108,6 +108,34 @@ describe("spreadsheet imports", () => {
     expect(repo.getFiscalDocument(detail.document.id).document.status).toBe("CANCELED");
     db.close();
   });
+
+  it("imports a row with no notes column (empty string, not null) instead of failing validation", () => {
+    // Real-world spreadsheets rarely have a "notes"/"observacoes" column; normalizeSpreadsheetRow
+    // (electron/main/ipc/handlers.ts) always sets notes to pick("notes"), which is "" when absent -
+    // not null/undefined. addOperation's notes field previously used `??`, which does not treat ""
+    // as missing, so it hit nullableText's z.string().min(1) and every such row failed with
+    // "String must contain at least 1 character(s)".
+    const { repo, db, partnerId, productId } = setup();
+    const job = repo.createSpreadsheetImportDraft({
+      organizationId: villaId,
+      ownLegalEntityId,
+      mappingTemplateId: null,
+      originalFileName: "vendas-sem-notas.xlsx",
+      storedFilePath: null,
+      selectedSheetName: "DADOS",
+      importType: "GENERAL_SALES",
+      settings: { defaultPartnerId: partnerId, operationType: "SALE", defaultOperationScope: "EXTERNAL", defaultProductId: productId }
+    });
+    repo.addSpreadsheetImportRow({ importJobId: job.id, sheetName: "DADOS", sourceRowNumber: 2, rawData: { NF: "4820" }, normalizedData: { ...normalizedRow(partnerId, productId, "4820", "350"), notes: "" }, status: "VALID", errorCode: null, errorMessage: null, warningCodes: [] });
+
+    const imported = repo.executeSpreadsheetImport(job.id);
+    expect(imported.job.importedRows).toBe(1);
+    expect(imported.job.errorRows).toBe(0);
+    expect(imported.rows[0].status).toBe("IMPORTED");
+    const detail = repo.getFiscalDocument(imported.rows[0].fiscalDocumentId as string);
+    expect(detail.operations[0].notes).toBeNull();
+    db.close();
+  });
 });
 
 async function writeWorkbook(filePath: string): Promise<void> {

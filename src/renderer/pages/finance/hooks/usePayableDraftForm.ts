@@ -13,7 +13,7 @@ export function usePayableDraftForm(): { form: PayableDraftFormState; setForm: (
   const initial: PayableDraftFormState = {
     payee: "Fornecedor avulso",
     description: "Conta a pagar",
-    amount: "100000",
+    amount: "1000,00",
     dueDate: new Date().toISOString().slice(0, 10),
     categoryId: "",
     costCenterId: ""

@@ -14,6 +14,7 @@ export * from "./components/FileDropzone";
 export * from "./components/FilterBar";
 export * from "./components/FormField";
 export * from "./components/IconButton";
+export * from "./components/Icons";
 export * from "./components/Input";
 export * from "./components/LoadingState";
 export * from "./components/PageHeader";

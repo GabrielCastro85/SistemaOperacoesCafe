@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { getBrandingConfig } from "../../../shared/branding/branding";
-import type { AppVariant, BillingSummary, BootstrapData, DealConfirmationSummary, FinancialSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
+import type { AppVariant, BillingSummary, BootstrapData, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
-import { Button, Card, EmptyState, PageHeader, Select } from "../../design-system";
+import { Button, Card, CheckCircleIcon, CoinsIcon, EmptyState, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 
 export function Splash(): JSX.Element {
   return (
@@ -65,7 +65,7 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
           <div className="company-choice-grid">
             {(["villa", "grao", "multiempresa"] as AppVariant[]).map((item) => (
               <button key={item} className={variant === item ? "company-choice active" : "company-choice"} onClick={() => setVariant(item)}>
-                <img src={item === "grao" ? "/assets/branding/grao/logo.png" : "/assets/branding/villa/logo.png"} alt="" />
+                <img src={item === "grao" ? "assets/branding/grao/logo.png" : "assets/branding/villa/logo.png"} alt="" />
                 <span>{getBrandingConfig(item).name}</span>
                 <small>{item === "multiempresa" ? "Gestao centralizada" : getBrandingConfig(item).appDisplayName}</small>
               </button>
@@ -87,41 +87,51 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
 
 export function Dashboard({ organizations, legalEntities, locations, organizationId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
-  const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
+  const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
+  const [chartYear, setChartYear] = useState(new Date().getFullYear());
 
   useEffect(() => {
     if (!organizationId) return;
     void Promise.all([
       window.operationsCafe.getBillingSummary(organizationId),
-      window.operationsCafe.getFinancialSummary(organizationId),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId })
-    ]).then(([billing, financial, confirmations]) => {
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
+    ]).then(([billing, confirmations]) => {
       setBillingSummary(billing);
-      setFinancialSummary(financial);
       setConfirmationSummary(confirmations);
     });
   }, [organizationId]);
 
+  useEffect(() => {
+    if (!organizationId) return;
+    void window.operationsCafe.getMonthlyOperationTotals({ organizationId, year: chartYear }).then(setMonthlyTotals);
+  }, [organizationId, chartYear]);
+
   const totalReceivable = billingSummary?.openCents ?? 0;
-  const totalPayables = financialSummary?.openCents ?? 0;
+  const totalCommercialAmount = confirmationSummary?.totalCommercialAmountCents ?? 0;
   const confirmationCount = confirmationSummary?.issued ?? 0;
   const sacks = Number(confirmationSummary?.totalSacksDecimal ?? 0);
-  const monthBars = [38, 52, 64, 92, 86, 61, 57, 72, 68, 75, 70, 78];
+  const maxMonthlyAmount = Math.max(1, ...monthlyTotals.map((item) => item.amountCents));
+  const maxMonthlySacks = Math.max(1, ...monthlyTotals.map((item) => Number(item.sacksDecimal)));
+  const monthBars = monthlyTotals.length ? monthlyTotals.map((item) => Math.round((item.amountCents / maxMonthlyAmount) * 100)) : Array.from({ length: 12 }, () => 0);
+  const monthLine = monthlyTotals.length ? monthlyTotals.map((item) => Math.round((Number(item.sacksDecimal) / maxMonthlySacks) * 100)) : Array.from({ length: 12 }, () => 0);
+  const linePoints = monthLine.map((value, index) => `${(index / Math.max(1, monthLine.length - 1)) * 100},${100 - value}`).join(" ");
+  const hasMonthlyData = monthlyTotals.some((item) => item.operationCount > 0);
   const statusSlices = [
-    { label: "Confirmadas", value: confirmationCount || 62 },
-    { label: "Pendentes", value: confirmationSummary?.waitingSignature ?? 10 },
-    { label: "Financeiro", value: billingSummary?.unbilledOperations ?? 8 }
+    { label: "Confirmadas", value: confirmationSummary?.issued ?? 0 },
+    { label: "Aguardando assinatura", value: confirmationSummary?.waitingSignature ?? 0 },
+    { label: "Rascunho/pendente", value: (confirmationSummary?.drafts ?? 0) + (confirmationSummary?.pendingReview ?? 0) }
   ];
+  const statusTotal = statusSlices.reduce((sum, item) => sum + item.value, 0);
 
   return (
     <section className="content-section">
       <PageHeader eyebrow="Visao geral" title="Dashboard operacional" description="Indicadores locais para operacao, recebimentos, financeiro interno e confirmacoes de negocio." />
       <div className="dashboard-grid dashboard-grid--hero">
-        <Card><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume comercial confirmado</small></Card>
-        <Card><span>Valor total das operacoes</span><strong>{formatCurrencyFromCents(totalReceivable + Math.max(totalPayables, 0))}</strong><small>Operacao e financeiro local</small></Card>
-        <Card><span>A receber</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
-        <Card><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
+        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume comercial confirmado</small></Card>
+        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das operacoes</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das confirmacoes emitidas</small></Card>
+        <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
+        <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
       </div>
 
       <div className="dashboard-workspace">
@@ -155,12 +165,27 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               <span className="ui-eyebrow">Totais por mês</span>
               <h2>Operações e sacas</h2>
             </div>
-            <select aria-label="Ano"><option>2026</option></select>
+            <select aria-label="Ano" value={chartYear} onChange={(event) => setChartYear(Number(event.target.value))}>
+              {[chartYear - 2, chartYear - 1, chartYear].map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
           </div>
-          <div className="mini-chart" aria-label="Grafico mensal de operacoes">
-            {monthBars.map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}
-          </div>
-          <div className="chart-months"><span>Jan</span><span>Mar</span><span>Mai</span><span>Jul</span><span>Set</span><span>Nov</span></div>
+          {hasMonthlyData ? (
+            <>
+              <div className="chart-legend">
+                <span><i className="chart-legend__dot chart-legend__dot--bar" />Total operações (R$)</span>
+                <span><i className="chart-legend__dot chart-legend__dot--line" />Total sacas</span>
+              </div>
+              <div className="mini-chart" aria-label="Grafico mensal de operacoes: barras de valor em reais e linha de sacas">
+                {monthBars.map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}
+                <svg className="mini-chart__line" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <polyline points={linePoints} />
+                </svg>
+              </div>
+              <div className="chart-months"><span>Jan</span><span>Mar</span><span>Mai</span><span>Jul</span><span>Set</span><span>Nov</span></div>
+            </>
+          ) : (
+            <EmptyState title="Sem operacoes confirmadas" description={`Nenhuma operacao confirmada em ${chartYear} ainda.`} />
+          )}
         </Card>
 
         <Card>
@@ -170,15 +195,21 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               <h2>Status operacional</h2>
             </div>
           </div>
-          <div className="status-donut" aria-label="Operacoes por status">
-            <strong>{statusSlices.reduce((sum, item) => sum + item.value, 0)}</strong>
-            <span>Total</span>
-          </div>
-          <div className="status-list">
-            {statusSlices.map((item) => (
-              <p key={item.label}><span />{item.label}<strong>{item.value}</strong></p>
-            ))}
-          </div>
+          {statusTotal > 0 ? (
+            <>
+              <div className="status-donut" aria-label="Operacoes por status">
+                <strong>{statusTotal}</strong>
+                <span>Total</span>
+              </div>
+              <div className="status-list">
+                {statusSlices.map((item) => (
+                  <p key={item.label}><span />{item.label}<strong>{item.value}</strong></p>
+                ))}
+              </div>
+            </>
+          ) : (
+            <EmptyState title="Sem confirmacoes ainda" description="Crie uma confirmacao de negocio para ver o resumo por status aqui." />
+          )}
         </Card>
 
         <Card>

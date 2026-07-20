@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button, DataTable, PageHeader } from "../../design-system";
-import { formatCurrencyFromCents } from "../../../shared/utils/format";
+import { formatCurrencyFromCents, parseCurrencyToCents } from "../../../shared/utils/format";
 import { PayablePaymentForm } from "./forms/PayablePaymentForm";
 import { useFinanceData } from "./hooks/useFinanceData";
 import type { FinancePageProps } from "./types";
@@ -13,7 +13,7 @@ export function PayablePaymentsPage({ data }: FinancePageProps): JSX.Element {
   const [accountId, setAccountId] = useState("");
   async function pay(): Promise<void> {
     if (!firstOpen) return;
-    const cents = Number(amount || firstOpen.openAmountCents || 0);
+    const cents = amount ? parseCurrencyToCents(amount) : (firstOpen.openAmountCents ?? 0);
     const payment = await window.operationsCafe.createPayablePayment({ organizationId, ownLegalEntityId, financialAccountId: accountId || null, paymentDate: date, amountCents: cents, paymentMethod: "PIX", transactionReference: null, payeeNameSnapshot: firstOpen.payeeNameSnapshot, notes: null, attachmentPath: null, attachmentHash: null });
     await window.operationsCafe.allocatePayablePayment({ payablePaymentId: payment.id, accountPayableId: firstOpen.id, amountCents: cents });
     await reload();

@@ -26,6 +26,7 @@ export interface Organization {
   slug: string;
   displayName: string;
   appDisplayName: string;
+  description: string | null;
   logoPath: string | null;
   compactLogoPath: string | null;
   iconPath: string | null;
@@ -1010,6 +1011,17 @@ export interface BillingSummary {
   billedSacks: string;
 }
 
+export interface PartnerRateSummaryRow {
+  partnerId: string;
+  partnerDisplayName: string;
+  internalSacks: string;
+  externalSacks: string;
+  internalAmountCents: number;
+  externalAmountCents: number;
+  totalAmountCents: number;
+  operationCount: number;
+}
+
 export type ExpenseNature = "FIXED" | "VARIABLE" | "TAX" | "PERSONNEL" | "FINANCIAL" | "INVESTMENT" | "OTHER";
 export type FinancialAccountType = "BANK_ACCOUNT" | "CASH" | "DIGITAL_WALLET" | "OTHER";
 export type AccountPayableSource = "MANUAL" | "RECURRING" | "INSTALLMENT" | "IMPORT";
@@ -1335,6 +1347,12 @@ export interface DealConfirmation {
   generalTermsSnapshot: string | null;
   publicNotes: string | null;
   internalNotes: string | null;
+  brokeragePercentageBasisPoints: number | null;
+  bankName: string | null;
+  bankCode: string | null;
+  bankAgency: string | null;
+  bankAccount: string | null;
+  pixKey: string | null;
   templateSnapshotJson: string | null;
   pendingIssuesJson: string;
   issuedDocumentVersionId: string | null;

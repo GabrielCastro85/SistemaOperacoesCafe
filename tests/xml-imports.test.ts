@@ -11,7 +11,7 @@ const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 const ownCnpj = "11222333000181";
-const partnerCnpj = "22333444000110";
+const partnerCnpj = "22333444000181";
 
 function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string; dir: string } {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-xml-"));
@@ -83,6 +83,17 @@ describe("xml imports", () => {
     expect(() => parseXmlContent("<nfeProc><NFe>")).toThrow(/malformado/);
   });
 
+  it("rounds vUnCom/vUnTrib with SEFAZ-max precision (10 decimals) instead of rejecting the note", () => {
+    // Real-world authorized NF-e: vUnCom/vUnTrib padded to 10 decimal places ("1997.0000000000"),
+    // which previously threw "Decimal invalido." because normalizeDecimalText caps at 6 decimals.
+    const parsed = parseXmlContent(realWorldHighPrecisionNfeXml());
+    expect(parsed.xmlType).toBe("NFE_PROC");
+    const items = (parsed.extractedData as { items: Array<{ commercialUnitValue: string; taxableUnitValue: string; commercialQuantity: string }> }).items;
+    expect(items[0].commercialUnitValue).toBe("1997");
+    expect(items[0].taxableUnitValue).toBe("1997");
+    expect(items[0].commercialQuantity).toBe("350");
+  });
+
   it("imports a valid XML into fiscal documents, items and operations", () => {
     const { repo, db, partnerId, productId, dir } = setup();
     const key = makeAccessKey();
@@ -102,6 +113,82 @@ describe("xml imports", () => {
     expect(detail.document.direction).toBe("OUTBOUND");
     expect(detail.items).toHaveLength(1);
     expect(detail.operations[0].serviceAmountCents).toBe(5250);
+    // A clean XML import (no pending issues) auto-confirms the note and its operation,
+    // so it shows up ready-to-bill without a separate manual "Confirmar" step.
+    expect(detail.document.status).toBe("CONFIRMED");
+    expect(detail.operations[0].status).toBe("CONFIRMED");
+    expect(detail.operations[0].billingStatus).toBe("UNBILLED");
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-01-01", periodEnd: "2026-12-31" });
+    expect(eligible).toHaveLength(1);
+    db.close();
+  });
+
+  it("auto-matches the counterparty by CNPJ without an explicit clientPartnerId", () => {
+    const { repo, db, partnerId, productId, dir } = setup();
+    repo.createPartnerLegalEntity({
+      businessPartnerId: partnerId,
+      legalName: "Cliente XML Ltda",
+      tradeName: "Cliente XML Ltda",
+      cnpj: partnerCnpj,
+      stateRegistration: null,
+      municipalRegistration: null,
+      email: null,
+      phone: null,
+      addressLine: null,
+      addressNumber: null,
+      addressComplement: null,
+      district: null,
+      city: null,
+      state: null,
+      postalCode: null,
+      isPrimary: true,
+      isActive: true,
+      isDraft: false
+    });
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-cnpj-match.xml");
+    writeFileSync(filePath, nfeXml(key), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111114");
+    const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.job.importedNotes).toBe(1);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    expect(detail.document.responsiblePartnerId).toBe(partnerId);
+    db.close();
+  });
+
+  it("auto-matches the counterparty by alias when no CNPJ is registered", () => {
+    const { repo, db, partnerId, productId, dir } = setup();
+    repo.createPartnerAlias({ organizationId: villaId, businessPartnerId: partnerId, partnerLegalEntityId: null, alias: "Cliente XML Ltda", source: "TEST", isActive: true });
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-alias-match.xml");
+    writeFileSync(filePath, nfeXml(key), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111115");
+    const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.job.importedNotes).toBe(1);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    expect(detail.document.responsiblePartnerId).toBe(partnerId);
+    db.close();
+  });
+
+  it("leaves the file pending for manual review instead of guessing a client when nothing matches", () => {
+    const { repo, db, productId, dir } = setup();
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-no-match.xml");
+    writeFileSync(filePath, nfeXml(key), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111116");
+    const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.job.importedNotes).toBe(0);
+    expect(result.files[0].status).toBe("PENDING_REVIEW");
+    expect(result.files[0].fiscalDocumentId).toBeNull();
     db.close();
   });
 
@@ -169,4 +256,9 @@ function cancelXml(key: string): string {
   <evento><infEvento Id="ID110111${key}01"><tpEvento>110111</tpEvento><chNFe>${key}</chNFe><nSeqEvento>1</nSeqEvento><dhEvento>2026-07-17T08:00:00-03:00</dhEvento><detEvento><xJust>Erro de emissao</xJust></detEvento></infEvento></evento>
   <retEvento><infEvento><chNFe>${key}</chNFe><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><cStat>135</cStat><xMotivo>Evento registrado</xMotivo><nProt>131260000000002</nProt></infEvento></retEvento>
 </procEventoNFe>`;
+}
+
+function realWorldHighPrecisionNfeXml(): string {
+  // Trimmed real, SEFAZ-authorized NF-e (signature/certificate block removed, not needed by the parser).
+  return `<?xml version="1.0" encoding="UTF-8"?><nfeProc versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe"><NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe31260744963370000523550010000006621163793580" versao="4.00"><ide><cUF>31</cUF><cNF>16379358</cNF><natOp>VENDA DE MERCADORIA ADQUIRIDA OU RECEBIDA DE TERCE</natOp><mod>55</mod><serie>1</serie><nNF>662</nNF><dhEmi>2026-07-17T18:14:05-03:00</dhEmi><dhSaiEnt>2026-07-17T18:24:05-03:00</dhSaiEnt><tpNF>1</tpNF><idDest>1</idDest><cMunFG>3143203</cMunFG><tpImp>1</tpImp><tpEmis>1</tpEmis><cDV>0</cDV><tpAmb>1</tpAmb><finNFe>1</finNFe><indFinal>0</indFinal><indPres>0</indPres><procEmi>0</procEmi><verProc>4.00</verProc></ide><emit><CNPJ>44963370000523</CNPJ><xNome>VILLA COFFEE COMERCIO E EXP. LTDA</xNome><enderEmit><xLgr>AVENIDA VITAL PAULINO DA COSTA</xLgr><nro>466</nro><xBairro>CENTRO</xBairro><cMun>3143203</cMun><xMun>MONTE SANTO DE MINAS</xMun><UF>MG</UF><CEP>37968000</CEP><cPais>1058</cPais><xPais>BRASIL</xPais></enderEmit><IE>0053761240090</IE><CRT>3</CRT></emit><dest><CNPJ>12454636000192</CNPJ><xNome>S B DE OLIVEIRA COMERCIO DE CAFE LTDA</xNome><enderDest><xLgr>AVENIDA AILTON ALVES DOS SANTOS</xLgr><nro>601</nro><xBairro>POUSO ALEGRE</xBairro><cMun>3139409</cMun><xMun>MANHUACU</xMun><UF>MG</UF><CEP>36904082</CEP><cPais>1058</cPais><xPais>BRASIL</xPais></enderDest><indIEDest>1</indIEDest><IE>0024322560040</IE></dest><det nItem="1"><prod><cProd>1</cProd><cEAN>1000000000016</cEAN><xProd>CAFE EM GRAOS CRU ARABICA</xProd><NCM>09011110</NCM><CEST>1709601</CEST><CFOP>5102</CFOP><uCom>SC</uCom><qCom>350.0000</qCom><vUnCom>1997.0000000000</vUnCom><vProd>698950.00</vProd><cEANTrib>1000000000016</cEANTrib><uTrib>SC</uTrib><qTrib>350.0000</qTrib><vUnTrib>1997.0000000000</vUnTrib><indTot>1</indTot></prod><imposto><ICMS><ICMS51><orig>0</orig><CST>51</CST><modBC>3</modBC></ICMS51></ICMS></imposto><vItem>698950.00</vItem></det><total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>698950.00</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>698950.00</vNF></ICMSTot></total><transp><modFrete>0</modFrete><transporta><CPF>08578492714</CPF><xNome>AGNALDO SANTOS DA SILVA</xNome><xMun>IBATIBA</xMun><UF>ES</UF></transporta><vol><qVol>350</qVol><esp>GRANEL</esp><marca>CAFE</marca><pesoL>21000.000</pesoL><pesoB>21000.000</pesoB></vol></transp><pag><detPag><tPag>01</tPag><vPag>698950.00</vPag></detPag></pag><infAdic><infCpl>ICMS DIFERIDO</infCpl></infAdic></infNFe></NFe><protNFe versao="4.00"><infProt><tpAmb>1</tpAmb><verAplic>W-3.4.14</verAplic><chNFe>31260744963370000523550010000006621163793580</chNFe><dhRecbto>2026-07-17T18:15:36-03:00</dhRecbto><nProt>131267734373529</nProt><digVal>Aiv0HwQX7JFDXuMxcZtf6M4DoRk=</digVal><cStat>100</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo></infProt></protNFe></nfeProc>`;
 }

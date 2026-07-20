@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -116,6 +116,40 @@ describe("deal confirmations", () => {
     const report = await repo.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format: "EXCEL", filters: { organizationId: villaId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
     expect(existsSync(report.storedFilePath)).toBe(true);
     expect(() => repo.reserveDealConfirmationNumber(graoId, graoLegalEntityId)).not.toThrow();
+    db.close();
+  });
+
+  it("persists brokerage percentage, bank/PIX data and a delivery-recipient party through create, update and PDF generation", async () => {
+    const { repo, db, seller, buyer, product } = setup();
+    const draft = repo.createDealConfirmationDraft({
+      organizationId: villaId,
+      ownLegalEntityId,
+      confirmationDate: "2026-07-17",
+      paymentTermsSnapshot: "A prazo",
+      brokeragePercentageBasisPoints: 250,
+      bankName: "Santander",
+      bankCode: "033",
+      bankAgency: "3318",
+      bankAccount: "13.0021347",
+      pixKey: "44.963.370/0005-23"
+    });
+    expect(draft.confirmation.brokeragePercentageBasisPoints).toBe(250);
+    expect(draft.confirmation.bankName).toBe("Santander");
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: seller.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 1 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
+    repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, "Lote unico", "350", "1997", 0));
+
+    const updated = repo.updateDealConfirmationDraft(draft.confirmation.id, { bankAgency: "9999", pixKey: "chave-nova@pix.com" });
+    expect(updated.confirmation.bankAgency).toBe("9999");
+    expect(updated.confirmation.pixKey).toBe("chave-nova@pix.com");
+    expect(updated.confirmation.bankName).toBe("Santander");
+    expect(updated.parties.filter((party) => party.partyRole === "DELIVERY_RECIPIENT")).toHaveLength(1);
+
+    const preview = await repo.generateDealConfirmationPreview(draft.confirmation.id);
+    const version = preview.documents.find((doc) => doc.documentType === "GENERATED_DRAFT");
+    expect(version?.storedFilePath && existsSync(version.storedFilePath)).toBe(true);
+    expect(version?.storedFilePath ? statSync(version.storedFilePath).size : 0).toBeGreaterThan(500);
     db.close();
   });
 

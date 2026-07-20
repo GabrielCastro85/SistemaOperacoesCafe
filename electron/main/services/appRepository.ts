@@ -25,6 +25,7 @@ import {
   operationClassificationRuleInputSchema,
   suggestChargePeriodsInputSchema,
   eligibleOperationsInputSchema,
+  partnerRateSummaryInputSchema,
   clientChargeDraftInputSchema,
   clientChargeAdjustmentInputSchema,
   clientLedgerEntryInputSchema,
@@ -95,6 +96,7 @@ import type {
   ClientLedgerEntry,
   ClientPayment,
   BillingSummary,
+  PartnerRateSummaryRow,
   ExpenseCategory,
   CostCenter,
   FinancialAccount,
@@ -183,7 +185,7 @@ import {
   mapDealConfirmationTemplate,
   mapDealPaymentTerm
 } from "../database/mappers.js";
-import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, normalizeDecimalText } from "../../../src/shared/utils/decimal.js";
+import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, normalizeDecimalText, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
 import { generateChargeDocuments } from "./chargeDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
@@ -250,12 +252,12 @@ export class AppRepository {
     this.db
       .prepare(
         `INSERT INTO organizations (
-          id, name, slug, display_name, app_display_name, logo_path, compact_logo_path, icon_path,
+          id, name, slug, display_name, app_display_name, description, logo_path, compact_logo_path, icon_path,
           primary_color, secondary_color, accent_color, theme_mode, is_active, created_at, updated_at
-        ) VALUES (@id, @name, @slug, @displayName, @appDisplayName, @logoPath, @compactLogoPath, @iconPath,
+        ) VALUES (@id, @name, @slug, @displayName, @appDisplayName, @description, @logoPath, @compactLogoPath, @iconPath,
           @primaryColor, @secondaryColor, @accentColor, @themeMode, @isActive, @createdAt, @updatedAt)`
       )
-      .run({ id, ...data, logoPath: data.logoPath ?? null, compactLogoPath: data.compactLogoPath ?? null, iconPath: data.iconPath ?? null, isActive: data.isActive ? 1 : 0, createdAt: now, updatedAt: now });
+      .run({ id, ...data, description: data.description ?? null, logoPath: data.logoPath ?? null, compactLogoPath: data.compactLogoPath ?? null, iconPath: data.iconPath ?? null, isActive: data.isActive ? 1 : 0, createdAt: now, updatedAt: now });
     return this.getOrganization(id);
   }
 
@@ -266,13 +268,13 @@ export class AppRepository {
     this.db
       .prepare(
         `UPDATE organizations SET
-          name = @name, slug = @slug, display_name = @displayName, app_display_name = @appDisplayName,
+          name = @name, slug = @slug, display_name = @displayName, app_display_name = @appDisplayName, description = @description,
           logo_path = @logoPath, compact_logo_path = @compactLogoPath, icon_path = @iconPath,
           primary_color = @primaryColor, secondary_color = @secondaryColor, accent_color = @accentColor,
           theme_mode = @themeMode, is_active = @isActive, updated_at = @updatedAt
          WHERE id = @id`
       )
-      .run({ id, ...data, logoPath: data.logoPath ?? null, compactLogoPath: data.compactLogoPath ?? null, iconPath: data.iconPath ?? null, isActive: data.isActive ? 1 : 0, updatedAt: new Date().toISOString() });
+      .run({ id, ...data, description: data.description ?? null, logoPath: data.logoPath ?? null, compactLogoPath: data.compactLogoPath ?? null, iconPath: data.iconPath ?? null, isActive: data.isActive ? 1 : 0, updatedAt: new Date().toISOString() });
     return this.getOrganization(id);
   }
 
@@ -880,6 +882,34 @@ export class AppRepository {
     };
   }
 
+  getMonthlyOperationTotals(organizationId: string, year: number): Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }> {
+    this.assertOrganizationWritable(organizationId);
+    const rows = this.db.prepare(`
+      SELECT operation_date AS operationDate, quantity_sacks_decimal AS sacks, service_amount_cents AS amountCents
+      FROM operations
+      WHERE organization_id = ? AND status = 'CONFIRMED' AND operation_date LIKE ?
+    `).all(organizationId, `${year}-%`) as Array<{ operationDate: string; sacks: string; amountCents: number }>;
+    const byMonth = new Map<number, { sacks: string[]; amountCents: number; count: number }>();
+    for (const row of rows) {
+      const month = Number(row.operationDate.slice(5, 7));
+      const bucket = byMonth.get(month) ?? { sacks: [], amountCents: 0, count: 0 };
+      bucket.sacks.push(row.sacks);
+      bucket.amountCents += row.amountCents;
+      bucket.count += 1;
+      byMonth.set(month, bucket);
+    }
+    return Array.from({ length: 12 }, (_unused, index) => {
+      const month = index + 1;
+      const bucket = byMonth.get(month);
+      return {
+        month,
+        sacksDecimal: bucket?.sacks.length ? sumDecimalTexts(bucket.sacks) : "0",
+        amountCents: bucket?.amountCents ?? 0,
+        operationCount: bucket?.count ?? 0
+      };
+    });
+  }
+
   listSpreadsheetMappingTemplates(organizationId: string): SpreadsheetMappingTemplate[] {
     this.assertOrganizationWritable(organizationId);
     return (this.db.prepare("SELECT * FROM spreadsheet_mapping_templates WHERE organization_id = ? ORDER BY name").all(organizationId) as DbRecord[]).map(mapSpreadsheetMappingTemplate);
@@ -1029,7 +1059,7 @@ export class AppRepository {
           quantitySacks: normalized.sacks,
           manualRateValueCents: normalized.manualRateValueCents ? Number(normalized.manualRateValueCents) : null,
           manualOverrideReason: normalized.manualRateValueCents ? "Valor informado na planilha" : null,
-          notes: normalized.notes ?? null
+          notes: normalized.notes || null
         });
         this.db.prepare("UPDATE operations SET source = 'SPREADSHEET', import_job_id = ?, import_row_id = ? WHERE id = ?").run(id, row.id, operation.id);
         this.db.prepare("UPDATE spreadsheet_import_rows SET status = 'IMPORTED', fiscal_document_id = ?, operation_id = ?, updated_at = ? WHERE id = ?").run(doc.document.id, operation.id, new Date().toISOString(), row.id);
@@ -1398,6 +1428,52 @@ export class AppRepository {
     `).all(data.organizationId, data.ownLegalEntityId, data.clientPartnerId, data.periodStart, data.periodEnd) as DbRecord[]).map(mapOperation);
   }
 
+  getPartnerRateSummary(input: unknown): PartnerRateSummaryRow[] {
+    const data = partnerRateSummaryInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    const billingStatusClause = data.includeAlreadyBilled ? "" : "AND billing_status = 'UNBILLED'";
+    const rows = this.db.prepare(`
+      SELECT responsible_partner_id AS partnerId, operation_scope AS scope, quantity_sacks_decimal AS sacks, service_amount_cents AS amountCents
+      FROM operations
+      WHERE organization_id = ?
+        AND own_legal_entity_id = ?
+        AND operation_date BETWEEN ? AND ?
+        AND status = 'CONFIRMED'
+        ${billingStatusClause}
+    `).all(data.organizationId, data.ownLegalEntityId, data.periodStart, data.periodEnd) as Array<{ partnerId: string; scope: "INTERNAL" | "EXTERNAL"; sacks: string; amountCents: number }>;
+
+    const byPartner = new Map<string, { internalSacks: string[]; externalSacks: string[]; internalAmountCents: number; externalAmountCents: number; operationCount: number }>();
+    for (const row of rows) {
+      const bucket = byPartner.get(row.partnerId) ?? { internalSacks: [], externalSacks: [], internalAmountCents: 0, externalAmountCents: 0, operationCount: 0 };
+      if (row.scope === "INTERNAL") {
+        bucket.internalSacks.push(row.sacks);
+        bucket.internalAmountCents += row.amountCents;
+      } else {
+        bucket.externalSacks.push(row.sacks);
+        bucket.externalAmountCents += row.amountCents;
+      }
+      bucket.operationCount += 1;
+      byPartner.set(row.partnerId, bucket);
+    }
+
+    const clients = this.listBusinessPartners({ organizationId: data.organizationId, role: "CLIENT", status: "active" });
+    return clients
+      .map((partner): PartnerRateSummaryRow => {
+        const bucket = byPartner.get(partner.id);
+        return {
+          partnerId: partner.id,
+          partnerDisplayName: partner.displayName,
+          internalSacks: bucket?.internalSacks.length ? sumDecimalTexts(bucket.internalSacks) : "0",
+          externalSacks: bucket?.externalSacks.length ? sumDecimalTexts(bucket.externalSacks) : "0",
+          internalAmountCents: bucket?.internalAmountCents ?? 0,
+          externalAmountCents: bucket?.externalAmountCents ?? 0,
+          totalAmountCents: (bucket?.internalAmountCents ?? 0) + (bucket?.externalAmountCents ?? 0),
+          operationCount: bucket?.operationCount ?? 0
+        };
+      })
+      .sort((a, b) => b.totalAmountCents - a.totalAmountCents);
+  }
+
   createClientChargeDraft(input: unknown): ClientChargeDetail {
     const data = clientChargeDraftInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
@@ -1549,6 +1625,13 @@ export class AppRepository {
       .run(randomUUID(), id, version, result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.excelFileHash, result.imageFilePath, result.imageFileHash, now);
     this.db.prepare("UPDATE client_charges SET pdf_file_path = ?, pdf_file_hash = ?, excel_file_path = ?, image_file_path = ?, updated_at = ? WHERE id = ?").run(result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.imageFilePath, now, id);
     return this.getClientCharge(id);
+  }
+
+  getChargeDocumentPath(chargeId: string, kind: "pdf" | "excel" | "image"): string {
+    const charge = this.getClientCharge(chargeId).charge;
+    const path = kind === "pdf" ? charge.pdfFilePath : kind === "excel" ? charge.excelFilePath : charge.imageFilePath;
+    if (!path) throw new Error("Documento ainda nao foi gerado para esta cobranca.");
+    return path;
   }
 
   createClientPayment(input: unknown): ClientPayment {
@@ -1795,17 +1878,20 @@ export class AppRepository {
       }
     }
     const own = this.resolveOwnLegalEntityForXml(job.organizationId, extracted, resolution);
-    const clientPartnerId = typeof resolution.clientPartnerId === "string" ? resolution.clientPartnerId : null;
+    if (!own.ownLegalEntityId) throw new Error("CNPJ proprio nao identificado.");
+    const explicitClientPartnerId = typeof resolution.clientPartnerId === "string" ? resolution.clientPartnerId : null;
+    const autoMatchedPartnerId = explicitClientPartnerId ? null : this.resolveCounterpartyPartnerForXml(job.organizationId, extracted, own.ownLegalEntityId);
+    const responsiblePartnerId = explicitClientPartnerId ?? autoMatchedPartnerId;
+    if (!responsiblePartnerId) {
+      this.db.prepare("UPDATE xml_import_files SET status = 'PENDING_REVIEW', error_code = NULL, error_message = ?, updated_at = ? WHERE id = ?")
+        .run("Cliente responsavel nao identificado automaticamente pelo CNPJ/nome do contraparte. Associe manualmente e reprocesse.", new Date().toISOString(), file.id);
+      return;
+    }
     const operationScope = resolution.operationScope === "INTERNAL" || resolution.operationScope === "EXTERNAL" ? resolution.operationScope : null;
     const createOperations = resolution.createOperations !== false;
     const operationType = resolution.operationType === "PURCHASE" || resolution.operationType === "SALE" ? resolution.operationType : own.operationType;
     const pending: string[] = [];
-    if (!clientPartnerId) pending.push("Cliente responsavel nao definido.");
     if (!operationScope) pending.push("Classificacao interna/externa nao definida.");
-    if (!own.ownLegalEntityId) pending.push("CNPJ proprio nao identificado.");
-    const responsiblePartnerId = clientPartnerId ?? this.firstClientPartner(job.organizationId);
-    if (!responsiblePartnerId) throw new Error("Nenhum cliente responsavel disponivel para criar a nota.");
-    if (!own.ownLegalEntityId) throw new Error("CNPJ proprio nao identificado.");
     const totals = extracted.totals as Record<string, unknown> | undefined;
     const doc = this.createFiscalDocument({
       organizationId: job.organizationId,
@@ -1845,12 +1931,12 @@ export class AppRepository {
         totalAmountCents: Number(xmlItem.totalAmountCents ?? 0),
         sacksQuantity: sacks
       });
-      if (createOperations && clientPartnerId && operationScope && productId && sacks) {
+      if (createOperations && operationScope && productId && sacks) {
         const operation = this.addOperation({
           fiscalDocumentId: doc.document.id,
           fiscalDocumentItemId: item.id,
           ownLegalEntityId: own.ownLegalEntityId as string,
-          responsiblePartnerId: clientPartnerId,
+          responsiblePartnerId,
           productId,
           operationType,
           operationScope,
@@ -1867,6 +1953,11 @@ export class AppRepository {
     this.linkPendingFiscalDocumentEvents(file.accessKey ?? "");
     this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(doc.document.id, new Date().toISOString(), file.id);
     this.db.prepare("UPDATE xml_import_jobs SET imported_notes = imported_notes + 1, created_operations = created_operations + ? WHERE id = ?").run(createdOperations, job.id);
+    // Nota sem pendencias e com pelo menos uma operacao ja entra confirmada, pronta para cobranca,
+    // sem exigir um segundo clique manual em "Confirmar" na tela de Notas fiscais.
+    if (!pending.length && createdOperations > 0) {
+      this.confirmFiscalDocument(doc.document.id);
+    }
   }
 
   private importFiscalEvent(job: XmlImportJob, file: XmlImportFile, extracted: Record<string, unknown>): void {
@@ -1903,6 +1994,39 @@ export class AppRepository {
     return { ownLegalEntityId: null, direction: "UNKNOWN", operationType: "SALE" };
   }
 
+  private resolveCounterpartyPartnerForXml(organizationId: string, extracted: Record<string, unknown>, ownLegalEntityId: string): string | null {
+    const ownEntity = this.listLegalEntities({ organizationId, status: "all" }).find((entity) => entity.id === ownLegalEntityId);
+    const ownCnpj = ownEntity?.cnpj ?? null;
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? ""));
+    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    const counterpartyIsRecipient = ownCnpj !== null && issuerDoc === ownCnpj;
+    const counterpartyDoc = counterpartyIsRecipient ? recipientDoc : issuerDoc;
+    const counterpartyParty = counterpartyIsRecipient ? recipient : issuer;
+    const counterpartyTradeName = this.stringOrNull(counterpartyParty?.tradeName);
+    const counterpartyLegalName = this.stringOrNull(counterpartyParty?.legalName);
+
+    if (counterpartyDoc && counterpartyDoc.length === 14) {
+      const row = this.db.prepare(`
+        SELECT ple.business_partner_id AS id
+        FROM partner_legal_entities ple
+        JOIN business_partners bp ON bp.id = ple.business_partner_id
+        WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      `).get(counterpartyDoc, organizationId) as { id: string } | undefined;
+      if (row) return row.id;
+    }
+    if (counterpartyTradeName) {
+      const aliasMatch = this.resolvePartnerAlias(organizationId, counterpartyTradeName);
+      if (aliasMatch) return aliasMatch.businessPartnerId;
+    }
+    if (counterpartyLegalName) {
+      const aliasMatch = this.resolvePartnerAlias(organizationId, counterpartyLegalName);
+      if (aliasMatch) return aliasMatch.businessPartnerId;
+    }
+    return null;
+  }
+
   private resolveSacksForXmlItem(xmlItem: Record<string, unknown>, product: Product | null, resolution: Record<string, unknown>): string | null {
     if (typeof resolution.manualSacks === "string" && resolution.manualSacks) return normalizeDecimalText(resolution.manualSacks);
     const unit = String(xmlItem.commercialUnit ?? "").trim().toUpperCase();
@@ -1920,10 +2044,6 @@ export class AppRepository {
     if (normalized === "KG") return "KG";
     if (["TON", "T"].includes(normalized)) return "TON";
     return "UNIT";
-  }
-
-  private firstClientPartner(organizationId: string): string | null {
-    return this.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" })[0]?.id ?? null;
   }
 
   private getXmlImportFile(id: string): XmlImportFile {
@@ -3017,9 +3137,10 @@ export class AppRepository {
         confirmation_date, negotiation_date, status, signature_status, currency_code, total_quantity_sacks_decimal,
         total_commercial_amount_cents, delivery_location_snapshot, delivery_start_date, delivery_end_date,
         payment_terms_snapshot, quality_terms_snapshot, general_terms_snapshot, public_notes, internal_notes,
+        brokerage_percentage_basis_points, bank_name, bank_code, bank_agency, bank_account, pix_key,
         template_snapshot_json, pending_issues_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
-        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, `TMP-${now.slice(0, 10).replace(/-/g, "")}-${id.slice(0, 8)}`, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, template ? JSON.stringify(template) : null, now, now);
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
+        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, `TMP-${now.slice(0, 10).replace(/-/g, "")}-${id.slice(0, 8)}`, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, data.bankName ?? null, data.bankCode ?? null, data.bankAgency ?? null, data.bankAccount ?? null, data.pixKey ?? null, template ? JSON.stringify(template) : null, now, now);
       this.addDealPartyInternal({ dealConfirmationId: id, partyRole: "ISSUER", ownLegalEntityId: own.id, businessPartnerId: null, partnerLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 0 });
       this.recordDealStatus(id, null, "DRAFT", "Rascunho criado");
     });
@@ -3150,6 +3271,12 @@ export class AppRepository {
       general_terms_snapshot = @generalTermsSnapshot,
       public_notes = @publicNotes,
       internal_notes = @internalNotes,
+      brokerage_percentage_basis_points = @brokeragePercentageBasisPoints,
+      bank_name = @bankName,
+      bank_code = @bankCode,
+      bank_agency = @bankAgency,
+      bank_account = @bankAccount,
+      pix_key = @pixKey,
       updated_at = @updatedAt
       WHERE id = @id`)
       .run({
@@ -3165,6 +3292,12 @@ export class AppRepository {
         generalTermsSnapshot: data.generalTermsSnapshot ?? current.generalTermsSnapshot,
         publicNotes: data.publicNotes ?? current.publicNotes,
         internalNotes: data.internalNotes ?? current.internalNotes,
+        brokeragePercentageBasisPoints: data.brokeragePercentageBasisPoints ?? current.brokeragePercentageBasisPoints,
+        bankName: data.bankName ?? current.bankName,
+        bankCode: data.bankCode ?? current.bankCode,
+        bankAgency: data.bankAgency ?? current.bankAgency,
+        bankAccount: data.bankAccount ?? current.bankAccount,
+        pixKey: data.pixKey ?? current.pixKey,
         updatedAt: new Date().toISOString()
       });
     return this.getDealConfirmation(id);
@@ -3878,7 +4011,7 @@ export class AppRepository {
     const detail = this.getDealConfirmation(id);
     const organization = this.getOrganization(detail.confirmation.organizationId);
     const ownLegalEntity = this.getLegalEntity(detail.confirmation.ownLegalEntityId);
-    const stored = generateDealConfirmationPdf({ directories: this.directories, organization, ownLegalEntity, detail, versionId, draft });
+    const stored = await generateDealConfirmationPdf({ directories: this.directories, organization, ownLegalEntity, detail, versionId, draft });
     const version = this.nextDealDocumentVersion(id);
     const now = new Date().toISOString();
     this.db.prepare("UPDATE deal_confirmation_document_versions SET is_current = 0 WHERE deal_confirmation_id = ? AND document_type = ?").run(id, documentType);

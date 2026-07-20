@@ -47,6 +47,7 @@ import type {
   ClientLedgerEntry,
   ClientPayment,
   BillingSummary,
+  PartnerRateSummaryRow,
   ExpenseCategory,
   CostCenter,
   FinancialAccount,
@@ -193,6 +194,7 @@ const IPC_CHANNELS = {
   confirmFiscalDocument: "fiscalDocuments:confirm",
   cancelFiscalDocument: "fiscalDocuments:cancel",
   getOperationalIndicators: "operations:indicators",
+  getMonthlyOperationTotals: "operations:monthlyTotals",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",
@@ -249,6 +251,7 @@ const IPC_CHANNELS = {
   getFiscalDocumentMergeHistory: "xmlMerge:history",
   suggestChargePeriods: "clientCharges:suggestPeriods",
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
+  getPartnerRateSummary: "clientCharges:partnerRateSummary",
   createClientChargeDraft: "clientCharges:createDraft",
   reserveChargeOperations: "clientCharges:reserveOperations",
   releaseChargeOperations: "clientCharges:releaseOperations",
@@ -261,6 +264,7 @@ const IPC_CHANNELS = {
   listClientCharges: "clientCharges:list",
   getClientCharge: "clientCharges:get",
   regenerateChargeDocuments: "clientCharges:regenerateDocuments",
+  openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",
   createLedgerEntry: "clientLedger:createEntry",
   createAdvance: "clientLedger:createAdvance",
@@ -374,6 +378,7 @@ const IPC_CHANNELS = {
   listDealDocumentVersions: "dealConfirmationDocuments:listVersions",
   getDealDocumentVersion: "dealConfirmationDocuments:getVersion",
   openDealDocument: "dealConfirmationDocuments:open",
+  getDealDocumentBytes: "dealConfirmationDocuments:bytes",
   revealDealDocumentFolder: "dealConfirmationDocuments:revealFolder",
   validateSignedDealPdf: "dealConfirmationDocuments:validateSignedPdf",
   calculateDealDocumentHash: "dealConfirmationDocuments:calculateHash",
@@ -503,6 +508,7 @@ export interface OperationsCafeApi {
   confirmFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   cancelFiscalDocument: (id: string, reason: string) => Promise<FiscalDocumentDetail>;
   getOperationalIndicators: (organizationId: string) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number }>;
+  getMonthlyOperationTotals: (input: { organizationId: string; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -559,6 +565,7 @@ export interface OperationsCafeApi {
   getFiscalDocumentMergeHistory: (fiscalDocumentId: string) => Promise<FiscalDocumentMergeHistory[]>;
   suggestChargePeriods: (input: unknown) => Promise<Array<{ periodicity: string; periodStart: string; periodEnd: string; label: string }>>;
   findEligibleChargeOperations: (input: unknown) => Promise<Operation[]>;
+  getPartnerRateSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
   createClientChargeDraft: (input: unknown) => Promise<ClientChargeDetail>;
   reserveChargeOperations: (clientChargeId: string, operationIds: string[]) => Promise<ClientChargeDetail>;
   releaseChargeOperations: (clientChargeId: string, operationIds?: string[]) => Promise<ClientChargeDetail>;
@@ -571,6 +578,7 @@ export interface OperationsCafeApi {
   listClientCharges: (filters?: { organizationId?: string; clientPartnerId?: string; status?: string }) => Promise<ClientCharge[]>;
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
   regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
+  openChargeDocument: (input: { chargeId: string; kind: "pdf" | "excel" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;
   createAdvance: (input: unknown) => Promise<ClientLedgerEntry>;
@@ -684,6 +692,7 @@ export interface OperationsCafeApi {
   listDealDocumentVersions: (id: string) => Promise<DealConfirmationDocumentVersion[]>;
   getDealDocumentVersion: (id: string) => Promise<DealConfirmationDocumentVersion>;
   openDealDocument: (id: string) => Promise<boolean>;
+  getDealDocumentBytes: (id: string) => Promise<string>;
   revealDealDocumentFolder: (id: string) => Promise<boolean>;
   validateSignedDealPdf: (id: string) => Promise<{ validPdfStored: boolean; cryptographicSignatureValidated: false; message: string }>;
   calculateDealDocumentHash: (id: string) => Promise<string>;
@@ -825,6 +834,7 @@ const api: OperationsCafeApi = {
       operations: number;
       serviceAmountCents: number;
     }>,
+  getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
   selectSpreadsheetFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectSpreadsheetFile) as Promise<WorkbookInspection | null>,
   inspectSpreadsheetWorkbook: (token) => ipcRenderer.invoke(IPC_CHANNELS.inspectSpreadsheetWorkbook, token) as Promise<WorkbookInspection>,
   previewSpreadsheetSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.previewSpreadsheetSheet, input) as Promise<SheetPreview>,
@@ -882,6 +892,7 @@ const api: OperationsCafeApi = {
   getFiscalDocumentMergeHistory: (fiscalDocumentId) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalDocumentMergeHistory, fiscalDocumentId) as Promise<FiscalDocumentMergeHistory[]>,
   suggestChargePeriods: (input) => ipcRenderer.invoke(IPC_CHANNELS.suggestChargePeriods, input) as Promise<Array<{ periodicity: string; periodStart: string; periodEnd: string; label: string }>>,
   findEligibleChargeOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligibleChargeOperations, input) as Promise<Operation[]>,
+  getPartnerRateSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerRateSummary, input) as Promise<PartnerRateSummaryRow[]>,
   createClientChargeDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientChargeDraft, input) as Promise<ClientChargeDetail>,
   reserveChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.reserveChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
   releaseChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.releaseChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
@@ -894,6 +905,7 @@ const api: OperationsCafeApi = {
   listClientCharges: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listClientCharges, filters) as Promise<ClientCharge[]>,
   getClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.getClientCharge, id) as Promise<ClientChargeDetail>,
   regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail>,
+  openChargeDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.openChargeDocument, input) as Promise<boolean>,
   listLedgerEntries: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLedgerEntries, filters) as Promise<ClientLedgerEntry[]>,
   createLedgerEntry: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLedgerEntry, input) as Promise<ClientLedgerEntry>,
   createAdvance: (input) => ipcRenderer.invoke(IPC_CHANNELS.createAdvance, input) as Promise<ClientLedgerEntry>,
@@ -1007,6 +1019,7 @@ const api: OperationsCafeApi = {
   listDealDocumentVersions: (id) => ipcRenderer.invoke(IPC_CHANNELS.listDealDocumentVersions, id) as Promise<DealConfirmationDocumentVersion[]>,
   getDealDocumentVersion: (id) => ipcRenderer.invoke(IPC_CHANNELS.getDealDocumentVersion, id) as Promise<DealConfirmationDocumentVersion>,
   openDealDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.openDealDocument, id) as Promise<boolean>,
+  getDealDocumentBytes: (id) => ipcRenderer.invoke(IPC_CHANNELS.getDealDocumentBytes, id) as Promise<string>,
   revealDealDocumentFolder: (id) => ipcRenderer.invoke(IPC_CHANNELS.revealDealDocumentFolder, id) as Promise<boolean>,
   validateSignedDealPdf: (id) => ipcRenderer.invoke(IPC_CHANNELS.validateSignedDealPdf, id) as Promise<{ validPdfStored: boolean; cryptographicSignatureValidated: false; message: string }>,
   calculateDealDocumentHash: (id) => ipcRenderer.invoke(IPC_CHANNELS.calculateDealDocumentHash, id) as Promise<string>,

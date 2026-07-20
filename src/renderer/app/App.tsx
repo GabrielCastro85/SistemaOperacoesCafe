@@ -4,6 +4,7 @@ import { AppLayout } from "../layouts/AppLayout";
 import "../styles/index.css";
 import { AuditPage } from "../pages/audit/AuditPage";
 import { AccessDeniedPage, FirstAdminSetupPage, LockScreen, LoginPage } from "../pages/auth/AuthPages";
+import { OrganizationPickerPage, rememberedOrganizationId, setRememberedOrganizationId } from "../pages/auth/OrganizationPickerPage";
 import { ConfirmationsPage } from "../pages/confirmations/ConfirmationsPage";
 import { ConfirmationReportsPage } from "../pages/confirmations/ConfirmationReportsPage";
 import { ClauseLibraryPage } from "../pages/confirmations/ClauseLibraryPage";
@@ -75,6 +76,7 @@ function RoutedApp(): JSX.Element {
   const [needsBootstrap, setNeedsBootstrap] = useState<boolean | null>(null);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [path, setPath] = useState(() => currentPath());
+  const [orgPickerDismissed, setOrgPickerDismissed] = useState(false);
 
   const refresh = useCallback(async (): Promise<BootstrapData> => {
     const bootstrap = await window.operationsCafe.getBootstrapData();
@@ -106,6 +108,27 @@ function RoutedApp(): JSX.Element {
   if (!session) return <LoginPage onSession={(nextSession) => { setSession(nextSession); void refresh(); }} />;
   if (!data) return <Splash />;
   if (!profile?.completedSetup) return <SetupWizard data={data} onSaved={setProfile} />;
+
+  const activeOrganizations = data.organizations.filter((item) => item.isActive);
+  const canPickOrganization = profile.appVariant === "multiempresa" && activeOrganizations.length > 1;
+  const orgAlreadyRemembered = rememberedOrganizationId() === profile.defaultOrganizationId;
+  if (canPickOrganization && !orgPickerDismissed && !orgAlreadyRemembered) {
+    return (
+      <OrganizationPickerPage
+        organizations={data.organizations}
+        legalEntities={data.legalEntities}
+        defaultOrganizationId={profile.defaultOrganizationId}
+        onSelect={(id, remember) => {
+          void window.operationsCafe.setActiveOrganization(id).then(async (nextProfile) => {
+            setProfile(nextProfile);
+            setRememberedOrganizationId(remember ? id : null);
+            setOrgPickerDismissed(true);
+            await refresh();
+          });
+        }}
+      />
+    );
+  }
 
   const organization = data.organizations.find((item) => item.id === profile.defaultOrganizationId) ?? data.organizations[0] ?? null;
   const legalEntity = data.legalEntities.find((item) => item.id === profile.defaultLegalEntityId) ?? null;
@@ -149,7 +172,7 @@ function RoutedApp(): JSX.Element {
       onOrganizationChange={(id) => void changeOrganization(id)}
       onLegalEntityChange={(id) => void changeLegalEntity(id)}
       onLock={() => void window.operationsCafe.authLock().then((nextSession) => setSession(nextSession))}
-      onLogout={() => void window.operationsCafe.authLogout().then(() => setSession(null))}
+      onLogout={() => void window.operationsCafe.authLogout().then(() => { setSession(null); setOrgPickerDismissed(false); })}
     >
       {page}
       {session.status === "LOCKED" ? <LockScreen session={session} onSession={setSession} /> : null}

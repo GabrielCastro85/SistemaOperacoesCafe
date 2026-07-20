@@ -9,7 +9,7 @@ export function QuickPayableForm({ form, categories, costCenters, onChange, onSu
     <FormGrid>
       <TextField label="Favorecido" value={form.payee} onChange={(value) => onChange({ ...form, payee: value })} />
       <TextField label="Descricao" value={form.description} onChange={(value) => onChange({ ...form, description: value })} />
-      <TextField label="Valor em centavos" value={form.amount} onChange={(value) => onChange({ ...form, amount: value })} />
+      <TextField label="Valor (R$)" value={form.amount} onChange={(value) => onChange({ ...form, amount: value })} />
       <DateInput label="Vencimento" value={form.dueDate} onChange={(event) => onChange({ ...form, dueDate: event.target.value })} />
       <Select label="Categoria" value={form.categoryId} onChange={(event) => onChange({ ...form, categoryId: event.target.value })}>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select>
       <Select label="Centro de custo" value={form.costCenterId} onChange={(event) => onChange({ ...form, costCenterId: event.target.value })}><option value="">Sem centro</option>{costCenters.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select>

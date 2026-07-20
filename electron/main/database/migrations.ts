@@ -2161,5 +2161,37 @@ export const migrations: Migration[] = [
         WHERE code IN ('backups.view','backups.create','backups.verify','integrity.view','integrity.run','integrity.export');
       `);
     }
+  },
+  {
+    name: "014_organization_description",
+    up: (db) => {
+      const columns = (table: string): string[] =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
+      const organizationColumns = columns("organizations");
+      if (!organizationColumns.includes("description")) {
+        db.exec("ALTER TABLE organizations ADD COLUMN description TEXT");
+      }
+    }
+  },
+  {
+    name: "015_deal_confirmation_brokerage_bank",
+    up: (db) => {
+      const columns = (table: string): string[] =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
+      const dealConfirmationColumns = columns("deal_confirmations");
+      const additions: Array<[string, string]> = [
+        ["brokerage_percentage_basis_points", "INTEGER"],
+        ["bank_name", "TEXT"],
+        ["bank_code", "TEXT"],
+        ["bank_agency", "TEXT"],
+        ["bank_account", "TEXT"],
+        ["pix_key", "TEXT"]
+      ];
+      additions.forEach(([column, type]) => {
+        if (!dealConfirmationColumns.includes(column)) {
+          db.exec(`ALTER TABLE deal_confirmations ADD COLUMN ${column} ${type}`);
+        }
+      });
+    }
   }
 ];

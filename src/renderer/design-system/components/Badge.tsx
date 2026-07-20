@@ -17,7 +17,14 @@ const statusToneMap: Record<string, StatusTone> = {
   PARTIAL: "warning",
   OVERDUE: "danger",
   CANCELLED: "danger",
-  REPLACED: "neutral"
+  REPLACED: "neutral",
+  VALID: "success",
+  WARNING: "warning",
+  DUPLICATE: "warning",
+  ERROR: "danger",
+  IMPORTED: "success",
+  SKIPPED: "neutral",
+  REVERTED: "neutral"
 };
 
 export function StatusBadge({ status, label }: { status: string; label?: string }): JSX.Element {

@@ -95,6 +95,7 @@ export const organizationInputSchema = z.object({
   slug: z.string().trim().min(1).regex(/^[a-z0-9-]+$/),
   displayName: z.string().trim().min(1),
   appDisplayName: z.string().trim().min(1),
+  description: z.string().trim().min(1).nullable().optional(),
   logoPath: z.string().trim().min(1).nullable().optional(),
   compactLogoPath: z.string().trim().min(1).nullable().optional(),
   iconPath: z.string().trim().min(1).nullable().optional(),
@@ -436,6 +437,14 @@ export const eligibleOperationsInputSchema = z.object({
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
 
+export const partnerRateSummaryInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  includeAlreadyBilled: z.boolean().optional()
+});
+
 export const clientChargeDraftInputSchema = z.object({
   organizationId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid(),
@@ -707,7 +716,13 @@ const dealConfirmationDraftInputBaseSchema = z.object({
   qualityTermsSnapshot: nullableText.optional(),
   generalTermsSnapshot: nullableText.optional(),
   publicNotes: nullableText.optional(),
-  internalNotes: nullableText.optional()
+  internalNotes: nullableText.optional(),
+  brokeragePercentageBasisPoints: z.number().int().min(0).max(100_00).nullable().optional(),
+  bankName: nullableText.optional(),
+  bankCode: nullableText.optional(),
+  bankAgency: nullableText.optional(),
+  bankAccount: nullableText.optional(),
+  pixKey: nullableText.optional()
 });
 
 export const dealConfirmationDraftInputSchema = dealConfirmationDraftInputBaseSchema.refine((data) => !data.deliveryStartDate || !data.deliveryEndDate || data.deliveryEndDate >= data.deliveryStartDate, "Periodo de entrega invalido.");

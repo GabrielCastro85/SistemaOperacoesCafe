@@ -1,4 +1,5 @@
 import type { BootstrapData } from "../../../shared/types/domain";
+import { parseCurrencyToCents } from "../../../shared/utils/format";
 import type { PayableDraftFormState } from "./hooks/usePayableDraftForm";
 import { getFinanceContext } from "./hooks/useFinanceData";
 
@@ -21,7 +22,7 @@ export async function createPayableFromForm(data: BootstrapData, form: PayableDr
     competenceDate: `${form.dueDate.slice(0, 8)}01`,
     issueDate: null,
     dueDate: form.dueDate,
-    originalAmountCents: Number(form.amount),
+    originalAmountCents: parseCurrencyToCents(form.amount),
     discountCents: 0,
     interestCents: 0,
     penaltyCents: 0,
@@ -46,7 +47,7 @@ export async function createRecurringFromForm(data: BootstrapData, form: Payable
     defaultLocationId: null,
     description: form.description,
     amountMode: "FIXED",
-    fixedAmountCents: Number(form.amount),
+    fixedAmountCents: parseCurrencyToCents(form.amount),
     estimatedAmountCents: null,
     frequency: "MONTHLY",
     dueDay: Number(form.dueDate.slice(-2)),
@@ -71,7 +72,7 @@ export async function createInstallmentsFromForm(data: BootstrapData, form: Paya
     defaultCostCenterId: form.costCenterId || null,
     defaultLocationId: null,
     description: form.description,
-    totalAmountCents: Number(form.amount),
+    totalAmountCents: parseCurrencyToCents(form.amount),
     installmentCount: count,
     firstDueDate: form.dueDate,
     intervalType: "MONTHLY"

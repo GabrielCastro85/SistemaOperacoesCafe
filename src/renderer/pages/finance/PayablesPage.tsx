@@ -29,7 +29,7 @@ export function PayablesPage({ data }: FinancePageProps): JSX.Element {
       <div className="cards">{payableMetrics(finance.payables).map((metric) => <Card key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></Card>)}</div>
       <FilterBar activeCount={search ? 1 : 0} onClear={() => setSearch("")}><SearchInput label="Busca" value={search} onChange={(event) => setSearch(event.target.value)} /></FilterBar>
       <QuickPayableForm form={{ ...form, categoryId: form.categoryId || finance.categories[0]?.id || "" }} categories={finance.categories} costCenters={finance.costCenters} onChange={setForm} onSubmit={() => void submit(true)} onDraft={() => void submit(false)} />
-      <PayablesTable payables={filtered} categories={finance.categories} costCenters={finance.costCenters} legalEntities={data.legalEntities} locations={data.locations} onOpen={(id) => { window.location.hash = `#/finance/payables/${id}`; }} onConfirm={(id) => void window.operationsCafe.confirmAccountPayable(id).then(reload)} onCancel={(id) => void cancel(id)} />
+      <PayablesTable payables={filtered} categories={finance.categories} costCenters={finance.costCenters} legalEntities={data.legalEntities} locations={data.locations} onOpen={(id) => { window.location.hash = `#/finance/payables/${id}`; }} onConfirm={(id) => void window.operationsCafe.confirmAccountPayable(id).then(reload)} onPay={() => { window.location.hash = "#/finance/payments"; }} onCancel={(id) => void cancel(id)} />
       <Pagination page={1} pageCount={1} onPageChange={() => undefined} />
     </section>
   );

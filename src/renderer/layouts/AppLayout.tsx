@@ -2,6 +2,8 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
+import { formatCnpj } from "../../shared/utils/format";
+import { resolveOrganizationLogoSrc } from "../../shared/branding/branding";
 
 export interface AppLayoutProps {
   variant: AppVariant;
@@ -43,8 +45,8 @@ export function AppLayout({
   const [collapsed, setCollapsed] = useState(false);
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
-  const logoSrc = resolveLogoSrc(variant, organization);
-  const legalEntityLabel = legalEntity ? `${legalEntity.tradeName} - ${legalEntity.cnpj}` : "Nenhum CNPJ ativo";
+  const logoSrc = resolveOrganizationLogoSrc(organization, variant);
+  const legalEntityLabel = legalEntity ? `${legalEntity.tradeName} - ${formatCnpj(legalEntity.cnpj)}` : "Nenhum CNPJ ativo";
 
   return (
     <main className={`app-shell professional-shell ${collapsed ? "is-collapsed" : ""}`} style={themeToCssVariables(theme)}>
@@ -137,10 +139,3 @@ export function AppLayout({
   );
 }
 
-function resolveLogoSrc(variant: AppVariant, organization: Organization | null): string | null {
-  if (organization?.logoPath?.startsWith("data:") || organization?.logoPath?.startsWith("/")) return organization.logoPath;
-  const name = `${organization?.displayName ?? ""} ${organization?.appDisplayName ?? ""}`.toLowerCase();
-  if (variant === "villa" || name.includes("villa")) return "/assets/branding/villa/logo.png";
-  if (variant === "grao" || name.includes("grao") || name.includes("grão")) return "/assets/branding/grao/logo.png";
-  return null;
-}

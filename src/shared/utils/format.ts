@@ -40,3 +40,9 @@ export function formatDateBr(value: string): string {
 export function formatCurrencyFromCents(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
 }
+
+export function parseCurrencyToCents(value: string): number {
+  const normalized = value.trim().replace(/\./g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+}

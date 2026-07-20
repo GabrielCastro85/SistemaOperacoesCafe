@@ -23,6 +23,13 @@ export function multiplyDecimalByCents(decimalValue: string, cents: number): num
   return Number(result);
 }
 
+export function sumDecimalTexts(values: string[]): string {
+  const total = values.reduce((sum, value) => sum + decimalTextToScaled(value), 0n);
+  const whole = total / scale;
+  const fraction = (total % scale).toString().padStart(6, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
 export function divideDecimalText(decimalValue: string, divisorValue: string): string {
   const dividend = decimalTextToScaled(decimalValue);
   const divisor = decimalTextToScaled(divisorValue);

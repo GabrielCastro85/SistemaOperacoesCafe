@@ -1,7 +1,9 @@
 import ExcelJS from "exceljs";
+import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   AppDirectories,
   BusinessPartner,
@@ -42,19 +44,20 @@ export function storeSignedDealConfirmationPdf(input: {
   };
 }
 
-export function generateDealConfirmationPdf(input: {
+export async function generateDealConfirmationPdf(input: {
   directories: AppDirectories;
   organization: Organization;
   ownLegalEntity: LegalEntity;
   detail: DealConfirmationDetail;
   versionId: string;
   draft: boolean;
-}): { originalFileName: string; storedFilePath: string; fileHash: string; fileSize: number; mimeType: string } {
+}): Promise<{ originalFileName: string; storedFilePath: string; fileHash: string; fileSize: number; mimeType: string }> {
   const confirmation = input.detail.confirmation;
   const targetDir = join(input.directories.confirmationsDir, confirmation.organizationId, confirmation.ownLegalEntityId, confirmation.id, input.draft ? "preview" : "issued", input.versionId);
   mkdirSync(targetDir, { recursive: true });
   const storedFilePath = join(targetDir, input.draft ? "previa.pdf" : "confirmacao.pdf");
-  writeSimplePdf(storedFilePath, buildConfirmationLines(input));
+  const bytes = await buildConfirmationPdf(input);
+  writeFileSync(storedFilePath, bytes);
   const stats = statSync(storedFilePath);
   return {
     originalFileName: basename(storedFilePath),
@@ -99,43 +102,245 @@ function assertPdf(filePath: string): void {
   if (extname(filePath).toLowerCase() !== ".pdf") throw new Error("Somente PDF pode ser importado como versao assinada.");
 }
 
-function buildConfirmationLines(input: Parameters<typeof generateDealConfirmationPdf>[0]): string[] {
-  const { confirmation } = input.detail;
-  const title = confirmation.confirmationNumber ? `Confirmacao de Negocio ${confirmation.confirmationNumber}` : `Previa de Confirmacao ${confirmation.temporaryReference}`;
-  const lines = [
-    input.draft ? "PREVIA - NAO ASSINAR" : "DOCUMENTO OFICIAL EMITIDO PELO SISTEMA",
-    title,
-    `Organizacao: ${input.organization.displayName}`,
-    `CNPJ emissor: ${input.ownLegalEntity.tradeName}`,
-    `Data: ${confirmation.confirmationDate}`,
-    `Status: ${confirmation.status} | Assinatura: ${confirmation.signatureStatus}`,
-    ""
-  ];
-  input.detail.parties.forEach((party) => {
-    const snapshot = safeJson<Record<string, unknown>>(party.snapshotJson, {});
-    lines.push(`${party.partyRole}: ${escapeFlat(String(snapshot.name ?? party.manualName ?? ""))} ${snapshot.taxId ? `- ${snapshot.taxId}` : ""}`);
-  });
-  lines.push("", "Itens");
-  input.detail.items.forEach((item, index) => {
-    lines.push(`${index + 1}. ${escapeFlat(item.productNameSnapshot)} | ${item.quantitySacksDecimal} sacas | ${item.sackWeightKgDecimal} kg | R$ ${item.unitPriceDecimal}/saca | Total R$ ${formatCents(item.totalAmountCents)}`);
-    if (item.qualitySnapshot) lines.push(`   Qualidade: ${escapeFlat(item.qualitySnapshot)}`);
-    if (item.deliveryLocationSnapshot) lines.push(`   Entrega: ${escapeFlat(item.deliveryLocationSnapshot)}`);
-  });
-  lines.push("", `Total: ${confirmation.totalQuantitySacksDecimal} sacas | R$ ${formatCents(confirmation.totalCommercialAmountCents)}`);
-  if (confirmation.paymentTermsSnapshot) lines.push(`Pagamento: ${escapeFlat(confirmation.paymentTermsSnapshot)}`);
-  if (confirmation.deliveryLocationSnapshot) lines.push(`Entrega/descarga: ${escapeFlat(confirmation.deliveryLocationSnapshot)}`);
-  if (confirmation.qualityTermsSnapshot) lines.push(`Qualidade: ${escapeFlat(confirmation.qualityTermsSnapshot)}`);
-  if (confirmation.generalTermsSnapshot) lines.push(`Condicoes gerais: ${escapeFlat(confirmation.generalTermsSnapshot)}`);
-  if (confirmation.publicNotes) lines.push(`Observacoes: ${escapeFlat(confirmation.publicNotes)}`);
-  const visibleClauses = input.detail.clauses.filter((clause) => clause.isVisible);
-  if (visibleClauses.length > 0) {
-    lines.push("", "Clausulas");
-    visibleClauses.forEach((clause, index) => lines.push(`${clause.clauseNumber ?? index + 1}. ${clause.title ? `${escapeFlat(clause.title)} - ` : ""}${escapeFlat(clause.clauseText)}`));
+function resolveBrandingLogoBytes(organization: Organization): { bytes: Buffer; ext: string } | null {
+  if (organization.logoPath?.startsWith("data:")) {
+    const match = /^data:image\/(png|jpe?g);base64,(.+)$/.exec(organization.logoPath);
+    if (match) return { bytes: Buffer.from(match[2], "base64"), ext: match[1] === "jpg" ? "jpeg" : match[1] };
+  } else if (organization.logoPath && existsSync(organization.logoPath)) {
+    return { bytes: readFileSync(organization.logoPath), ext: extname(organization.logoPath).replace(".", "").toLowerCase() };
   }
-  lines.push("", "Assinaturas");
-  input.detail.signers.forEach((signer) => lines.push(`${signer.signatureOrder}. ${signer.name} (${signer.partyRole}) - ${signer.signatureStatus}`));
-  lines.push("", "A assinatura externa deve ser conferida fora do sistema. Esta etapa nao valida certificado digital.");
-  return lines;
+  const name = `${organization.displayName ?? ""} ${organization.appDisplayName ?? ""}`.toLowerCase();
+  const variant = name.includes("villa") ? "villa" : name.includes("grao") || name.includes("grão") ? "grao" : null;
+  if (!variant) return null;
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const appRoot = join(moduleDir, "..", "..", "..", "..");
+  const candidates = [join(appRoot, "dist", "assets", "branding", variant, "logo.png"), join(appRoot, "public", "assets", "branding", variant, "logo.png")];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found ? { bytes: readFileSync(found), ext: "png" } : null;
+}
+
+const PARTY_ROLE_LABELS: Record<string, string> = {
+  ISSUER: "Emitente",
+  BROKER: "Corretora",
+  SELLER: "Vendedor",
+  BUYER: "Comprador",
+  DELIVERY_RECIPIENT: "Local de descarga",
+  OTHER: "Outro"
+};
+
+async function buildConfirmationPdf(input: Parameters<typeof generateDealConfirmationPdf>[0]): Promise<Uint8Array> {
+  const { detail, organization, ownLegalEntity, draft } = input;
+  const { confirmation } = detail;
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const margin = 40;
+  const contentWidth = pageWidth - margin * 2;
+
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let page = doc.addPage([pageWidth, pageHeight]);
+  let y = pageHeight - margin;
+
+  const ensureSpace = (needed: number): void => {
+    if (y - needed < margin) {
+      page = doc.addPage([pageWidth, pageHeight]);
+      y = pageHeight - margin;
+    }
+  };
+
+  const text = (value: string, x: number, options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; maxWidth?: number } = {}): number => {
+    const size = options.size ?? 10;
+    const usedFont = options.font ?? font;
+    const lines = options.maxWidth ? wrapText(value, usedFont, size, options.maxWidth) : [value];
+    lines.forEach((line) => {
+      page.drawText(line, { x, y, size, font: usedFont, color: options.color ?? rgb(0.1, 0.1, 0.1) });
+      y -= size + 4;
+    });
+    return lines.length;
+  };
+
+  const rule = (): void => {
+    page.drawLine({ start: { x: margin, y }, end: { x: pageWidth - margin, y }, thickness: 0.75, color: rgb(0.75, 0.7, 0.6) });
+    y -= 10;
+  };
+
+  // Logo (best-effort) + header
+  let logoImage: Awaited<ReturnType<typeof doc.embedPng>> | null = null;
+  const logoSource = resolveBrandingLogoBytes(organization);
+  if (logoSource) {
+    try {
+      logoImage = logoSource.ext === "jpg" || logoSource.ext === "jpeg" ? await doc.embedJpg(logoSource.bytes) : await doc.embedPng(logoSource.bytes);
+    } catch {
+      logoImage = null;
+    }
+  }
+  if (logoImage) {
+    const logoHeight = 40;
+    const logoWidth = (logoImage.width / logoImage.height) * logoHeight;
+    page.drawImage(logoImage, { x: margin, y: y - logoHeight + 8, width: logoWidth, height: logoHeight });
+  }
+  const headerX = logoImage ? margin + 70 : margin;
+  text(organization.displayName, headerX, { size: 15, font: bold });
+  text(`${ownLegalEntity.tradeName} - CNPJ ${ownLegalEntity.cnpj ?? "nao informado"}`, headerX, { size: 9, color: rgb(0.4, 0.4, 0.4) });
+  y -= 6;
+  rule();
+
+  const title = draft ? "PREVIA - NAO ASSINAR" : confirmation.confirmationNumber ? `Confirmacao de Negocio No ${confirmation.confirmationNumber}` : `Previa de Confirmacao ${confirmation.temporaryReference}`;
+  text(title, margin, { size: 13, font: bold, color: draft ? rgb(0.65, 0.25, 0.1) : rgb(0.1, 0.1, 0.1) });
+  text(`Data da negociacao: ${confirmation.negotiationDate ?? confirmation.confirmationDate}${confirmation.brokeragePercentageBasisPoints != null ? `   |   Corretagem: ${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : ""}`, margin, { size: 9 });
+  y -= 8;
+
+  // Party boxes side by side
+  const roleOrder = ["SELLER", "BUYER", "DELIVERY_RECIPIENT"];
+  const visibleParties = roleOrder
+    .map((role) => detail.parties.find((party) => party.partyRole === role))
+    .filter((party): party is (typeof detail.parties)[number] => Boolean(party));
+  if (visibleParties.length > 0) {
+    const boxCount = visibleParties.length;
+    const gap = 10;
+    const boxWidth = (contentWidth - gap * (boxCount - 1)) / boxCount;
+    const partyFields = visibleParties.map((party) => {
+      const snapshot = safeJson<Partial<{ name: string; legalName: string; taxId: string; stateRegistration: string; addressLine: string; addressNumber: string; district: string; city: string; state: string }>>(party.snapshotJson, {});
+      const fields: { value: string; size: number; font: PDFFont; color?: ReturnType<typeof rgb> }[] = [
+        { value: PARTY_ROLE_LABELS[party.partyRole] ?? party.partyRole, size: 8, font: bold, color: rgb(0.5, 0.45, 0.3) },
+        { value: snapshot.name ?? party.manualName ?? "Nao informado", size: 10, font: bold }
+      ];
+      if (snapshot.legalName && snapshot.legalName !== snapshot.name) fields.push({ value: snapshot.legalName, size: 8, font });
+      if (snapshot.addressLine) fields.push({ value: `${snapshot.addressLine}${snapshot.addressNumber ? `, ${snapshot.addressNumber}` : ""}`, size: 8, font });
+      if (snapshot.city) fields.push({ value: `${snapshot.city}${snapshot.state ? ` - ${snapshot.state}` : ""}`, size: 8, font });
+      if (snapshot.taxId) fields.push({ value: `CNPJ/CPF: ${snapshot.taxId}`, size: 8, font });
+      if (snapshot.stateRegistration) fields.push({ value: `I.E.: ${snapshot.stateRegistration}`, size: 8, font });
+      return fields.map((field) => ({ ...field, lines: wrapText(field.value, field.font, field.size, boxWidth - 16) }));
+    });
+    const contentHeights = partyFields.map((fields) => fields.reduce((sum, field) => sum + field.lines.length * (field.size + 3), 0));
+    const boxHeight = Math.max(92, ...contentHeights.map((height) => height + 20));
+    ensureSpace(boxHeight + 12);
+    const boxTop = y;
+    partyFields.forEach((fields, index) => {
+      const boxX = margin + index * (boxWidth + gap);
+      page.drawRectangle({ x: boxX, y: boxTop - boxHeight, width: boxWidth, height: boxHeight, borderColor: rgb(0.75, 0.7, 0.6), borderWidth: 0.75 });
+      let innerY = boxTop - 14;
+      fields.forEach((field) => {
+        field.lines.forEach((line) => {
+          page.drawText(line, { x: boxX + 8, y: innerY, size: field.size, font: field.font, color: field.color ?? rgb(0.1, 0.1, 0.1) });
+          innerY -= field.size + 3;
+        });
+      });
+    });
+    y = boxTop - boxHeight - 14;
+  }
+
+  // Items table
+  ensureSpace(30);
+  const columns = [
+    { label: "Produto", x: margin, width: 150 },
+    { label: "Procedencia", x: margin + 150, width: 85 },
+    { label: "Sacas", x: margin + 235, width: 55 },
+    { label: "R$/saca", x: margin + 290, width: 70 },
+    { label: "Total", x: margin + 360, width: contentWidth - 360 }
+  ];
+  columns.forEach((column) => page.drawText(column.label, { x: column.x, y, size: 9, font: bold }));
+  y -= 6;
+  rule();
+  detail.items.forEach((item) => {
+    ensureSpace(16);
+    page.drawText(truncate(item.productNameSnapshot, font, 9, columns[0].width), { x: columns[0].x, y, size: 9, font });
+    page.drawText(truncate(item.originSnapshot ?? "-", font, 9, columns[1].width), { x: columns[1].x, y, size: 9, font });
+    page.drawText(item.quantitySacksDecimal.replace(".", ","), { x: columns[2].x, y, size: 9, font });
+    page.drawText(item.unitPriceDecimal.replace(".", ","), { x: columns[3].x, y, size: 9, font });
+    page.drawText(`R$ ${formatCents(item.totalAmountCents)}`, { x: columns[4].x, y, size: 9, font });
+    y -= 15;
+  });
+  y -= 2;
+  rule();
+  text(`Total: ${confirmation.totalQuantitySacksDecimal.replace(".", ",")} sacas   |   R$ ${formatCents(confirmation.totalCommercialAmountCents)}`, margin, { size: 11, font: bold });
+  y -= 6;
+
+  // Payment + bank block
+  ensureSpace(70);
+  const paymentColWidth = (contentWidth - 20) / 2;
+  const blockTop = y;
+  text("Condicao de pagamento", margin, { size: 9, font: bold });
+  const paymentLinesUsed = confirmation.paymentTermsSnapshot ? text(confirmation.paymentTermsSnapshot, margin, { size: 9, maxWidth: paymentColWidth }) : text("Nao informado", margin, { size: 9 });
+  const bankLines: string[] = [];
+  if (confirmation.bankName) bankLines.push(`Banco: ${confirmation.bankName}${confirmation.bankCode ? ` (${confirmation.bankCode})` : ""}`);
+  if (confirmation.bankAgency) bankLines.push(`Agencia: ${confirmation.bankAgency}`);
+  if (confirmation.bankAccount) bankLines.push(`Conta: ${confirmation.bankAccount}`);
+  if (confirmation.pixKey) bankLines.push(`PIX: ${confirmation.pixKey}`);
+  if (bankLines.length > 0) {
+    let bankY = blockTop;
+    const bankX = margin + paymentColWidth + 20;
+    page.drawText("Dados para deposito", { x: bankX, y: bankY, size: 9, font: bold });
+    bankY -= 13;
+    bankLines.forEach((line) => { page.drawText(line, { x: bankX, y: bankY, size: 9, font }); bankY -= 13; });
+    y = Math.min(y, bankY);
+  }
+  void paymentLinesUsed;
+  y -= 10;
+
+  if (confirmation.qualityTermsSnapshot) text(`Qualidade: ${confirmation.qualityTermsSnapshot}`, margin, { size: 9, maxWidth: contentWidth });
+  if (confirmation.generalTermsSnapshot) text(`Condicoes gerais: ${confirmation.generalTermsSnapshot}`, margin, { size: 9, maxWidth: contentWidth });
+  if (confirmation.publicNotes) text(`Observacoes: ${confirmation.publicNotes}`, margin, { size: 9, maxWidth: contentWidth });
+
+  const visibleClauses = detail.clauses.filter((clause) => clause.isVisible);
+  if (visibleClauses.length > 0) {
+    y -= 4;
+    ensureSpace(20);
+    text("Clausulas", margin, { size: 10, font: bold });
+    visibleClauses.forEach((clause, index) => {
+      ensureSpace(16);
+      text(`${clause.clauseNumber ?? index + 1}. ${clause.title ? `${clause.title} - ` : ""}${clause.clauseText}`, margin, { size: 8.5, maxWidth: contentWidth });
+    });
+  }
+
+  // Signatures side by side
+  if (detail.signers.length > 0) {
+    ensureSpace(70);
+    y -= 20;
+    const sigColWidth = (contentWidth - 20) / 2;
+    detail.signers.forEach((signer, index) => {
+      const col = index % 2;
+      const sigX = margin + col * (sigColWidth + 20);
+      if (col === 0 && index > 0) y -= 50;
+      const lineY = y;
+      page.drawLine({ start: { x: sigX, y: lineY }, end: { x: sigX + sigColWidth, y: lineY }, thickness: 0.75, color: rgb(0.3, 0.3, 0.3) });
+      page.drawText(signer.name, { x: sigX, y: lineY - 12, size: 9, font: bold });
+      page.drawText(`${PARTY_ROLE_LABELS[signer.partyRole] ?? signer.partyRole}${draft ? "" : ` - ${signer.signatureStatus}`}`, { x: sigX, y: lineY - 24, size: 8, font, color: rgb(0.4, 0.4, 0.4) });
+    });
+    y -= 50;
+  }
+
+  ensureSpace(20);
+  text("A assinatura externa deve ser conferida fora do sistema. Esta etapa nao valida certificado digital.", margin, { size: 7.5, color: rgb(0.5, 0.5, 0.5), maxWidth: contentWidth });
+
+  return doc.save();
+}
+
+function wrapText(value: string, usedFont: PDFFont, size: number, maxWidth: number): string[] {
+  const words = value.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (usedFont.widthOfTextAtSize(candidate, size) > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  });
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [""];
+}
+
+function truncate(value: string, usedFont: PDFFont, size: number, maxWidth: number): string {
+  if (usedFont.widthOfTextAtSize(value, size) <= maxWidth) return value;
+  let result = value;
+  while (result.length > 1 && usedFont.widthOfTextAtSize(`${result}...`, size) > maxWidth) {
+    result = result.slice(0, -1);
+  }
+  return `${result}...`;
 }
 
 function buildReportLines(input: Parameters<typeof generateDealConfirmationReportFile>[0]): string[] {
@@ -253,10 +458,6 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 function formatCents(value: number): string {
   return (value / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function escapeFlat(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
 }
 
 function escapePdf(value: string): string {

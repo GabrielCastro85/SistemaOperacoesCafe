@@ -59,6 +59,29 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("summarizes internal/external sacks and value per client, zeroing clients without operations in the period", () => {
+    const { repo, db, partnerId, productId } = setup();
+    const otherPartner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Operacao", notes: null, roles: ["CLIENT"], isActive: true });
+    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, productId, operationScope: "INTERNAL", rateType: "PER_SACK", rateValueCents: 300, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    createConfirmedOperation(repo, partnerId, productId, "9001", "10.5", "EXTERNAL");
+    createConfirmedOperation(repo, partnerId, productId, "9002", "4.5", "INTERNAL");
+
+    const summary = repo.getPartnerRateSummary({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    const withOperations = summary.find((row) => row.partnerId === partnerId);
+    const withoutOperations = summary.find((row) => row.partnerId === otherPartner.id);
+    expect(withOperations).toMatchObject({ externalSacks: "10.5", internalSacks: "4.5", externalAmountCents: 5250, internalAmountCents: 1350, totalAmountCents: 6600, operationCount: 2 });
+    expect(withoutOperations).toMatchObject({ externalSacks: "0", internalSacks: "0", totalAmountCents: 0, operationCount: 0 });
+
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+
+    const afterBilling = repo.getPartnerRateSummary({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(afterBilling.find((row) => row.partnerId === partnerId)?.operationCount).toBe(0);
+    const includingBilled = repo.getPartnerRateSummary({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31", includeAlreadyBilled: true });
+    expect(includingBilled.find((row) => row.partnerId === partnerId)?.operationCount).toBe(2);
+    db.close();
+  });
+
   it("releases reserved operations when draft is cancelled", () => {
     const { repo, db, partnerId, productId } = setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "2");
@@ -70,9 +93,9 @@ describe("client charges and ledger", () => {
   });
 });
 
-function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string): void {
+function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, operationScope: "INTERNAL" | "EXTERNAL" = "EXTERNAL"): void {
   const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-16", totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
   const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId, description: "Cafe", quantity: sacks, unit: "SACK", unitPriceDecimal: "1000.000", totalAmountCents: 100000, sacksQuantity: sacks });
-  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-16", quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
+  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope, operationDate: "2026-07-16", quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
   repo.confirmFiscalDocument(doc.document.id);
 }

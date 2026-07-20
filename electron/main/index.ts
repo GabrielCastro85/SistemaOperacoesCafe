@@ -11,17 +11,22 @@ import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js
 let mainWindow: BrowserWindow | null = null;
 const buildVariant = getBuildVariantConfig(resolveRuntimeVariant());
 
-app.setName(buildVariant.displayName);
+// Ao rodar contra o servidor de dev do Vite, isola completamente os dados numa pasta separada
+// da instalacao real, para que testes manuais nunca leiam/escrevam no banco de producao.
+const isDevServer = Boolean(process.env.VITE_DEV_SERVER_URL);
+const userDataDirectoryName = isDevServer ? `${buildVariant.userDataDirectoryName} (Dev)` : buildVariant.userDataDirectoryName;
+
+app.setName(isDevServer ? `${buildVariant.displayName} (Dev)` : buildVariant.displayName);
 app.setAppUserModelId(buildVariant.appId);
-app.setPath("userData", join(app.getPath("appData"), buildVariant.userDataDirectoryName));
+app.setPath("userData", join(app.getPath("appData"), userDataDirectoryName));
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 960,
-    minHeight: 640,
-    title: buildVariant.displayName,
+    width: 1440,
+    height: 900,
+    minWidth: 1180,
+    minHeight: 720,
+    title: isDevServer ? `${buildVariant.displayName} (Dev - banco isolado)` : buildVariant.displayName,
     show: true,
     webPreferences: {
       preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),

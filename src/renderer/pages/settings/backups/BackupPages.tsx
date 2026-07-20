@@ -141,7 +141,7 @@ export function RestorePage(): JSX.Element {
   return (
     <section className="content-section">
       <div className="page-header"><span>Restauracao</span><h1>Restaurar instalacao</h1><p>Dados atuais serao substituidos apos backup pre-restauracao.</p></div>
-      <div className="form-grid"><button onClick={() => void select()}>Selecionar backup</button><label>Senha do backup<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><button onClick={() => void inspect()}>Validar</button><label>Senha atual do usuario<input type="password" value={currentUserPassword} onChange={(event) => setCurrentUserPassword(event.target.value)} /></label><button className="primary" onClick={() => void restore()}>Confirmar restauracao</button></div>
+      <div className="form-grid"><button onClick={() => void select()}>Selecionar backup</button><label>Senha do backup<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><button onClick={() => void inspect()}>Validar</button><label>Senha atual do usuario<input type="password" autoComplete="off" value={currentUserPassword} onChange={(event) => setCurrentUserPassword(event.target.value)} /></label><button className="primary" onClick={() => void restore()}>Confirmar restauracao</button></div>
       <p className="muted">{path ?? "Nenhum arquivo selecionado."}</p>
       {inspection ? <pre className="json-preview">{JSON.stringify(inspection, null, 2)}</pre> : null}
       {message ? <p>{message}</p> : null}

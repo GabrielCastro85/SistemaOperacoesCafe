@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AppVariant } from "../types/domain.js";
+import type { AppVariant, Organization } from "../types/domain.js";
 
 export interface BrandingConfig {
   variant: AppVariant;
@@ -82,4 +82,12 @@ export function getBrandingConfig(variant: AppVariant): BrandingConfig {
 
 export function getAllBrandingConfigs(): BrandingConfig[] {
   return Object.values(configs).map((config) => brandingSchema.parse(config));
+}
+
+export function resolveOrganizationLogoSrc(organization: Organization | null, variant: AppVariant = "multiempresa"): string | null {
+  if (organization?.logoPath?.startsWith("data:")) return organization.logoPath;
+  const name = `${organization?.displayName ?? ""} ${organization?.appDisplayName ?? ""}`.toLowerCase();
+  if (variant === "villa" || name.includes("villa")) return "assets/branding/villa/logo.png";
+  if (variant === "grao" || name.includes("grao") || name.includes("grão")) return "assets/branding/grao/logo.png";
+  return null;
 }

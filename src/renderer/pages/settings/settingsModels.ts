@@ -12,7 +12,7 @@ export const locationLabels: Record<Location["type"], string> = {
 
 export const blankOrg = (variant: AppVariant): Omit<Organization, "id" | "createdAt" | "updatedAt"> => {
   const branding = getBrandingConfig(variant);
-  return { name: "", slug: "", displayName: "", appDisplayName: "", logoPath: null, compactLogoPath: null, iconPath: null, primaryColor: branding.colors.primary, secondaryColor: branding.colors.secondary, accentColor: branding.colors.accent, themeMode: "light", isActive: true };
+  return { name: "", slug: "", displayName: "", appDisplayName: "", description: null, logoPath: null, compactLogoPath: null, iconPath: null, primaryColor: branding.colors.primary, secondaryColor: branding.colors.secondary, accentColor: branding.colors.accent, themeMode: "light", isActive: true };
 };
 
 export const blankEntity = (organizationId: string): Omit<LegalEntity, "id" | "createdAt" | "updatedAt"> => ({ organizationId, legalName: "", tradeName: "", cnpj: null, stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: "Endereco pendente", addressNumber: "S/N", addressComplement: null, district: "Pendente", city: "Pendente", state: "MG", postalCode: "00000000", documentPrefix: null, isDraft: false, isActive: true });

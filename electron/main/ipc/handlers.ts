@@ -4,7 +4,7 @@ import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
 import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
-import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
@@ -320,6 +320,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.cancelFiscalDocument(data.id, data.reason);
   });
   handle(IPC_CHANNELS.getOperationalIndicators, (_event, payload: unknown) => repository.getOperationalIndicators(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.getMonthlyOperationTotals, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), year: z.number().int().min(2000).max(2100) }).parse(payload);
+    return repository.getMonthlyOperationTotals(data.organizationId, data.year);
+  });
   handle(IPC_CHANNELS.selectSpreadsheetFile, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Planilhas Excel", extensions: ["xlsx"] }] });
     if (result.canceled || !result.filePaths[0]) return null;
@@ -524,6 +528,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.getFiscalDocumentMergeHistory, (_event, payload: unknown) => repository.getFiscalDocumentMergeHistory(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.suggestChargePeriods, (_event, payload: unknown) => repository.suggestChargePeriods(payload));
   handle(IPC_CHANNELS.findEligibleChargeOperations, (_event, payload: unknown) => repository.findEligibleOperations(payload));
+  handle(IPC_CHANNELS.getPartnerRateSummary, (_event, payload: unknown) => repository.getPartnerRateSummary(payload));
   handle(IPC_CHANNELS.createClientChargeDraft, (_event, payload: unknown) => repository.createClientChargeDraft(payload));
   handle(IPC_CHANNELS.reserveChargeOperations, (_event, payload: unknown) => {
     const data = z.object({ clientChargeId: z.string().uuid(), operationIds: z.array(z.string().uuid()) }).parse(payload);
@@ -545,6 +550,13 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.listClientCharges, (_event, payload: unknown) => repository.listClientCharges(z.object({ organizationId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional(), status: z.string().optional() }).optional().parse(payload) ?? {}));
   handle(IPC_CHANNELS.getClientCharge, (_event, payload: unknown) => repository.getClientCharge(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.regenerateChargeDocuments, (_event, payload: unknown) => repository.regenerateChargeDocuments(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.openChargeDocument, async (_event, payload: unknown) => {
+    const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "excel", "image"]) }).parse(payload);
+    const filePath = repository.getChargeDocumentPath(data.chargeId, data.kind);
+    const result = await shell.openPath(filePath);
+    if (result) throw new Error(result);
+    return true;
+  });
   handle(IPC_CHANNELS.listLedgerEntries, (_event, payload: unknown) => repository.listLedgerEntries(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional() }).parse(payload)));
   handle(IPC_CHANNELS.createLedgerEntry, (_event, payload: unknown) => repository.createLedgerEntry(payload));
   handle(IPC_CHANNELS.createAdvance, (_event, payload: unknown) => repository.createAdvance(payload));
@@ -777,6 +789,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     if (result) throw new Error(result);
     return true;
   });
+  handle(IPC_CHANNELS.getDealDocumentBytes, (_event, payload: unknown) => readFileSync(repository.getDealDocumentPath(z.string().uuid().parse(payload))).toString("base64"));
   handle(IPC_CHANNELS.revealDealDocumentFolder, (_event, payload: unknown) => {
     shell.showItemInFolder(repository.getDealDocumentPath(z.string().uuid().parse(payload)));
     return true;

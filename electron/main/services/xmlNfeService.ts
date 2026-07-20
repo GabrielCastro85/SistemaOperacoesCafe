@@ -302,7 +302,23 @@ function digits(value: string): string {
 function decimal(value: unknown): string | null {
   const raw = text(value);
   if (!raw) return null;
-  return normalizeDecimalText(raw.replace(",", "."));
+  return normalizeDecimalText(roundDecimalString(raw.replace(",", "."), 6));
+}
+
+// Campos da NF-e como vUnCom/vUnTrib permitem ate 10 casas decimais por
+// especificacao da SEFAZ (frequentemente preenchidas com zeros ate o limite),
+// mas o app guarda no maximo 6 casas. Arredonda em vez de rejeitar a nota.
+function roundDecimalString(value: string, maxDecimals: number): string {
+  const [whole, fraction = ""] = value.split(".");
+  if (fraction.length <= maxDecimals) return value;
+  const keep = fraction.slice(0, maxDecimals);
+  const roundUp = Number(fraction[maxDecimals] ?? "0") >= 5;
+  const scale = 10n ** BigInt(maxDecimals);
+  let scaled = BigInt(whole || "0") * scale + BigInt(keep || "0");
+  if (roundUp) scaled += 1n;
+  const roundedWhole = scaled / scale;
+  const roundedFraction = (scaled % scale).toString().padStart(maxDecimals, "0");
+  return `${roundedWhole}.${roundedFraction}`;
 }
 
 function money(value: unknown): number {

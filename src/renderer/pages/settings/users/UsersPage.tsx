@@ -41,7 +41,7 @@ export function UsersPage(): JSX.Element {
         <label>Nome<input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
         <label>Usuario<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} /></label>
         <label>Email<input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
-        <label>Senha temporaria<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
+        <label>Senha temporaria<input type="password" autoComplete="off" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
         <label>Role<select value={form.roleId} onChange={(event) => setForm({ ...form, roleId: event.target.value })}>{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
         <button className="primary" type="button" onClick={() => void create()}>Criar usuario</button>
       </div>

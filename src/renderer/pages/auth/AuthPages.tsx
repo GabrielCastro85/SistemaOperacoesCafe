@@ -25,8 +25,8 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
     <main className="auth-shell">
       <section className="auth-panel">
         <div className="auth-brand-row">
-          <img src="/assets/branding/villa/logo.png" alt="" />
-          <img src="/assets/branding/grao/logo.png" alt="" />
+          <img src="assets/branding/villa/logo.png" alt="" />
+          <img src="assets/branding/grao/logo.png" alt="" />
         </div>
         <span className="auth-eyebrow">Primeiro acesso</span>
         <h1>Criar administrador local</h1>
@@ -34,7 +34,7 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
         <label>Nome<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
         <label>Usuario<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <label>Senha<input type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Criar administrador</button>
       </section>
@@ -60,13 +60,13 @@ export function LoginPage({ onSession }: AuthPageProps): JSX.Element {
     <main className="auth-shell">
       <section className="auth-panel">
         <div className="auth-brand-row">
-          <img src="/assets/branding/villa/logo.png" alt="" />
-          <img src="/assets/branding/grao/logo.png" alt="" />
+          <img src="assets/branding/villa/logo.png" alt="" />
+          <img src="assets/branding/grao/logo.png" alt="" />
         </div>
         <span className="auth-eyebrow">Sistema de Operacoes de Cafe</span>
         <h1>Entrar</h1>
         <label>Usuario<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} /></label>
+        <label>Senha<input type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} /></label>
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Entrar</button>
       </section>
@@ -96,12 +96,12 @@ export function LockScreen({ session, onSession }: AuthPageProps & { session: Au
     <div className="lock-screen">
       <section className="auth-panel">
         <div className="auth-brand-row">
-          <img src="/assets/branding/villa/logo.png" alt="" />
-          <img src="/assets/branding/grao/logo.png" alt="" />
+          <img src="assets/branding/villa/logo.png" alt="" />
+          <img src="assets/branding/grao/logo.png" alt="" />
         </div>
         <span className="auth-eyebrow">Sessao bloqueada</span>
         <h1>{session.user.displayName}</h1>
-        <label>Senha<input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void unlock(); }} /></label>
+        <label>Senha<input autoFocus type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void unlock(); }} /></label>
         {error ? <div className="auth-error">{error}</div> : null}
         <div className="auth-actions">
           <button className="primary" type="button" onClick={() => void unlock()}>Desbloquear</button>
