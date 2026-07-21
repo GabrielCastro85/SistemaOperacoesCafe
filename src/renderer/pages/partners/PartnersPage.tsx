@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, BusinessPartnerRole, PartnerContact } from "../../../shared/types/domain";
-import { formatCnpj, formatDateBr, onlyDigits } from "../../../shared/utils/format";
+import { formatCnpj, formatDateBr, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
 import { PageHeader } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
 import { TextField } from "../../components/forms/LegacyFields";
@@ -31,8 +31,21 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   }
 
   async function savePartner(): Promise<void> {
+    const name = partnerName.trim();
+    if (!organizationId) {
+      setMessage("Erro: selecione uma organizacao antes de cadastrar o cliente.");
+      return;
+    }
+    if (!name) {
+      setMessage("Erro: informe o nome do cliente.");
+      return;
+    }
+    if (roles.length === 0) {
+      setMessage("Erro: selecione pelo menos um papel para o cadastro.");
+      return;
+    }
     try {
-      const partner = await window.operationsCafe.createBusinessPartner({ organizationId, displayName: partnerName, notes: null, roles, isActive: true });
+      const partner = await window.operationsCafe.createBusinessPartner({ organizationId, displayName: name, notes: null, roles, isActive: true });
       setPartnerName("");
       setMessage("Parceiro salvo.");
       await load();
@@ -44,12 +57,18 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
 
   async function savePartnerLegalEntity(): Promise<void> {
     if (!selected) return;
+    const cnpjDigits = onlyDigits(cnpj);
+    const hasCnpj = Boolean(cnpjDigits);
+    if (hasCnpj && !isValidCnpj(cnpjDigits)) {
+      setMessage("Erro: informe um CNPJ valido com 14 digitos.");
+      return;
+    }
     try {
       await window.operationsCafe.createPartnerLegalEntity({
         businessPartnerId: selected.id,
         legalName: selected.displayName,
         tradeName: selected.displayName,
-        cnpj: onlyDigits(cnpj),
+        cnpj: hasCnpj ? cnpjDigits : null,
         stateRegistration: null,
         municipalRegistration: null,
         email: null,
@@ -62,11 +81,11 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
         state: null,
         postalCode: null,
         isPrimary: legalEntities.length === 0,
-        isActive: true,
-        isDraft: false
+        isActive: hasCnpj,
+        isDraft: !hasCnpj
       });
       setCnpj("");
-      setMessage("Estabelecimento salvo.");
+      setMessage(hasCnpj ? "Estabelecimento salvo." : "Estabelecimento salvo como rascunho sem CNPJ.");
       await loadDetail(selected);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar estabelecimento."}`);
@@ -75,11 +94,16 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
 
   async function saveContact(): Promise<void> {
     if (!selected) return;
+    const name = contactName.trim();
+    if (!name) {
+      setMessage("Erro: informe o nome do contato.");
+      return;
+    }
     try {
       await window.operationsCafe.createPartnerContact({
         businessPartnerId: selected.id,
         partnerLegalEntityId: null,
-        name: contactName,
+        name,
         department: null,
         email: null,
         phone: null,
@@ -106,7 +130,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
           <TextField label="Nome do parceiro" value={partnerName} onChange={setPartnerName} required />
           <label className="checkbox"><input type="checkbox" checked={roles.includes("CLIENT")} onChange={(event) => setRoles(event.target.checked ? Array.from(new Set([...roles, "CLIENT"])) : roles.filter((role) => role !== "CLIENT"))} /> Cliente</label>
           <label className="checkbox"><input type="checkbox" checked={roles.includes("BUYER")} onChange={(event) => setRoles(event.target.checked ? Array.from(new Set([...roles, "BUYER"])) : roles.filter((role) => role !== "BUYER"))} /> Comprador</label>
-          <button className="primary" onClick={() => void savePartner()}>Cadastrar parceiro</button>
+          <button className="primary" disabled={!partnerName.trim() || roles.length === 0 || !organizationId} onClick={() => void savePartner()}>Cadastrar parceiro</button>
         </FormGrid>
         <div className="table">
           <div className="table-head partner-grid"><span>Parceiro</span><span>Papeis</span><span>Status</span><span>Atualizado</span><span>Acoes</span></div>
@@ -116,11 +140,11 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       {selected ? <AdminBlock title={`Detalhe: ${selected.displayName}`}>
         <FormGrid>
           <TextField label="CNPJ do estabelecimento" value={cnpj} onChange={setCnpj} />
-          <button onClick={() => void savePartnerLegalEntity()}>Cadastrar CNPJ</button>
+          <button onClick={() => void savePartnerLegalEntity()}>{cnpj.trim() ? "Cadastrar CNPJ" : "Salvar rascunho sem CNPJ"}</button>
           <TextField label="Nome do contato" value={contactName} onChange={setContactName} />
-          <button onClick={() => void saveContact()}>Cadastrar contato</button>
+          <button disabled={!contactName.trim()} onClick={() => void saveContact()}>Cadastrar contato</button>
         </FormGrid>
-        <div className="cards"><article><span>Estabelecimentos</span><strong>{legalEntities.map((item) => `${item.tradeName} ${formatCnpj(item.cnpj)}`).join(" | ") || "Nenhum"}</strong></article><article><span>Contatos</span><strong>{contacts.map((item) => item.name).join(" | ") || "Nenhum"}</strong></article></div>
+        <div className="cards"><article><span>Estabelecimentos</span><strong>{legalEntities.map((item) => `${item.tradeName} ${formatCnpj(item.cnpj)}${item.isDraft ? " (rascunho)" : ""}`).join(" | ") || "Nenhum"}</strong></article><article><span>Contatos</span><strong>{contacts.map((item) => item.name).join(" | ") || "Nenhum"}</strong></article></div>
       </AdminBlock> : null}
       <Feedback message={message} />
     </section>

@@ -1,8 +1,24 @@
 import { useState } from "react";
+import type { KeyboardEvent } from "react";
 import type { AuthSession } from "../../../shared/types/domain";
 
 interface AuthPageProps {
   onSession: (session: AuthSession | null) => void;
+}
+
+function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: { label: string; value: string; onChange: (value: string) => void; autoFocus?: boolean; onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void }): JSX.Element {
+  const [visible, setVisible] = useState(false);
+  return (
+    <label>
+      {label}
+      <div className="auth-password-field">
+        <input autoFocus={autoFocus} type={visible ? "text" : "password"} autoComplete="off" value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} />
+        <button type="button" className="auth-password-toggle" onClick={() => setVisible((current) => !current)} tabIndex={-1}>
+          {visible ? "Ocultar" : "Mostrar"}
+        </button>
+      </div>
+    </label>
+  );
 }
 
 export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
@@ -34,7 +50,7 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
         <label>Nome<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
         <label>Usuario<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <label>Senha<input type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <PasswordField label="Senha" value={password} onChange={setPassword} />
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Criar administrador</button>
       </section>
@@ -66,7 +82,7 @@ export function LoginPage({ onSession }: AuthPageProps): JSX.Element {
         <span className="auth-eyebrow">Sistema de Operacoes de Cafe</span>
         <h1>Entrar</h1>
         <label>Usuario<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        <label>Senha<input type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} /></label>
+        <PasswordField label="Senha" value={password} onChange={setPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Entrar</button>
       </section>
@@ -101,7 +117,7 @@ export function LockScreen({ session, onSession }: AuthPageProps & { session: Au
         </div>
         <span className="auth-eyebrow">Sessao bloqueada</span>
         <h1>{session.user.displayName}</h1>
-        <label>Senha<input autoFocus type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void unlock(); }} /></label>
+        <PasswordField label="Senha" value={password} onChange={setPassword} autoFocus onKeyDown={(event) => { if (event.key === "Enter") void unlock(); }} />
         {error ? <div className="auth-error">{error}</div> : null}
         <div className="auth-actions">
           <button className="primary" type="button" onClick={() => void unlock()}>Desbloquear</button>

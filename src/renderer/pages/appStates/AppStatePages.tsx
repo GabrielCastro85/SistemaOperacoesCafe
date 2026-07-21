@@ -27,6 +27,15 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
     setLegalEntityId(data.legalEntities.find((entity) => entity.organizationId === organizationId)?.id ?? "");
   }, [organizationId, data.legalEntities]);
 
+  useEffect(() => {
+    if (variant === "multiempresa") return;
+    const variantSlug = variant === "villa" ? "villa-coffee" : "grao-e-grao";
+    const matchingOrganization = data.organizations.find((item) => item.slug === variantSlug);
+    if (matchingOrganization && matchingOrganization.id !== organizationId) {
+      setOrganizationId(matchingOrganization.id);
+    }
+  }, [variant, data.organizations, organizationId]);
+
   async function save(): Promise<void> {
     try {
       const selectedOrganization = data.organizations.find((item) => item.id === organizationId);
