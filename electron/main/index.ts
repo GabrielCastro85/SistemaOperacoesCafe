@@ -20,13 +20,26 @@ app.setName(isDevServer ? `${buildVariant.displayName} (Dev)` : buildVariant.dis
 app.setAppUserModelId(buildVariant.appId);
 app.setPath("userData", join(app.getPath("appData"), userDataDirectoryName));
 
+function resolveWindowIcon(): string | undefined {
+  const iconFileName = buildVariant.iconPath.split(/[\\/]/).at(-1);
+  const candidates = [
+    iconFileName ? join(process.resourcesPath, "icons", iconFileName) : null,
+    join(process.cwd(), buildVariant.iconPath),
+    join(app.getAppPath(), buildVariant.iconPath)
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
 function createWindow(): void {
+  const windowIcon = resolveWindowIcon();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1180,
     minHeight: 720,
     title: isDevServer ? `${buildVariant.displayName} (Dev - banco isolado)` : buildVariant.displayName,
+    icon: windowIcon,
     show: false,
     webPreferences: {
       preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),
