@@ -52,9 +52,9 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       window.operationsCafe.listProducts({ organizationId, status: "active" }),
       window.operationsCafe.listDealConfirmationTemplates({ organizationId, status: "all" }),
       window.operationsCafe.listDealClauseTemplates(organizationId),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId || null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
     ]);
-    setConfirmations(dealList);
+    setConfirmations(dealList.filter((confirmation) => !ownLegalEntityId || confirmation.ownLegalEntityId === ownLegalEntityId));
     setPartners(partnerList);
     setProducts(productList);
     setTemplates(templateList);
@@ -66,7 +66,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     setSourceClientId((current) => current || clientPartners[0]?.id || "");
     setDeliveryRecipientId((current) => current || partnerList[0]?.id || "");
     setClauseTemplateId((current) => current || clauseList.find((item) => item.isActive)?.id || "");
-  }, [organizationId]);
+  }, [organizationId, ownLegalEntityId]);
 
   useEffect(() => {
     void load();
@@ -74,7 +74,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   const loadSourceDocuments = useCallback(async () => {
     if (!sourceClientId) return;
-    const documents = (await window.operationsCafe.listFiscalDocuments({ organizationId, status: "CONFIRMED" })).filter((item) => item.responsiblePartnerId === sourceClientId);
+    const documents = (await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "CONFIRMED" })).filter((item) => item.responsiblePartnerId === sourceClientId);
     const rows = await Promise.all(documents.map(async (document): Promise<SourceDocumentRow> => {
       const detailDoc = await window.operationsCafe.getFiscalDocument(document.id);
       const sacks = detailDoc.items.map((item) => item.sacksQuantity).filter((value): value is string => Boolean(value));
@@ -82,7 +82,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }));
     setSourceDocuments(rows);
     setSelectedDocumentIds({});
-  }, [organizationId, sourceClientId]);
+  }, [organizationId, ownLegalEntityId, sourceClientId]);
 
   useEffect(() => { void loadSourceDocuments(); }, [loadSourceDocuments]);
 
@@ -134,9 +134,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }
   }
 
-  async function addPartiesItemsAndSigners(confirmationId: string, skipItem = false): Promise<void> {
-    if (ownLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+  async function addPartiesItemsAndSigners(confirmationId: string, skipItem = false, confirmationOwnLegalEntityId = ownLegalEntityId): Promise<void> {
+    if (confirmationOwnLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
     if (buyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: buyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    if (buyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: buyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
     if (!skipItem && productId) await window.operationsCafe.addDealConfirmationItem({
       dealConfirmationId: confirmationId,
       sortOrder: 0,
@@ -158,7 +159,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       deliveryLocationSnapshot: "Local de entrega a confirmar",
       notes: null
     });
-    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === ownLegalEntityId)?.tradeName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.tradeName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
     await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: partners.find((item) => item.id === buyerId)?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
   }
 
@@ -175,7 +176,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     if (fiscalDocumentIds.length === 0) return;
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
-      await addPartiesItemsAndSigners(created.confirmation.id, true);
+      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId);
       const refreshed = await window.operationsCafe.getDealConfirmation(created.confirmation.id);
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
@@ -226,11 +227,13 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     setMessage("Dados de corretagem e banco atualizados.");
   }
 
-  async function addDeliveryRecipient(): Promise<void> {
+  async function setDeliveryRecipient(): Promise<void> {
     if (!detail || !deliveryRecipientId) return;
+    const existing = detail.parties.filter((party) => party.partyRole === "DELIVERY_RECIPIENT");
+    await Promise.all(existing.map((party) => window.operationsCafe.removeDealConfirmationParty(party.id)));
     const updated = await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: detail.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: deliveryRecipientId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
     setDetail(updated);
-    setMessage("Local de descarga adicionado.");
+    setMessage("Local de descarga definido.");
   }
 
   async function addClauseFromTemplate(): Promise<void> {
@@ -304,7 +307,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   }
 
   async function generateReport(format: "PDF" | "EXCEL"): Promise<void> {
-    const report = await window.operationsCafe.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format, filters: { organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
+    const report = await window.operationsCafe.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format, filters: { organizationId, ownLegalEntityId: ownLegalEntityId || null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
     setMessage(`Relatorio ${format} gerado: ${report.fileName}`);
   }
 
@@ -390,14 +393,15 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                     {detail.parties.filter((party) => party.partyRole !== "ISSUER").map((party) => <ConfirmationPartyCard key={party.id} party={party} />)}
                   </div>
                   <FormGrid>
-                    <SelectField label="Adicionar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} options={partners.map((item) => [item.id, item.displayName])} />
-                    <button onClick={() => void addDeliveryRecipient()} disabled={!deliveryRecipientId}>Adicionar</button>
+                    <SelectField label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} options={partners.map((item) => [item.id, item.displayName])} />
+                    <button onClick={() => void setDeliveryRecipient()} disabled={!deliveryRecipientId}>Salvar local</button>
                   </FormGrid>
 
                   <h3><HandshakeIcon /> Itens</h3>
                   <ConfirmationItemsTable items={detail.items} />
 
                   <h3>Corretagem e dados bancarios</h3>
+                  <p className="muted">Preenchidos automaticamente pelo CNPJ proprio. Altere aqui quando este fechamento precisar de dados diferentes.</p>
                   <FormGrid>
                     <TextField label="Corretagem (%)" value={brokerageInput} onChange={setBrokerageInput} />
                     <TextField label="Banco" value={bankName} onChange={setBankName} />

@@ -64,7 +64,6 @@ import {
 } from "../../../src/shared/schemas/domainSchemas.js";
 import type {
   ActiveContext,
-  AppVariant,
   BootstrapData,
   BusinessPartner,
   BusinessPartnerLegalEntity,
@@ -79,6 +78,7 @@ import type {
   ServiceRateRule,
   FiscalDocument,
   FiscalDocumentDetail,
+  FiscalDocumentStatus,
   FiscalDocumentItem,
   Operation,
   SpreadsheetImportJob,
@@ -241,10 +241,6 @@ export class AppRepository {
   }
 
   createOrganization(input: unknown): Organization {
-    const profile = this.getInstallationProfile();
-    if (profile?.appVariant !== "multiempresa") {
-      throw new Error("Esta variante nao permite cadastrar novas organizacoes.");
-    }
     const data = organizationInputSchema.parse(input);
     this.assertUniqueSlug(data.slug);
     const now = new Date().toISOString();
@@ -360,10 +356,12 @@ export class AppRepository {
         `INSERT INTO legal_entities (
           id, organization_id, legal_name, trade_name, cnpj, state_registration, municipal_registration,
           email, phone, address_line, address_number, address_complement, district, city, state,
-          postal_code, document_prefix, is_draft, is_active, created_at, updated_at
+          postal_code, document_prefix, default_bank_name, default_bank_code, default_bank_agency,
+          default_bank_account, default_pix_key, is_draft, is_active, created_at, updated_at
         ) VALUES (@id, @organizationId, @legalName, @tradeName, @cnpj, @stateRegistration, @municipalRegistration,
           @email, @phone, @addressLine, @addressNumber, @addressComplement, @district, @city, @state,
-          @postalCode, @documentPrefix, @isDraft, @isActive, @createdAt, @updatedAt)`
+          @postalCode, @documentPrefix, @defaultBankName, @defaultBankCode, @defaultBankAgency,
+          @defaultBankAccount, @defaultPixKey, @isDraft, @isActive, @createdAt, @updatedAt)`
       )
       .run({ id, ...data, isDraft: data.isDraft ? 1 : 0, isActive: data.isActive ? 1 : 0, createdAt: now, updatedAt: now });
     return this.getLegalEntity(id);
@@ -381,6 +379,8 @@ export class AppRepository {
           state_registration = @stateRegistration, municipal_registration = @municipalRegistration, email = @email,
           phone = @phone, address_line = @addressLine, address_number = @addressNumber, address_complement = @addressComplement,
           district = @district, city = @city, state = @state, postal_code = @postalCode, document_prefix = @documentPrefix,
+          default_bank_name = @defaultBankName, default_bank_code = @defaultBankCode, default_bank_agency = @defaultBankAgency,
+          default_bank_account = @defaultBankAccount, default_pix_key = @defaultPixKey,
           is_draft = @isDraft, is_active = @isActive, updated_at = @updatedAt
          WHERE id = @id`
       )
@@ -557,6 +557,62 @@ export class AppRepository {
     return this.getBusinessPartner(id);
   }
 
+  deleteBusinessPartner(id: string): void {
+    this.getBusinessPartner(id);
+    const transaction = this.db.transaction(() => {
+      const partnerLegalEntitySubquery = "SELECT id FROM partner_legal_entities WHERE business_partner_id = ?";
+      const fiscalDocumentSubquery = `SELECT id FROM fiscal_documents WHERE responsible_partner_id = ? OR partner_legal_entity_id IN (${partnerLegalEntitySubquery})`;
+      const operationSubquery = `SELECT id FROM operations WHERE responsible_partner_id = ? OR fiscal_document_id IN (${fiscalDocumentSubquery})`;
+      const clientChargeSubquery = "SELECT id FROM client_charges WHERE client_partner_id = ?";
+      const clientLedgerSubquery = `SELECT id FROM client_ledger_entries WHERE client_partner_id = ? OR client_charge_id IN (${clientChargeSubquery})`;
+      const clientPaymentSubquery = "SELECT id FROM client_payments WHERE client_partner_id = ?";
+      const accountPayableSubquery = `SELECT id FROM accounts_payable WHERE supplier_partner_id = ? OR supplier_legal_entity_id IN (${partnerLegalEntitySubquery})`;
+
+      this.db.prepare(`DELETE FROM spreadsheet_import_rows WHERE operation_id IN (${operationSubquery}) OR fiscal_document_id IN (${fiscalDocumentSubquery})`)
+        .run(id, id, id, id, id);
+      this.db.prepare(`DELETE FROM xml_import_files WHERE fiscal_document_id IN (${fiscalDocumentSubquery}) OR fiscal_document_event_id IN (SELECT id FROM fiscal_document_events WHERE fiscal_document_id IN (${fiscalDocumentSubquery}))`).run(id, id, id, id);
+      this.db.prepare(`DELETE FROM deal_confirmation_operations WHERE operation_id IN (${operationSubquery})`).run(id, id, id);
+      this.db.prepare(`DELETE FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM client_charge_operations WHERE operation_id IN (${operationSubquery}) OR client_charge_id IN (${clientChargeSubquery})`).run(id, id, id, id);
+
+      this.db.prepare(`DELETE FROM client_credit_allocations WHERE ledger_entry_id IN (${clientLedgerSubquery}) OR client_charge_id IN (${clientChargeSubquery})`).run(id, id, id);
+      this.db.prepare(`DELETE FROM client_payment_allocations WHERE client_payment_id IN (${clientPaymentSubquery}) OR client_charge_id IN (${clientChargeSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM client_charge_adjustments WHERE client_charge_id IN (${clientChargeSubquery}) OR ledger_entry_id IN (${clientLedgerSubquery})`).run(id, id, id);
+      this.db.prepare(`DELETE FROM charge_document_versions WHERE client_charge_id IN (${clientChargeSubquery})`).run(id);
+      this.db.prepare(`DELETE FROM charge_status_history WHERE client_charge_id IN (${clientChargeSubquery})`).run(id);
+      this.db.prepare(`UPDATE operations SET client_charge_id = NULL, billing_status = 'UNBILLED' WHERE client_charge_id IN (${clientChargeSubquery})`).run(id);
+      this.db.prepare(`DELETE FROM client_ledger_entries WHERE id IN (${clientLedgerSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM client_payments WHERE id IN (${clientPaymentSubquery})`).run(id);
+      this.db.prepare(`DELETE FROM client_charges WHERE id IN (${clientChargeSubquery})`).run(id);
+
+      this.db.prepare(`DELETE FROM payable_payment_allocations WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM account_payable_allocations WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM payable_status_history WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM payable_document_attachments WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM accounts_payable WHERE id IN (${accountPayableSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM payable_recurring_templates WHERE supplier_partner_id = ? OR supplier_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id);
+      this.db.prepare("DELETE FROM payable_installment_groups WHERE supplier_partner_id = ?").run(id);
+
+      this.db.prepare(`DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM fiscal_document_events WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM operations WHERE id IN (${operationSubquery})`).run(id, id, id);
+      this.db.prepare(`DELETE FROM fiscal_document_items WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
+      this.db.prepare(`DELETE FROM fiscal_documents WHERE id IN (${fiscalDocumentSubquery})`).run(id, id);
+
+      this.db.prepare(`DELETE FROM product_aliases WHERE issuer_partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id);
+      this.db.prepare(`DELETE FROM operation_classification_rules WHERE client_partner_id = ? OR destination_partner_id = ? OR issuer_partner_legal_entity_id IN (${partnerLegalEntitySubquery}) OR recipient_partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id, id, id);
+      this.db.prepare(`DELETE FROM deal_confirmation_parties WHERE business_partner_id = ? OR partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id);
+      this.db.prepare("DELETE FROM service_rate_rules WHERE business_partner_id = ?").run(id);
+      this.db.prepare("DELETE FROM client_billing_profiles WHERE business_partner_id = ?").run(id);
+      this.db.prepare(`DELETE FROM partner_aliases WHERE business_partner_id = ? OR partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id);
+      this.db.prepare("DELETE FROM partner_contacts WHERE business_partner_id = ?").run(id);
+      this.db.prepare("DELETE FROM partner_legal_entities WHERE business_partner_id = ?").run(id);
+      this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
+      this.db.prepare("DELETE FROM business_partners WHERE id = ?").run(id);
+    });
+    transaction();
+  }
+
   listPartnerLegalEntities(businessPartnerId: string): BusinessPartnerLegalEntity[] {
     const partner = this.getBusinessPartner(businessPartnerId);
     return (this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id = ? ORDER BY trade_name").all(partner.id) as DbRecord[]).map(mapBusinessPartnerLegalEntity);
@@ -730,6 +786,15 @@ export class AppRepository {
   activateServiceRateRule(id: string): ServiceRateRule { return this.setServiceRateRuleActive(id, true); }
   deactivateServiceRateRule(id: string): ServiceRateRule { return this.setServiceRateRuleActive(id, false); }
 
+  deleteServiceRateRule(id: string): void {
+    this.getServiceRateRule(id);
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("UPDATE operations SET service_rate_rule_id = NULL WHERE service_rate_rule_id = ?").run(id);
+      this.db.prepare("DELETE FROM service_rate_rules WHERE id = ?").run(id);
+    });
+    transaction();
+  }
+
   resolveServiceRateRule(input: unknown): ResolveRateResult {
     const data = resolveRateInputSchema.parse(input);
     this.assertClientPartner(data.businessPartnerId, data.organizationId);
@@ -746,11 +811,12 @@ export class AppRepository {
     return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
   }
 
-  listFiscalDocuments(filters: { organizationId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" } = {}): FiscalDocument[] {
+  listFiscalDocuments(filters: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" } = {}): FiscalDocument[] {
     return (this.db.prepare("SELECT * FROM fiscal_documents ORDER BY issue_date DESC, updated_at DESC").all() as DbRecord[])
       .map(mapFiscalDocument)
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
       .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
+      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
       .filter((item) => !filters.status || filters.status === "all" || item.status === filters.status)
       .filter((item) => this.matchesSearch([item.documentNumber, item.accessKey ?? "", item.pendingNotes ?? ""], filters.search));
   }
@@ -801,6 +867,29 @@ export class AppRepository {
     return this.getFiscalDocument(id);
   }
 
+  deleteFiscalDocument(id: string): void {
+    const detail = this.getFiscalDocument(id);
+    const linkedCharge = detail.operations.find((operation) => operation.clientChargeId || operation.billingStatus !== "UNBILLED");
+    if (linkedCharge) throw new Error("Nota ja vinculada a cobranca. Cancele/libere a cobranca antes de excluir.");
+    const linkedDeal = this.tableExists("deal_confirmation_fiscal_documents")
+      ? this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ? LIMIT 1").get(id)
+      : null;
+    const linkedDealOperation = this.tableExists("deal_confirmation_operations")
+      ? this.db.prepare("SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id)
+      : null;
+    if (linkedDeal || linkedDealOperation) throw new Error("Nota ja vinculada a confirmacao de negocio. Remova o vinculo antes de excluir.");
+    const trx = this.db.transaction(() => {
+      if (this.tableExists("spreadsheet_import_rows")) this.db.prepare("UPDATE spreadsheet_import_rows SET fiscal_document_id = NULL, operation_id = NULL WHERE fiscal_document_id = ? OR operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id, id);
+      if (this.tableExists("xml_import_files")) this.db.prepare("UPDATE xml_import_files SET fiscal_document_id = NULL, status = 'REVERTED', updated_at = ? WHERE fiscal_document_id = ?").run(new Date().toISOString(), id);
+      if (this.tableExists("fiscal_document_merge_history")) this.db.prepare("DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").run(id);
+      if (this.tableExists("fiscal_document_events")) this.db.prepare("DELETE FROM fiscal_document_events WHERE fiscal_document_id = ?").run(id);
+      this.db.prepare("DELETE FROM operations WHERE fiscal_document_id = ?").run(id);
+      this.db.prepare("DELETE FROM fiscal_document_items WHERE fiscal_document_id = ?").run(id);
+      this.db.prepare("DELETE FROM fiscal_documents WHERE id = ?").run(id);
+    });
+    trx();
+  }
+
   addFiscalDocumentItem(input: unknown): FiscalDocumentItem {
     const data = fiscalDocumentItemInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);
@@ -811,6 +900,19 @@ export class AppRepository {
     this.db.prepare("INSERT INTO fiscal_document_items (id, fiscal_document_id, product_id, description, quantity_decimal, unit, unit_price_decimal, total_amount_cents, sacks_quantity_decimal, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(id, data.fiscalDocumentId, data.productId, data.description, normalizeDecimalText(data.quantity), data.unit, normalizeDecimalText(data.unitPriceDecimal), data.totalAmountCents, data.sacksQuantity ? normalizeDecimalText(data.sacksQuantity) : null, now, now);
     return this.getFiscalDocument(data.fiscalDocumentId).items.find((item) => item.id === id) as FiscalDocumentItem;
+  }
+
+  listOperations(filters: { organizationId?: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; status?: FiscalDocumentStatus | "all"; billingStatus?: Operation["billingStatus"] | "all" } = {}): Operation[] {
+    return (this.db.prepare("SELECT * FROM operations ORDER BY operation_date DESC, created_at DESC").all() as DbRecord[])
+      .map(mapOperation)
+      .filter((item) => this.isOrganizationAllowed(item.organizationId))
+      .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
+      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
+      .filter((item) => !filters.responsiblePartnerId || item.responsiblePartnerId === filters.responsiblePartnerId)
+      .filter((item) => !filters.periodStart || item.operationDate >= filters.periodStart)
+      .filter((item) => !filters.periodEnd || item.operationDate <= filters.periodEnd)
+      .filter((item) => !filters.status || filters.status === "all" || item.status === filters.status)
+      .filter((item) => !filters.billingStatus || filters.billingStatus === "all" || item.billingStatus === filters.billingStatus);
   }
 
   addOperation(input: unknown): Operation {
@@ -869,26 +971,27 @@ export class AppRepository {
     return this.getFiscalDocument(id);
   }
 
-  getOperationalIndicators(organizationId: string): { documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number } {
+  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number } {
+    const organizationId = typeof input === "string" ? input : input.organizationId;
+    const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
     this.assertOrganizationWritable(organizationId);
-    const docs = this.listFiscalDocuments({ organizationId });
-    const operations = (this.db.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(service_amount_cents), 0) AS amount FROM operations WHERE organization_id = ?").get(organizationId) as { total: number; amount: number });
+    this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
+    const docs = this.listFiscalDocuments({ organizationId, ownLegalEntityId });
+    const operations = this.listOperations({ organizationId, ownLegalEntityId });
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
       confirmed: docs.filter((doc) => doc.status === "CONFIRMED").length,
-      operations: Number(operations.total),
-      serviceAmountCents: Number(operations.amount)
+      operations: operations.length,
+      serviceAmountCents: operations.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
-  getMonthlyOperationTotals(organizationId: string, year: number): Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }> {
+  getMonthlyOperationTotals(organizationId: string, year: number, ownLegalEntityId?: string | null): Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }> {
     this.assertOrganizationWritable(organizationId);
-    const rows = this.db.prepare(`
-      SELECT operation_date AS operationDate, quantity_sacks_decimal AS sacks, service_amount_cents AS amountCents
-      FROM operations
-      WHERE organization_id = ? AND status = 'CONFIRMED' AND operation_date LIKE ?
-    `).all(organizationId, `${year}-%`) as Array<{ operationDate: string; sacks: string; amountCents: number }>;
+    this.refreshOperationServiceRates({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` });
+    const rows = this.listOperations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, status: "CONFIRMED", periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` })
+      .map((operation) => ({ operationDate: operation.operationDate, sacks: operation.quantitySacks, amountCents: operation.serviceAmountCents }));
     const byMonth = new Map<number, { sacks: string[]; amountCents: number; count: number }>();
     for (const row of rows) {
       const month = Number(row.operationDate.slice(5, 7));
@@ -1416,6 +1519,13 @@ export class AppRepository {
   findEligibleOperations(input: unknown): Operation[] {
     const data = eligibleOperationsInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
+    this.refreshOperationServiceRates({
+      organizationId: data.organizationId,
+      ownLegalEntityId: data.ownLegalEntityId,
+      responsiblePartnerId: data.clientPartnerId,
+      periodStart: data.periodStart,
+      periodEnd: data.periodEnd
+    });
     return (this.db.prepare(`
       SELECT * FROM operations
       WHERE organization_id = ?
@@ -1431,6 +1541,12 @@ export class AppRepository {
   getPartnerRateSummary(input: unknown): PartnerRateSummaryRow[] {
     const data = partnerRateSummaryInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
+    this.refreshOperationServiceRates({
+      organizationId: data.organizationId,
+      ownLegalEntityId: data.ownLegalEntityId,
+      periodStart: data.periodStart,
+      periodEnd: data.periodEnd
+    });
     const billingStatusClause = data.includeAlreadyBilled ? "" : "AND billing_status = 'UNBILLED'";
     const rows = this.db.prepare(`
       SELECT responsible_partner_id AS partnerId, operation_scope AS scope, quantity_sacks_decimal AS sacks, service_amount_cents AS amountCents
@@ -1472,6 +1588,34 @@ export class AppRepository {
         };
       })
       .sort((a, b) => b.totalAmountCents - a.totalAmountCents);
+  }
+
+  private refreshOperationServiceRates(filters: { organizationId: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string }): void {
+    const operations = this.listOperations({
+      organizationId: filters.organizationId,
+      ownLegalEntityId: filters.ownLegalEntityId,
+      responsiblePartnerId: filters.responsiblePartnerId,
+      periodStart: filters.periodStart,
+      periodEnd: filters.periodEnd,
+      status: "all",
+      billingStatus: "UNBILLED"
+    }).filter((operation) => !operation.rateWasManuallyOverridden && operation.status !== "CANCELED");
+    const now = new Date().toISOString();
+    for (const operation of operations) {
+      const resolved = this.resolveServiceRateRule({
+        organizationId: operation.organizationId,
+        businessPartnerId: operation.responsiblePartnerId,
+        ownLegalEntityId: operation.ownLegalEntityId,
+        productId: operation.productId,
+        operationScope: operation.operationScope,
+        operationDate: operation.operationDate
+      });
+      if (resolved.status !== "found" || resolved.rateValueCents === null) continue;
+      const serviceAmountCents = multiplyDecimalByCents(operation.quantitySacks, resolved.rateValueCents);
+      if (operation.serviceRateRuleId === resolved.rule?.id && operation.appliedRateValueCents === resolved.rateValueCents && operation.serviceAmountCents === serviceAmountCents) continue;
+      this.db.prepare("UPDATE operations SET service_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, updated_at = ? WHERE id = ?")
+        .run(resolved.rule?.id ?? null, resolved.rateValueCents, serviceAmountCents, now, operation.id);
+    }
   }
 
   createClientChargeDraft(input: unknown): ClientChargeDetail {
@@ -1519,7 +1663,7 @@ export class AppRepository {
   addChargeAdjustment(input: unknown): ClientChargeDetail {
     const data = clientChargeAdjustmentInputSchema.parse(input);
     const charge = this.getClientCharge(data.clientChargeId).charge;
-    if (!["DRAFT", "PENDING_REVIEW"].includes(charge.status)) throw new Error("Ajustes bloqueados apos emissao.");
+    if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status)) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
     if (data.adjustmentType === "MANUAL_ADJUSTMENT" && !data.reason?.trim()) throw new Error("Ajuste manual exige justificativa.");
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -1533,7 +1677,7 @@ export class AppRepository {
     const row = this.db.prepare("SELECT client_charge_id AS chargeId FROM client_charge_adjustments WHERE id = ?").get(id) as { chargeId: string } | undefined;
     if (!row) throw new Error("Ajuste nao encontrado.");
     const charge = this.getClientCharge(row.chargeId).charge;
-    if (!["DRAFT", "PENDING_REVIEW"].includes(charge.status)) throw new Error("Ajustes bloqueados apos emissao.");
+    if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status)) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
     this.db.prepare("DELETE FROM client_charge_adjustments WHERE id = ?").run(id);
     this.recalculateClientCharge(row.chargeId);
     return this.getClientCharge(row.chargeId);
@@ -1618,7 +1762,8 @@ export class AppRepository {
     const organization = this.getOrganization(detail.charge.organizationId);
     const ownLegalEntity = this.getLegalEntity(detail.charge.ownLegalEntityId);
     const client = this.getBusinessPartner(detail.charge.clientPartnerId);
-    const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, detail });
+    const clientLegalEntity = this.listPartnerLegalEntities(client.id).find((entity) => entity.isPrimary && entity.isActive) ?? this.listPartnerLegalEntities(client.id).find((entity) => entity.isActive) ?? null;
+    const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, clientLegalEntity, detail });
     const version = detail.documents.length + 1;
     const now = new Date().toISOString();
     this.db.prepare("INSERT INTO charge_document_versions (id, client_charge_id, version, pdf_file_path, pdf_file_hash, excel_file_path, excel_file_hash, image_file_path, image_file_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -1714,19 +1859,23 @@ export class AppRepository {
     return (this.db.prepare(`SELECT * FROM client_ledger_entries WHERE ${clauses.join(" AND ")} ORDER BY entry_date DESC, created_at DESC`).all(...params) as DbRecord[]).map(mapClientLedgerEntry);
   }
 
-  getBillingSummary(organizationId: string): BillingSummary {
+  getBillingSummary(input: string | { organizationId: string; ownLegalEntityId?: string | null }): BillingSummary {
+    const organizationId = typeof input === "string" ? input : input.organizationId;
+    const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
     this.assertOrganizationWritable(organizationId);
-    const charges = (this.db.prepare("SELECT * FROM client_charges WHERE organization_id = ? AND status != 'CANCELLED'").all(organizationId) as DbRecord[]).map(mapClientCharge);
-    const credits = this.db.prepare("SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE organization_id = ? AND status = 'CONFIRMED'").get(organizationId) as { total: number };
-    const unbilled = (this.db.prepare("SELECT COUNT(*) AS total FROM operations WHERE organization_id = ? AND status = 'CONFIRMED' AND billing_status = 'UNBILLED'").get(organizationId) as { total: number }).total;
+    this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
+    const charges = (this.db.prepare(`SELECT * FROM client_charges WHERE organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status != 'CANCELLED'`).all(...(ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId])) as DbRecord[]).map(mapClientCharge);
+    const credits = this.db.prepare(`SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status = 'CONFIRMED'`).get(...(ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId])) as { total: number };
+    const unbilledRows = this.listOperations({ organizationId, ownLegalEntityId, status: "CONFIRMED", billingStatus: "UNBILLED" });
+    const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
       receivedCents: charges.reduce((sum, item) => sum + item.paidAmountCents, 0),
-      openCents: charges.reduce((sum, item) => sum + item.openAmountCents, 0),
+      openCents: charges.reduce((sum, item) => sum + item.openAmountCents, 0) + unbilledServiceCents,
       overdueCents: charges.filter((item) => item.status === "OVERDUE").reduce((sum, item) => sum + item.openAmountCents, 0),
       availableCreditsCents: Number(credits.total),
-      unbilledOperations: Number(unbilled),
-      unbilledSacks: "0",
+      unbilledOperations: unbilledRows.length,
+      unbilledSacks: unbilledRows.length ? sumDecimalTexts(unbilledRows.map((item) => item.quantitySacks)) : "0",
       billedSacks: "0"
     };
   }
@@ -1739,7 +1888,13 @@ export class AppRepository {
   }
 
   saveInstallationProfile(input: unknown): InstallationProfile {
-    const profile = saveInstallationProfileSchema.parse(input);
+    const parsedProfile = saveInstallationProfileSchema.parse(input);
+    const profile = {
+      ...parsedProfile,
+      appVariant: "multiempresa" as const,
+      allowOrganizationSwitch: true,
+      allowLegalEntitySwitch: true
+    };
     this.validateProfileInput(profile);
     const now = new Date().toISOString();
     const existing = this.getInstallationProfile();
@@ -1814,9 +1969,6 @@ export class AppRepository {
     if (!existing) {
       throw new Error("Perfil de instalacao nao configurado.");
     }
-    if (!existing.allowOrganizationSwitch || existing.appVariant !== "multiempresa") {
-      throw new Error("Esta instalacao nao permite trocar organizacao.");
-    }
     const organization = this.getOrganization(organizationId);
     if (!organization.isActive) {
       throw new Error("Organizacao inativa nao pode ser selecionada.");
@@ -1878,9 +2030,9 @@ export class AppRepository {
       }
     }
     const own = this.resolveOwnLegalEntityForXml(job.organizationId, extracted, resolution);
-    if (!own.ownLegalEntityId) throw new Error("CNPJ proprio nao identificado.");
+    if (!own.ownLegalEntityId) throw new Error(own.errorMessage ?? "CNPJ proprio nao identificado.");
     const explicitClientPartnerId = typeof resolution.clientPartnerId === "string" ? resolution.clientPartnerId : null;
-    const autoMatchedPartnerId = explicitClientPartnerId ? null : this.resolveCounterpartyPartnerForXml(job.organizationId, extracted, own.ownLegalEntityId);
+    const autoMatchedPartnerId = explicitClientPartnerId ? null : this.resolveCounterpartyPartnerForXml(job.organizationId, extracted, own.ownLegalEntityId, own.direction);
     const responsiblePartnerId = explicitClientPartnerId ?? autoMatchedPartnerId;
     if (!responsiblePartnerId) {
       this.db.prepare("UPDATE xml_import_files SET status = 'PENDING_REVIEW', error_code = NULL, error_message = ?, updated_at = ? WHERE id = ?")
@@ -1978,11 +2130,27 @@ export class AppRepository {
     this.db.prepare("UPDATE xml_import_jobs SET imported_events = imported_events + 1 WHERE id = ?").run(job.id);
   }
 
-  private resolveOwnLegalEntityForXml(organizationId: string, extracted: Record<string, unknown>, resolution: Record<string, unknown>): { ownLegalEntityId: string | null; direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"; operationType: "PURCHASE" | "SALE" } {
-    if (typeof resolution.ownLegalEntityId === "string") return { ownLegalEntityId: resolution.ownLegalEntityId, direction: "UNKNOWN", operationType: "SALE" };
-    const issuerDoc = this.onlyDigits(String((extracted.issuer as Record<string, unknown> | undefined)?.cnpjCpf ?? ""));
-    const recipientDoc = this.onlyDigits(String((extracted.recipient as Record<string, unknown> | undefined)?.cnpjCpf ?? ""));
+  private resolveOwnLegalEntityForXml(
+    organizationId: string,
+    extracted: Record<string, unknown>,
+    resolution: Record<string, unknown>
+  ): { ownLegalEntityId: string | null; direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"; operationType: "PURCHASE" | "SALE"; errorMessage?: string } {
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? ""));
+    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
     const allEntities = this.listLegalEntities({ status: "all" });
+    if (typeof resolution.ownLegalEntityId === "string") {
+      const selectedOwn = allEntities.find((entity) => entity.id === resolution.ownLegalEntityId);
+      if (!selectedOwn || selectedOwn.organizationId !== organizationId) throw new Error("CNPJ proprio selecionado nao pertence a organizacao atual.");
+      if (!selectedOwn.isActive) throw new Error("CNPJ proprio selecionado esta inativo.");
+      if (selectedOwn.cnpj && selectedOwn.cnpj !== issuerDoc && selectedOwn.cnpj !== recipientDoc) {
+        throw new Error("XML nao pertence ao CNPJ proprio selecionado. Troque a empresa ativa antes de importar ou selecione o CNPJ correto.");
+      }
+      if (selectedOwn.cnpj && selectedOwn.cnpj === issuerDoc) return { ownLegalEntityId: selectedOwn.id, direction: "OUTBOUND", operationType: "SALE" };
+      if (selectedOwn.cnpj && selectedOwn.cnpj === recipientDoc) return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
+      return { ownLegalEntityId: selectedOwn.id, direction: "UNKNOWN", operationType: "SALE" };
+    }
     const issuerOwn = allEntities.find((entity) => entity.organizationId === organizationId && entity.cnpj === issuerDoc);
     const recipientOwn = allEntities.find((entity) => entity.organizationId === organizationId && entity.cnpj === recipientDoc);
     const otherOrg = allEntities.find((entity) => entity.organizationId !== organizationId && (entity.cnpj === issuerDoc || entity.cnpj === recipientDoc));
@@ -1991,17 +2159,50 @@ export class AppRepository {
     if (recipientOwn && !recipientOwn.isActive) throw new Error("CNPJ proprio destinatario esta inativo.");
     if (issuerOwn) return { ownLegalEntityId: issuerOwn.id, direction: "OUTBOUND", operationType: "SALE" };
     if (recipientOwn) return { ownLegalEntityId: recipientOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
-    return { ownLegalEntityId: null, direction: "UNKNOWN", operationType: "SALE" };
+
+    const organizationEntities = allEntities.filter((entity) => entity.organizationId === organizationId);
+    const issuerByIdentity = this.resolveOwnLegalEntityByXmlParty(organizationEntities, issuer);
+    const recipientByIdentity = this.resolveOwnLegalEntityByXmlParty(organizationEntities, recipient);
+    if (issuerByIdentity && !issuerByIdentity.isActive) throw new Error("CNPJ proprio emitente esta inativo.");
+    if (recipientByIdentity && !recipientByIdentity.isActive) throw new Error("CNPJ proprio destinatario esta inativo.");
+    if (issuerByIdentity) return { ownLegalEntityId: issuerByIdentity.id, direction: "OUTBOUND", operationType: "SALE" };
+    if (recipientByIdentity) return { ownLegalEntityId: recipientByIdentity.id, direction: "INBOUND", operationType: "PURCHASE" };
+
+    const issuerLabel = [issuerDoc || "sem CNPJ", this.stringOrNull(issuer?.state) ?? null, this.stringOrNull(issuer?.legalName) ?? null].filter(Boolean).join(" - ");
+    const recipientLabel = [recipientDoc || "sem CNPJ", this.stringOrNull(recipient?.state) ?? null, this.stringOrNull(recipient?.legalName) ?? null].filter(Boolean).join(" - ");
+    return {
+      ownLegalEntityId: null,
+      direction: "UNKNOWN",
+      operationType: "SALE",
+      errorMessage: `CNPJ proprio nao identificado. Cadastre o CNPJ proprio da empresa ou selecione a empresa/CNPJ correto. Emitente: ${issuerLabel || "-"}; Destinatario: ${recipientLabel || "-"}.`
+    };
   }
 
-  private resolveCounterpartyPartnerForXml(organizationId: string, extracted: Record<string, unknown>, ownLegalEntityId: string): string | null {
+  private resolveOwnLegalEntityByXmlParty(entities: LegalEntity[], party: Record<string, unknown> | undefined): LegalEntity | null {
+    const state = this.stringOrNull(party?.state)?.toUpperCase() ?? null;
+    if (!state) return null;
+    const stateAliases: Record<string, string[]> = {
+      MG: ["MG", "MINAS GERAIS", "MONTE SANTO DE MINAS"],
+      ES: ["ES", "ESPIRITO SANTO"],
+      SP: ["SP", "SAO PAULO"]
+    };
+    const aliases = stateAliases[state] ?? [state];
+    const matches = entities.filter((entity) => {
+      if (entity.state?.toUpperCase() === state) return true;
+      const haystack = this.normalizeName(`${entity.legalName} ${entity.tradeName} ${entity.city} ${entity.state}`);
+      return aliases.some((alias) => haystack.includes(this.normalizeName(alias)));
+    });
+    return matches.find((entity) => entity.isActive) ?? matches[0] ?? null;
+  }
+
+  private resolveCounterpartyPartnerForXml(organizationId: string, extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
     const ownEntity = this.listLegalEntities({ organizationId, status: "all" }).find((entity) => entity.id === ownLegalEntityId);
     const ownCnpj = ownEntity?.cnpj ?? null;
     const issuer = extracted.issuer as Record<string, unknown> | undefined;
     const recipient = extracted.recipient as Record<string, unknown> | undefined;
     const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? ""));
     const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
-    const counterpartyIsRecipient = ownCnpj !== null && issuerDoc === ownCnpj;
+    const counterpartyIsRecipient = direction === "OUTBOUND" || (direction === "UNKNOWN" && ownCnpj !== null && issuerDoc === ownCnpj);
     const counterpartyDoc = counterpartyIsRecipient ? recipientDoc : issuerDoc;
     const counterpartyParty = counterpartyIsRecipient ? recipient : issuer;
     const counterpartyTradeName = this.stringOrNull(counterpartyParty?.tradeName);
@@ -2140,6 +2341,8 @@ export class AppRepository {
     }
     this.db.prepare("UPDATE client_charges SET subtotal_services_cents = ?, additions_cents = ?, deductions_cents = ?, final_amount_cents = ?, paid_amount_cents = ?, open_amount_cents = ?, status = ?, updated_at = ? WHERE id = ?")
       .run(subtotal, additions, deductions, finalAmount, paid, open, status, new Date().toISOString(), id);
+    this.db.prepare("UPDATE client_ledger_entries SET amount_cents = ?, updated_at = ? WHERE client_charge_id = ? AND entry_type = 'SERVICE_CHARGE'")
+      .run(finalAmount, new Date().toISOString(), id);
   }
 
   private reserveNextChargeNumber(organizationId: string, ownLegalEntityId: string, yearText: string): string {
@@ -3131,6 +3334,7 @@ export class AppRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     const template = data.templateId ? this.getDealConfirmationTemplate(data.templateId) : this.getDefaultDealTemplate(data.organizationId, data.ownLegalEntityId);
+    const bankDefaults = this.resolveDealBankDefaults(own, data);
     const trx = this.db.transaction(() => {
       this.db.prepare(`INSERT INTO deal_confirmations (
         id, organization_id, own_legal_entity_id, template_id, confirmation_number, temporary_reference,
@@ -3140,7 +3344,7 @@ export class AppRepository {
         brokerage_percentage_basis_points, bank_name, bank_code, bank_agency, bank_account, pix_key,
         template_snapshot_json, pending_issues_json, created_at, updated_at
       ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
-        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, `TMP-${now.slice(0, 10).replace(/-/g, "")}-${id.slice(0, 8)}`, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, data.bankName ?? null, data.bankCode ?? null, data.bankAgency ?? null, data.bankAccount ?? null, data.pixKey ?? null, template ? JSON.stringify(template) : null, now, now);
+        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, `TMP-${now.slice(0, 10).replace(/-/g, "")}-${id.slice(0, 8)}`, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.pixKey, template ? JSON.stringify(template) : null, now, now);
       this.addDealPartyInternal({ dealConfirmationId: id, partyRole: "ISSUER", ownLegalEntityId: own.id, businessPartnerId: null, partnerLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 0 });
       this.recordDealStatus(id, null, "DRAFT", "Rascunho criado");
     });
@@ -3152,7 +3356,10 @@ export class AppRepository {
   createDealConfirmationFromOperations(input: unknown): DealConfirmationDetail {
     const data = dealConfirmationSourceInputSchema.parse(input);
     if (data.operationIds.length === 0) throw new Error("Selecione ao menos uma operacao.");
-    const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
+    const operations = data.operationIds.map((operationId) => this.getOperation(operationId));
+    const operationOwnIds = [...new Set(operations.map((operation) => operation.ownLegalEntityId))];
+    if (operationOwnIds.length > 1) throw new Error("Selecione operacoes do mesmo CNPJ proprio para gerar uma confirmacao.");
+    const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: operationOwnIds[0] ?? data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
     const trx = this.db.transaction(() => {
       data.operationIds.forEach((operationId) => {
         this.linkDealOperationInternal(draft.confirmation.id, operationId);
@@ -3189,7 +3396,10 @@ export class AppRepository {
   createDealConfirmationFromFiscalDocuments(input: unknown): DealConfirmationDetail {
     const data = dealConfirmationSourceInputSchema.parse(input);
     if (data.fiscalDocumentIds.length === 0) throw new Error("Selecione ao menos uma nota.");
-    const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
+    const fiscalDocuments = data.fiscalDocumentIds.map((documentId) => this.getFiscalDocument(documentId).document);
+    const documentOwnIds = [...new Set(fiscalDocuments.map((document) => document.ownLegalEntityId))];
+    if (documentOwnIds.length > 1) throw new Error("Selecione notas do mesmo CNPJ proprio para gerar uma confirmacao.");
+    const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: documentOwnIds[0] ?? data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
     const trx = this.db.transaction(() => {
       data.fiscalDocumentIds.forEach((documentId) => {
         this.linkDealFiscalDocumentInternal(draft.confirmation.id, documentId);
@@ -4111,26 +4321,9 @@ export class AppRepository {
     }
   }
 
-  private getVariantOrganizationSlug(variant: AppVariant): string | null {
-    if (variant === "villa") {
-      return "villa-coffee";
-    }
-    if (variant === "grao") {
-      return "grao-e-grao";
-    }
-    return null;
-  }
-
   private isOrganizationAllowed(organizationId: string): boolean {
-    const profile = this.getInstallationProfile();
-    if (!profile) {
-      return true;
-    }
-    if (profile.appVariant === "multiempresa") {
-      return true;
-    }
-    const row = this.db.prepare("SELECT slug FROM organizations WHERE id = ?").get(organizationId) as { slug: string } | undefined;
-    return row?.slug === this.getVariantOrganizationSlug(profile.appVariant);
+    void organizationId;
+    return true;
   }
 
   private assertOrganizationWritable(organizationId: string): void {
@@ -4145,6 +4338,19 @@ export class AppRepository {
     if (!data.isDraft && (!data.cnpj || !isValidCnpj(data.cnpj))) {
       throw new Error("CNPJ invalido.");
     }
+  }
+
+  private resolveDealBankDefaults(
+    ownLegalEntity: LegalEntity,
+    data: ReturnType<typeof dealConfirmationDraftInputSchema.parse>
+  ): { bankName: string | null; bankCode: string | null; bankAgency: string | null; bankAccount: string | null; pixKey: string | null } {
+    return {
+      bankName: data.bankName ?? ownLegalEntity.defaultBankName ?? null,
+      bankCode: data.bankCode ?? ownLegalEntity.defaultBankCode ?? null,
+      bankAgency: data.bankAgency ?? ownLegalEntity.defaultBankAgency ?? null,
+      bankAccount: data.bankAccount ?? ownLegalEntity.defaultBankAccount ?? null,
+      pixKey: data.pixKey ?? ownLegalEntity.defaultPixKey ?? null
+    };
   }
 
   private assertValidLocation(data: ReturnType<typeof locationInputSchema.parse>): void {
@@ -4345,9 +4551,6 @@ export class AppRepository {
       const organization = this.getOrganization(profile.defaultOrganizationId);
       if (!organization.isActive) {
         throw new Error("Organizacao padrao precisa estar ativa.");
-      }
-      if (profile.appVariant !== "multiempresa" && organization.slug !== this.getVariantOrganizationSlug(profile.appVariant)) {
-        throw new Error("Organizacao nao autorizada para a variante.");
       }
     }
     if (profile.defaultLegalEntityId) {

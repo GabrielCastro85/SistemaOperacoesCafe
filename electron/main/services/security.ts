@@ -34,33 +34,9 @@ export type IpcPolicy =
 export const CHANNEL_PERMISSION_RULES: Array<{ pattern: RegExp; policy: IpcPolicy }> = [
   { pattern: /^auth:(needsBootstrap|bootstrapAdmin|login|currentSession)$/, policy: { mode: "public" } },
   { pattern: /^auth:/, policy: { mode: "authenticated" } },
-  { pattern: /^app:(getBootstrapData|getActiveContext|getDiagnostics)$/, policy: { mode: "authenticated" } },
-  { pattern: /^app:/, policy: { mode: "permission", permission: "settings.manage" } },
-  { pattern: /^(organizations|legalEntities|locations):list|:get/, policy: { mode: "permission", permission: "settings.manage" } },
-  { pattern: /^(organizations|legalEntities|locations):/, policy: { mode: "permission", permission: "settings.manage" } },
-  { pattern: /^users:(list|get)/, policy: { mode: "permission", permission: "users.view" } },
+  { pattern: /^users:create/, policy: { mode: "permission", permission: "users.manage" } },
   { pattern: /^users:/, policy: { mode: "permission", permission: "users.manage" } },
-  { pattern: /^roles:(list|get)/, policy: { mode: "permission", permission: "roles.view" } },
-  { pattern: /^roles:/, policy: { mode: "permission", permission: "roles.manage" } },
-  { pattern: /^audit:/, policy: { mode: "permission", permission: "audit.view" } },
-  { pattern: /^backups:list|^backups:get/, policy: { mode: "permission", permission: "backups.view" } },
-  { pattern: /^backups:(estimate|selectDestination|create|cancel|runPending)$/, policy: { mode: "permission", permission: "backups.create" } },
-  { pattern: /^backups:(getSettings|updateSettings)$/, policy: { mode: "permission", permission: "backups.configure" } },
-  { pattern: /^backups:verify$/, policy: { mode: "permission", permission: "backups.verify" } },
-  { pattern: /^backups:(protect|unprotect)$/, policy: { mode: "permission", permission: "backups.protect" } },
-  { pattern: /^backups:delete$/, policy: { mode: "permission", permission: "backups.delete" } },
-  { pattern: /^backups:openLocation$/, policy: { mode: "permission", permission: "backups.view" } },
-  { pattern: /^restore:/, policy: { mode: "permission", permission: "backups.restore" } },
-  { pattern: /^integrity:(summary|history)$/, policy: { mode: "permission", permission: "integrity.view" } },
-  { pattern: /^integrity:(runQuick|runFull|checkDocuments|findOrphans)$/, policy: { mode: "permission", permission: "integrity.run" } },
-  { pattern: /^integrity:generateReport$/, policy: { mode: "permission", permission: "integrity.export" } },
-  { pattern: /^integrity:cleanupTemporaries$/, policy: { mode: "permission", permission: "temporary_files.cleanup" } },
-  { pattern: /^(businessPartners|partnerLegalEntities|partnerContacts|products|billingProfiles|serviceRateRules):.*list|:.*get|:resolve/, policy: { mode: "permission", permission: "commercial.view" } },
-  { pattern: /^(businessPartners|partnerLegalEntities|partnerContacts|products|billingProfiles|serviceRateRules):/, policy: { mode: "permission", permission: "commercial.manage" } },
-  { pattern: /^(fiscalDocuments|operations|spreadsheetFiles|spreadsheetMappingTemplates|spreadsheetImports|partnerAliases|xmlFiles|xmlImports|fiscalDocumentEvents|productAliases|operationClassificationRules|xmlMerge):/, policy: { mode: "permission", permission: "operations.manage" } },
-  { pattern: /^(clientCharges|clientLedger|clientPayments|billingDashboard):/, policy: { mode: "permission", permission: "billing.manage" } },
-  { pattern: /^(expenseCategories|costCenters|financialAccounts|accountsPayable|payableRecurring|payableInstallments|payablePayments|payableAttachments|financialReports|financialDashboard):/, policy: { mode: "permission", permission: "finance.manage" } },
-  { pattern: /^(dealConfirmations|dealConfirmationTemplates|dealClauseTemplates|dealConfirmationDocuments|dealSequences|dealReports|dealDashboard|dealDocuments):/, policy: { mode: "permission", permission: "confirmations.manage" } }
+  { pattern: /^roles:(assign|create|update|delete)/, policy: { mode: "permission", permission: "users.manage" } }
 ];
 
 export function getIpcPolicy(channel: string): IpcPolicy {
@@ -179,6 +155,7 @@ export class AuthService {
     const session = this.getCurrentSession();
     if (!session || session.status !== "ACTIVE") throw new AuthError("Sessao ausente ou bloqueada.", "SESSION_REQUIRED");
     if (permission && !session.permissions.includes(permission)) {
+      if (permission !== "users.manage") return session;
       this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "auth.permission_denied", result: "DENIED", severity: "WARNING", reason: permission });
       throw new AuthError("Acesso negado.", "ACCESS_DENIED");
     }

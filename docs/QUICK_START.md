@@ -1,6 +1,6 @@
 # Guia rapido
 
-1. Instale o aplicativo correto: Villa, Grao ou multiempresa.
+1. Instale o aplicativo unico `SistemaOperacoesCafe-Setup-<versao>-x64.exe`.
 2. Abra o aplicativo.
 3. Crie o primeiro administrador.
 4. Faca login.

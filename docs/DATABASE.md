@@ -58,6 +58,12 @@ Credenciais guardam somente hash `scrypt` versionado e salt aleatorio. Roles e p
 
 Migration `013_backups_integrity`: cria `backup_jobs`, `backup_file_entries`, `backup_settings`, `restore_jobs`, `integrity_check_runs` e `integrity_check_findings`.
 
+Migration `016_unified_company_context`: consolida o app como instalador unico multiempresa, normaliza perfis de instalacao, preserva Villa Coffee e Grao & Grao como organizacoes visuais e padroniza as unidades ativas Villa Coffee Minas Gerais, Villa Coffee Espirito Santo, Grao & Grao Minas Gerais e Grao & Grao Sao Paulo.
+
+Migration `017_real_company_legal_entities`: substitui os CNPJs demonstrativos pelas empresas reais Villa Coffee MG, Villa Coffee ES, Grao & Grao MG e Grao & Grao SP, preenchendo dados cadastrais publicos encontrados por CNPJ.
+
+Migration `018_legal_entity_confirmation_defaults`: adiciona padroes de banco/PIX por CNPJ proprio para preenchimento automatico de fechamentos, atualiza inscricoes estaduais dos modelos conferidos e mantem os dados editaveis na tela de confirmacao.
+
 Pacotes de backup ficam fora do SQLite, em arquivo `.cafebackup`. O banco registra historico, status, hashes, destino, protecao, verificacao, restauracoes e findings de integridade. Permissoes de backup, restauracao, integridade, retencao e limpeza sao semeadas de forma idempotente.
 
-Homologacao `1.0.0-rc.1`: nenhuma migration nova foi criada apenas para mudar versao de aplicativo. A ultima migration permanece `013_backups_integrity`.
+Homologacao `1.0.0-rc.1`: a ultima migration aprovada e `018_legal_entity_confirmation_defaults`.

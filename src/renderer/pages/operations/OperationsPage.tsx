@@ -1,25 +1,33 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { BootstrapData, BusinessPartner, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateBr, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
 import { EmptyState, FileDropzone, ListStepsIcon, PageHeader, StatusBadge, Stepper, Tabs } from "../../design-system";
 import type { StepperStep } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
-import { requestTextInput } from "../../utils/dialogs";
+import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { parseNfeExtractedPreview, resolveOwnAndCounterparty } from "./xmlPreview";
 
 function decimalTextBr(value: string | null): string {
   return value ? value.replace(".", ",") : "-";
 }
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+}
+
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const ownLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
+  const [documentServiceInfo, setDocumentServiceInfo] = useState<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>({});
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
-  const [indicators, setIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState("");
   const [number, setNumber] = useState("");
@@ -53,15 +61,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
-    setDocuments(await window.operationsCafe.listFiscalDocuments({ organizationId, status: "all" }));
-    setIndicators(await window.operationsCafe.getOperationalIndicators(organizationId));
+    const fiscalDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "all" });
+    setDocuments(fiscalDocuments);
+    const details = await Promise.all(fiscalDocuments.map((doc) => window.operationsCafe.getFiscalDocument(doc.id)));
+    setDocumentServiceInfo(Object.fromEntries(details.map((docDetail) => {
+      const sacks = docDetail.operations.map((op) => op.quantitySacks).reduce((total, value) => String(Number(total) + Number(value)), "0");
+      const rateValues = Array.from(new Set(docDetail.operations.map((op) => op.appliedRateValueCents)));
+      return [docDetail.document.id, {
+        sacks,
+        rateCents: rateValues.length === 1 ? rateValues[0] : null,
+        serviceCents: docDetail.operations.reduce((total, op) => total + op.serviceAmountCents, 0),
+        missingRate: docDetail.operations.some((op) => op.appliedRateValueCents === 0)
+      }];
+    })));
     setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
     setXmlHistory(await window.operationsCafe.listXmlImportJobs(organizationId));
-  }, [organizationId]);
+  }, [organizationId, ownLegalEntityId]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const parseCurrency = (value: string): number => Math.round(Number(value.replace(".", "").replace(",", ".")) * 100);
+  const parseCurrency = (value: string): number => parseCurrencyToCents(value);
 
   async function createDocument(): Promise<void> {
     try {
@@ -138,6 +157,23 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setMessage(`Valor por saca alterado manualmente para ${formatCurrencyFromCents(manualRateValueCents)}.`);
   }
 
+  async function deleteCurrentDocument(): Promise<void> {
+    if (!detail) return;
+    const confirmed = await requestDecision({
+      title: "Excluir nota definitivamente",
+      message: `Deseja excluir a nota ${detail.document.documentNumber}? Itens e operacoes vinculados a ela tambem serao removidos.`
+    });
+    if (!confirmed) return;
+    try {
+      await window.operationsCafe.deleteFiscalDocument(detail.document.id);
+      setDetail(null);
+      setMessage("Nota excluida definitivamente.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir nota."}`);
+    }
+  }
+
   async function selectSpreadsheet(): Promise<void> {
     try {
       const selected = await window.operationsCafe.selectSpreadsheetFile();
@@ -199,11 +235,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             : (await window.operationsCafe.selectXmlFolder(includeXmlSubfolders)).files;
       if (selected.length === 0) return;
       const inspections = await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token));
+      const invalidCount = inspections.filter((file) => file.status === "ERROR").length;
       setXmlSelections(selected);
       setXmlQueue(inspections);
       setXmlJob(null);
-      setSelectedXmlToken(inspections[0]?.token ?? null);
-      setMessage(`${inspections.length} XML(s) inspecionado(s).`);
+      setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
+      setMessage(
+        invalidCount
+          ? `${inspections.length} XML(s) inspecionado(s). ${invalidCount} arquivo(s) com erro.`
+          : `${inspections.length} XML(s) inspecionado(s).`
+      );
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar XML."}`);
     }
@@ -316,6 +357,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedXmlParties = resolveOwnAndCounterparty(selectedXmlPreview, data.legalEntities);
   const selectedXmlItem = selectedXmlPreview?.items[0] ?? null;
+  const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
   const xmlJobStatus = xmlJob?.job.status;
   const xmlImportSteps: StepperStep[] = [
     { id: "import", label: "Importar arquivo", status: xmlQueue.length > 0 ? "complete" : "current" },
@@ -332,6 +374,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             : "pending"
     }
   ];
+  const visibleServiceCents = Object.values(documentServiceInfo).reduce((sum, item) => sum + item.serviceCents, 0);
+  const detailMainItem = detail?.items[0] ?? null;
+  const detailMainOperation = detail?.operations[0] ?? null;
+  const operationTypeLabel = detailMainOperation?.operationType === "PURCHASE" ? "Compra" : detailMainOperation?.operationType === "SALE" ? "Venda" : "-";
+  const operationScopeLabel = detailMainOperation?.operationScope === "INTERNAL" ? "Interna" : detailMainOperation?.operationScope === "EXTERNAL" ? "Externa" : "-";
 
   return (
     <section className="content-section settings">
@@ -352,18 +399,23 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       <Tabs
         active={pageTab}
         items={[
+          { id: "xml", label: "XML NF-e" },
           { id: "documents", label: "Notas fiscais" },
-          { id: "spreadsheets", label: "Planilhas" },
-          { id: "xml", label: "XML NF-e" }
+          { id: "spreadsheets", label: "Planilhas" }
         ]}
         onChange={setPageTab}
       />
       {pageTab === "documents" && <>
       <AdminBlock title="Notas e operacoes manuais">
+        <div className="operation-context-note">
+          <span>CNPJ ativo para notas</span>
+          <strong>{ownLegalEntity?.tradeName ?? "Nao selecionado"}</strong>
+          <small>{ownLegalEntity?.cnpj ?? "CNPJ pendente"} - a lista abaixo mostra somente notas desse CNPJ.</small>
+        </div>
         <div className="cards">
-          <article><span>Notas</span><strong>{indicators?.documents ?? 0}</strong></article>
-          <article><span>Pendencias</span><strong>{indicators?.pending ?? 0}</strong></article>
-          <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(indicators?.serviceAmountCents ?? 0)}</strong></article>
+          <article><span>Notas deste CNPJ</span><strong>{documents.length}</strong></article>
+          <article><span>Pendencias</span><strong>{documents.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length}</strong></article>
+          <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(visibleServiceCents)}</strong></article>
         </div>
         <FormGrid>
           <SelectField label="Cliente responsavel" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
@@ -372,21 +424,52 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
         </FormGrid>
-        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span>{doc.status}</span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{doc.duplicateWarning ?? "-"}</span><span><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>)}</div>
+        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
+          const info = documentServiceInfo[doc.id];
+          const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span>{doc.status}</span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>;
+        })}</div>
       </AdminBlock>
       {detail ? <AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
-        <FormGrid>
-          <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
-          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-          <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
-          <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
-          <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
-          <TextField label="Sacas" value={sacks} onChange={setSacks} />
-          <button onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
-          <button onClick={() => void overrideFirstOperation()}>Alterar valor primeira operacao</button>
-          <button onClick={() => window.operationsCafe.confirmFiscalDocument(detail.document.id).then((updated) => { setDetail(updated); void load(); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao confirmar."}`))}>Confirmar</button>
-          <button onClick={() => { void requestTextInput({ title: "Cancelar nota", label: "Motivo do cancelamento" }).then((reason) => { if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then((updated) => { setDetail(updated); void load(); }); }); }}>Cancelar</button>
-        </FormGrid>
+        <div className="invoice-detail-layout">
+          <section className="invoice-action-card invoice-action-card--wide">
+            <header><span>{detail.items.length ? "Dados da nota" : "Adicionar item"}</span><strong>{detail.items.length ? "Preenchido pelo XML/regra" : "Produto e classificacao"}</strong></header>
+            {detailMainItem || detailMainOperation ? (
+              <div className="invoice-auto-summary">
+                <div><span>Produto</span><strong>{detailMainItem?.description ?? products.find((product) => product.id === detailMainOperation?.productId)?.name ?? "-"}</strong></div>
+                <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${detailMainItem.unit}` : "-"}</strong></div>
+                <div><span>Preco comercial</span><strong>{detailMainItem ? decimalTextBr(detailMainItem.unitPriceDecimal) : "-"}</strong></div>
+                <div><span>Sacas</span><strong>{detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
+                <div><span>Classificacao</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
+                <div><span>Servico calculado</span><strong>{detailMainOperation ? `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/saca)` : "-"}</strong></div>
+              </div>
+            ) : null}
+            {detail.items.length ? <p className="muted">Os campos abaixo servem apenas para adicionar outro item/operacao manualmente nesta nota.</p> : null}
+            <FormGrid>
+              <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
+              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+              <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
+              <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
+              <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
+              <TextField label="Sacas" value={sacks} onChange={setSacks} />
+            </FormGrid>
+            <button className="invoice-action-button invoice-action-button--primary" onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
+          </section>
+          <section className="invoice-action-card">
+            <header><span>Servico</span><strong>Valor por saca</strong></header>
+            <p className="muted">Altera manualmente a primeira operacao da nota e exige motivo.</p>
+            <button className="invoice-action-button" disabled={!detail.operations.length} onClick={() => void overrideFirstOperation()}>Alterar valor da primeira operacao</button>
+          </section>
+          <section className="invoice-action-card">
+            <header><span>Status</span><strong>Controle da nota</strong></header>
+            <p className="muted">Confirme para liberar cobranca ou cancele quando a nota deve permanecer no historico.</p>
+            <div className="invoice-action-row">
+              <button className="invoice-action-button invoice-action-button--primary" disabled={detail.document.status === "CONFIRMED" || detail.document.status === "CANCELED"} onClick={() => window.operationsCafe.confirmFiscalDocument(detail.document.id).then((updated) => { setDetail(updated); void load(); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao confirmar."}`))}>Confirmar nota</button>
+              <button className="invoice-action-button" disabled={detail.document.status === "CANCELED"} onClick={() => { void requestTextInput({ title: "Cancelar nota", label: "Motivo do cancelamento" }).then((reason) => { if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then((updated) => { setDetail(updated); void load(); }); }); }}>Cancelar nota</button>
+              <button className="invoice-action-button invoice-action-button--danger" onClick={() => void deleteCurrentDocument()}>Excluir nota</button>
+            </div>
+          </section>
+        </div>
         <div className="cards">
           <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${item.unit}`).join(" | ") || "Nenhum"}</strong></article>
           <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${op.operationScope}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
@@ -437,6 +520,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
                       <span>{file.originalFileName}</span>
                       <StatusBadge status={file.status} />
+                      <small>{formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
                     </button>
                   </li>
                 ))}
@@ -445,7 +529,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
             )}
             <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0}>Validar fila</button>
+              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection}>Validar fila</button>
             </div>
           </div>
 
@@ -471,6 +555,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
                 </dl>
               </>
+            ) : selectedXmlFile?.status === "ERROR" ? (
+              <EmptyState title="XML nao lido" description={selectedXmlFile.errorMessage ?? "O arquivo selecionado nao pode ser lido. Confira se ele nao esta vazio ou corrompido."} />
             ) : (
               <EmptyState title="Sem dados ainda" description="Selecione um arquivo na lista ao lado para ver os dados extraidos automaticamente." />
             )}
@@ -491,6 +577,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           </div>
         </div>
         {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
+        {xmlJob ? (
+          <div className="table">
+            <div className="table-head xml-files-grid"><span>Arquivo</span><span>Status</span><span>Tipo</span><span>Chave</span><span>Detalhe</span></div>
+            {xmlJob.files.map((file) => (
+              <div key={file.id} className="table-row xml-files-grid">
+                <span>{file.originalFileName}</span>
+                <span><StatusBadge status={file.status} /></span>
+                <span>{file.xmlType}</span>
+                <span>{file.accessKey ?? "-"}</span>
+                <span>{file.errorMessage ?? (file.warningCodesJson && file.warningCodesJson !== "[]" ? file.warningCodesJson : "Processado sem erro")}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {xmlJob && xmlJob.files.some((file) => file.status === "PENDING_REVIEW") ? (
           <div className="table">
             <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente</span><span>Acoes</span></div>
@@ -526,4 +626,3 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     </section>
   );
 }
-

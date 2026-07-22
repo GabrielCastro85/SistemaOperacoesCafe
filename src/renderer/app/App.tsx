@@ -3,8 +3,8 @@ import type { AuthSession, BootstrapData, InstallationProfile } from "../../shar
 import { AppLayout } from "../layouts/AppLayout";
 import "../styles/index.css";
 import { AuditPage } from "../pages/audit/AuditPage";
-import { AccessDeniedPage, FirstAdminSetupPage, LockScreen, LoginPage } from "../pages/auth/AuthPages";
-import { OrganizationPickerPage, rememberedOrganizationId, setRememberedOrganizationId } from "../pages/auth/OrganizationPickerPage";
+import { FirstAdminSetupPage, LockScreen, LoginPage } from "../pages/auth/AuthPages";
+import { OrganizationPickerPage, setRememberedOrganizationId } from "../pages/auth/OrganizationPickerPage";
 import { ConfirmationsPage } from "../pages/confirmations/ConfirmationsPage";
 import { ConfirmationReportsPage } from "../pages/confirmations/ConfirmationReportsPage";
 import { ClauseLibraryPage } from "../pages/confirmations/ClauseLibraryPage";
@@ -111,17 +111,18 @@ function RoutedApp(): JSX.Element {
 
   const activeOrganizations = data.organizations.filter((item) => item.isActive);
   const canPickOrganization = profile.appVariant === "multiempresa" && activeOrganizations.length > 1;
-  const orgAlreadyRemembered = rememberedOrganizationId() === profile.defaultOrganizationId;
-  if (canPickOrganization && !orgPickerDismissed && !orgAlreadyRemembered) {
+  if (canPickOrganization && !orgPickerDismissed) {
     return (
       <OrganizationPickerPage
         organizations={data.organizations}
         legalEntities={data.legalEntities}
         defaultOrganizationId={profile.defaultOrganizationId}
-        onSelect={(id, remember) => {
-          void window.operationsCafe.setActiveOrganization(id).then(async (nextProfile) => {
+        defaultLegalEntityId={profile.defaultLegalEntityId}
+        onSelect={(organizationId, legalEntityId) => {
+          void window.operationsCafe.setActiveOrganization(organizationId).then(async () => {
+            const nextProfile = await window.operationsCafe.setActiveLegalEntity(legalEntityId);
             setProfile(nextProfile);
-            setRememberedOrganizationId(remember ? id : null);
+            setRememberedOrganizationId(null);
             setOrgPickerDismissed(true);
             await refresh();
           });
@@ -154,7 +155,7 @@ function RoutedApp(): JSX.Element {
     setPath(nextPath);
   }
 
-  const page = canOpenRoute(path, session) ? renderRoute(path, data, profile, refresh, setProfile) : <AccessDeniedPage />;
+  const page = renderRoute(path, data, profile, refresh, setProfile);
 
   return (
     <AppLayout
@@ -253,19 +254,8 @@ function renderRoute(
   if (path.startsWith("/settings/system")) return <SystemSettingsPage />;
   if (path.startsWith("/audit")) return <AuditPage />;
   if (path.startsWith("/settings")) return <SettingsHomePage />;
-  if (path === "/dashboard" || path === "/") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={data.profile?.defaultOrganizationId ?? undefined} />;
+  if (path === "/dashboard" || path === "/") return <Dashboard organizations={data.organizations} legalEntities={data.legalEntities} locations={data.locations} organizationId={data.profile?.defaultOrganizationId ?? undefined} ownLegalEntityId={data.profile?.defaultLegalEntityId ?? null} />;
   return <NotFoundPage />;
-}
-
-function canOpenRoute(path: string, session: AuthSession): boolean {
-  if (path.startsWith("/audit")) return session.permissions.includes("audit.view");
-  if (path.startsWith("/settings/users")) return session.permissions.includes("users.view");
-  if (path.startsWith("/settings/roles")) return session.permissions.includes("roles.view");
-  if (path.startsWith("/settings/backups")) return session.permissions.includes("backups.view");
-  if (path.startsWith("/settings/restore")) return session.permissions.includes("backups.restore");
-  if (path.startsWith("/settings/integrity")) return session.permissions.includes("integrity.view");
-  if (path.startsWith("/settings/retention")) return session.permissions.includes("retention.manage");
-  return true;
 }
 
 function currentPath(): string {

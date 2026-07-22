@@ -26,9 +26,9 @@ afterEach(() => {
 });
 
 describe("admin services", () => {
-  it("blocks new organizations outside multiempresa and allows them in multiempresa", () => {
+  it("normalizes installation profile to the single multiempresa app and allows organizations", () => {
     const { repo, db } = setup();
-    repo.saveInstallationProfile({
+    const profile = repo.saveInstallationProfile({
       installationName: "Villa",
       appVariant: "villa",
       defaultOrganizationId: villaId,
@@ -37,17 +37,8 @@ describe("admin services", () => {
       allowLegalEntitySwitch: true,
       completedSetup: true
     });
-    expect(() => repo.createOrganization(sampleOrganization("nova"))).toThrow(/nao permite/);
-    repo.updateInstallationProfile({
-      installationName: "Multi",
-      appVariant: "multiempresa",
-      defaultOrganizationId: villaId,
-      defaultLegalEntityId: "33333333-3333-4333-8333-333333333331",
-      allowOrganizationSwitch: true,
-      allowLegalEntitySwitch: true,
-      completedSetup: true,
-      confirmVariantChange: true
-    });
+    expect(profile.appVariant).toBe("multiempresa");
+    expect(profile.allowOrganizationSwitch).toBe(true);
     expect(repo.createOrganization(sampleOrganization("nova")).slug).toBe("nova");
     expect(() => repo.createOrganization(sampleOrganization("nova"))).toThrow(/Slug/);
     db.close();

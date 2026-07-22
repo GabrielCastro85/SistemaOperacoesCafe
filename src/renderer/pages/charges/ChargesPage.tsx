@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, ClientCharge, ClientChargeDetail, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, parseCurrencyToCents } from "../../../shared/utils/format";
+import { formatCurrencyFromCents, formatCurrencyInput, parseCurrencyToCents } from "../../../shared/utils/format";
 import { EmptyState, PageHeader, Tabs } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
@@ -20,9 +20,11 @@ const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
 export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
+  const activeLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [charges, setCharges] = useState<ClientCharge[]>([]);
   const [eligible, setEligible] = useState<Operation[]>([]);
+  const [clientPeriodOperations, setClientPeriodOperations] = useState<Operation[]>([]);
   const [detail, setDetail] = useState<ClientChargeDetail | null>(null);
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [partnerSummary, setPartnerSummary] = useState<PartnerRateSummaryRow[]>([]);
@@ -42,12 +44,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
     setPartners(clients);
     setClientId((current) => current || clients[0]?.id || "");
-    setCharges(await window.operationsCafe.listClientCharges({ organizationId, status: "all" }));
-    setSummary(await window.operationsCafe.getBillingSummary(organizationId));
-  }, [organizationId]);
+    setCharges((await window.operationsCafe.listClientCharges({ organizationId, status: "all" })).filter((charge) => charge.ownLegalEntityId === ownLegalEntityId));
+    setSummary(await window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }));
+  }, [organizationId, ownLegalEntityId]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setEligible([]); setSearchedOperations(false); }, [clientId]);
+  useEffect(() => { setEligible([]); setClientPeriodOperations([]); setSearchedOperations(false); }, [clientId]);
 
   const loadPartnerSummary = useCallback(async () => {
     if (!ownLegalEntityId) return;
@@ -65,9 +67,38 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function findOperations(): Promise<void> {
     const found = await window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: clientId, periodStart, periodEnd });
+    const related = await window.operationsCafe.listOperations({ organizationId, ownLegalEntityId, responsiblePartnerId: clientId, periodStart, periodEnd, status: "all", billingStatus: "all" });
     setEligible(found);
+    setClientPeriodOperations(related);
+    setSummary(await window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }));
+    await loadPartnerSummary();
     setSearchedOperations(true);
     setMessage(found.length > 0 ? `${found.length} operacao(oes) elegivel(is) encontrada(s) no periodo.` : "Nenhuma operacao elegivel encontrada nesse periodo para esse cliente.");
+  }
+
+  function legalEntityLabel(id: string): string {
+    const entity = data.legalEntities.find((item) => item.id === id);
+    return entity ? `${entity.tradeName}${entity.cnpj ? ` - ${entity.cnpj}` : ""}` : id;
+  }
+
+  function operationBillingReason(operation: Operation): string {
+    if (operation.ownLegalEntityId !== ownLegalEntityId) return "Outro CNPJ proprio";
+    if (operation.status !== "CONFIRMED") return "Nota ainda nao confirmada";
+    if (operation.billingStatus !== "UNBILLED") return operation.billingStatus === "RESERVED" ? "Ja reservada em rascunho" : "Ja cobrada";
+    if (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0) return "Regra por saca zerada ou ausente";
+    return "Elegivel";
+  }
+
+  const diagnosticOperations = clientPeriodOperations.filter((operation) => !eligible.some((item) => item.id === operation.id));
+  const advanceCents = parseCurrencyToCents(advanceInput);
+  const discountCents = parseCurrencyToCents(discountInput);
+  const surchargeCents = parseCurrencyToCents(surchargeInput);
+  const previewFinalCents = detail
+    ? Math.max(0, detail.charge.finalAmountCents + surchargeCents - advanceCents - discountCents)
+    : 0;
+
+  function formatMoneyState(value: string, setter: (next: string) => void): void {
+    setter(formatCurrencyInput(value));
   }
 
   async function createDraft(): Promise<void> {
@@ -107,23 +138,30 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function applyAdjustments(): Promise<void> {
     if (!detail) return;
-    let current = detail;
-    const advanceCents = Math.round(Number(advanceInput.replace(",", ".") || "0") * 100);
-    const discountCents = Math.round(Number(discountInput.replace(",", ".") || "0") * 100);
-    const surchargeCents = Math.round(Number(surchargeInput.replace(",", ".") || "0") * 100);
-    if (advanceCents > 0) {
-      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: advanceCents, sortOrder: 10, reason: "Ajuste manual" });
+    try {
+      let current = detail;
+      const shouldRegenerateDocuments = !["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status);
+      if (advanceCents > 0) {
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: advanceCents, sortOrder: 10, reason: "Ajuste manual" });
+      }
+      if (discountCents > 0) {
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: "Ajuste manual" });
+      }
+      if (surchargeCents > 0) {
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: surchargeCents, sortOrder: 30, reason: "Ajuste manual" });
+      }
+      if (shouldRegenerateDocuments && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0)) {
+        current = await window.operationsCafe.regenerateChargeDocuments(current.charge.id);
+      }
+      setDetail(current);
+      setAdvanceInput("");
+      setDiscountInput("");
+      setSurchargeInput("");
+      setMessage(shouldRegenerateDocuments ? "Ajustes aplicados e documentos regenerados." : "Ajustes aplicados.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao aplicar ajustes."}`);
     }
-    if (discountCents > 0) {
-      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: "Ajuste manual" });
-    }
-    if (surchargeCents > 0) {
-      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: surchargeCents, sortOrder: 30, reason: "Ajuste manual" });
-    }
-    setDetail(current);
-    setAdvanceInput("");
-    setDiscountInput("");
-    setSurchargeInput("");
   }
 
   async function registerPayment(): Promise<void> {
@@ -156,6 +194,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       </div>
 
       <AdminBlock title="Gerar cobranca">
+        <div className="charge-context-note">
+          <span>CNPJ ativo para cobranca</span>
+          <strong>{activeLegalEntity ? activeLegalEntity.tradeName : "Nao selecionado"}</strong>
+          <small>{activeLegalEntity?.cnpj ? activeLegalEntity.cnpj : "CNPJ pendente"} - somente operacoes desse CNPJ entram como elegiveis.</small>
+        </div>
         <FormGrid>
           <SelectField label="Cliente" value={clientId} onChange={setClientId} options={partners.map((item) => [item.id, item.displayName])} />
           <TextField label="Inicio" value={periodStart} onChange={setPeriodStart} />
@@ -185,14 +228,34 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 description={searchedOperations ? "Esse cliente nao tem operacoes confirmadas e nao cobradas nesse periodo. Confira as datas ou se as notas dele ja foram confirmadas em 'Notas e operacoes'." : "Clique em 'Buscar operacoes' para listar as operacoes elegiveis do cliente no periodo."}
               />
             )}
+            {searchedOperations && diagnosticOperations.length > 0 ? (
+              <div className="charge-diagnostics">
+                <h4>Operacoes encontradas fora da cobranca atual</h4>
+                <p className="muted">Essas notas existem no periodo para o cliente, mas nao entram no total a cobrar com o CNPJ ativo atual.</p>
+                <div className="table">
+                  <div className="table-head charge-diagnostic-grid"><span>Data</span><span>CNPJ proprio</span><span>Status</span><span>Sacas</span><span>R$/saca</span><span>Servico</span><span>Motivo</span></div>
+                  {diagnosticOperations.map((op) => (
+                    <div key={op.id} className="table-row charge-diagnostic-grid">
+                      <span>{op.operationDate}</span>
+                      <span>{legalEntityLabel(op.ownLegalEntityId)}</span>
+                      <span>{op.status} / {op.billingStatus}</span>
+                      <span>{decimalTextBr(op.quantitySacks)}</span>
+                      <span>{formatCurrencyFromCents(op.appliedRateValueCents)}</span>
+                      <span>{formatCurrencyFromCents(op.serviceAmountCents)}</span>
+                      <span>{operationBillingReason(op)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="charges-column">
             <h3>Ajustes e valores</h3>
             <div className="kv-list">
-              <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} placeholder="0,00" disabled={!detail} /></dd></div>
-              <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} placeholder="0,00" disabled={!detail} /></dd></div>
-              <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} placeholder="0,00" disabled={!detail} /></dd></div>
+              <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
+              <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
+              <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
             </div>
             <div className="toolbar">
               <button onClick={() => void applyAdjustments()} disabled={!detail}>Aplicar ajustes</button>
@@ -200,6 +263,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
               <strong>{formatCurrencyFromCents(detail?.charge.finalAmountCents ?? 0)}</strong>
+              {detail && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
               {!detail ? (
                 <button className="primary" onClick={() => void createDraft()} disabled={eligible.length === 0}>Gerar rascunho</button>
               ) : ["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status) ? (
@@ -207,7 +271,6 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               ) : (
                 <div className="inline-actions">
                   <button onClick={() => void openDocument("pdf")}>PDF</button>
-                  <button onClick={() => void openDocument("excel")}>Excel</button>
                   <button onClick={() => void openDocument("image")}>Imagem</button>
                 </div>
               )}

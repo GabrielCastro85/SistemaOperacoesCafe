@@ -27,7 +27,7 @@ function createWindow(): void {
     minWidth: 1180,
     minHeight: 720,
     title: isDevServer ? `${buildVariant.displayName} (Dev - banco isolado)` : buildVariant.displayName,
-    show: true,
+    show: false,
     webPreferences: {
       preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),
       contextIsolation: true,
@@ -49,6 +49,7 @@ function createWindow(): void {
     log.error("Renderer failed to load", { errorCode, errorDescription, validatedUrl });
   });
   mainWindow.once("ready-to-show", () => {
+    mainWindow?.maximize();
     mainWindow?.show();
     mainWindow?.focus();
   });
@@ -109,6 +110,7 @@ if (!singleInstance) {
   app.on("second-instance", () => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.maximize();
     mainWindow.focus();
   });
 }

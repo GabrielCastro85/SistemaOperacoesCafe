@@ -57,6 +57,11 @@ export interface LegalEntity {
   state: string;
   postalCode: string;
   documentPrefix: string | null;
+  defaultBankName: string | null;
+  defaultBankCode: string | null;
+  defaultBankAgency: string | null;
+  defaultBankAccount: string | null;
+  defaultPixKey: string | null;
   isDraft: boolean;
   isActive: boolean;
   createdAt: string;
@@ -445,6 +450,23 @@ export interface BusinessPartnerLegalEntity {
   isDraft: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CnpjLookupResult {
+  cnpj: string;
+  legalName: string;
+  tradeName: string | null;
+  registrationStatus: string | null;
+  email: string | null;
+  phone: string | null;
+  addressLine: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  district: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  source: "BRASIL_API" | "RECEITA_WS";
 }
 
 export interface PartnerContact {

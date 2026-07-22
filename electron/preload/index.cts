@@ -17,6 +17,7 @@ import type {
   BusinessPartnerLegalEntity,
   BusinessPartnerRole,
   ClientBillingProfile,
+  CnpjLookupResult,
   Diagnostics,
   InstallationProfile,
   LegalEntity,
@@ -153,6 +154,7 @@ const IPC_CHANNELS = {
   getBusinessPartner: "businessPartners:get",
   createBusinessPartner: "businessPartners:create",
   updateBusinessPartner: "businessPartners:update",
+  deleteBusinessPartner: "businessPartners:delete",
   activateBusinessPartner: "businessPartners:activate",
   deactivateBusinessPartner: "businessPartners:deactivate",
   addBusinessPartnerRole: "businessPartners:addRole",
@@ -162,6 +164,7 @@ const IPC_CHANNELS = {
   updatePartnerLegalEntity: "partnerLegalEntities:update",
   activatePartnerLegalEntity: "partnerLegalEntities:activate",
   deactivatePartnerLegalEntity: "partnerLegalEntities:deactivate",
+  lookupCnpj: "cnpj:lookup",
   listPartnerContacts: "partnerContacts:list",
   createPartnerContact: "partnerContacts:create",
   updatePartnerContact: "partnerContacts:update",
@@ -181,6 +184,7 @@ const IPC_CHANNELS = {
   getServiceRateRule: "serviceRateRules:get",
   createServiceRateRule: "serviceRateRules:create",
   updateServiceRateRule: "serviceRateRules:update",
+  deleteServiceRateRule: "serviceRateRules:delete",
   activateServiceRateRule: "serviceRateRules:activate",
   deactivateServiceRateRule: "serviceRateRules:deactivate",
   resolveServiceRateRule: "serviceRateRules:resolve",
@@ -188,7 +192,9 @@ const IPC_CHANNELS = {
   getFiscalDocument: "fiscalDocuments:get",
   createFiscalDocument: "fiscalDocuments:create",
   updateFiscalDocument: "fiscalDocuments:update",
+  deleteFiscalDocument: "fiscalDocuments:delete",
   addFiscalDocumentItem: "fiscalDocuments:addItem",
+  listOperations: "operations:list",
   addOperation: "operations:add",
   updateOperationManualRate: "operations:updateManualRate",
   confirmFiscalDocument: "fiscalDocuments:confirm",
@@ -467,6 +473,7 @@ export interface OperationsCafeApi {
   getBusinessPartner: (id: string) => Promise<BusinessPartner>;
   createBusinessPartner: (input: unknown) => Promise<BusinessPartner>;
   updateBusinessPartner: (id: string, input: unknown) => Promise<BusinessPartner>;
+  deleteBusinessPartner: (id: string) => Promise<void>;
   activateBusinessPartner: (id: string) => Promise<BusinessPartner>;
   deactivateBusinessPartner: (id: string) => Promise<BusinessPartner>;
   addBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
@@ -476,6 +483,7 @@ export interface OperationsCafeApi {
   updatePartnerLegalEntity: (id: string, input: unknown) => Promise<BusinessPartnerLegalEntity>;
   activatePartnerLegalEntity: (id: string) => Promise<BusinessPartnerLegalEntity>;
   deactivatePartnerLegalEntity: (id: string) => Promise<BusinessPartnerLegalEntity>;
+  lookupCnpj: (cnpj: string) => Promise<CnpjLookupResult>;
   listPartnerContacts: (businessPartnerId: string) => Promise<PartnerContact[]>;
   createPartnerContact: (input: unknown) => Promise<PartnerContact>;
   updatePartnerContact: (id: string, input: unknown) => Promise<PartnerContact>;
@@ -495,20 +503,23 @@ export interface OperationsCafeApi {
   getServiceRateRule: (id: string) => Promise<ServiceRateRule>;
   createServiceRateRule: (input: unknown) => Promise<ServiceRateRule>;
   updateServiceRateRule: (id: string, input: unknown) => Promise<ServiceRateRule>;
+  deleteServiceRateRule: (id: string) => Promise<void>;
   activateServiceRateRule: (id: string) => Promise<ServiceRateRule>;
   deactivateServiceRateRule: (id: string) => Promise<ServiceRateRule>;
   resolveServiceRateRule: (input: unknown) => Promise<ResolveRateResult>;
-  listFiscalDocuments: (filters?: { organizationId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" }) => Promise<FiscalDocument[]>;
+  listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" }) => Promise<FiscalDocument[]>;
   getFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   createFiscalDocument: (input: unknown) => Promise<FiscalDocumentDetail>;
   updateFiscalDocument: (id: string, input: unknown) => Promise<FiscalDocumentDetail>;
+  deleteFiscalDocument: (id: string) => Promise<void>;
   addFiscalDocumentItem: (input: unknown) => Promise<FiscalDocumentItem>;
+  listOperations: (filters?: { organizationId?: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; billingStatus?: "UNBILLED" | "RESERVED" | "BILLED" | "all" }) => Promise<Operation[]>;
   addOperation: (input: unknown) => Promise<Operation>;
   updateOperationManualRate: (id: string, manualRateValueCents: number, reason: string) => Promise<Operation>;
   confirmFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   cancelFiscalDocument: (id: string, reason: string) => Promise<FiscalDocumentDetail>;
-  getOperationalIndicators: (organizationId: string) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number }>;
-  getMonthlyOperationTotals: (input: { organizationId: string; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
+  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number }>;
+  getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -586,7 +597,7 @@ export interface OperationsCafeApi {
   getAvailableCredits: (organizationId: string, ownLegalEntityId: string, clientPartnerId: string) => Promise<ClientLedgerEntry[]>;
   createClientPayment: (input: unknown) => Promise<ClientPayment>;
   allocateClientPayment: (input: unknown) => Promise<ClientChargeDetail>;
-  getBillingSummary: (organizationId: string) => Promise<BillingSummary>;
+  getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<BillingSummary>;
   listExpenseCategories: (organizationId: string) => Promise<ExpenseCategory[]>;
   createExpenseCategory: (input: unknown) => Promise<ExpenseCategory>;
   updateExpenseCategory: (id: string, input: unknown) => Promise<ExpenseCategory>;
@@ -785,6 +796,7 @@ const api: OperationsCafeApi = {
   getBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.getBusinessPartner, id) as Promise<BusinessPartner>,
   createBusinessPartner: (input) => ipcRenderer.invoke(IPC_CHANNELS.createBusinessPartner, input) as Promise<BusinessPartner>,
   updateBusinessPartner: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateBusinessPartner, { id, input }) as Promise<BusinessPartner>,
+  deleteBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteBusinessPartner, id) as Promise<void>,
   activateBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateBusinessPartner, id) as Promise<BusinessPartner>,
   deactivateBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivateBusinessPartner, id) as Promise<BusinessPartner>,
   addBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.addBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
@@ -794,6 +806,7 @@ const api: OperationsCafeApi = {
   updatePartnerLegalEntity: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updatePartnerLegalEntity, { id, input }) as Promise<BusinessPartnerLegalEntity>,
   activatePartnerLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.activatePartnerLegalEntity, id) as Promise<BusinessPartnerLegalEntity>,
   deactivatePartnerLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivatePartnerLegalEntity, id) as Promise<BusinessPartnerLegalEntity>,
+  lookupCnpj: (cnpj) => ipcRenderer.invoke(IPC_CHANNELS.lookupCnpj, cnpj) as Promise<CnpjLookupResult>,
   listPartnerContacts: (businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerContacts, businessPartnerId) as Promise<PartnerContact[]>,
   createPartnerContact: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPartnerContact, input) as Promise<PartnerContact>,
   updatePartnerContact: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updatePartnerContact, { id, input }) as Promise<PartnerContact>,
@@ -813,6 +826,7 @@ const api: OperationsCafeApi = {
   getServiceRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.getServiceRateRule, id) as Promise<ServiceRateRule>,
   createServiceRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.createServiceRateRule, input) as Promise<ServiceRateRule>,
   updateServiceRateRule: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateServiceRateRule, { id, input }) as Promise<ServiceRateRule>,
+  deleteServiceRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteServiceRateRule, id) as Promise<void>,
   activateServiceRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateServiceRateRule, id) as Promise<ServiceRateRule>,
   deactivateServiceRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivateServiceRateRule, id) as Promise<ServiceRateRule>,
   resolveServiceRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.resolveServiceRateRule, input) as Promise<ResolveRateResult>,
@@ -820,7 +834,9 @@ const api: OperationsCafeApi = {
   getFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalDocument, id) as Promise<FiscalDocumentDetail>,
   createFiscalDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFiscalDocument, input) as Promise<FiscalDocumentDetail>,
   updateFiscalDocument: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateFiscalDocument, { id, input }) as Promise<FiscalDocumentDetail>,
+  deleteFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFiscalDocument, id) as Promise<void>,
   addFiscalDocumentItem: (input) => ipcRenderer.invoke(IPC_CHANNELS.addFiscalDocumentItem, input) as Promise<FiscalDocumentItem>,
+  listOperations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listOperations, filters) as Promise<Operation[]>,
   addOperation: (input) => ipcRenderer.invoke(IPC_CHANNELS.addOperation, input) as Promise<Operation>,
   updateOperationManualRate: (id, manualRateValueCents, reason) =>
     ipcRenderer.invoke(IPC_CHANNELS.updateOperationManualRate, { id, manualRateValueCents, reason }) as Promise<Operation>,

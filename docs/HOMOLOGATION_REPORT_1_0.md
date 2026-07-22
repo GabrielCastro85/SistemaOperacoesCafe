@@ -2,31 +2,32 @@
 
 Versao homologada: `1.0.0-rc.1`
 
-Recomendacao atual: NO-GO para `1.0.0` stable ate concluir instalacao limpa, atualizacao 0.13.0 -> 1.0.0, lado a lado, aceite do usuario em ambiente real e tratamento do achado `REL-002`. GO para distribuicao interna de release candidate.
+Recomendacao atual: NO-GO para `1.0.0` stable ate concluir instalacao limpa, atualizacao 0.13.0 -> 1.0.0, operacao multiempresa, aceite do usuario em ambiente real e tratamento do achado `REL-002`. GO para distribuicao interna de release candidate.
 
 ## Inventario
 
 - Electron, React, TypeScript, Vite e SQLite `better-sqlite3`.
 - Offline-first.
-- Migrations ate `013_backups_integrity`.
-- Variantes: Villa Coffee, Grao & Grao e multiempresa.
-- App IDs e `userData` mantidos sem alteracao.
+- Migrations ate `018_legal_entity_confirmation_defaults`.
+- Distribuicao oficial: instalador unico multiempresa.
+- Villa Coffee e Grao & Grao permanecem como organizacoes/branding dentro do mesmo app.
+- App ID e `userData` multiempresa mantidos sem alteracao.
 - Artefatos sem Authenticode: `signed: false`.
 
-## Matriz de variantes
+## Matriz de distribuicao
 
-| Teste | Villa | Grao | Multiempresa |
-| --- | --- | --- | --- |
-| App ID em configuracao | PASSED | PASSED | PASSED |
-| Executavel em configuracao | PASSED | PASSED | PASSED |
-| Icone `.ico` | PASSED | PASSED | PASSED |
-| Pacote `win-unpacked` | PASSED | PASSED | PASSED |
-| Instalador NSIS | PASSED | PASSED | PASSED |
-| Manifesto e SHA-256 | PASSED | PASSED | PASSED |
-| Smoke empacotado | PASSED | PASSED | PASSED |
-| Instalacao limpa real | PENDING_MANUAL_VALIDATION | PENDING_MANUAL_VALIDATION | PENDING_MANUAL_VALIDATION |
-| Lado a lado real | PENDING_MANUAL_VALIDATION | PENDING_MANUAL_VALIDATION | PENDING_MANUAL_VALIDATION |
-| Atualizacao 0.13.0 -> RC | PENDING_MANUAL_VALIDATION | PENDING_MANUAL_VALIDATION | PENDING_MANUAL_VALIDATION |
+| Teste | Sistema unico |
+| --- | --- |
+| App ID em configuracao | PASSED |
+| Executavel em configuracao | PASSED |
+| Icone `.ico` | PASSED |
+| Pacote `win-unpacked` | PASSED |
+| Instalador NSIS | PASSED |
+| Manifesto e SHA-256 | PASSED |
+| Smoke empacotado | PASSED |
+| Instalacao limpa real | PENDING_MANUAL_VALIDATION |
+| Operacao multiempresa real | PENDING_MANUAL_VALIDATION |
+| Atualizacao 0.13.0 -> RC | PENDING_MANUAL_VALIDATION |
 
 ## Testes automatizados
 
@@ -36,7 +37,7 @@ Recomendacao atual: NO-GO para `1.0.0` stable ate concluir instalacao limpa, atu
 | AUTO-002 | TypeScript | Todas | Codigo fonte | `npm run typecheck` | Sem erros | Sem erros | PASSED | Terminal | - | - |
 | AUTO-003 | Testes | Todas | Dependencias instaladas | `npm run test:run` | Suite verde | 62 testes verdes | PASSED | Vitest | - | - |
 | AUTO-004 | Build | Todas | Typecheck ok | `npm run build` | `dist` e `dist-electron` gerados | Gerados | PASSED | Vite/tsc | - | - |
-| AUTO-005 | Migrations | Todas | Fonte atual | `npm run migrations:check` | Ultima `013_backups_integrity` | Confirmado | PASSED | Script | - | - |
+| AUTO-005 | Migrations | Todas | Fonte atual | `npm run migrations:check` | Ultima `018_legal_entity_confirmation_defaults` | Confirmado | PASSED | Script | - | - |
 | AUTO-006 | Seguranca | Todas | Fonte atual | `npm run security:review` | Controles presentes | 11 controles ok | PASSED | Script | - | - |
 | AUTO-007 | Desempenho basico | Todas | SQLite local | `npm run performance:baseline` | Insercao/consulta e quick_check ok | Ok | PASSED | Script | - | Sintetico |
 | AUTO-008 | Audit producao | Todas | Lockfile atual | `npm audit --omit=dev` | 0 vulnerabilidades | 0 | PASSED | npm audit | - | - |
@@ -46,22 +47,20 @@ Recomendacao atual: NO-GO para `1.0.0` stable ate concluir instalacao limpa, atu
 
 | ID | Modulo | Variante | Pre-condicao | Passos | Resultado esperado | Resultado obtido | Status | Evidencia | Defeito | Observacao |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| PKG-001 | Package | Multiempresa | Build ok | `npm run package` | `win-unpacked` | Gerado | PASSED | release/multiempresa | - | - |
-| PKG-002 | Package | Villa | Build ok | `npm run package:villa` | `win-unpacked` | Gerado | PASSED | release/villa | - | - |
-| PKG-003 | Package | Grao | Build ok | `npm run package:grao` | `win-unpacked` | Gerado | PASSED | release/grao | - | - |
-| PKG-004 | Instaladores | Todas | Build ok | `npm run release:all` | NSIS por variante | Gerados | PASSED | release/*/1.0.0-rc.1 | - | Sem assinatura |
+| PKG-001 | Package | Sistema unico | Build ok | `npm run package` | `win-unpacked` | Gerado | PASSED | release/multiempresa | - | - |
+| PKG-002 | Instalador | Sistema unico | Build ok | `npm run dist` | NSIS unico | Gerado | PASSED | release/multiempresa/1.0.0-rc.1 | - | Sem assinatura |
 | PKG-005 | Manifestos | Todas | Release gerado | `npm run release:verify` | Hash valido | Valido | PASSED | SHA256SUMS | - | - |
 | PKG-006 | Smoke | Todas | Release gerado | `npm run smoke:packaged` | exe/app.asar/native ok | Ok | PASSED | Script | - | - |
 
 ## Testes manuais executados
 
-Nenhum teste manual de instalacao limpa, atualizacao real, lado a lado ou aceite foi marcado como executado nesta etapa, porque o ambiente atual nao representa maquina limpa de usuario final.
+Nenhum teste manual de instalacao limpa, atualizacao real, operacao multiempresa ou aceite foi marcado como executado nesta etapa, porque o ambiente atual nao representa maquina limpa de usuario final.
 
 ## Testes manuais pendentes
 
-- Instalacao limpa das tres variantes.
+- Instalacao limpa do instalador unico.
 - Atualizacao de 0.13.0 para 1.0.0 em diretorio isolado.
-- Instalacao lado a lado Villa/Grao/multiempresa.
+- Operacao real com Villa e Grao dentro do mesmo aplicativo.
 - Desinstalacao preservando `userData`.
 - Aceite por responsavel Villa.
 - Aceite por responsavel Grao & Grao.

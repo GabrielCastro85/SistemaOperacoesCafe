@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { getBrandingConfig } from "../../../shared/branding/branding";
-import type { AppVariant, BillingSummary, BootstrapData, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
+import { useEffect, useState, type CSSProperties } from "react";
+import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
+import type { BillingSummary, BootstrapData, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
 import { Button, Card, CheckCircleIcon, CoinsIcon, EmptyState, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 
@@ -15,26 +15,15 @@ export function Splash(): JSX.Element {
 }
 
 export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (profile: InstallationProfile) => void }): JSX.Element {
-  const [variant, setVariant] = useState<AppVariant>(data.profile?.appVariant ?? "multiempresa");
-  const [organizationId, setOrganizationId] = useState(data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "");
-  const legalEntities = data.legalEntities.filter((entity) => entity.organizationId === organizationId);
-  const [legalEntityId, setLegalEntityId] = useState(data.profile?.defaultLegalEntityId ?? legalEntities[0]?.id ?? "");
+  const variant = "multiempresa";
+  const activeLegalEntities = data.legalEntities.filter((entity) => entity.isActive);
+  const firstLegalEntity = activeLegalEntities[0] ?? data.legalEntities[0] ?? null;
+  const [legalEntityId, setLegalEntityId] = useState(data.profile?.defaultLegalEntityId ?? firstLegalEntity?.id ?? "");
   const [error, setError] = useState<string | null>(null);
   const branding = getBrandingConfig(variant);
-  const selectedOrganization = data.organizations.find((item) => item.id === organizationId);
-
-  useEffect(() => {
-    setLegalEntityId(data.legalEntities.find((entity) => entity.organizationId === organizationId)?.id ?? "");
-  }, [organizationId, data.legalEntities]);
-
-  useEffect(() => {
-    if (variant === "multiempresa") return;
-    const variantSlug = variant === "villa" ? "villa-coffee" : "grao-e-grao";
-    const matchingOrganization = data.organizations.find((item) => item.slug === variantSlug);
-    if (matchingOrganization && matchingOrganization.id !== organizationId) {
-      setOrganizationId(matchingOrganization.id);
-    }
-  }, [variant, data.organizations, organizationId]);
+  const selectedLegalEntity = data.legalEntities.find((item) => item.id === legalEntityId) ?? firstLegalEntity;
+  const selectedOrganization = data.organizations.find((item) => item.id === selectedLegalEntity?.organizationId) ?? data.organizations[0] ?? null;
+  const organizationId = selectedOrganization?.id ?? "";
 
   async function save(): Promise<void> {
     try {
@@ -43,8 +32,8 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
         installationName: `${selectedOrganization?.displayName ?? "Instalacao"} - Windows`,
         appVariant: variant,
         defaultOrganizationId: organizationId || null,
-        defaultLegalEntityId: legalEntityId || null,
-        allowOrganizationSwitch: variant === "multiempresa",
+        defaultLegalEntityId: selectedLegalEntity?.id ?? null,
+        allowOrganizationSwitch: true,
         allowLegalEntitySwitch: true,
         completedSetup: true
       });
@@ -62,7 +51,7 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
           "--brand-primary": branding.colors.primary,
           "--brand-accent": branding.colors.accent,
           "--brand-secondary": branding.colors.secondary
-        } as React.CSSProperties
+        } as CSSProperties
       }
     >
       <section className="setup-panel">
@@ -70,22 +59,25 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
         <h1>Selecione a empresa</h1>
         <p>Um unico sistema-base com identidade, dados e atalhos separados por empresa.</p>
         <div className="field">
-          <label>Variante</label>
+          <label>Empresas disponiveis</label>
           <div className="company-choice-grid">
-            {(["villa", "grao", "multiempresa"] as AppVariant[]).map((item) => (
-              <button key={item} className={variant === item ? "company-choice active" : "company-choice"} onClick={() => setVariant(item)}>
-                <img src={item === "grao" ? "assets/branding/grao/logo.png" : "assets/branding/villa/logo.png"} alt="" />
-                <span>{getBrandingConfig(item).name}</span>
-                <small>{item === "multiempresa" ? "Gestao centralizada" : getBrandingConfig(item).appDisplayName}</small>
+            {activeLegalEntities.map((entity) => {
+              const organization = data.organizations.find((item) => item.id === entity.organizationId) ?? null;
+              const logoSrc = resolveOrganizationLogoSrc(organization, variant);
+              return (
+              <button key={entity.id} className={legalEntityId === entity.id ? "company-choice active" : "company-choice"} onClick={() => setLegalEntityId(entity.id)}>
+                {logoSrc ? <img src={logoSrc} alt="" /> : null}
+                <span>{entity.tradeName}</span>
+                <small>{formatCnpj(entity.cnpj)}</small>
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
-        <Select label="Organizacao padrao" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>{data.organizations.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</Select>
-        <Select label="CNPJ padrao" value={legalEntityId} onChange={(event) => setLegalEntityId(event.target.value)}>{legalEntities.map((item) => <option key={item.id} value={item.id}>{item.tradeName} - {formatCnpj(item.cnpj)}</option>)}</Select>
+        <Select label="Empresa inicial" value={legalEntityId} onChange={(event) => setLegalEntityId(event.target.value)}>{activeLegalEntities.map((item) => <option key={item.id} value={item.id}>{item.tradeName} - {formatCnpj(item.cnpj)}</option>)}</Select>
         <div className="setup-summary">
-          <strong>{selectedOrganization?.displayName ?? branding.name}</strong>
-          <span>Branding por empresa, atualizacoes centralizadas e banco local offline.</span>
+          <strong>{selectedLegalEntity?.tradeName ?? selectedOrganization?.displayName ?? branding.name}</strong>
+          <span>{formatCnpj(selectedLegalEntity?.cnpj ?? null)} - branding por empresa, atualizacoes centralizadas e banco local offline.</span>
         </div>
         {error ? <p className="error">{error}</p> : null}
         <Button variant="primary" onClick={() => void save()} disabled={!organizationId}>Entrar no sistema</Button>
@@ -94,7 +86,7 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
   );
 }
 
-export function Dashboard({ organizations, legalEntities, locations, organizationId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string }): JSX.Element {
+export function Dashboard({ organizations, legalEntities, locations, organizationId, ownLegalEntityId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string; ownLegalEntityId?: string | null }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
   const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
@@ -103,18 +95,18 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   useEffect(() => {
     if (!organizationId) return;
     void Promise.all([
-      window.operationsCafe.getBillingSummary(organizationId),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
+      window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }),
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
     ]).then(([billing, confirmations]) => {
       setBillingSummary(billing);
       setConfirmationSummary(confirmations);
     });
-  }, [organizationId]);
+  }, [organizationId, ownLegalEntityId]);
 
   useEffect(() => {
     if (!organizationId) return;
-    void window.operationsCafe.getMonthlyOperationTotals({ organizationId, year: chartYear }).then(setMonthlyTotals);
-  }, [organizationId, chartYear]);
+    void window.operationsCafe.getMonthlyOperationTotals({ organizationId, ownLegalEntityId, year: chartYear }).then(setMonthlyTotals);
+  }, [organizationId, ownLegalEntityId, chartYear]);
 
   const totalReceivable = billingSummary?.openCents ?? 0;
   const totalCommercialAmount = confirmationSummary?.totalCommercialAmountCents ?? 0;

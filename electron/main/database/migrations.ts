@@ -2193,5 +2193,251 @@ export const migrations: Migration[] = [
         }
       });
     }
+  },
+  {
+    name: "016_unified_company_context",
+    up: (db) => {
+      const now = new Date().toISOString();
+      db.exec(`
+        UPDATE installation_profiles
+           SET app_variant = 'multiempresa',
+               allow_organization_switch = 1,
+               allow_legal_entity_switch = 1,
+               updated_at = '${now}';
+
+        UPDATE organizations
+           SET display_name = 'Villa Coffee',
+               app_display_name = 'Villa Coffee Operacoes',
+               primary_color = '#0F0D0A',
+               secondary_color = '#D4A875',
+               accent_color = '#16B86A',
+               theme_mode = 'dark',
+               updated_at = '${now}'
+         WHERE slug = 'villa-coffee';
+
+        UPDATE organizations
+           SET display_name = 'Grao & Grao',
+               app_display_name = 'Grao & Grao Operacoes',
+               primary_color = '#073F28',
+               secondary_color = '#9A7449',
+               accent_color = '#05B866',
+               theme_mode = 'light',
+               updated_at = '${now}'
+         WHERE slug = 'grao-e-grao';
+
+        UPDATE legal_entities
+           SET legal_name = 'Villa Coffee Comercio Exp. Ltda - Minas Gerais',
+               trade_name = 'Villa Coffee Minas Gerais',
+               city = CASE WHEN city = 'Pendente' THEN 'Minas Gerais' ELSE city END,
+               state = 'MG',
+               is_active = 1,
+               updated_at = '${now}'
+         WHERE id = '33333333-3333-4333-8333-333333333331';
+
+        UPDATE legal_entities
+           SET legal_name = 'Villa Coffee Comercio Exp. Ltda - Espirito Santo',
+               trade_name = 'Villa Coffee Espirito Santo',
+               city = CASE WHEN city = 'Pendente' THEN 'Espirito Santo' ELSE city END,
+               state = 'ES',
+               is_active = 1,
+               updated_at = '${now}'
+         WHERE id = '33333333-3333-4333-8333-333333333332';
+
+        UPDATE legal_entities
+           SET legal_name = 'Grao & Grao Comercio Exp. Ltda - Minas Gerais',
+               trade_name = 'Grao & Grao Minas Gerais',
+               city = CASE WHEN city = 'Pendente' THEN 'Minas Gerais' ELSE city END,
+               state = 'MG',
+               is_active = 1,
+               updated_at = '${now}'
+         WHERE id = '44444444-4444-4444-8444-444444444441';
+
+        UPDATE legal_entities
+           SET legal_name = 'Grao & Grao Comercio Exp. Ltda - Sao Paulo',
+               trade_name = 'Grao & Grao Sao Paulo',
+               city = CASE WHEN city = 'Pendente' THEN 'Sao Paulo' ELSE city END,
+               state = 'SP',
+               is_active = 1,
+               updated_at = '${now}'
+         WHERE id = '44444444-4444-4444-8444-444444444442';
+
+        UPDATE legal_entities
+           SET is_active = 0,
+               updated_at = '${now}'
+         WHERE id = '44444444-4444-4444-8444-444444444443';
+      `);
+    }
+  },
+  {
+    name: "017_real_company_legal_entities",
+    up: (db) => {
+      const now = new Date().toISOString();
+      const update = db.prepare(`
+        UPDATE legal_entities
+           SET legal_name = @legalName,
+               trade_name = @tradeName,
+               cnpj = @cnpj,
+               state_registration = @stateRegistration,
+               municipal_registration = @municipalRegistration,
+               email = @email,
+               phone = @phone,
+               address_line = @addressLine,
+               address_number = @addressNumber,
+               address_complement = @addressComplement,
+               district = @district,
+               city = @city,
+               state = @state,
+               postal_code = @postalCode,
+               is_draft = 0,
+               is_active = 1,
+               updated_at = @updatedAt
+         WHERE id = @id
+      `);
+
+      [
+        {
+          id: "33333333-3333-4333-8333-333333333331",
+          legalName: "VILLA COFFEE COMERCIO E EXP. LTDA",
+          tradeName: "Villa Coffee Minas Gerais",
+          cnpj: "44963370000523",
+          stateRegistration: "0053761240090",
+          municipalRegistration: null,
+          email: "villacoffeefiscal@gmail.com",
+          phone: "3599479528",
+          addressLine: "AVENIDA VITAL PAULINO DA COSTA",
+          addressNumber: "466",
+          addressComplement: null,
+          district: "CENTRO",
+          city: "MONTE SANTO DE MINAS",
+          state: "MG",
+          postalCode: "37968000"
+        },
+        {
+          id: "33333333-3333-4333-8333-333333333332",
+          legalName: "VILLA COFFEE COMERCIO E EXP. LTDA",
+          tradeName: "Villa Coffee Espirito Santo",
+          cnpj: "44963370000280",
+          stateRegistration: "084.359.68-4",
+          municipalRegistration: null,
+          email: "villacoffeefiscal@gmail.com",
+          phone: "3599479528",
+          addressLine: "AVENIDA AMINTAS OZORIO DE MATOS",
+          addressNumber: "111",
+          addressComplement: "LOJA 01",
+          district: "NITEROI",
+          city: "IUNA",
+          state: "ES",
+          postalCode: "29390000"
+        },
+        {
+          id: "44444444-4444-4444-8444-444444444441",
+          legalName: "GRAO & GRAO COMERCIO EXP LTDA",
+          tradeName: "Grao & Grao Minas Gerais",
+          cnpj: "16594876000224",
+          stateRegistration: "46505230009",
+          municipalRegistration: null,
+          email: "graograofiscal@gmail.com",
+          phone: "3599479528",
+          addressLine: "AREA ROD. MG 455 KM 40",
+          addressNumber: "SN",
+          addressComplement: null,
+          district: "AREA RURAL DE ANDRADAS",
+          city: "ANDRADAS",
+          state: "MG",
+          postalCode: "37842899"
+        },
+        {
+          id: "44444444-4444-4444-8444-444444444442",
+          legalName: "GRAO & GRAO COMERCIO EXP LTDA",
+          tradeName: "Grao & Grao Sao Paulo",
+          cnpj: "16594876000496",
+          stateRegistration: null,
+          municipalRegistration: null,
+          email: "graograofiscal@gmail.com",
+          phone: "35999479528",
+          addressLine: "SITIO SANTA MARIA",
+          addressNumber: "0",
+          addressComplement: null,
+          district: "ARROZAL",
+          city: "SANTO ANTONIO DO JARDIM",
+          state: "SP",
+          postalCode: "13995000"
+        }
+      ].forEach((entity) => update.run({ ...entity, updatedAt: now }));
+
+      db.prepare("UPDATE legal_entities SET is_active = 0, updated_at = ? WHERE id = ?").run(now, "44444444-4444-4444-8444-444444444443");
+    }
+  },
+  {
+    name: "018_legal_entity_confirmation_defaults",
+    up: (db) => {
+      const columns = (table: string): string[] =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
+      const legalEntityColumns = columns("legal_entities");
+      const additions: Array<[string, string]> = [
+        ["default_bank_name", "TEXT"],
+        ["default_bank_code", "TEXT"],
+        ["default_bank_agency", "TEXT"],
+        ["default_bank_account", "TEXT"],
+        ["default_pix_key", "TEXT"]
+      ];
+      additions.forEach(([column, type]) => {
+        if (!legalEntityColumns.includes(column)) {
+          db.exec(`ALTER TABLE legal_entities ADD COLUMN ${column} ${type}`);
+        }
+      });
+
+      const now = new Date().toISOString();
+      const updateDefaults = db.prepare(`
+        UPDATE legal_entities
+           SET state_registration = @stateRegistration,
+               default_bank_name = @defaultBankName,
+               default_bank_code = @defaultBankCode,
+               default_bank_agency = @defaultBankAgency,
+               default_bank_account = @defaultBankAccount,
+               default_pix_key = @defaultPixKey,
+               updated_at = @updatedAt
+         WHERE cnpj = @cnpj
+      `);
+
+      [
+        {
+          cnpj: "44963370000523",
+          stateRegistration: "0053761240090",
+          defaultBankName: "Santander",
+          defaultBankCode: "033",
+          defaultBankAgency: "3318",
+          defaultBankAccount: "13.0021347",
+          defaultPixKey: "44.963.370/0005-23"
+        },
+        {
+          cnpj: "44963370000280",
+          stateRegistration: "084.359.68-4",
+          defaultBankName: "Santander",
+          defaultBankCode: "033",
+          defaultBankAgency: "3318",
+          defaultBankAccount: "13.0021347",
+          defaultPixKey: "44.963.370/0002-80"
+        },
+        {
+          cnpj: "16594876000224",
+          stateRegistration: "46505230009",
+          defaultBankName: null,
+          defaultBankCode: null,
+          defaultBankAgency: null,
+          defaultBankAccount: null,
+          defaultPixKey: "16.594.876/0002-24"
+        },
+        {
+          cnpj: "16594876000496",
+          stateRegistration: null,
+          defaultBankName: null,
+          defaultBankCode: null,
+          defaultBankAgency: null,
+          defaultBankAccount: null,
+          defaultPixKey: null
+        }
+      ].forEach((entity) => updateDefaults.run({ ...entity, updatedAt: now }));
+    }
   }
 ];

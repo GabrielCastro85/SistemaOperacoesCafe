@@ -8,6 +8,6 @@ Antes de desinstalar:
 2. Copie o backup para uma pasta externa ao `userData`.
 3. Confirme o SHA-256 do backup se ele sera arquivado.
 
-Dados preservados ficam em `%APPDATA%/<UserData da variante>/`. A remocao manual dessa pasta apaga banco, documentos, backups internos, logs e branding local.
+Dados preservados ficam em `%APPDATA%/Sistema de Operacoes de Cafe Multiempresa/`. A remocao manual dessa pasta apaga banco, documentos, backups internos, logs e branding local.
 
-Na homologacao, confirme que desinstalar uma variante nao remove dados nem atalhos das outras variantes instaladas lado a lado.
+Na homologacao, confirme que desinstalar o aplicativo remove apenas arquivos do programa e atalhos, preservando o `userData` enquanto essa opcao estiver ativa no instalador.

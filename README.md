@@ -17,10 +17,9 @@ Aplicativo desktop Windows offline-first para operacoes internas de empresas do 
 - `npm run test`
 - `npm run test:run`
 - `npm run build`
-- `npm run package` prepara pacote Windows em modo diretorio.
-- `npm run package:villa` prepara pacote Windows da Villa Coffee.
-- `npm run package:grao` prepara pacote Windows da Grao & Grao.
-- `npm run release:villa` e `npm run release:grao` geram instaladores NSIS.
+- `npm run package` prepara pacote Windows unico em modo diretorio.
+- `npm run dist` gera o instalador NSIS unico.
+- `npm run release` tambem gera o instalador NSIS unico.
 - `npm run release:verify` valida manifestos e checksums.
 - `npm run smoke:packaged` valida artefatos empacotados.
 - `npm run homologation:check` valida documentos e pre-condicoes da homologacao.
@@ -32,7 +31,7 @@ Aplicativo desktop Windows offline-first para operacoes internas de empresas do 
 
 O banco fica em `app.getPath("userData")/database/operations.sqlite`. Documentos ficam em `app.getPath("userData")/documents`. Esses dados nao ficam na pasta de instalacao e devem ser preservados em atualizacoes.
 
-Cada distribuicao Windows possui `userData` proprio. Villa Coffee, Grao & Grao e multiempresa podem coexistir sem compartilhar banco, logs ou documentos.
+O release oficial possui um unico instalador Windows. Villa Coffee, Grao & Grao e outras empresas ficam separadas dentro do app por organizacao, CNPJ, permissao e branding.
 
 ## Branding
 
@@ -42,7 +41,9 @@ Variantes suportadas: `villa`, `grao` e `multiempresa`. Na tela Configuracoes > 
 
 Use Configuracoes para administrar Organizacoes, Empresas e CNPJs, Locais, Identidade visual, Perfil da instalacao e Diagnostico. CNPJs sao armazenados apenas com numeros e validados por digitos verificadores. Dados demonstrativos sem CNPJ podem permanecer como rascunho ate serem substituidos.
 
-Regras de variante: `villa` limita a Villa Coffee, `grao` limita a Grao & Grao, e `multiempresa` permite novas organizacoes e alternancia autorizada.
+Regra de distribuicao: o aplicativo oficial roda em modo multiempresa e permite novas organizacoes e alternancia autorizada.
+
+Na abertura da sessao, o usuario escolhe a empresa/CNPJ operacional, como Villa Coffee Minas Gerais, Villa Coffee Espirito Santo, Grao & Grao Minas Gerais ou Grao & Grao Sao Paulo. A troca pela barra superior muda o contexto dos dados e aplica a identidade visual da empresa ativa.
 
 ## Parceiros, Produtos E Regras
 
@@ -104,6 +105,8 @@ A decima primeira etapa adiciona autenticacao local obrigatoria. Na primeira abe
 
 Sessoes ficam no processo principal, com lock, unlock, logout e troca de usuario. Canais IPC passam por politica deny-by-default baseada em roles/permissoes. Use Configuracoes > Usuarios, Configuracoes > Roles e Auditoria para administrar acesso e verificar a trilha de eventos com hash encadeado.
 
+Na versao multiempresa unica, usuarios logados acessam todos os modulos operacionais. A criacao e manutencao de usuarios permanece restrita ao administrador.
+
 ## Backups, Restauracao E Integridade
 
 A decima segunda etapa adiciona backups locais `.cafebackup`, com snapshot consistente do SQLite, documentos, branding, manifesto, hashes e opcao de criptografia AES-256-GCM com senha nao persistida.
@@ -114,13 +117,13 @@ Backup interno nao protege contra perda total do disco; copie backups importante
 
 ## Distribuicao Windows
 
-A decima terceira etapa profissionaliza a distribuicao Windows. `src/shared/buildVariants.ts` centraliza App ID, nome de produto, executavel, icone, artefatos e diretorio `userData` das variantes Villa Coffee, Grao & Grao e multiempresa.
+A decima terceira etapa profissionaliza a distribuicao Windows. `src/shared/buildVariants.ts` centraliza App ID, nome de produto, executavel, icone, artefato e diretorio `userData` do instalador unico.
 
-Os scripts em `scripts/release` geram icones `.ico`, empacotam variantes, criam manifestos de release, checksums SHA-256, notas de release e testes smoke de artefatos. A tela Configuracoes > Sobre exibe produto, versao, variante, App ID, executavel, arquitetura, Electron, migration e status de assinatura.
+Os scripts em `scripts/release` geram icones `.ico`, empacotam o app, criam manifesto de release, checksums SHA-256, notas de release e teste smoke de artefato. A tela Configuracoes > Sobre exibe produto, versao, variante, App ID, executavel, arquitetura, Electron, migration e status de assinatura.
 
 ## Homologacao 1.0
 
-A decima quarta etapa gerou `1.0.0-rc.1` como release candidate. A versao stable `1.0.0` fica bloqueada ate concluir instalacao limpa, atualizacao 0.13.0 -> 1.0.0, lado a lado e aceite de usuario em ambiente real. Consulte `docs/HOMOLOGATION_REPORT_1_0.md`, `docs/RELEASE_1_0_CHECKLIST.md` e `docs/USER_ACCEPTANCE_TEST.md`.
+A decima quarta etapa gerou `1.0.0-rc.1` como release candidate. A versao stable `1.0.0` fica bloqueada ate concluir instalacao limpa, atualizacao 0.13.0 -> 1.0.0, operacao multiempresa e aceite de usuario em ambiente real. Consulte `docs/HOMOLOGATION_REPORT_1_0.md`, `docs/RELEASE_1_0_CHECKLIST.md` e `docs/USER_ACCEPTANCE_TEST.md`.
 
 ## Estrutura
 

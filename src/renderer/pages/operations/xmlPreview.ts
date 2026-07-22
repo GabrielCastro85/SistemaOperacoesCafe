@@ -5,6 +5,7 @@ interface NfePartySnapshot {
   legalName: string | null;
   tradeName: string | null;
   cnpjCpf: string | null;
+  state: string | null;
 }
 
 interface NfeItemPreview {
@@ -43,7 +44,7 @@ function num(value: unknown): number | null {
 function party(value: unknown): NfePartySnapshot | null {
   const record = asRecord(value);
   if (!record) return null;
-  return { legalName: str(record.legalName), tradeName: str(record.tradeName), cnpjCpf: str(record.cnpjCpf) };
+  return { legalName: str(record.legalName), tradeName: str(record.tradeName), cnpjCpf: str(record.cnpjCpf), state: str(record.state) };
 }
 
 export function parseNfeExtractedPreview(data: Record<string, unknown> | null | undefined): NfeExtractedPreview | null {
@@ -89,11 +90,45 @@ export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, l
   const recipientCnpj = preview.recipient?.cnpjCpf ? onlyDigits(preview.recipient.cnpjCpf) : null;
   const ownByIssuer = issuerCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj) : undefined;
   const ownByRecipient = recipientCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj) : undefined;
+  const ownByIssuerIdentity = !ownByIssuer ? findOwnByIdentity(legalEntities, preview.issuer) : undefined;
+  const ownByRecipientIdentity = !ownByRecipient ? findOwnByIdentity(legalEntities, preview.recipient) : undefined;
   if (ownByIssuer) {
     return { ownEntityLabel: ownByIssuer.tradeName, counterpartyLabel: preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null, counterpartyCnpj: recipientCnpj };
   }
   if (ownByRecipient) {
     return { ownEntityLabel: ownByRecipient.tradeName, counterpartyLabel: preview.issuer?.tradeName ?? preview.issuer?.legalName ?? null, counterpartyCnpj: issuerCnpj };
   }
+  if (ownByIssuerIdentity) {
+    return { ownEntityLabel: ownByIssuerIdentity.tradeName, counterpartyLabel: preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null, counterpartyCnpj: recipientCnpj };
+  }
+  if (ownByRecipientIdentity) {
+    return { ownEntityLabel: ownByRecipientIdentity.tradeName, counterpartyLabel: preview.issuer?.tradeName ?? preview.issuer?.legalName ?? null, counterpartyCnpj: issuerCnpj };
+  }
   return { ownEntityLabel: null, counterpartyLabel: preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null, counterpartyCnpj: recipientCnpj };
+}
+
+function findOwnByIdentity(legalEntities: LegalEntity[], partySnapshot: NfePartySnapshot | null | undefined): LegalEntity | undefined {
+  const state = partySnapshot?.state?.toUpperCase();
+  if (!state) return undefined;
+  const stateAliases: Record<string, string[]> = {
+    MG: ["MG", "MINAS GERAIS", "MONTE SANTO DE MINAS"],
+    ES: ["ES", "ESPIRITO SANTO"],
+    SP: ["SP", "SAO PAULO"]
+  };
+  const aliases = stateAliases[state] ?? [state];
+  return legalEntities.find((entity) => {
+    if (entity.state.toUpperCase() === state) return true;
+    const haystack = normalizeText(`${entity.legalName} ${entity.tradeName} ${entity.city} ${entity.state}`);
+    return aliases.some((alias) => haystack.includes(normalizeText(alias)));
+  });
+}
+
+function normalizeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^\p{Letter}\p{Number} ]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }

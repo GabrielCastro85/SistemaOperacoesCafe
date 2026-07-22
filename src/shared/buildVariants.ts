@@ -44,7 +44,7 @@ export const buildVariantConfigs: Record<AppVariant, BuildVariantConfig> = {
     productName: "Sistema de Operacoes de Cafe",
     displayName: "Sistema de Operacoes de Cafe Multiempresa",
     executableName: "SistemaOperacoesCafe",
-    artifactPrefix: "SistemaOperacoesCafe-Multiempresa",
+    artifactPrefix: "SistemaOperacoesCafe",
     iconPath: "build/icons/multiempresa.ico",
     userDataDirectoryName: "Sistema de Operacoes de Cafe Multiempresa",
     copyright: "Copyright (c) 2026 Sistema Operacoes Cafe",

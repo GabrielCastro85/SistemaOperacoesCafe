@@ -6,11 +6,9 @@ Este manual descreve o uso operacional do Sistema de Operacoes de Cafe. O sistem
 
 ## Instalacao
 
-Use o instalador correto da empresa:
+Use o instalador unico do sistema:
 
-- Villa Coffee: `VillaCoffee-Operacoes-Setup-<versao>-x64.exe`.
-- Grao & Grao: `GraoEGrao-Operacoes-Setup-<versao>-x64.exe`.
-- Multiempresa: `SistemaOperacoesCafe-Multiempresa-Setup-<versao>-x64.exe`.
+- `SistemaOperacoesCafe-Setup-<versao>-x64.exe`.
 
 Antes de atualizar uma instalacao usada em producao, gere um backup completo em Configuracoes > Backups.
 

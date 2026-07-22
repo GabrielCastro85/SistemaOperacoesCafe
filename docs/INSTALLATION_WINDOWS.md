@@ -8,17 +8,15 @@
 
 ## Instalador
 
-Use o instalador correto para a empresa:
+Use o instalador unico do sistema:
 
-- `VillaCoffee-Operacoes-Setup-<versao>-x64.exe`
-- `GraoEGrao-Operacoes-Setup-<versao>-x64.exe`
-- `SistemaOperacoesCafe-Multiempresa-Setup-<versao>-x64.exe`
+- `SistemaOperacoesCafe-Setup-<versao>-x64.exe`
 
-O instalador e por usuario (`perMachine=false`) e nao apaga dados locais. Os dados ficam em `%APPDATA%/<UserData da variante>/`.
+O instalador e por usuario (`perMachine=false`) e nao apaga dados locais. Os dados ficam em `%APPDATA%/Sistema de Operacoes de Cafe Multiempresa/`.
 
 ## Primeira abertura
 
-Na primeira execucao, o aplicativo cria ou valida o banco SQLite local, aplica migrations, cria o primeiro administrador quando necessario e mostra a variante visual correspondente.
+Na primeira execucao, o aplicativo cria ou valida o banco SQLite local, aplica migrations, cria o primeiro administrador quando necessario e permite operar Villa Coffee, Grao & Grao e outras organizacoes no mesmo app.
 
 Se o Windows SmartScreen alertar sobre aplicativo desconhecido, confirme apenas artefatos cujo SHA-256 conste em `SHA256SUMS.txt` e `release-manifest.json`.
 

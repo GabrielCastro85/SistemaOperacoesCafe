@@ -120,3 +120,145 @@ export function HandshakeIcon(props: IconProps): JSX.Element {
     props
   );
 }
+
+export function DashboardIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="5" rx="1.5" />
+      <rect x="13" y="11" width="7" height="9" rx="1.5" />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" />
+    </>,
+    props
+  );
+}
+
+export function InvoiceIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M7 3h10a1 1 0 0 1 1 1v17l-3-1.5L12 21l-3-1.5L6 21V4a1 1 0 0 1 1-1Z" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
+    </>,
+    props
+  );
+}
+
+export function UsersIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6.5a2.6 2.6 0 0 1 0 5.1" />
+      <path d="M17 14c2 .6 3.2 2.2 3.5 5" />
+    </>,
+    props
+  );
+}
+
+export function PackageIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3 4.5 7v10L12 21l7.5-4V7L12 3Z" />
+      <path d="M4.5 7 12 11l7.5-4" />
+      <path d="M12 11v10" />
+      <path d="m8.5 5.1 7.2 4" />
+    </>,
+    props
+  );
+}
+
+export function RateIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 19 19 4" />
+      <circle cx="7" cy="7" r="2.2" />
+      <circle cx="17" cy="17" r="2.2" />
+    </>,
+    props
+  );
+}
+
+export function LedgerIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M5 5h14v14H5z" />
+      <path d="M8 9h8M8 13h8M8 17h5" />
+      <path d="M5 5 3.5 7M19 5l1.5 2" />
+    </>,
+    props
+  );
+}
+
+export function ReportIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M6 20V4h12v16" />
+      <path d="M9 17v-4M12 17V8M15 17v-6" />
+      <path d="M4 20h16" />
+    </>,
+    props
+  );
+}
+
+export function UserAdminIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="8" r="3" />
+      <path d="M6.5 20a5.5 5.5 0 0 1 11 0" />
+      <path d="m18 5 1 1 2-2" />
+    </>,
+    props
+  );
+}
+
+export function RolesIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3 5 6v5c0 4.4 2.8 7.9 7 10 4.2-2.1 7-5.6 7-10V6l-7-3Z" />
+      <path d="M9 12h6M12 9v6" />
+    </>,
+    props
+  );
+}
+
+export function AuditIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M7 3h8l4 4v14H7z" />
+      <path d="M15 3v4h4" />
+      <path d="M10 13h5M10 17h5M9 9h2" />
+    </>,
+    props
+  );
+}
+
+export function BackupIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M6 12a6 6 0 1 1 2 4.5" />
+      <path d="M6 16.5H3.5V14" />
+      <path d="M12 8v5l3 1.5" />
+    </>,
+    props
+  );
+}
+
+export function IntegrityIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3 5 6v5c0 4.4 2.8 7.9 7 10 4.2-2.1 7-5.6 7-10V6l-7-3Z" />
+      <path d="m8.5 12 2.3 2.3 4.7-5" />
+    </>,
+    props
+  );
+}
+
+export function SettingsIcon(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.8-1L14.4 3h-4.8L9.3 6a7.4 7.4 0 0 0-1.8 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.8 1l.3 3h4.8l.3-3a7.4 7.4 0 0 0 1.8-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1Z" />
+    </>,
+    props
+  );
+}

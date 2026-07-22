@@ -14,6 +14,7 @@ import type { AppContext } from "../services/context.js";
 import { inspectWorkbook, previewSheet, readSheetRows, validateSpreadsheetPath } from "../services/spreadsheetService.js";
 import { multiplyDecimalByCents } from "../../../src/shared/utils/decimal.js";
 import { inspectXmlFile, safeXmlTargetName } from "../services/xmlNfeService.js";
+import { lookupCnpj } from "../services/cnpjLookupService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
 
@@ -237,6 +238,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     return repository.updateBusinessPartner(data.id, data.input);
   });
+  handle(IPC_CHANNELS.deleteBusinessPartner, (_event, payload: unknown) => repository.deleteBusinessPartner(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.activateBusinessPartner, (_event, payload: unknown) => repository.activateBusinessPartner(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivateBusinessPartner, (_event, payload: unknown) => repository.deactivateBusinessPartner(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.addBusinessPartnerRole, (_event, payload: unknown) => {
@@ -249,6 +251,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.listPartnerLegalEntities, (_event, payload: unknown) => repository.listPartnerLegalEntities(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createPartnerLegalEntity, (_event, payload: unknown) => repository.createPartnerLegalEntity(payload));
+  handle(IPC_CHANNELS.lookupCnpj, (_event, payload: unknown) => lookupCnpj(z.string().min(1).parse(payload)));
   handle(IPC_CHANNELS.updatePartnerLegalEntity, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     return repository.updatePartnerLegalEntity(data.id, data.input);
@@ -287,6 +290,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     return repository.updateServiceRateRule(data.id, data.input);
   });
+  handle(IPC_CHANNELS.deleteServiceRateRule, (_event, payload: unknown) => repository.deleteServiceRateRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.activateServiceRateRule, (_event, payload: unknown) => repository.activateServiceRateRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivateServiceRateRule, (_event, payload: unknown) => repository.deactivateServiceRateRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.resolveServiceRateRule, (_event, payload: unknown) => repository.resolveServiceRateRule(payload));
@@ -295,6 +299,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       z
         .object({
           organizationId: z.string().uuid().optional(),
+          ownLegalEntityId: z.string().uuid().optional(),
           search: z.string().optional(),
           status: z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED", "all"]).optional()
         })
@@ -308,7 +313,24 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     return repository.updateFiscalDocument(data.id, data.input);
   });
+  handle(IPC_CHANNELS.deleteFiscalDocument, (_event, payload: unknown) => repository.deleteFiscalDocument(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.addFiscalDocumentItem, (_event, payload: unknown) => repository.addFiscalDocumentItem(payload));
+  handle(IPC_CHANNELS.listOperations, (_event, payload: unknown) =>
+    repository.listOperations(
+      z
+        .object({
+          organizationId: z.string().uuid().optional(),
+          ownLegalEntityId: z.string().uuid().optional(),
+          responsiblePartnerId: z.string().uuid().optional(),
+          periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          status: z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED", "all"]).optional(),
+          billingStatus: z.enum(["UNBILLED", "RESERVED", "BILLED", "all"]).optional()
+        })
+        .optional()
+        .parse(payload) ?? {}
+    )
+  );
   handle(IPC_CHANNELS.addOperation, (_event, payload: unknown) => repository.addOperation(payload));
   handle(IPC_CHANNELS.updateOperationManualRate, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), manualRateValueCents: z.number().int().min(0), reason: z.string().min(1) }).parse(payload);
@@ -319,10 +341,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
     return repository.cancelFiscalDocument(data.id, data.reason);
   });
-  handle(IPC_CHANNELS.getOperationalIndicators, (_event, payload: unknown) => repository.getOperationalIndicators(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.getOperationalIndicators, (_event, payload: unknown) =>
+    repository.getOperationalIndicators(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() })]).parse(payload))
+  );
   handle(IPC_CHANNELS.getMonthlyOperationTotals, (_event, payload: unknown) => {
-    const data = z.object({ organizationId: z.string().uuid(), year: z.number().int().min(2000).max(2100) }).parse(payload);
-    return repository.getMonthlyOperationTotals(data.organizationId, data.year);
+    const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), year: z.number().int().min(2000).max(2100) }).parse(payload);
+    return repository.getMonthlyOperationTotals(data.organizationId, data.year, data.ownLegalEntityId);
   });
   handle(IPC_CHANNELS.selectSpreadsheetFile, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Planilhas Excel", extensions: ["xlsx"] }] });
@@ -567,7 +591,9 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.createClientPayment, (_event, payload: unknown) => repository.createClientPayment(payload));
   handle(IPC_CHANNELS.allocateClientPayment, (_event, payload: unknown) => repository.allocatePayment(payload));
-  handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) => repository.getBillingSummary(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) =>
+    repository.getBillingSummary(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() })]).parse(payload))
+  );
   handle(IPC_CHANNELS.listExpenseCategories, (_event, payload: unknown) => repository.listExpenseCategories(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createExpenseCategory, (_event, payload: unknown) => repository.createExpenseCategory(payload));
   handle(IPC_CHANNELS.updateExpenseCategory, (_event, payload: unknown) => {

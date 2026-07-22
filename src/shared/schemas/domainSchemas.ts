@@ -46,6 +46,11 @@ export const legalEntitySchema = z.object({
   state: ufSchema,
   postalCode: z.string().regex(/^\d{8}$/),
   documentPrefix: nullableText,
+  defaultBankName: nullableText.optional().default(null),
+  defaultBankCode: nullableText.optional().default(null),
+  defaultBankAgency: nullableText.optional().default(null),
+  defaultBankAccount: nullableText.optional().default(null),
+  defaultPixKey: nullableText.optional().default(null),
   isDraft: z.boolean(),
   isActive: z.boolean(),
   createdAt: isoDateSchema,
@@ -124,6 +129,11 @@ export const legalEntityInputSchema = z
     state: ufSchema,
     postalCode: z.string().transform(digits).pipe(z.string().length(8)),
     documentPrefix: z.string().trim().regex(/^[A-Za-z0-9_.-]{1,20}$/).nullable(),
+    defaultBankName: nullableText.optional().default(null),
+    defaultBankCode: nullableText.optional().default(null),
+    defaultBankAgency: nullableText.optional().default(null),
+    defaultBankAccount: nullableText.optional().default(null),
+    defaultPixKey: nullableText.optional().default(null),
     isDraft: z.boolean(),
     isActive: z.boolean()
   })

@@ -9,18 +9,22 @@ import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/se
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+const villaEsLegalEntityId = "33333333-3333-4333-8333-333333333332";
+const graoId = "22222222-2222-4222-8222-222222222222";
+const graoMgLegalEntityId = "44444444-4444-4444-8444-444444444441";
+const graoSpLegalEntityId = "44444444-4444-4444-8444-444444444442";
 
-function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
+function setup(organizationId = villaId, defaultLegalEntityId = ownLegalEntityId): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-charge-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
   ensureAppDirectories(dirs);
   const db = initializeDatabase(dirs);
   const repo = new AppRepository(db, dirs);
-  repo.saveInstallationProfile({ installationName: "Villa", appVariant: "villa", defaultOrganizationId: villaId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: false, allowLegalEntitySwitch: true, completedSetup: true });
-  const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Cobranca", notes: null, roles: ["CLIENT"], isActive: true });
-  const product = repo.listProducts({ organizationId: villaId })[0];
-  repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+  repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: organizationId, defaultLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+  const partner = repo.createBusinessPartner({ organizationId, displayName: "Cliente Cobranca", notes: null, roles: ["CLIENT"], isActive: true });
+  const product = repo.listProducts({ organizationId })[0];
+  repo.createServiceRateRule({ organizationId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
   return { repo, db, partnerId: partner.id, productId: product.id };
 }
 
@@ -82,6 +86,80 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("lists client operations across legal entities for billing diagnostics", () => {
+    const { repo, db, partnerId, productId } = setup();
+    createConfirmedOperation(repo, partnerId, productId, "9101", "310", "EXTERNAL");
+    const operations = repo.listOperations({ organizationId: villaId, responsiblePartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31", status: "all", billingStatus: "all" });
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({
+      responsiblePartnerId: partnerId,
+      quantitySacks: "310",
+      appliedRateValueCents: 500,
+      serviceAmountCents: 155000,
+      billingStatus: "UNBILLED"
+    });
+    db.close();
+  });
+
+  it("keeps Villa MG and Villa ES billing and sacks indicators independent", () => {
+    const { repo, db, partnerId, productId } = setup();
+    createConfirmedOperation(repo, partnerId, productId, "9301", "100", "EXTERNAL", ownLegalEntityId);
+    createConfirmedOperation(repo, partnerId, productId, "9302", "250", "EXTERNAL", villaEsLegalEntityId);
+
+    const mgSummary = repo.getBillingSummary({ organizationId: villaId, ownLegalEntityId });
+    const esSummary = repo.getBillingSummary({ organizationId: villaId, ownLegalEntityId: villaEsLegalEntityId });
+    expect(mgSummary.unbilledOperations).toBe(1);
+    expect(mgSummary.unbilledSacks).toBe("100");
+    expect(mgSummary.openCents).toBe(50000);
+    expect(esSummary.unbilledOperations).toBe(1);
+    expect(esSummary.unbilledSacks).toBe("250");
+    expect(esSummary.openCents).toBe(125000);
+
+    const mgMonthly = repo.getMonthlyOperationTotals(villaId, 2026, ownLegalEntityId);
+    const esMonthly = repo.getMonthlyOperationTotals(villaId, 2026, villaEsLegalEntityId);
+    expect(mgMonthly[6]).toMatchObject({ sacksDecimal: "100", amountCents: 50000, operationCount: 1 });
+    expect(esMonthly[6]).toMatchObject({ sacksDecimal: "250", amountCents: 125000, operationCount: 1 });
+    db.close();
+  });
+
+  it("keeps Grao & Grao MG and SP billing and sacks indicators independent", () => {
+    const { repo, db, partnerId, productId } = setup(graoId, graoMgLegalEntityId);
+    createConfirmedOperation(repo, partnerId, productId, "9401", "80", "EXTERNAL", graoMgLegalEntityId, graoId);
+    createConfirmedOperation(repo, partnerId, productId, "9402", "175", "EXTERNAL", graoSpLegalEntityId, graoId);
+
+    const mgSummary = repo.getBillingSummary({ organizationId: graoId, ownLegalEntityId: graoMgLegalEntityId });
+    const spSummary = repo.getBillingSummary({ organizationId: graoId, ownLegalEntityId: graoSpLegalEntityId });
+    expect(mgSummary.unbilledOperations).toBe(1);
+    expect(mgSummary.unbilledSacks).toBe("80");
+    expect(mgSummary.openCents).toBe(40000);
+    expect(spSummary.unbilledOperations).toBe(1);
+    expect(spSummary.unbilledSacks).toBe("175");
+    expect(spSummary.openCents).toBe(87500);
+
+    const mgDocs = repo.listFiscalDocuments({ organizationId: graoId, ownLegalEntityId: graoMgLegalEntityId });
+    const spDocs = repo.listFiscalDocuments({ organizationId: graoId, ownLegalEntityId: graoSpLegalEntityId });
+    expect(mgDocs.map((doc) => doc.documentNumber)).toEqual(["9401"]);
+    expect(spDocs.map((doc) => doc.documentNumber)).toEqual(["9402"]);
+    db.close();
+  });
+
+  it("refreshes unbilled operation service values when a rate rule is created after the note", () => {
+    const { repo, db, productId } = setup();
+    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Diamante", notes: null, roles: ["CLIENT"], isActive: true });
+    createConfirmedOperation(repo, partner.id, productId, "9102", "310", "EXTERNAL");
+    expect(repo.listOperations({ organizationId: villaId, responsiblePartnerId: partner.id })[0].serviceAmountCents).toBe(0);
+    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partner.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(eligible).toHaveLength(1);
+    expect(eligible[0].appliedRateValueCents).toBe(500);
+    expect(eligible[0].serviceAmountCents).toBe(155000);
+    const summary = repo.getBillingSummary(villaId);
+    expect(summary.openCents).toBe(155000);
+    expect(summary.unbilledOperations).toBe(1);
+    expect(summary.unbilledSacks).toBe("310");
+    db.close();
+  });
+
   it("releases reserved operations when draft is cancelled", () => {
     const { repo, db, partnerId, productId } = setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "2");
@@ -93,9 +171,9 @@ describe("client charges and ledger", () => {
   });
 });
 
-function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, operationScope: "INTERNAL" | "EXTERNAL" = "EXTERNAL"): void {
-  const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-16", totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
+function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, operationScope: "INTERNAL" | "EXTERNAL" = "EXTERNAL", targetOwnLegalEntityId = ownLegalEntityId, organizationId = villaId): void {
+  const doc = repo.createFiscalDocument({ organizationId, ownLegalEntityId: targetOwnLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-16", totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
   const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId, description: "Cafe", quantity: sacks, unit: "SACK", unitPriceDecimal: "1000.000", totalAmountCents: 100000, sacksQuantity: sacks });
-  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope, operationDate: "2026-07-16", quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
+  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId: targetOwnLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope, operationDate: "2026-07-16", quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
   repo.confirmFiscalDocument(doc.document.id);
 }

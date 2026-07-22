@@ -10,6 +10,7 @@ import { multiplyDecimalByCents, normalizeDecimalText } from "../src/shared/util
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+const villaEsLegalEntityId = "33333333-3333-4333-8333-333333333332";
 
 function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-step4-"));
@@ -94,6 +95,22 @@ describe("manual invoices and operations", () => {
     expect(() => repo.confirmFiscalDocument(doc.document.id)).toThrow(/pendencias/);
     expect(repo.cancelFiscalDocument(doc.document.id, "Nota incorreta").document.status).toBe("CANCELED");
     expect(repo.getOperationalIndicators(villaId).pending).toBe(1);
+    db.close();
+  });
+
+  it("filters invoices by own legal entity and deletes an unbilled wrong invoice completely", () => {
+    const { repo, db, partnerId, productId } = setup();
+    const mgDoc = repo.createFiscalDocument(sampleDocument(partnerId, "660", null));
+    const esDoc = repo.createFiscalDocument({ ...sampleDocument(partnerId, "661", null), ownLegalEntityId: villaEsLegalEntityId });
+    const item = repo.addFiscalDocumentItem({ fiscalDocumentId: esDoc.document.id, productId, description: "Cafe", quantity: "475", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 47500000, sacksQuantity: "475" });
+    repo.addOperation({ fiscalDocumentId: esDoc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId: villaEsLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-16", quantitySacks: "475", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    expect(repo.listFiscalDocuments({ organizationId: villaId, ownLegalEntityId }).map((doc) => doc.documentNumber)).toEqual(["660"]);
+    expect(repo.listFiscalDocuments({ organizationId: villaId, ownLegalEntityId: villaEsLegalEntityId }).map((doc) => doc.documentNumber)).toEqual(["661"]);
+
+    repo.deleteFiscalDocument(esDoc.document.id);
+    expect(repo.listFiscalDocuments({ organizationId: villaId, ownLegalEntityId: villaEsLegalEntityId })).toHaveLength(0);
+    expect(repo.listOperations({ organizationId: villaId, ownLegalEntityId: villaEsLegalEntityId })).toHaveLength(0);
+    expect(repo.getFiscalDocument(mgDoc.document.id).document.documentNumber).toBe("660");
     db.close();
   });
 });

@@ -48,4 +48,4 @@ Na etapa 13, a distribuicao Windows passa a ter variantes de build formais. `src
 
 Os scripts de release ficam em `scripts/release`: geracao de `.ico`, empacotamento por variante, instalador NSIS, manifesto de release, checksums SHA-256 e smoke test de artefatos.
 
-Na etapa 14, nao houve nova migration nem mudanca de arquitetura central. Foram adicionados scripts de homologacao em `scripts/homologation` para checar readiness, seguranca, migrations e desempenho SQLite basico. A versao `1.0.0-rc.1` mantem os mesmos App IDs, executaveis e diretorios `userData` da etapa 13.
+Na etapa 14, foram adicionados scripts de homologacao em `scripts/homologation` para checar readiness, seguranca, migrations e desempenho SQLite basico. A consolidacao posterior adicionou `017_real_company_legal_entities` e `018_legal_entity_confirmation_defaults`, mantendo um instalador unico multiempresa, dados de fechamento por CNPJ proprio e preservando o `userData` oficial.

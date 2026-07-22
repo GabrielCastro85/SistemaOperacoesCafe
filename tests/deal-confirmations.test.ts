@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { PDFDocument } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../electron/main/database/database";
 import { AppRepository } from "../electron/main/services/appRepository";
@@ -89,7 +90,8 @@ describe("deal confirmations", () => {
   });
 
   it("creates from operation and fiscal document without changing billing status", async () => {
-    const { repo, db, buyer, product } = setup();
+    const { repo, db, product } = setup();
+    const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
     repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: buyer.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
     const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "NF-900", series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
     const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000.1234", totalAmountCents: 500062, sacksQuantity: "5" });
@@ -100,6 +102,55 @@ describe("deal confirmations", () => {
     expect(fromOperation.operations).toHaveLength(1);
     expect(fromDocument.fiscalDocuments).toHaveLength(1);
     expect(repo.getFiscalDocument(doc.document.id).operations[0].billingStatus).toBe("UNBILLED");
+    db.close();
+  });
+
+  it("creates confirmation using the own legal entity from the selected fiscal document", () => {
+    const { repo, db, buyer, product } = setup();
+    const otherVillaLegalEntity = repo.listLegalEntities({ organizationId: villaId }).find((entity) => entity.id !== ownLegalEntityId);
+    expect(otherVillaLegalEntity).toBeDefined();
+    const doc = repo.createFiscalDocument({
+      organizationId: villaId,
+      ownLegalEntityId: otherVillaLegalEntity?.id as string,
+      responsiblePartnerId: buyer.id,
+      partnerLegalEntityId: null,
+      accessKey: null,
+      documentNumber: "NF-901",
+      series: "1",
+      issueDate: "2026-07-17",
+      totalAmountCents: 53010000,
+      hasPendingIssues: false,
+      pendingNotes: null,
+      notes: null
+    });
+    const item = repo.addFiscalDocumentItem({
+      fiscalDocumentId: doc.document.id,
+      productId: product.id,
+      description: "Cafe em graos",
+      quantity: "310",
+      unit: "SACK",
+      unitPriceDecimal: "1710",
+      totalAmountCents: 53010000,
+      sacksQuantity: "310"
+    });
+    repo.addOperation({
+      fiscalDocumentId: doc.document.id,
+      fiscalDocumentItemId: item.id,
+      ownLegalEntityId: otherVillaLegalEntity?.id as string,
+      responsiblePartnerId: buyer.id,
+      productId: product.id,
+      operationType: "SALE",
+      operationScope: "EXTERNAL",
+      operationDate: "2026-07-17",
+      quantitySacks: "310",
+      manualRateValueCents: null,
+      manualOverrideReason: null,
+      notes: null
+    });
+    repo.confirmFiscalDocument(doc.document.id);
+    const confirmation = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    expect(confirmation.confirmation.ownLegalEntityId).toBe(otherVillaLegalEntity?.id);
+    expect(confirmation.fiscalDocuments[0].id).toBe(doc.document.id);
     db.close();
   });
 
@@ -150,6 +201,81 @@ describe("deal confirmations", () => {
     const version = preview.documents.find((doc) => doc.documentType === "GENERATED_DRAFT");
     expect(version?.storedFilePath && existsSync(version.storedFilePath)).toBe(true);
     expect(version?.storedFilePath ? statSync(version.storedFilePath).size : 0).toBeGreaterThan(500);
+    db.close();
+  });
+
+  it("keeps the compact confirmation PDF in one A4 page with long names and four items", async () => {
+    const { repo, db, product } = setup();
+    const buyer = repo.createBusinessPartner({
+      organizationId: villaId,
+      displayName: "COOPERATIVA REGIONAL DOS PRODUTORES EXPORTADORES DE CAFE ESPECIAL DO SUL DE MINAS E MATAS DE MINAS",
+      notes: null,
+      roles: ["BUYER", "CLIENT"],
+      isActive: true
+    });
+    const draft = repo.createDealConfirmationDraft({
+      organizationId: villaId,
+      ownLegalEntityId,
+      confirmationDate: "2026-07-17",
+      negotiationDate: "2026-07-16",
+      paymentTermsSnapshot: "Pagamento a prazo na descarga com conferencia fiscal e liberacao financeira apos validacao comercial.",
+      deliveryLocationSnapshot: "Local rural com acesso pela Rodovia MG 455, km 40, zona rural, Andradadas - MG",
+      generalTermsSnapshot: "Fechamento sujeito a conferencia de qualidade e quantidade no recebimento.",
+      bankName: "Santander",
+      bankCode: "033",
+      bankAgency: "3318",
+      bankAccount: "13.0021347-9 / operacao cafe safra 2026",
+      pixKey: "chave-pix-comercial-muito-longa-44.963.370/0005-23@sistema-operacoes-cafe.local"
+    });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: "ARMAZEM RURAL SERRA ALTA - RODOVIA MG 455 KM 40 ZONA RURAL ANDRADAS MINAS GERAIS", representativeName: null, sortOrder: 3 });
+    ["Cafe arabica bebida dura tipo 6/7 safra 2026 lote longo A", "Cafe arabica bebida dura tipo 6/7 safra 2026 lote longo B", "Cafe arabica bebida dura tipo 6/7 safra 2026 lote longo C", "Cafe arabica bebida dura tipo 6/7 safra 2026 lote longo D"].forEach((label, index) => {
+      repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, label, index === 0 ? "310" : "267", index === 0 ? "1710.00" : "1000.0000", index));
+    });
+    repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: "Villa Coffee Minas Gerais", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+    repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: "Cooperativa Regional dos Produtores Exportadores de Cafe Especial", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+    const preview = await repo.generateDealConfirmationPreview(draft.confirmation.id);
+    const version = preview.documents.find((doc) => doc.documentType === "GENERATED_DRAFT");
+    expect(version?.storedFilePath).toBeTruthy();
+    const bytes = version?.storedFilePath ? readFileSync(version.storedFilePath) : Buffer.from([]);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBe(1);
+    expect(pdf.getPage(0).getWidth()).toBeCloseTo(595.28, 1);
+    expect(pdf.getPage(0).getHeight()).toBeCloseTo(841.89, 1);
+    db.close();
+  });
+
+  it("rejects compact confirmation PDF with more than four items", async () => {
+    const { repo, db, buyer, product } = setup();
+    const draft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-07-17", paymentTermsSnapshot: "A vista" });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    for (let index = 0; index < 5; index += 1) {
+      repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, `Cafe ${index + 1}`, "10", "1000", index));
+    }
+    await expect(repo.generateDealConfirmationPreview(draft.confirmation.id)).rejects.toThrow(/ate 4 itens/);
+    db.close();
+  });
+
+  it("names issued PDF with seller, buyer and confirmation sequence", async () => {
+    const { repo, db, product } = setup();
+    const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const draft = repo.createDealConfirmationDraft({
+      organizationId: villaId,
+      ownLegalEntityId,
+      confirmationDate: "2026-07-17",
+      paymentTermsSnapshot: "A vista"
+    });
+    expect(draft.confirmation.bankName).toBe("Santander");
+    expect(draft.confirmation.pixKey).toBe("44.963.370/0005-23");
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, "Cafe", "15", "1000", 0));
+    const issued = await repo.issueDealConfirmation(draft.confirmation.id);
+    const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
+    expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE \d+\.pdf$/);
+    expect(document?.storedFilePath ? basename(document.storedFilePath) : "").toBe(document?.originalFileName);
     db.close();
   });
 

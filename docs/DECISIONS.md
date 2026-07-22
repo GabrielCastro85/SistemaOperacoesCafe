@@ -134,14 +134,14 @@ Quando ativada, a criptografia protege o payload do pacote com AES-256-GCM e cha
 
 Retencao automatica atua sobre backups nao protegidos. Documentos oficiais e historicos permanecem com retencao indefinida por padrao porque prazos fiscais e legais devem ser definidos pela empresa e contabilidade.
 
-## Variantes Windows Isoladas
+## Instalador Windows Unico
 
-Villa Coffee, Grao & Grao e multiempresa possuem App ID, executavel, icone, artefatos e `userData` separados. Essa decisao evita compartilhamento acidental de banco entre empresas, permite instalacoes lado a lado e prepara assinatura/instalador independente por marca.
+O release oficial usa um unico instalador Windows multiempresa. Villa Coffee e Grao & Grao ficam separadas dentro do aplicativo por organizacao, CNPJ, permissao e branding. O `userData` multiempresa foi preservado para manter compatibilidade com instalacoes ja testadas.
 
 ## Release Com Manifesto E Checksum
 
-Cada empacotamento gera `release-manifest.json`, `SHA256SUMS.txt` e `release-notes.md`. O manifesto nao substitui assinatura de codigo, mas fornece rastreabilidade local de versao, variante, artefato, hash, arquitetura, migration e limitacoes conhecidas.
+Cada empacotamento gera `release-manifest.json`, `SHA256SUMS.txt` e `release-notes.md`. O manifesto nao substitui assinatura de codigo, mas fornece rastreabilidade local de versao, distribuicao, artefato, hash, arquitetura, migration e limitacoes conhecidas.
 
 ## Release Candidate Antes Do Stable
 
-Como instalacao limpa, atualizacao real, lado a lado e aceite de usuario dependem de ambiente manual, a etapa 14 gera `1.0.0-rc.1`. Essa decisao evita marcar como stable uma versao sem validacoes finais em maquina de usuario.
+Como instalacao limpa, atualizacao real, operacao multiempresa e aceite de usuario dependem de ambiente manual, a etapa 14 gera `1.0.0-rc.1`. Essa decisao evita marcar como stable uma versao sem validacoes finais em maquina de usuario.

@@ -10,31 +10,18 @@ echo.
 echo Atualizador do Sistema de Operacoes de Cafe
 echo ==========================================
 echo.
-echo Este script fecha os aplicativos abertos e instala as tres variantes por cima:
-echo - Villa Coffee
-echo - Grao e Grao
-echo - Multiempresa
+echo Este script fecha o aplicativo aberto e instala a versao mais nova por cima.
 echo.
 
-call :latest "VillaCoffee-Operacoes-Setup-*-x64.exe" VILLA
-call :latest "GraoEGrao-Operacoes-Setup-*-x64.exe" GRAO
-call :latest "SistemaOperacoesCafe-Multiempresa-Setup-*-x64.exe" MULTI
+call :latest "SistemaOperacoesCafe-Setup-*-x64.exe" INSTALLER
 
-call :check "%VILLA%" "Villa Coffee"
-if errorlevel 1 goto :failed
-call :check "%GRAO%" "Grao e Grao"
-if errorlevel 1 goto :failed
-call :check "%MULTI%" "Multiempresa"
+call :check "%INSTALLER%" "Sistema de Operacoes de Cafe"
 if errorlevel 1 goto :failed
 
 echo Fechando aplicativos abertos...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -Name VillaCoffeeOperacoes,GraoEGraoOperacoes,SistemaOperacoesCafe -ErrorAction SilentlyContinue | Stop-Process -Force"
 
-call :install "%VILLA%" "Villa Coffee"
-if errorlevel 1 goto :failed
-call :install "%GRAO%" "Grao e Grao"
-if errorlevel 1 goto :failed
-call :install "%MULTI%" "Multiempresa"
+call :install "%INSTALLER%" "Sistema de Operacoes de Cafe"
 if errorlevel 1 goto :failed
 
 echo.
@@ -70,7 +57,7 @@ exit /b 0
 :failed
 echo.
 echo A atualizacao nao foi concluida.
-echo Verifique se todos os instaladores estao na mesma pasta deste atualizador.
+echo Verifique se o instalador esta na mesma pasta deste atualizador.
 echo.
 pause
 exit /b 1

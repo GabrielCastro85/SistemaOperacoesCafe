@@ -9,7 +9,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node", "electron"],
-    "sourceMap": true
+    "sourceMap": false
   },
   "include": ["electron/**/*.ts", "electron/**/*.cts", "src/shared/**/*.ts"]
 }

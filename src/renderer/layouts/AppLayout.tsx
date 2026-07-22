@@ -2,8 +2,27 @@ import { useMemo, useState, type ReactNode } from "react";
 import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
+import {
+  AuditIcon,
+  BackupIcon,
+  CheckCircleIcon,
+  CoinsIcon,
+  DashboardIcon,
+  HandshakeIcon,
+  IntegrityIcon,
+  InvoiceIcon,
+  LedgerIcon,
+  PackageIcon,
+  RateIcon,
+  ReportIcon,
+  RolesIcon,
+  SettingsIcon,
+  UserAdminIcon,
+  WalletIcon
+} from "../design-system/components/Icons";
 import { formatCnpj } from "../../shared/utils/format";
 import { resolveOrganizationLogoSrc } from "../../shared/branding/branding";
+import type { NavigationItem } from "../app/navigation";
 
 export interface AppLayoutProps {
   variant: AppVariant;
@@ -22,6 +41,45 @@ export interface AppLayoutProps {
   onLock: () => void;
   onLogout: () => void;
   children: ReactNode;
+}
+
+function renderNavigationIcon(item: NavigationItem): JSX.Element {
+  switch (item.id) {
+    case "dashboard":
+      return <DashboardIcon />;
+    case "invoices":
+      return <InvoiceIcon />;
+    case "partners":
+      return <HandshakeIcon />;
+    case "products":
+      return <PackageIcon />;
+    case "rates":
+      return <RateIcon />;
+    case "confirmations":
+      return <CheckCircleIcon />;
+    case "charges":
+      return <CoinsIcon />;
+    case "ledger":
+      return <LedgerIcon />;
+    case "finance":
+      return <WalletIcon />;
+    case "reports":
+      return <ReportIcon />;
+    case "users":
+      return <UserAdminIcon />;
+    case "roles":
+      return <RolesIcon />;
+    case "audit":
+      return <AuditIcon />;
+    case "backups":
+      return <BackupIcon />;
+    case "integrity":
+      return <IntegrityIcon />;
+    case "settings":
+      return <SettingsIcon />;
+    default:
+      return <DashboardIcon />;
+  }
 }
 
 export function AppLayout({
@@ -47,6 +105,7 @@ export function AppLayout({
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveOrganizationLogoSrc(organization, variant);
   const legalEntityLabel = legalEntity ? `${legalEntity.tradeName} - ${formatCnpj(legalEntity.cnpj)}` : "Nenhum CNPJ ativo";
+  const userLabel = session.permissions.includes("users.manage") ? "Administrador" : "Usuario";
 
   return (
     <main className={`app-shell professional-shell ${collapsed ? "is-collapsed" : ""}`} style={themeToCssVariables(theme)}>
@@ -74,7 +133,7 @@ export function AppLayout({
                   onClick={() => onNavigate(item.legacyMenu)}
                 >
                   <span className="nav-icon" aria-hidden="true">
-                    {item.icon}
+                    {renderNavigationIcon(item)}
                   </span>
                   <span className="nav-label">{item.label}</span>
                 </button>
@@ -99,7 +158,7 @@ export function AppLayout({
             </div>
           </div>
           <label className="context-select">
-            <span>Empresa</span>
+            <span>Grupo</span>
             <select value={organization?.id ?? ""} disabled={!canSwitchOrganization} onChange={(event) => onOrganizationChange(event.target.value)}>
               {organizations.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -108,8 +167,13 @@ export function AppLayout({
               ))}
             </select>
           </label>
+          <div className="context-pill context-pill--active-company">
+            <span>Operando em</span>
+            <strong>{legalEntity?.tradeName ?? organization?.displayName ?? "Empresa nao selecionada"}</strong>
+            <small>{legalEntity ? formatCnpj(legalEntity.cnpj) : "CNPJ pendente"}</small>
+          </div>
           <label className="context-select">
-            <span>CNPJ próprio</span>
+            <span>Empresa/CNPJ</span>
             <select value={legalEntity?.id ?? ""} disabled={!canSwitchLegalEntity} onChange={(event) => onLegalEntityChange(event.target.value)}>
               {legalEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
@@ -122,7 +186,7 @@ export function AppLayout({
           <div className="context-pill context-pill--user">
             <span>Usuário</span>
             <strong>{session.user.displayName}</strong>
-            <small>Administrador</small>
+            <small>{userLabel}</small>
           </div>
           <div className="topbar-actions">
             <button type="button" onClick={onLock}>Bloquear</button>
@@ -138,4 +202,3 @@ export function AppLayout({
     </main>
   );
 }
-

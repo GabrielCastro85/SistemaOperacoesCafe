@@ -44,7 +44,7 @@ export function initializeDatabase(directories: AppDirectories): Database.Databa
 
 export function getCurrentMigration(db: Database.Database): string {
   const row = db
-    .prepare("SELECT migration_name AS migrationName FROM migration_history ORDER BY executed_at DESC LIMIT 1")
+    .prepare("SELECT migration_name AS migrationName FROM migration_history ORDER BY executed_at DESC, rowid DESC LIMIT 1")
     .get() as { migrationName: string } | undefined;
   return row?.migrationName ?? "none";
 }

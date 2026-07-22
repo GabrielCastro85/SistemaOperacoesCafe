@@ -3,11 +3,11 @@
 1. Abra o aplicativo atual.
 2. Gere um backup completo em Configuracoes > Backups.
 3. Feche o aplicativo.
-4. Instale a nova versao da mesma variante.
+4. Instale a nova versao do instalador unico `SistemaOperacoesCafe-Setup-<versao>-x64.exe`.
 5. Abra o aplicativo e verifique Configuracoes > Sobre.
 6. Execute Configuracoes > Integridade.
 
-Nao misture instaladores de variantes diferentes para atualizar a mesma base. Villa Coffee, Grao & Grao e multiempresa usam `userData` separados.
+O release oficial possui apenas um instalador. Villa Coffee e Grao & Grao continuam separadas dentro do app por organizacao, CNPJ, permissao e branding.
 
 Se uma atualizacao falhar, restaure o backup `.cafebackup` pela tela Configuracoes > Restaurar.
 

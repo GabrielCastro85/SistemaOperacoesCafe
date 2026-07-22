@@ -6,8 +6,11 @@
 - Mantida a ultima migration em `013_backups_integrity`.
 - Adicionados scripts `homologation:check`, `security:review`, `migrations:check` e `performance:baseline`.
 - Criados manual do usuario, guia rapido, checklist diario, teste de aceite, checklist de release, controle de defeitos, revisao de seguranca e relatorio de homologacao.
-- Documentado bloqueio de promocao para `1.0.0` ate validacoes manuais de instalacao limpa, atualizacao, lado a lado e aceite.
-- Gerados artefatos RC por variante com `signed: false` quando nao houver certificado Authenticode.
+- Documentado bloqueio de promocao para `1.0.0` ate validacoes manuais de instalacao limpa, atualizacao, operacao multiempresa e aceite.
+- Consolidado release oficial em instalador unico com `signed: false` quando nao houver certificado Authenticode.
+- Adicionada migration `016_unified_company_context` para app unico multiempresa, escolha de unidade/CNPJ na entrada e acesso operacional total para usuarios logados.
+- Adicionada migration `017_real_company_legal_entities` para cadastrar os CNPJs reais de Villa Coffee MG/ES e Grao & Grao MG/SP.
+- Adicionada migration `018_legal_entity_confirmation_defaults` para preencher automaticamente banco/PIX nos fechamentos e atualizar inscricoes estaduais conferidas nos PDFs de referencia.
 
 ## 0.13.0
 

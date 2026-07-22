@@ -31,7 +31,7 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("015_deal_confirmation_brokerage_bank");
+    expect(getCurrentMigration(db)).toBe("018_legal_entity_confirmation_defaults");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });
@@ -50,6 +50,10 @@ describe("database foundation", () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'restore_jobs'").get()).toMatchObject({ name: "restore_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'integrity_check_runs'").get()).toMatchObject({ name: "integrity_check_runs" });
     expect(db.prepare("SELECT COUNT(*) AS total FROM permissions WHERE code LIKE 'backups.%' OR code LIKE 'integrity.%' OR code IN ('retention.manage','temporary_files.cleanup')").get()).toMatchObject({ total: 12 });
+    expect(db.prepare("SELECT COUNT(*) AS total FROM legal_entities WHERE cnpj IN ('44963370000523','44963370000280','16594876000224','16594876000496') AND is_active = 1").get()).toMatchObject({ total: 4 });
+    expect(db.prepare("SELECT city, state, state_registration, default_bank_name, default_bank_code, default_bank_agency, default_bank_account, default_pix_key FROM legal_entities WHERE cnpj = '44963370000523'").get()).toMatchObject({ city: "MONTE SANTO DE MINAS", state: "MG", state_registration: "0053761240090", default_bank_name: "Santander", default_bank_code: "033", default_bank_agency: "3318", default_bank_account: "13.0021347", default_pix_key: "44.963.370/0005-23" });
+    expect(db.prepare("SELECT state_registration, default_pix_key FROM legal_entities WHERE cnpj = '16594876000224'").get()).toMatchObject({ state_registration: "46505230009", default_pix_key: "16.594.876/0002-24" });
+    expect(db.prepare("SELECT city, state FROM legal_entities WHERE cnpj = '16594876000496'").get()).toMatchObject({ city: "SANTO ANTONIO DO JARDIM", state: "SP" });
     db.close();
   });
 

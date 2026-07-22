@@ -39,9 +39,11 @@ export function getReadableTextColor(hexColor: string): "#111111" | "#ffffff" {
 export function buildUiTheme(variant: AppVariant, organization?: Organization | null): UiTheme {
   const branding = getBrandingConfig(variant);
   const primary = organization?.primaryColor ?? branding.colors.primary;
+  const secondary = organization?.secondaryColor ?? branding.colors.secondary;
   const accent = organization?.accentColor ?? branding.colors.accent;
-  const isVilla = variant === "villa";
-  const isGrao = variant === "grao";
+  const organizationName = `${organization?.slug ?? ""} ${organization?.displayName ?? ""}`.toLowerCase();
+  const isVilla = variant === "villa" || organizationName.includes("villa");
+  const isGrao = variant === "grao" || organizationName.includes("grao") || organizationName.includes("grão");
 
   return {
     variant,
@@ -53,14 +55,14 @@ export function buildUiTheme(variant: AppVariant, organization?: Organization | 
       primaryText: getReadableTextColor(primary),
       accent,
       accentText: getReadableTextColor(accent),
-      sidebar: isVilla ? "#11100d" : isGrao ? "#102f22" : "#182320",
+      sidebar: isVilla ? "#11100d" : isGrao ? "#073f28" : primary,
       sidebarText: "#fffaf0",
-      background: isVilla ? "#f5efe4" : isGrao ? "#f3f0e6" : "#f6f2e8",
+      background: isVilla ? "#f5efe4" : isGrao ? "#f3f0e6" : secondary,
       surface: "#fffaf2",
-      surfaceMuted: isVilla ? "#f1e6d4" : isGrao ? "#ecf1e5" : "#eee8dc",
+      surfaceMuted: isVilla ? "#f1e6d4" : isGrao ? "#ecf1e5" : secondary,
       text: branding.colors.text,
       textMuted: "#6b6255",
-      border: isVilla ? "#d7c2a5" : isGrao ? "#cdbd9d" : "#d7cbb6",
+      border: isVilla ? "#d7c2a5" : isGrao ? "#cdbd9d" : secondary,
       success: "#2f7d4f",
       warning: "#ad741f",
       danger: "#b43d36",

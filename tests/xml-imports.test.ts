@@ -10,6 +10,7 @@ import { inspectXmlFile, isValidAccessKey, parseXmlContent } from "../electron/m
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+const villaEsLegalEntityId = "33333333-3333-4333-8333-333333333332";
 const ownCnpj = "11222333000181";
 const partnerCnpj = "22333444000181";
 
@@ -123,6 +124,29 @@ describe("xml imports", () => {
     db.close();
   });
 
+  it("blocks XML import when the selected own CNPJ does not match the invoice parties", () => {
+    const { repo, db, partnerId, productId, dir } = setup();
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-wrong-own-cnpj.xml");
+    writeFileSync(filePath, nfeXml(key), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111118");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId: villaEsLegalEntityId, clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.job.importedNotes).toBe(0);
+    expect(result.files[0].status).toBe("ERROR");
+    expect(result.files[0].errorMessage).toContain("XML nao pertence ao CNPJ proprio selecionado");
+    expect(repo.listFiscalDocuments({ organizationId: villaId, ownLegalEntityId: villaEsLegalEntityId })).toHaveLength(0);
+    db.close();
+  });
+
   it("auto-matches the counterparty by CNPJ without an explicit clientPartnerId", () => {
     const { repo, db, partnerId, productId, dir } = setup();
     repo.createPartnerLegalEntity({
@@ -156,6 +180,65 @@ describe("xml imports", () => {
     expect(result.job.importedNotes).toBe(1);
     const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
     expect(detail.document.responsiblePartnerId).toBe(partnerId);
+    db.close();
+  });
+
+  it("identifies the own legal entity by state/name when its CNPJ is still pending", () => {
+    const { repo, db, partnerId, productId, dir } = setup();
+    repo.updateLegalEntity(ownLegalEntityId, {
+      organizationId: villaId,
+      legalName: "Villa Coffee Comercio Exp. Ltda - Minas Gerais",
+      tradeName: "Villa Coffee Minas Gerais",
+      cnpj: null,
+      stateRegistration: null,
+      municipalRegistration: null,
+      email: null,
+      phone: null,
+      addressLine: "Rua A",
+      addressNumber: "1",
+      addressComplement: null,
+      district: "Centro",
+      state: "MG",
+      city: "Monte Santo de Minas",
+      postalCode: "37000000",
+      documentPrefix: null,
+      isActive: true,
+      isDraft: true
+    });
+    repo.createPartnerLegalEntity({
+      businessPartnerId: partnerId,
+      legalName: "Cliente XML Ltda",
+      tradeName: "Cliente XML Ltda",
+      cnpj: partnerCnpj,
+      stateRegistration: null,
+      municipalRegistration: null,
+      email: null,
+      phone: null,
+      addressLine: null,
+      addressNumber: null,
+      addressComplement: null,
+      district: null,
+      city: null,
+      state: null,
+      postalCode: null,
+      isPrimary: true,
+      isActive: true,
+      isDraft: false
+    });
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-own-pending-cnpj.xml");
+    writeFileSync(filePath, nfeXml(key), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111117");
+    const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.files[0].errorMessage).toBeNull();
+    expect(result.job.importedNotes).toBe(1);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    expect(detail.document.ownLegalEntityId).toBe(ownLegalEntityId);
+    expect(detail.document.responsiblePartnerId).toBe(partnerId);
+    expect(detail.document.direction).toBe("OUTBOUND");
     db.close();
   });
 

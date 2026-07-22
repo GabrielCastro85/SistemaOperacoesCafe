@@ -42,7 +42,12 @@ export function formatCurrencyFromCents(value: number): string {
 }
 
 export function parseCurrencyToCents(value: string): number {
-  const normalized = value.trim().replace(/\./g, "").replace(",", ".");
+  const normalized = value.trim().replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+}
+
+export function formatCurrencyInput(value: string): string {
+  const cents = parseCurrencyToCents(value);
+  return value.trim() ? formatCurrencyFromCents(cents) : "";
 }

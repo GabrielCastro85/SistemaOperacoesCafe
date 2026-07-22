@@ -26,26 +26,26 @@ export function OrganizationPickerPage({
   organizations,
   legalEntities,
   defaultOrganizationId,
+  defaultLegalEntityId,
   onSelect
 }: {
   organizations: Organization[];
   legalEntities: LegalEntity[];
   defaultOrganizationId: string | null;
-  onSelect: (organizationId: string, remember: boolean) => void;
+  defaultLegalEntityId: string | null;
+  onSelect: (organizationId: string, legalEntityId: string) => void;
 }): JSX.Element {
-  const activeOrganizations = organizations.filter((org) => org.isActive);
-  const [selectedId, setSelectedId] = useState(defaultOrganizationId ?? activeOrganizations[0]?.id ?? "");
-  const [remember, setRemember] = useState(true);
+  const activeLegalEntities = legalEntities.filter((entity) => entity.isActive);
+  const firstEntity = activeLegalEntities.find((entity) => entity.id === defaultLegalEntityId) ?? activeLegalEntities.find((entity) => entity.organizationId === defaultOrganizationId) ?? activeLegalEntities[0] ?? null;
+  const [selectedId, setSelectedId] = useState(firstEntity?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
-
-  function primaryCnpjFor(organizationId: string): string | null {
-    return legalEntities.find((entity) => entity.organizationId === organizationId && entity.isActive)?.cnpj ?? null;
-  }
 
   function submit(): void {
     if (!selectedId || submitting) return;
+    const entity = activeLegalEntities.find((item) => item.id === selectedId);
+    if (!entity) return;
     setSubmitting(true);
-    onSelect(selectedId, remember);
+    onSelect(entity.organizationId, entity.id);
   }
 
   return (
@@ -53,24 +53,24 @@ export function OrganizationPickerPage({
       <section className="org-picker-panel">
         <span className="auth-eyebrow">Sistema de Operacoes de Cafe</span>
         <h1>Bem-vindo</h1>
-        <p>Selecione a empresa para acessar o sistema.</p>
+        <p>Selecione a empresa/CNPJ para acessar o sistema.</p>
         <div className="org-picker-grid">
-          {activeOrganizations.map((org) => {
-            const cnpj = primaryCnpjFor(org.id);
+          {activeLegalEntities.map((entity) => {
+            const org = organizations.find((item) => item.id === entity.organizationId) ?? null;
             const logoSrc = resolveOrganizationLogoSrc(org);
-            const isSelected = selectedId === org.id;
+            const isSelected = selectedId === entity.id;
             return (
               <button
-                key={org.id}
+                key={entity.id}
                 type="button"
                 className={`org-picker-card${isSelected ? " active" : ""}`}
-                onClick={() => setSelectedId(org.id)}
+                onClick={() => setSelectedId(entity.id)}
               >
-                {logoSrc ? <img src={logoSrc} alt="" /> : <div className="brand-mark">{org.displayName.slice(0, 2).toUpperCase()}</div>}
+                {logoSrc ? <img src={logoSrc} alt="" /> : <div className="brand-mark">{entity.tradeName.slice(0, 2).toUpperCase()}</div>}
                 <div className="org-picker-card__body">
-                  <strong>{org.displayName}</strong>
-                  {cnpj ? <span className="org-picker-card__cnpj">CNPJ: {formatCnpj(cnpj)}</span> : null}
-                  {org.description ? <small>{org.description}</small> : null}
+                  <strong>{entity.tradeName}</strong>
+                  <span className="org-picker-card__cnpj">CNPJ: {formatCnpj(entity.cnpj)}</span>
+                  <small>{org?.displayName ?? "Empresa"} - {entity.city}/{entity.state}</small>
                 </div>
                 <span className="org-picker-card__chevron" aria-hidden="true">
                   &#8250;
@@ -79,9 +79,6 @@ export function OrganizationPickerPage({
             );
           })}
         </div>
-        <label className="checkbox">
-          <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /> Lembrar minha escolha
-        </label>
         <button className="primary" type="button" disabled={!selectedId || submitting} onClick={submit}>
           Entrar no sistema
         </button>

@@ -5,8 +5,8 @@ import { buildVariantConfigs, getBuildVariantConfig } from "../src/shared/buildV
 
 const root = process.cwd();
 
-describe("Windows distribution variants", () => {
-  it("keeps app IDs, executables and userData directories isolated", () => {
+describe("Windows distribution", () => {
+  it("keeps brand variants available inside the single multiempresa app", () => {
     const variants = Object.values(buildVariantConfigs);
     expect(new Set(variants.map((variant) => variant.appId))).toHaveLength(variants.length);
     expect(new Set(variants.map((variant) => variant.executableName))).toHaveLength(variants.length);
@@ -37,8 +37,13 @@ describe("Windows distribution variants", () => {
     expect(pkg.author).toBeTruthy();
     expect(pkg.license).toBe("UNLICENSED");
     expect(pkg.engines?.node).toContain(">=20.19.0");
-    expect(pkg.scripts["package:villa"]).toContain("villa");
-    expect(pkg.scripts["package:grao"]).toContain("grao");
+    expect(pkg.scripts.package).toContain("multiempresa");
+    expect(pkg.scripts.dist).toContain("multiempresa");
+    expect(pkg.scripts["package:villa"]).toBeUndefined();
+    expect(pkg.scripts["package:grao"]).toBeUndefined();
+    expect(pkg.scripts["release:villa"]).toBeUndefined();
+    expect(pkg.scripts["release:grao"]).toBeUndefined();
+    expect(buildVariantConfigs.multiempresa.artifactPrefix).toBe("SistemaOperacoesCafe");
     expect(pkg.scripts["release:verify"]).toContain("verify-release");
     expect(pkg.scripts["smoke:packaged"]).toContain("smoke-packaged");
     expect(pkg.scripts["homologation:check"]).toContain("release-readiness");
