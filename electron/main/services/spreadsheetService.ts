@@ -12,7 +12,7 @@ const aliases: Record<string, string[]> = {
   destinationName: ["DESTINO", "DESTINATARIO", "COMPRADOR", "LOCAL DE DESCARGA"],
   documentNumber: ["NF", "NOTA", "NOTA FISCAL", "N NF", "NUMERO NF"],
   clientName: ["CLIENTE", "CORRETOR", "RESPONSAVEL"],
-  operationScope: ["INTERNO/EXTERNO", "TIPO", "OPERACAO", "CLASSIFICACAO"]
+  operationScope: ["UF DA VENDA", "INTERNO/EXTERNO", "INTERNA/EXTERNA", "TIPO", "OPERACAO", "CLASSIFICACAO"]
 };
 
 export function normalizeHeader(value: string): string {

@@ -174,7 +174,8 @@ export const businessPartnerInputSchema = z.object({
   displayName: z.string().trim().min(1),
   notes: nullableText,
   roles: z.array(businessPartnerRoleSchema).min(1),
-  isActive: z.boolean()
+  isActive: z.boolean(),
+  creditLimitCents: z.number().int().min(0).nullable().optional()
 });
 
 export const partnerLegalEntityInputSchema = z

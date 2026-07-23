@@ -156,6 +156,7 @@ export function mapBusinessPartner(row: DbRecord, roles: BusinessPartner["roles"
     notes: textOrNull(row.notes),
     roles,
     isActive: bool(row.is_active),
+    creditLimitCents: row.credit_limit_cents == null ? null : Number(row.credit_limit_cents),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };

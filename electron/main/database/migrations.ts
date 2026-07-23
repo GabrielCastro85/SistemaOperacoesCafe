@@ -2439,5 +2439,14 @@ export const migrations: Migration[] = [
         }
       ].forEach((entity) => updateDefaults.run({ ...entity, updatedAt: now }));
     }
+  },
+  {
+    name: "019_business_partner_credit_limit",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(business_partners)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("credit_limit_cents")) {
+        db.exec("ALTER TABLE business_partners ADD COLUMN credit_limit_cents INTEGER");
+      }
+    }
   }
 ];

@@ -21,7 +21,7 @@ Preencha uma copia deste documento para Villa Coffee e outra para Grao & Grao.
 | UAT-002 | Criar administrador | Criar admin inicial e fazer login | Login bem-sucedido, sem senha padrao |  |  |  |
 | UAT-003 | Configurar empresa | Revisar organizacao, CNPJ e local | Dados ficam salvos apos reiniciar |  |  |  |
 | UAT-004 | Cadastrar cliente e produto | Criar cliente, CNPJ, contato e produto | Cadastros aparecem em listas e detalhes |  |  |  |
-| UAT-005 | Criar regra por saca | Criar regra interna/externa | Regra fica ativa e aplicavel |  |  |  |
+| UAT-005 | Criar regra por saca | Criar regra por mesma UF/outra UF | Regra fica ativa e aplicavel |  |  |  |
 | UAT-006 | Lancar nota manual | Criar nota, itens e operacao | Nota confirma e calcula servico |  |  |  |
 | UAT-007 | Importar planilha | Selecionar `.xlsx`, mapear e processar | Linhas validas importadas, avisos visiveis |  |  |  |
 | UAT-008 | Importar XML | Importar XML de teste | Nota/evento identificado sem internet |  |  |  |

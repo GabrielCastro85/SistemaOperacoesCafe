@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, BusinessPartnerRole, CnpjLookupResult, PartnerContact } from "../../../shared/types/domain";
-import { formatCnpj, formatDateBr, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
+import { formatCnpj, formatCurrencyFromCents, formatDateBr, isValidCnpj, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
 import { PageHeader } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
 import { TextField } from "../../components/forms/LegacyFields";
@@ -36,6 +36,8 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   const [message, setMessage] = useState<string | null>(null);
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const [partnerName, setPartnerName] = useState("");
+  const [creditLimitInput, setCreditLimitInput] = useState("");
+  const [editCreditLimitInput, setEditCreditLimitInput] = useState("");
   const [roles, setRoles] = useState<BusinessPartnerRole[]>(["CLIENT"]);
   const [contactName, setContactName] = useState("");
   const [manualLegalEntityForm, setManualLegalEntityForm] = useState(emptyLegalEntityForm);
@@ -57,6 +59,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     setSelected(partner);
     setEditPartnerName(partner.displayName);
     setEditPartnerRoles(partner.roles);
+    setEditCreditLimitInput(partner.creditLimitCents != null ? formatCurrencyFromCents(partner.creditLimitCents) : "");
     setLegalEntities(await window.operationsCafe.listPartnerLegalEntities(partner.id));
     setContacts(await window.operationsCafe.listPartnerContacts(partner.id));
   }
@@ -117,6 +120,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
 
   function resetCreateForm(): void {
     setPartnerName("");
+    setCreditLimitInput("");
     setRoles(["CLIENT"]);
     setManualLegalEntityForm(emptyLegalEntityForm);
     setLookupCnpjInput("");
@@ -196,13 +200,14 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       return;
     }
     try {
-      const partner = await window.operationsCafe.createBusinessPartner({ organizationId, displayName: fallbackName, notes: null, roles, isActive: true });
+      const partner = await window.operationsCafe.createBusinessPartner({ organizationId, displayName: fallbackName, notes: null, roles, isActive: true, creditLimitCents: creditLimitInput.trim() ? parseCurrencyToCents(creditLimitInput) : null });
       if (hasLegalEntityData(manualLegalEntityForm)) {
         await window.operationsCafe.createPartnerLegalEntity(buildLegalEntityPayload(manualLegalEntityForm, partner.id, true, fallbackName));
       }
       setLookupCnpjInput("");
       setLookupResult(null);
       setPartnerName("");
+      setCreditLimitInput("");
       setManualLegalEntityForm(emptyLegalEntityForm);
       setMessage(cnpjDigits ? "Cliente cadastrado manualmente." : "Cliente cadastrado manualmente como rascunho sem CNPJ.");
       await load();
@@ -230,7 +235,8 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
         displayName: name,
         notes: selected.notes,
         roles: editPartnerRoles,
-        isActive: selected.isActive
+        isActive: selected.isActive,
+        creditLimitCents: editCreditLimitInput.trim() ? parseCurrencyToCents(editCreditLimitInput) : null
       });
       setMessage("Cadastro do cliente atualizado.");
       await load();
@@ -273,12 +279,14 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
         displayName: manualLegalEntityForm.tradeName.trim() || lookupResult.tradeName || lookupResult.legalName,
         notes: lookupResult.registrationStatus ? `Situacao cadastral: ${lookupResult.registrationStatus}` : null,
         roles,
-        isActive: true
+        isActive: true,
+        creditLimitCents: creditLimitInput.trim() ? parseCurrencyToCents(creditLimitInput) : null
       });
       await window.operationsCafe.createPartnerLegalEntity(buildLegalEntityPayload(manualLegalEntityForm, partner.id, true, lookupResult.tradeName || lookupResult.legalName));
       setLookupCnpjInput("");
       setLookupResult(null);
       setPartnerName("");
+      setCreditLimitInput("");
       setManualLegalEntityForm(emptyLegalEntityForm);
       setMessage("Cliente cadastrado com dados do CNPJ.");
       await load();
@@ -373,17 +381,19 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   }
 
   return (
-    <section className="content-section settings">
+    <section className="content-section settings compact-crud-page partners-page">
       <PageHeader title="Clientes e parceiros" eyebrow="Comercial" description="Cadastre clientes, compradores, vendedores, fornecedores, CNPJs e contatos." />
       <AdminBlock title="Clientes e parceiros">
-        <div className="partners-list-toolbar">
-          <TextField label="Pesquisar cliente" value={search} onChange={setSearch} />
-          <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar cliente</button>
-        </div>
-        <div className="table">
-          <div className="table-head partner-grid"><span>Parceiro</span><span>Papeis</span><span>Status</span><span>Atualizado</span><span>Acoes</span></div>
-          {items.map((item) => <div key={item.id} className="table-row partner-grid"><span>{item.displayName}</span><span>{item.roles.map((role) => roleLabels[role]).join(", ")}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span><span className="actions"><button onClick={() => void openEditModal(item)}>Editar</button><button className="danger-action" onClick={() => void deletePartner(item)}>Excluir</button></span></div>)}
-          {items.length === 0 ? <div className="table-row"><span>Nenhum cliente encontrado.</span></div> : null}
+        <div className="partners-list-panel">
+          <div className="partners-list-toolbar">
+            <TextField label="Pesquisar cliente" value={search} onChange={setSearch} />
+            <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar cliente</button>
+          </div>
+          <div className="table">
+            <div className="table-head partner-grid"><span>Parceiro</span><span>Papeis</span><span>Status</span><span>Atualizado</span><span>Acoes</span></div>
+            {items.map((item) => <div key={item.id} className="table-row partner-grid"><span>{item.displayName}</span><span>{item.roles.map((role) => roleLabels[role]).join(", ")}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span><span className="actions"><button onClick={() => void openEditModal(item)}>Editar</button><button className="danger-action" onClick={() => void deletePartner(item)}>Excluir</button></span></div>)}
+            {items.length === 0 ? <div className="table-row"><span>Nenhum cliente encontrado.</span></div> : null}
+          </div>
         </div>
       </AdminBlock>
       {modalMode ? (
@@ -429,6 +439,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                     </div>
                     <FormGrid>
                       <TextField label="Nome do parceiro" value={partnerName} onChange={setPartnerName} required />
+                      <TextField label="Limite de credito (R$)" value={creditLimitInput} onChange={setCreditLimitInput} />
                       <label className="checkbox"><input type="checkbox" checked={roles.includes("CLIENT")} onChange={(event) => setRoles(toggleRole(roles, "CLIENT", event.target.checked))} /> Cliente</label>
                       <label className="checkbox"><input type="checkbox" checked={roles.includes("BUYER")} onChange={(event) => setRoles(toggleRole(roles, "BUYER", event.target.checked))} /> Comprador</label>
                     </FormGrid>
@@ -462,6 +473,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                     </div>
                     <FormGrid>
                       <TextField label="Nome do cliente" value={editPartnerName} onChange={setEditPartnerName} required />
+                      <TextField label="Limite de credito (R$)" value={editCreditLimitInput} onChange={setEditCreditLimitInput} />
                       {roleOptions.map((role) => (
                         <label key={role} className="checkbox">
                           <input type="checkbox" checked={editPartnerRoles.includes(role)} onChange={(event) => setEditPartnerRoles(toggleRole(editPartnerRoles, role, event.target.checked))} /> {roleLabels[role]}

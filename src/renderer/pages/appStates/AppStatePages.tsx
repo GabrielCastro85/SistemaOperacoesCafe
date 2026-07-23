@@ -1,8 +1,8 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
-import type { BillingSummary, BootstrapData, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
+import type { BillingSummary, BootstrapData, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
-import { Button, Card, CheckCircleIcon, CoinsIcon, EmptyState, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
+import { Badge, Button, Card, CheckCircleIcon, CoinsIcon, EmptyState, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 
 export function Splash(): JSX.Element {
   return (
@@ -89,6 +89,7 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
 export function Dashboard({ organizations, legalEntities, locations, organizationId, ownLegalEntityId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string; ownLegalEntityId?: string | null }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
+  const [alerts, setAlerts] = useState<DashboardAlerts | null>(null);
   const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
 
@@ -96,10 +97,12 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     if (!organizationId) return;
     void Promise.all([
       window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
-    ]).then(([billing, confirmations]) => {
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
+      window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
+    ]).then(([billing, confirmations, dashboardAlerts]) => {
       setBillingSummary(billing);
       setConfirmationSummary(confirmations);
+      setAlerts(dashboardAlerts);
     });
   }, [organizationId, ownLegalEntityId]);
 
@@ -124,6 +127,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     { label: "Rascunho/pendente", value: (confirmationSummary?.drafts ?? 0) + (confirmationSummary?.pendingReview ?? 0) }
   ];
   const statusTotal = statusSlices.reduce((sum, item) => sum + item.value, 0);
+  const hasAlerts = Boolean(alerts && (alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length));
 
   return (
     <section className="content-section">
@@ -134,6 +138,37 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
         <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
         <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
       </div>
+
+      {hasAlerts && alerts ? (
+        <Card>
+          <div className="ui-card__header">
+            <div>
+              <span className="ui-eyebrow">Atenção</span>
+              <h2>Alertas</h2>
+            </div>
+          </div>
+          <div className="alert-list">
+            {alerts.overdueCharges.map((item) => (
+              <button key={item.chargeId} className="alert-item" onClick={() => { window.location.hash = "#/charges"; }}>
+                <Badge tone="danger">Cobranca vencida</Badge>
+                <span>{item.partnerName} - {formatCurrencyFromCents(item.openAmountCents)} em aberto ha {item.daysOverdue} dia(s)</span>
+              </button>
+            ))}
+            {alerts.waitingSignatureConfirmations.map((item) => (
+              <button key={item.confirmationId} className="alert-item" onClick={() => { window.location.hash = "#/confirmations"; }}>
+                <Badge tone="warning">Aguardando assinatura</Badge>
+                <span>{item.confirmationNumber} - {item.buyerName}, ha {item.daysWaiting} dia(s)</span>
+              </button>
+            ))}
+            {alerts.partnersNearCreditLimit.map((item) => (
+              <button key={item.partnerId} className="alert-item" onClick={() => { window.location.hash = "#/partners"; }}>
+                <Badge tone="warning">Limite de credito</Badge>
+                <span>{item.partnerName} - {item.percentUsed}% do limite ({formatCurrencyFromCents(item.outstandingCents)} de {formatCurrencyFromCents(item.creditLimitCents)})</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <div className="dashboard-workspace">
         <Card>

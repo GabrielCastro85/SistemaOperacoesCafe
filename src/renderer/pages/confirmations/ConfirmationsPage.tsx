@@ -6,7 +6,7 @@ import { EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper } from "../
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { Feedback } from "../../components/feedback/Feedback";
-import { requestTextInput } from "../../utils/dialogs";
+import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { ConfirmationPartyCard } from "./components/ConfirmationPartyCard";
 import { ConfirmationItemsTable } from "./components/ConfirmationItemsTable";
 
@@ -43,6 +43,8 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [pixKey, setPixKey] = useState("");
   const [deliveryRecipientId, setDeliveryRecipientId] = useState("");
   const [clauseTemplateId, setClauseTemplateId] = useState("");
+  const [view, setView] = useState<"list" | "new" | "detail">("list");
+  const [creationMode, setCreationMode] = useState<"notes" | "manual">("notes");
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -127,6 +129,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
       setPreviewBase64(null);
+      setView("detail");
       setMessage("Confirmacao manual criada.");
       await load();
     } catch (errorValue) {
@@ -181,6 +184,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
       setPreviewBase64(null);
+      setView("detail");
       setMessage(`Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`);
       await load();
     } catch (errorValue) {
@@ -193,22 +197,31 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     setDetail(opened);
     loadBankFieldsFromDetail(opened);
     await refreshPreview(opened);
+    setView("detail");
   }
 
   async function generatePreview(): Promise<void> {
     if (!detail) return;
     const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id);
+    if (!updated) {
+      setMessage("Geracao cancelada. Nenhuma pasta foi escolhida.");
+      return;
+    }
     setDetail(updated);
     await refreshPreview(updated);
-    setMessage("Previa gerada.");
+    setMessage("Previa gerada e salva na pasta escolhida.");
   }
 
   async function issue(): Promise<void> {
     if (!detail) return;
     const updated = await window.operationsCafe.issueDealConfirmation(detail.confirmation.id);
+    if (!updated) {
+      setMessage("Emissao cancelada. Nenhuma pasta foi escolhida.");
+      return;
+    }
     setDetail(updated);
     await refreshPreview(updated);
-    setMessage("Confirmacao emitida.");
+    setMessage("Confirmacao emitida e salva na pasta escolhida.");
     await load();
   }
 
@@ -271,6 +284,29 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     await load();
   }
 
+  async function deleteDeal(id = detail?.confirmation.id): Promise<void> {
+    if (!id) return;
+    const target = confirmations.find((item) => item.id === id) ?? detail?.confirmation;
+    const label = target?.confirmationNumber ?? target?.temporaryReference ?? "esta confirmacao";
+    const confirmed = await requestDecision({
+      title: "Excluir confirmação definitivamente",
+      message: `Deseja excluir ${label}? Documentos, participantes, itens, clausulas, assinantes e historico desta confirmacao tambem serao removidos.`
+    });
+    if (!confirmed) return;
+    try {
+      await window.operationsCafe.deleteDealConfirmation(id);
+      if (detail?.confirmation.id === id) {
+        setDetail(null);
+        setPreviewBase64(null);
+        setView("list");
+      }
+      setMessage("Confirmacao excluida definitivamente.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir confirmacao."}`);
+    }
+  }
+
   async function createTemplate(): Promise<void> {
     await window.operationsCafe.createDealConfirmationTemplate({
       organizationId,
@@ -308,7 +344,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   async function generateReport(format: "PDF" | "EXCEL"): Promise<void> {
     const report = await window.operationsCafe.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format, filters: { organizationId, ownLegalEntityId: ownLegalEntityId || null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
-    setMessage(`Relatorio ${format} gerado: ${report.fileName}`);
+    setMessage(report ? `Relatorio ${format} salvo: ${report.fileName}` : "Geracao cancelada. Nenhuma pasta foi escolhida.");
   }
 
   return (
@@ -318,140 +354,168 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
         title="Confirmações de negócio"
         description="Crie confirmações, controle documentos, assinaturas externas, templates, cláusulas e relatórios comerciais."
       />
-      <Stepper
-        activeId="origin"
-        steps={[
-          { id: "origin", label: "Origem", status: "current" },
-          { id: "parties", label: "Participantes", status: detail?.parties.length ? "complete" : "pending" },
-          { id: "items", label: "Itens", status: detail?.items.length ? "complete" : "pending" },
-          { id: "documents", label: "Documentos", status: detail?.documents.length ? "complete" : "pending" }
-        ]}
-      />
+      {tab === "Confirmacoes" && view !== "list" && (
+        <Stepper
+          activeId="origin"
+          steps={[
+            { id: "origin", label: "Origem", status: "current" },
+            { id: "parties", label: "Participantes", status: detail?.parties.length ? "complete" : "pending" },
+            { id: "items", label: "Itens", status: detail?.items.length ? "complete" : "pending" },
+            { id: "documents", label: "Documentos", status: detail?.documents.length ? "complete" : "pending" }
+          ]}
+        />
+      )}
       <div className="settings-tabs">{["Confirmacoes", "Templates", "Clausulas", "Relatorios"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
-      <div className="cards">
-        <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
-        <article><span>Sacas confirmadas</span><strong>{summary?.totalSacksDecimal ?? "0"}</strong></article>
-        <article><span>Valor comercial</span><strong>{formatCurrencyFromCents(summary?.totalCommercialAmountCents ?? 0)}</strong></article>
-        <article><span>Aguardando assinatura</span><strong>{summary?.waitingSignature ?? 0}</strong></article>
-        <article><span>Assinadas</span><strong>{summary?.signed ?? 0}</strong></article>
-        <article><span>Sem NF</span><strong>{summary?.withoutFiscalDocument ?? 0}</strong></article>
-      </div>
-      {tab === "Confirmacoes" && (
+      {tab === "Confirmacoes" && view !== "detail" && (
+        <div className="cards">
+          <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
+          <article><span>Sacas confirmadas</span><strong>{summary?.totalSacksDecimal ?? "0"}</strong></article>
+          <article><span>Valor comercial</span><strong>{formatCurrencyFromCents(summary?.totalCommercialAmountCents ?? 0)}</strong></article>
+          <article><span>Aguardando assinatura</span><strong>{summary?.waitingSignature ?? 0}</strong></article>
+          <article><span>Assinadas</span><strong>{summary?.signed ?? 0}</strong></article>
+          <article><span>Sem NF</span><strong>{summary?.withoutFiscalDocument ?? 0}</strong></article>
+        </div>
+      )}
+      {tab === "Confirmacoes" && view === "list" && (
         <>
-          <AdminBlock title="Criacao manual">
-            <p className="muted">Vendedor: <strong>{ownEntityName}</strong> (empresa/CNPJ propio selecionado no topo).</p>
-            <FormGrid>
-              <SelectField label="Comprador (cliente)" value={buyerId} onChange={setBuyerId} options={clientPartners.map((item) => [item.id, item.displayName])} />
-              <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
-              <TextField label="Sacas" value={quantity} onChange={setQuantity} />
-              <TextField label="Preco por saca" value={price} onChange={setPrice} />
-              <button className="primary" onClick={() => void createManual()}>Criar confirmacao</button>
-            </FormGrid>
-          </AdminBlock>
-
-          <AdminBlock title="Criar a partir de notas fiscais">
-            <FormGrid>
-              <SelectField label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} options={clientPartners.map((item) => [item.id, item.displayName])} />
-            </FormGrid>
-            {sourceDocuments.length ? (
-              <div className="table">
-                <div className="table-head confirmation-source-grid"><span></span><span>NF</span><span>Emissao</span><span>Sacas</span><span>Valor total</span></div>
-                {sourceDocuments.map((row) => (
-                  <div key={row.document.id} className="table-row confirmation-source-grid">
-                    <span><input type="checkbox" checked={Boolean(selectedDocumentIds[row.document.id])} onChange={(event) => setSelectedDocumentIds((current) => ({ ...current, [row.document.id]: event.target.checked }))} /></span>
-                    <span>{row.document.documentNumber}</span>
-                    <span>{formatDateBr(row.document.issueDate)}</span>
-                    <span>{row.sacks.replace(".", ",")}</span>
-                    <span>{formatCurrencyFromCents(row.document.totalAmountCents)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="Nenhuma nota confirmada" description="Este cliente ainda nao possui notas fiscais confirmadas para gerar uma confirmacao." />
-            )}
-            <div className="confirmation-source-stats">
-              <span>{selectedCount} nota(s) selecionada(s)</span>
-              <span>Total de sacas: {selectedTotalSacks.replace(".", ",")}</span>
-              <span>Valor medio: {formatCurrencyFromCents(Math.round(selectedAvgPricePerSack * 100))}/saca</span>
-              <span>Valor total: {formatCurrencyFromCents(selectedTotalCents)}</span>
-            </div>
-            <div className="toolbar">
-              <button className="primary" onClick={() => void createFromNotes()} disabled={selectedCount === 0}>Gerar confirmacao das notas selecionadas</button>
-            </div>
-          </AdminBlock>
-
+          <div className="page-title-row">
+            <p className="muted">Confirmações já criadas nesta empresa/CNPJ.</p>
+            <button className="primary" onClick={() => setView("new")}>+ Nova confirmação</button>
+          </div>
           <div className="table">
             <div className="table-head confirmation-grid"><span>Numero</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
-            {confirmations.map((item) => <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span><button onClick={() => void openConfirmation(item.id)}>Abrir</button></span></div>)}
+            {confirmations.map((item) => <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button><button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button></span></div>)}
           </div>
-
-          {detail && (
-            <AdminBlock title={`Detalhe ${detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference}`}>
-              <div className="confirmation-detail-columns">
-                <div className="confirmation-detail-column">
-                  <div className="confirmation-parties-row">
-                    {detail.parties.filter((party) => party.partyRole !== "ISSUER").map((party) => <ConfirmationPartyCard key={party.id} party={party} />)}
-                  </div>
-                  <FormGrid>
-                    <SelectField label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} options={partners.map((item) => [item.id, item.displayName])} />
-                    <button onClick={() => void setDeliveryRecipient()} disabled={!deliveryRecipientId}>Salvar local</button>
-                  </FormGrid>
-
-                  <h3><HandshakeIcon /> Itens</h3>
-                  <ConfirmationItemsTable items={detail.items} />
-
-                  <h3>Corretagem e dados bancarios</h3>
-                  <p className="muted">Preenchidos automaticamente pelo CNPJ proprio. Altere aqui quando este fechamento precisar de dados diferentes.</p>
-                  <FormGrid>
-                    <TextField label="Corretagem (%)" value={brokerageInput} onChange={setBrokerageInput} />
-                    <TextField label="Banco" value={bankName} onChange={setBankName} />
-                    <TextField label="Codigo do banco" value={bankCode} onChange={setBankCode} />
-                    <TextField label="Agencia" value={bankAgency} onChange={setBankAgency} />
-                    <TextField label="Conta" value={bankAccount} onChange={setBankAccount} />
-                    <TextField label="Chave PIX" value={pixKey} onChange={setPixKey} />
-                    <button onClick={() => void saveBankDetails()}>Salvar dados</button>
-                  </FormGrid>
-
-                  <h3>Clausulas</h3>
-                  {detail.clauses.length > 0 ? <ul>{detail.clauses.map((clause) => <li key={clause.id}>{clause.title ? `${clause.title} - ` : ""}{clause.clauseText}</li>)}</ul> : <p className="muted">Nenhuma clausula adicionada ainda.</p>}
-                  {clauses.length > 0 ? (
-                    <div className="inline-actions">
-                      <SelectField label="Adicionar clausula da biblioteca" value={clauseTemplateId} onChange={setClauseTemplateId} options={clauses.filter((item) => item.isActive).map((item) => [item.id, item.name])} />
-                      <button disabled={!clauseTemplateId} onClick={() => void addClauseFromTemplate()}>Adicionar</button>
+        </>
+      )}
+      {tab === "Confirmacoes" && view === "new" && (
+        <>
+          <div className="page-title-row">
+            <button onClick={() => setView("list")}>&larr; Voltar para a lista</button>
+          </div>
+          <div className="settings-tabs">
+            <button className={creationMode === "notes" ? "active" : ""} onClick={() => setCreationMode("notes")}>A partir de notas fiscais</button>
+            <button className={creationMode === "manual" ? "active" : ""} onClick={() => setCreationMode("manual")}>Criação manual</button>
+          </div>
+          {creationMode === "notes" && (
+            <AdminBlock title="Criar a partir de notas fiscais">
+              <p className="muted">Fluxo recomendado: selecione o cliente e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
+              <FormGrid>
+                <SelectField label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} options={clientPartners.map((item) => [item.id, item.displayName])} />
+              </FormGrid>
+              {sourceDocuments.length ? (
+                <div className="table">
+                  <div className="table-head confirmation-source-grid"><span></span><span>NF</span><span>Emissao</span><span>Sacas</span><span>Valor total</span></div>
+                  {sourceDocuments.map((row) => (
+                    <div key={row.document.id} className="table-row confirmation-source-grid">
+                      <span><input type="checkbox" checked={Boolean(selectedDocumentIds[row.document.id])} onChange={(event) => setSelectedDocumentIds((current) => ({ ...current, [row.document.id]: event.target.checked }))} /></span>
+                      <span>{row.document.documentNumber}</span>
+                      <span>{formatDateBr(row.document.issueDate)}</span>
+                      <span>{row.sacks.replace(".", ",")}</span>
+                      <span>{formatCurrencyFromCents(row.document.totalAmountCents)}</span>
                     </div>
-                  ) : <p className="muted">Cadastre clausulas na aba "Clausulas" para poder anexa-las aqui.</p>}
-
-                  <div className="cards">
-                    <article><span>Itens</span><strong>{detail.items.length}</strong></article>
-                    <article><span>Notas</span><strong>{detail.fiscalDocuments.length}</strong></article>
-                    <article><span>Operacoes</span><strong>{detail.operations.length}</strong></article>
-                    <article><span>Versoes</span><strong>{detail.documents.length}</strong></article>
-                    <article><span>Pendencias</span><strong>{detail.pendingIssues.length}</strong></article>
-                  </div>
-                  <div className="actions">
-                    <button onClick={() => void generatePreview()}>Gerar previa</button>
-                    <button className="primary" onClick={() => void issue()}>Emitir</button>
-                    <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button>
-                    <button onClick={() => void importSigned()}>Importar assinada</button>
-                    <button onClick={() => void cancelDeal()}>Cancelar</button>
-                    <button onClick={() => void replaceDeal()}>Substituir</button>
-                  </div>
-                  <div className="table">
-                    <div className="table-head document-grid"><span>Versao</span><span>Tipo</span><span>Hash</span><span>Arquivo</span><span>Acoes</span></div>
-                    {detail.documents.map((item) => <div key={item.id} className="table-row document-grid"><span>{item.versionNumber}</span><span>{item.documentType}</span><span>{item.fileHash.slice(0, 12)}</span><span>{item.originalFileName}</span><span><button onClick={() => void window.operationsCafe.openDealDocument(item.id)}>Abrir</button><button onClick={() => void window.operationsCafe.revealDealDocumentFolder(item.id)}>Pasta</button></span></div>)}
-                  </div>
+                  ))}
                 </div>
-                <div className="confirmation-detail-column confirmation-preview-column">
-                  <h3>Previa do documento</h3>
-                  {previewBase64 ? (
-                    <embed src={`data:application/pdf;base64,${previewBase64}`} type="application/pdf" className="confirmation-pdf-embed" />
-                  ) : (
-                    <EmptyState title="Sem previa gerada" description="Clique em 'Gerar previa' ou 'Emitir' para ver o documento aqui." />
-                  )}
-                </div>
+              ) : (
+                <EmptyState title="Nenhuma nota confirmada" description="Este cliente ainda nao possui notas fiscais confirmadas para gerar uma confirmacao." />
+              )}
+              <div className="confirmation-source-stats">
+                <span>{selectedCount} nota(s) selecionada(s)</span>
+                <span>Total de sacas: {selectedTotalSacks.replace(".", ",")}</span>
+                <span>Valor medio: {formatCurrencyFromCents(Math.round(selectedAvgPricePerSack * 100))}/saca</span>
+                <span>Valor total: {formatCurrencyFromCents(selectedTotalCents)}</span>
+              </div>
+              <div className="toolbar">
+                <button className="primary" onClick={() => void createFromNotes()} disabled={selectedCount === 0}>Gerar confirmacao das notas selecionadas</button>
               </div>
             </AdminBlock>
           )}
+          {creationMode === "manual" && (
+            <AdminBlock title="Criacao manual">
+              <p className="muted">Use quando ainda não existe nota fiscal emitida para este negócio.</p>
+              <p className="muted">Vendedor: <strong>{ownEntityName}</strong> (empresa/CNPJ propio selecionado no topo).</p>
+              <FormGrid>
+                <SelectField label="Comprador (cliente)" value={buyerId} onChange={setBuyerId} options={clientPartners.map((item) => [item.id, item.displayName])} />
+                <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
+                <TextField label="Sacas" value={quantity} onChange={setQuantity} />
+                <TextField label="Preco por saca" value={price} onChange={setPrice} />
+                <button className="primary" onClick={() => void createManual()}>Criar confirmacao</button>
+              </FormGrid>
+            </AdminBlock>
+          )}
+        </>
+      )}
+      {tab === "Confirmacoes" && view === "detail" && detail && (
+        <>
+          <div className="page-title-row">
+            <button onClick={() => { setView("list"); setDetail(null); setPreviewBase64(null); }}>&larr; Voltar para a lista</button>
+          </div>
+          <AdminBlock title={`Detalhe ${detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference}`}>
+            <div className="confirmation-detail-columns">
+              <div className="confirmation-detail-column">
+                <div className="confirmation-parties-row">
+                  {detail.parties.filter((party) => party.partyRole !== "ISSUER").map((party) => <ConfirmationPartyCard key={party.id} party={party} />)}
+                </div>
+                <FormGrid>
+                  <SelectField label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} options={partners.map((item) => [item.id, item.displayName])} />
+                  <button onClick={() => void setDeliveryRecipient()} disabled={!deliveryRecipientId}>Salvar local</button>
+                </FormGrid>
+
+                <h3><HandshakeIcon /> Itens</h3>
+                <ConfirmationItemsTable items={detail.items} />
+
+                <h3>Corretagem e dados bancarios</h3>
+                <p className="muted">Preenchidos automaticamente pelo CNPJ proprio. Altere aqui quando este fechamento precisar de dados diferentes.</p>
+                <FormGrid>
+                  <TextField label="Corretagem (%)" value={brokerageInput} onChange={setBrokerageInput} />
+                  <TextField label="Banco" value={bankName} onChange={setBankName} />
+                  <TextField label="Codigo do banco" value={bankCode} onChange={setBankCode} />
+                  <TextField label="Agencia" value={bankAgency} onChange={setBankAgency} />
+                  <TextField label="Conta" value={bankAccount} onChange={setBankAccount} />
+                  <TextField label="Chave PIX" value={pixKey} onChange={setPixKey} />
+                  <button onClick={() => void saveBankDetails()}>Salvar dados</button>
+                </FormGrid>
+
+                <h3>Clausulas</h3>
+                {detail.clauses.length > 0 ? <ul>{detail.clauses.map((clause) => <li key={clause.id}>{clause.title ? `${clause.title} - ` : ""}{clause.clauseText}</li>)}</ul> : <p className="muted">Nenhuma clausula adicionada ainda.</p>}
+                {clauses.length > 0 ? (
+                  <div className="inline-actions">
+                    <SelectField label="Adicionar clausula da biblioteca" value={clauseTemplateId} onChange={setClauseTemplateId} options={clauses.filter((item) => item.isActive).map((item) => [item.id, item.name])} />
+                    <button disabled={!clauseTemplateId} onClick={() => void addClauseFromTemplate()}>Adicionar</button>
+                  </div>
+                ) : <p className="muted">Cadastre clausulas na aba "Clausulas" para poder anexa-las aqui.</p>}
+
+                <div className="cards">
+                  <article><span>Itens</span><strong>{detail.items.length}</strong></article>
+                  <article><span>Notas</span><strong>{detail.fiscalDocuments.length}</strong></article>
+                  <article><span>Operacoes</span><strong>{detail.operations.length}</strong></article>
+                  <article><span>Versoes</span><strong>{detail.documents.length}</strong></article>
+                  <article><span>Pendencias</span><strong>{detail.pendingIssues.length}</strong></article>
+                </div>
+                <div className="actions">
+                  <button onClick={() => void generatePreview()}>Gerar previa</button>
+                  <button className="primary" onClick={() => void issue()}>Emitir</button>
+                  <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button>
+                  <button onClick={() => void importSigned()}>Importar assinada</button>
+                  <button onClick={() => void cancelDeal()}>Cancelar</button>
+                  <button onClick={() => void replaceDeal()}>Substituir</button>
+                  <button className="danger-action" onClick={() => void deleteDeal()}>Excluir definitivamente</button>
+                </div>
+                <div className="table">
+                  <div className="table-head document-grid"><span>Versao</span><span>Tipo</span><span>Hash</span><span>Arquivo</span><span>Acoes</span></div>
+                  {detail.documents.map((item) => <div key={item.id} className="table-row document-grid"><span>{item.versionNumber}</span><span>{item.documentType}</span><span>{item.fileHash.slice(0, 12)}</span><span>{item.originalFileName}</span><span><button onClick={() => void window.operationsCafe.openDealDocument(item.id)}>Abrir</button><button onClick={() => void window.operationsCafe.revealDealDocumentFolder(item.id)}>Pasta</button></span></div>)}
+                </div>
+              </div>
+              <div className="confirmation-detail-column confirmation-preview-column">
+                <h3>Previa do documento</h3>
+                {previewBase64 ? (
+                  <embed src={`data:application/pdf;base64,${previewBase64}`} type="application/pdf" className="confirmation-pdf-embed" />
+                ) : (
+                  <EmptyState title="Sem previa gerada" description="Clique em 'Gerar previa' ou 'Emitir' para ver o documento aqui." />
+                )}
+              </div>
+            </div>
+          </AdminBlock>
         </>
       )}
       {tab === "Templates" && <AdminBlock title="Templates de Confirmacao"><div className="actions"><button className="primary" onClick={() => void createTemplate()}>Criar template</button></div><div className="table"><div className="table-head template-grid"><span>Nome</span><span>Layout</span><span>Padrao</span><span>Status</span><span>Acoes</span></div>{templates.map((item) => <div key={item.id} className="table-row template-grid"><span>{item.name}</span><span>{item.layoutMode}</span><span>{item.isDefault ? "Sim" : "Nao"}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span><button onClick={() => void window.operationsCafe.setDefaultDealConfirmationTemplate(item.id).then(() => load())}>Padrao</button><button onClick={() => void window.operationsCafe.duplicateDealConfirmationTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}

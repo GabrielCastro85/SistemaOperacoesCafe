@@ -36,6 +36,7 @@
     "stop:electron": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*SistemaOperacoesCafe*' -and (($_.Name -eq 'electron.exe') -or ($_.Name -eq 'node.exe' -and $_.CommandLine -like '*electron*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\"",
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
     "rebuild:node": "npm rebuild better-sqlite3",
+    "reset:admin": "npm run rebuild:node && node scripts/reset-admin-password.mjs",
     "pretest": "npm run rebuild:node",
     "pretest:run": "npm run rebuild:node"
   },

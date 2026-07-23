@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDirectories, ClientChargeDetail, LegalEntity, Organization, BusinessPartner, BusinessPartnerLegalEntity } from "../../../src/shared/types/domain.js";
+import { formatOperationScope } from "../../../src/shared/utils/operationLabels.js";
 
 export interface ChargeDocumentResult {
   pdfFilePath: string;
@@ -115,7 +116,7 @@ async function buildChargePdf(input: { organization: Organization; ownLegalEntit
     page.drawText(formatDate(item.operationDateSnapshot), { x: columns[0].x, y: rowY, size: 7, font, color: ink });
     page.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", font, 7, columns[1].width), { x: columns[1].x, y: rowY, size: 7, font, color: ink });
     page.drawText(truncate(item.productNameSnapshot ?? "-", font, 7, columns[2].width), { x: columns[2].x, y: rowY, size: 7, font, color: ink });
-    page.drawText(item.operationScopeSnapshot === "INTERNAL" ? "Interna" : "Externa", { x: columns[3].x, y: rowY, size: 7, font, color: ink });
+    page.drawText(formatOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: rowY, size: 7, font, color: ink });
     drawRightText(page, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, rowY, columns[4].width, font, 7, ink);
     drawRightText(page, formatCents(item.serviceRateCentsSnapshot), columns[5].x, rowY, columns[5].width, font, 7, ink);
     drawRightText(page, formatCents(item.serviceAmountCentsSnapshot), columns[6].x, rowY, columns[6].width, bold, 7, ink);
@@ -165,8 +166,8 @@ async function writeChargeWorkbook(filePath: string, input: { client: BusinessPa
     ["Aberto", charge.openAmountCents / 100]
   ]);
   const operations = workbook.addWorksheet("Operacoes");
-  operations.addRow(["Data", "NF", "Serie", "Produto", "Tipo", "Sacas", "R$/saca", "Total"]);
-  input.detail.operations.forEach((item) => operations.addRow([item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, item.operationScopeSnapshot, item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
+  operations.addRow(["Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total"]);
+  input.detail.operations.forEach((item) => operations.addRow([item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
   const adjustments = workbook.addWorksheet("Ajustes");
   adjustments.addRow(["Tipo", "Descricao", "Efeito", "Valor"]);
   input.detail.adjustments.forEach((item) => adjustments.addRow([item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
@@ -377,7 +378,7 @@ function buildSummarySvg(input: { organization: Organization; client: BusinessPa
       <text x="48" y="${y}" class="cell">${escapeXml(formatDate(item.operationDateSnapshot))}</text>
       <text x="150" y="${y}" class="cell">${escapeXml(item.fiscalDocumentNumberSnapshot ?? "-")}</text>
       <text x="248" y="${y}" class="cell">${escapeXml(clipText(item.productNameSnapshot ?? "-", 34))}</text>
-      <text x="540" y="${y}" class="cell">${item.operationScopeSnapshot === "INTERNAL" ? "Interna" : "Externa"}</text>
+      <text x="540" y="${y}" class="cell">${escapeXml(formatOperationScope(item.operationScopeSnapshot))}</text>
       <text x="662" y="${y}" class="cell right">${escapeXml(decimalTextBr(item.quantitySacksDecimalSnapshot))}</text>
       <text x="805" y="${y}" class="cell right">R$ ${escapeXml(formatCents(item.serviceAmountCentsSnapshot))}</text>
     `;

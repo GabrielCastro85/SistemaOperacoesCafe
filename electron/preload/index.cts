@@ -48,6 +48,7 @@ import type {
   ClientLedgerEntry,
   ClientPayment,
   BillingSummary,
+  DashboardAlerts,
   PartnerRateSummaryRow,
   ExpenseCategory,
   CostCenter,
@@ -279,6 +280,7 @@ const IPC_CHANNELS = {
   createClientPayment: "clientPayments:create",
   allocateClientPayment: "clientPayments:allocate",
   getBillingSummary: "billingDashboard:summary",
+  getDashboardAlerts: "billingDashboard:alerts",
   listExpenseCategories: "expenseCategories:list",
   createExpenseCategory: "expenseCategories:create",
   updateExpenseCategory: "expenseCategories:update",
@@ -333,6 +335,7 @@ const IPC_CHANNELS = {
   createDealConfirmationFromOperations: "dealConfirmations:createFromOperations",
   createDealConfirmationFromFiscalDocuments: "dealConfirmations:createFromFiscalDocuments",
   duplicateDealConfirmationAsDraft: "dealConfirmations:duplicateAsDraft",
+  deleteDealConfirmation: "dealConfirmations:delete",
   updateDealConfirmationDraft: "dealConfirmations:updateDraft",
   addDealConfirmationItem: "dealConfirmations:addItem",
   updateDealConfirmationItem: "dealConfirmations:updateItem",
@@ -584,11 +587,11 @@ export interface OperationsCafeApi {
   removeChargeAdjustment: (id: string) => Promise<ClientChargeDetail>;
   applyChargeCredit: (input: unknown) => Promise<ClientChargeDetail>;
   submitClientChargeForReview: (id: string) => Promise<ClientChargeDetail>;
-  issueClientCharge: (id: string) => Promise<ClientChargeDetail>;
+  issueClientCharge: (id: string) => Promise<ClientChargeDetail | null>;
   cancelClientCharge: (id: string, reason: string) => Promise<ClientChargeDetail>;
   listClientCharges: (filters?: { organizationId?: string; clientPartnerId?: string; status?: string }) => Promise<ClientCharge[]>;
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
-  regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
+  regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail | null>;
   openChargeDocument: (input: { chargeId: string; kind: "pdf" | "excel" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;
@@ -598,6 +601,7 @@ export interface OperationsCafeApi {
   createClientPayment: (input: unknown) => Promise<ClientPayment>;
   allocateClientPayment: (input: unknown) => Promise<ClientChargeDetail>;
   getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<BillingSummary>;
+  getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
   listExpenseCategories: (organizationId: string) => Promise<ExpenseCategory[]>;
   createExpenseCategory: (input: unknown) => Promise<ExpenseCategory>;
   updateExpenseCategory: (id: string, input: unknown) => Promise<ExpenseCategory>;
@@ -643,7 +647,7 @@ export interface OperationsCafeApi {
   openPayableAttachment: (id: string) => Promise<boolean>;
   removePayableAttachment: (id: string, reason: string | null) => Promise<PayableDocumentAttachment>;
   previewFinancialReport: (filters: unknown) => Promise<FinancialReportPreview>;
-  generateFinancialReport: (input: unknown) => Promise<FinancialReportGeneration>;
+  generateFinancialReport: (input: unknown) => Promise<FinancialReportGeneration | null>;
   listFinancialReports: (filters: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<FinancialReportGeneration[]>;
   openFinancialReport: (id: string) => Promise<boolean>;
   listDealConfirmations: (filters?: unknown) => Promise<DealConfirmation[]>;
@@ -652,6 +656,7 @@ export interface OperationsCafeApi {
   createDealConfirmationFromOperations: (input: unknown) => Promise<DealConfirmationDetail>;
   createDealConfirmationFromFiscalDocuments: (input: unknown) => Promise<DealConfirmationDetail>;
   duplicateDealConfirmationAsDraft: (id: string) => Promise<DealConfirmationDetail>;
+  deleteDealConfirmation: (id: string) => Promise<boolean>;
   updateDealConfirmationDraft: (id: string, input: unknown) => Promise<DealConfirmationDetail>;
   addDealConfirmationItem: (input: unknown) => Promise<DealConfirmationItem>;
   updateDealConfirmationItem: (id: string, input: unknown) => Promise<DealConfirmationItem>;
@@ -676,8 +681,8 @@ export interface OperationsCafeApi {
   calculateDealTotals: (id: string) => Promise<{ totalQuantitySacksDecimal: string; totalCommercialAmountCents: number }>;
   validateDealForIssue: (id: string) => Promise<DealConfirmationDetail["pendingIssues"]>;
   submitDealConfirmationForReview: (id: string) => Promise<DealConfirmationDetail>;
-  generateDealConfirmationPreview: (id: string) => Promise<DealConfirmationDetail>;
-  issueDealConfirmation: (id: string) => Promise<DealConfirmationDetail>;
+  generateDealConfirmationPreview: (id: string) => Promise<DealConfirmationDetail | null>;
+  issueDealConfirmation: (id: string) => Promise<DealConfirmationDetail | null>;
   markDealConfirmationSentForSignature: (id: string) => Promise<DealConfirmationDetail>;
   importSignedDealConfirmationDocument: (id: string, input: unknown) => Promise<DealConfirmationDetail>;
   updateDealSignatureStatus: (id: string, signatureStatus: string) => Promise<DealConfirmationDetail>;
@@ -709,7 +714,7 @@ export interface OperationsCafeApi {
   calculateDealDocumentHash: (id: string) => Promise<string>;
   previewDealConfirmationNumber: (organizationId: string, ownLegalEntityId: string) => Promise<string>;
   reserveDealConfirmationNumber: (organizationId: string, ownLegalEntityId: string) => Promise<string>;
-  generateConfirmationReport: (input: unknown) => Promise<ConfirmationReportGeneration>;
+  generateConfirmationReport: (input: unknown) => Promise<ConfirmationReportGeneration | null>;
   getDealConfirmationSummary: (input: unknown) => Promise<DealConfirmationSummary>;
   selectSignedDealPdf: () => Promise<{ token: string; fileName: string; sizeBytes: number } | null>;
 }
@@ -916,11 +921,11 @@ const api: OperationsCafeApi = {
   removeChargeAdjustment: (id) => ipcRenderer.invoke(IPC_CHANNELS.removeChargeAdjustment, id) as Promise<ClientChargeDetail>,
   applyChargeCredit: (input) => ipcRenderer.invoke(IPC_CHANNELS.applyChargeCredit, input) as Promise<ClientChargeDetail>,
   submitClientChargeForReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.submitClientChargeForReview, id) as Promise<ClientChargeDetail>,
-  issueClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueClientCharge, id) as Promise<ClientChargeDetail>,
+  issueClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueClientCharge, id) as Promise<ClientChargeDetail | null>,
   cancelClientCharge: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelClientCharge, { id, reason }) as Promise<ClientChargeDetail>,
   listClientCharges: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listClientCharges, filters) as Promise<ClientCharge[]>,
   getClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.getClientCharge, id) as Promise<ClientChargeDetail>,
-  regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail>,
+  regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail | null>,
   openChargeDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.openChargeDocument, input) as Promise<boolean>,
   listLedgerEntries: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLedgerEntries, filters) as Promise<ClientLedgerEntry[]>,
   createLedgerEntry: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLedgerEntry, input) as Promise<ClientLedgerEntry>,
@@ -930,6 +935,7 @@ const api: OperationsCafeApi = {
   createClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientPayment, input) as Promise<ClientPayment>,
   allocateClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.allocateClientPayment, input) as Promise<ClientChargeDetail>,
   getBillingSummary: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingSummary, organizationId) as Promise<BillingSummary>,
+  getDashboardAlerts: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDashboardAlerts, input) as Promise<DashboardAlerts>,
   listExpenseCategories: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listExpenseCategories, organizationId) as Promise<ExpenseCategory[]>,
   createExpenseCategory: (input) => ipcRenderer.invoke(IPC_CHANNELS.createExpenseCategory, input) as Promise<ExpenseCategory>,
   updateExpenseCategory: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateExpenseCategory, { id, input }) as Promise<ExpenseCategory>,
@@ -975,7 +981,7 @@ const api: OperationsCafeApi = {
   openPayableAttachment: (id) => ipcRenderer.invoke(IPC_CHANNELS.openPayableAttachment, id) as Promise<boolean>,
   removePayableAttachment: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.removePayableAttachment, { id, reason }) as Promise<PayableDocumentAttachment>,
   previewFinancialReport: (filters) => ipcRenderer.invoke(IPC_CHANNELS.previewFinancialReport, filters) as Promise<FinancialReportPreview>,
-  generateFinancialReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.generateFinancialReport, input) as Promise<FinancialReportGeneration>,
+  generateFinancialReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.generateFinancialReport, input) as Promise<FinancialReportGeneration | null>,
   listFinancialReports: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listFinancialReports, filters) as Promise<FinancialReportGeneration[]>,
   openFinancialReport: (id) => ipcRenderer.invoke(IPC_CHANNELS.openFinancialReport, id) as Promise<boolean>,
   listDealConfirmations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listDealConfirmations, filters) as Promise<DealConfirmation[]>,
@@ -984,6 +990,7 @@ const api: OperationsCafeApi = {
   createDealConfirmationFromOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.createDealConfirmationFromOperations, input) as Promise<DealConfirmationDetail>,
   createDealConfirmationFromFiscalDocuments: (input) => ipcRenderer.invoke(IPC_CHANNELS.createDealConfirmationFromFiscalDocuments, input) as Promise<DealConfirmationDetail>,
   duplicateDealConfirmationAsDraft: (id) => ipcRenderer.invoke(IPC_CHANNELS.duplicateDealConfirmationAsDraft, id) as Promise<DealConfirmationDetail>,
+  deleteDealConfirmation: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteDealConfirmation, id) as Promise<boolean>,
   updateDealConfirmationDraft: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateDealConfirmationDraft, { id, input }) as Promise<DealConfirmationDetail>,
   addDealConfirmationItem: (input) => ipcRenderer.invoke(IPC_CHANNELS.addDealConfirmationItem, input) as Promise<DealConfirmationItem>,
   updateDealConfirmationItem: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateDealConfirmationItem, { id, input }) as Promise<DealConfirmationItem>,
@@ -1008,8 +1015,8 @@ const api: OperationsCafeApi = {
   calculateDealTotals: (id) => ipcRenderer.invoke(IPC_CHANNELS.calculateDealTotals, id) as Promise<{ totalQuantitySacksDecimal: string; totalCommercialAmountCents: number }>,
   validateDealForIssue: (id) => ipcRenderer.invoke(IPC_CHANNELS.validateDealForIssue, id) as Promise<DealConfirmationDetail["pendingIssues"]>,
   submitDealConfirmationForReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.submitDealConfirmationForReview, id) as Promise<DealConfirmationDetail>,
-  generateDealConfirmationPreview: (id) => ipcRenderer.invoke(IPC_CHANNELS.generateDealConfirmationPreview, id) as Promise<DealConfirmationDetail>,
-  issueDealConfirmation: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueDealConfirmation, id) as Promise<DealConfirmationDetail>,
+  generateDealConfirmationPreview: (id) => ipcRenderer.invoke(IPC_CHANNELS.generateDealConfirmationPreview, id) as Promise<DealConfirmationDetail | null>,
+  issueDealConfirmation: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueDealConfirmation, id) as Promise<DealConfirmationDetail | null>,
   markDealConfirmationSentForSignature: (id) => ipcRenderer.invoke(IPC_CHANNELS.markDealConfirmationSentForSignature, id) as Promise<DealConfirmationDetail>,
   importSignedDealConfirmationDocument: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.importSignedDealConfirmationDocument, { id, input }) as Promise<DealConfirmationDetail>,
   updateDealSignatureStatus: (id, signatureStatus) => ipcRenderer.invoke(IPC_CHANNELS.updateDealSignatureStatus, { id, signatureStatus }) as Promise<DealConfirmationDetail>,
@@ -1041,7 +1048,7 @@ const api: OperationsCafeApi = {
   calculateDealDocumentHash: (id) => ipcRenderer.invoke(IPC_CHANNELS.calculateDealDocumentHash, id) as Promise<string>,
   previewDealConfirmationNumber: (organizationId, ownLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.previewDealConfirmationNumber, { organizationId, ownLegalEntityId }) as Promise<string>,
   reserveDealConfirmationNumber: (organizationId, ownLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.reserveDealConfirmationNumber, { organizationId, ownLegalEntityId }) as Promise<string>,
-  generateConfirmationReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.generateConfirmationReport, input) as Promise<ConfirmationReportGeneration>,
+  generateConfirmationReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.generateConfirmationReport, input) as Promise<ConfirmationReportGeneration | null>,
   getDealConfirmationSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDealConfirmationSummary, input) as Promise<DealConfirmationSummary>,
   selectSignedDealPdf: () => ipcRenderer.invoke(IPC_CHANNELS.selectSignedDealPdf) as Promise<{ token: string; fileName: string; sizeBytes: number } | null>
 };

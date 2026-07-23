@@ -12,9 +12,9 @@ BusinessPartner representa qualquer parceiro comercial. O mesmo cadastro pode se
 
 Estabelecimento do parceiro e o CNPJ/unidade vinculada ao parceiro. Ele nao deve ser confundido com CNPJ proprio da organizacao.
 
-Perfil de cobranca so existe para parceiro com papel Cliente. Regras por saca podem ser internas, externas ou gerais, com vigencia e prioridade. O resolvedor escolhe a regra mais especifica e retorna conflito quando houver empate deterministico.
+Perfil de cobranca so existe para parceiro com papel Cliente. Regras por saca podem ser para venda na mesma UF, venda em outra UF ou gerais, com vigencia e prioridade. O resolvedor escolhe a regra mais especifica e retorna conflito quando houver empate deterministico.
 
-Notas manuais podem ter varios itens e varias operacoes. Cada operacao possui classificacao de compra/venda e interna/externa. A regra por saca e aplicada automaticamente quando encontrada; alteracao manual exige motivo. Uma nota com pendencias nao pode ser confirmada.
+Notas manuais podem ter varios itens e varias operacoes. Cada operacao possui classificacao de compra/venda e UF da venda: mesma UF ou outra UF. A regra por saca e aplicada automaticamente quando encontrada; alteracao manual exige motivo. Uma nota com pendencias nao pode ser confirmada.
 
 Duplicidade: chave de acesso, quando informada, e unica. Sem chave, o sistema alerta possivel duplicidade por organizacao, cliente, numero, serie, data e valor.
 
@@ -52,7 +52,7 @@ Anexos de contas e comprovantes de pagamento sao documentos auxiliares, nao alte
 
 Relatorios financeiros sao gerenciais. Filtros sao validados no backend e registros cancelados sao ignorados quando o filtro nao pedir status especifico. Fluxo projetado mostra recebimentos previstos menos pagamentos previstos, sem representar saldo bancario real.
 
-Confirmacoes de negocio podem nascer manualmente, de operacoes ou de notas fiscais. Uma confirmacao pertence a uma organizacao e a um CNPJ proprio, tem cliente responsavel, direcao compra/venda, classificacao interna/externa, comprador, vendedor e demais participantes opcionais com snapshot.
+Confirmacoes de negocio podem nascer manualmente, de operacoes ou de notas fiscais. Uma confirmacao pertence a uma organizacao e a um CNPJ proprio, tem cliente responsavel, direcao compra/venda, UF da venda, comprador, vendedor e demais participantes opcionais com snapshot.
 
 Itens de confirmacao usam decimal exato em texto para quantidade e preco comercial, permitindo mais de duas casas decimais. O valor total por item e calculado em centavos no backend. A soma dos itens alimenta o subtotal da confirmacao; o renderer nao define totais finais.
 

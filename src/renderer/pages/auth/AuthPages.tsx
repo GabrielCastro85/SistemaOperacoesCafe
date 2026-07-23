@@ -8,15 +8,31 @@ interface AuthPageProps {
 
 function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: { label: string; value: string; onChange: (value: string) => void; autoFocus?: boolean; onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void }): JSX.Element {
   const [visible, setVisible] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
+
+  function trackCapsLock(event: KeyboardEvent<HTMLInputElement>): void {
+    setCapsLockOn(event.getModifierState("CapsLock"));
+  }
+
   return (
     <label>
       {label}
       <div className="auth-password-field">
-        <input autoFocus={autoFocus} type={visible ? "text" : "password"} autoComplete="off" value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} />
+        <input
+          autoFocus={autoFocus}
+          type={visible ? "text" : "password"}
+          autoComplete="off"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => { trackCapsLock(event); onKeyDown?.(event); }}
+          onKeyUp={trackCapsLock}
+          onBlur={() => setCapsLockOn(false)}
+        />
         <button type="button" className="auth-password-toggle" onClick={() => setVisible((current) => !current)} tabIndex={-1}>
           {visible ? "Ocultar" : "Mostrar"}
         </button>
       </div>
+      {capsLockOn ? <small className="auth-caps-warning">Caps Lock ativado</small> : null}
     </label>
   );
 }

@@ -50,7 +50,7 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
   }
 
   return (
-    <section className="content-section settings">
+    <section className="content-section settings compact-crud-page products-page">
       <PageHeader title="Produtos" eyebrow="Comercial" description="Cadastre produtos usados em notas, operacoes, regras por saca e confirmacoes." />
       <AdminBlock title="Novo produto">
         <FormGrid>

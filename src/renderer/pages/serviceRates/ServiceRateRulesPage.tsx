@@ -6,8 +6,9 @@ import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { PageHeader } from "../../design-system";
 import { requestDecision } from "../../utils/dialogs";
+import { OPERATION_SCOPE_LABELS, SERVICE_RATE_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 
-const scopeLabels: Record<OperationScope, string> = { INTERNAL: "Interna", EXTERNAL: "Externa", ALL: "Todas" };
+const scopeLabels = OPERATION_SCOPE_LABELS;
 type RateRuleModalMode = "create" | "edit" | null;
 
 const emptyRuleForm = {
@@ -160,16 +161,16 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
   }
 
   return (
-    <section className="content-section settings">
-      <PageHeader eyebrow="Regras por saca" title="Valores comerciais por cliente" description="Cadastre vigencias, escopos e produtos para aplicar automaticamente o valor de servico por saca." />
+    <section className="content-section settings compact-crud-page service-rates-page">
+      <PageHeader eyebrow="Regras por saca" title="Valores comerciais por cliente" description="Cadastre vigencias, produto e UF da venda para aplicar automaticamente o valor de servico por saca." />
       <AdminBlock title="Cobrancas - Regras por cliente">
-        <div className="partners-list-toolbar">
+        <div className="partners-list-toolbar service-rate-toolbar">
           <TextField label="Pesquisar regra" value={search} onChange={setSearch} />
-          <SelectField label="Tipo" value={scopeFilter} onChange={setScopeFilter} options={[["", "Todos"], ["INTERNAL", "Interna"], ["EXTERNAL", "Externa"], ["ALL", "Todas"]]} />
+          <SelectField label="UF da venda" value={scopeFilter} onChange={setScopeFilter} options={[["", "Todos"], ...SERVICE_RATE_SCOPE_OPTIONS]} />
           <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar regra</button>
         </div>
         <div className="table">
-          <div className="table-head rate-grid"><span>Cliente</span><span>Tipo</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span><span>Acoes</span></div>
+          <div className="table-head rate-grid"><span>Cliente</span><span>UF da venda</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span><span>Acoes</span></div>
           {filteredRules.map((item) => (
             <div key={item.id} className="table-row rate-grid">
               <span>{partnerLabel(item.businessPartnerId)}</span>
@@ -200,12 +201,12 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                   <span className="partner-action-icon" aria-hidden="true">$</span>
                   <div>
                     <strong>Dados da regra</strong>
-                    <small>Escolha o cliente, produto opcional, tipo de operacao e valor comercial por saca.</small>
+                    <small>Escolha o cliente, produto opcional, se a venda e na mesma UF ou em outra UF, e o valor comercial por saca.</small>
                   </div>
                 </div>
                 <FormGrid>
                   <SelectField label="Cliente" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} options={partners.map((item) => [item.id, item.displayName])} />
-                  <SelectField label="Tipo" value={form.scope} onChange={(value) => updateForm("scope", value)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"], ["ALL", "Todas"]]} />
+                  <SelectField label="UF da venda" value={form.scope} onChange={(value) => updateForm("scope", value)} options={SERVICE_RATE_SCOPE_OPTIONS} />
                   <SelectField label="Produto" value={form.productId} onChange={(value) => updateForm("productId", value)} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
                   <TextField label="Valor por saca" value={form.value} onChange={(value) => updateForm("value", value)} />
                   <TextField label="Inicio da vigencia" value={form.effectiveFrom} onChange={(value) => updateForm("effectiveFrom", value)} />

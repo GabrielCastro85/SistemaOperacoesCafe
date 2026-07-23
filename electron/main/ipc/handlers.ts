@@ -2,7 +2,7 @@ import { dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
-import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
+import type { BrandingAssetKind, ClientChargeDetail } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -566,14 +566,26 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.removeChargeAdjustment, (_event, payload: unknown) => repository.removeChargeAdjustment(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.applyChargeCredit, (_event, payload: unknown) => repository.applyCredit(payload));
   handle(IPC_CHANNELS.submitClientChargeForReview, (_event, payload: unknown) => repository.submitClientChargeForReview(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.issueClientCharge, (_event, payload: unknown) => repository.issueClientCharge(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.issueClientCharge, async (_event, payload: unknown) => {
+    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar os documentos da cobranca");
+    if (!destinationDir) return null;
+    const detail = await repository.issueClientCharge(z.string().uuid().parse(payload));
+    copyChargeDocumentsToDirectory(detail, destinationDir);
+    return detail;
+  });
   handle(IPC_CHANNELS.cancelClientCharge, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
     return repository.cancelClientCharge(data.id, data.reason);
   });
   handle(IPC_CHANNELS.listClientCharges, (_event, payload: unknown) => repository.listClientCharges(z.object({ organizationId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional(), status: z.string().optional() }).optional().parse(payload) ?? {}));
   handle(IPC_CHANNELS.getClientCharge, (_event, payload: unknown) => repository.getClientCharge(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.regenerateChargeDocuments, (_event, payload: unknown) => repository.regenerateChargeDocuments(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.regenerateChargeDocuments, async (_event, payload: unknown) => {
+    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar os documentos da cobranca");
+    if (!destinationDir) return null;
+    const detail = await repository.regenerateChargeDocuments(z.string().uuid().parse(payload));
+    copyChargeDocumentsToDirectory(detail, destinationDir);
+    return detail;
+  });
   handle(IPC_CHANNELS.openChargeDocument, async (_event, payload: unknown) => {
     const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "excel", "image"]) }).parse(payload);
     const filePath = repository.getChargeDocumentPath(data.chargeId, data.kind);
@@ -594,6 +606,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) =>
     repository.getBillingSummary(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() })]).parse(payload))
   );
+  handle(IPC_CHANNELS.getDashboardAlerts, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload);
+    return repository.getDashboardAlerts(data.organizationId, data.ownLegalEntityId);
+  });
   handle(IPC_CHANNELS.listExpenseCategories, (_event, payload: unknown) => repository.listExpenseCategories(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createExpenseCategory, (_event, payload: unknown) => repository.createExpenseCategory(payload));
   handle(IPC_CHANNELS.updateExpenseCategory, (_event, payload: unknown) => {
@@ -691,7 +707,13 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.removePayableAttachment(data.id, data.reason);
   });
   handle(IPC_CHANNELS.previewFinancialReport, (_event, payload: unknown) => repository.previewFinancialReport(payload));
-  handle(IPC_CHANNELS.generateFinancialReport, (_event, payload: unknown) => repository.generateFinancialReport(payload));
+  handle(IPC_CHANNELS.generateFinancialReport, async (_event, payload: unknown) => {
+    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar o relatorio financeiro");
+    if (!destinationDir) return null;
+    const report = await repository.generateFinancialReport(payload);
+    const exportedPath = copyGeneratedFileToDirectory(report.storedFilePath, destinationDir, report.fileName);
+    return { ...report, fileName: basename(exportedPath), storedFilePath: exportedPath };
+  });
   handle(IPC_CHANNELS.listFinancialReports, (_event, payload: unknown) => repository.listFinancialReportGenerations(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload)));
   handle(IPC_CHANNELS.openFinancialReport, async (_event, payload: unknown) => {
     const filePath = repository.getFinancialReportPath(z.string().uuid().parse(payload));
@@ -705,6 +727,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.createDealConfirmationFromOperations, (_event, payload: unknown) => repository.createDealConfirmationFromOperations(payload));
   handle(IPC_CHANNELS.createDealConfirmationFromFiscalDocuments, (_event, payload: unknown) => repository.createDealConfirmationFromFiscalDocuments(payload));
   handle(IPC_CHANNELS.duplicateDealConfirmationAsDraft, (_event, payload: unknown) => repository.duplicateDealConfirmationAsDraft(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.deleteDealConfirmation, (_event, payload: unknown) => repository.deleteDealConfirmation(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.updateDealConfirmationDraft, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     return repository.updateDealConfirmationDraft(data.id, data.input);
@@ -762,8 +785,20 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.calculateDealTotals, (_event, payload: unknown) => repository.calculateDealTotals(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.validateDealForIssue, (_event, payload: unknown) => repository.listDealPendingIssues(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.submitDealConfirmationForReview, (_event, payload: unknown) => repository.submitDealConfirmationForReview(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.generateDealConfirmationPreview, (_event, payload: unknown) => repository.generateDealConfirmationPreview(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.issueDealConfirmation, (_event, payload: unknown) => repository.issueDealConfirmation(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.generateDealConfirmationPreview, async (_event, payload: unknown) => {
+    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar a previa da confirmacao");
+    if (!destinationDir) return null;
+    const detail = await repository.generateDealConfirmationPreview(z.string().uuid().parse(payload));
+    copyCurrentDealDocumentToDirectory(repository, detail.confirmation.issuedDocumentVersionId ?? detail.documents.at(-1)?.id ?? null, destinationDir);
+    return detail;
+  });
+  handle(IPC_CHANNELS.issueDealConfirmation, async (_event, payload: unknown) => {
+    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar a confirmacao emitida");
+    if (!destinationDir) return null;
+    const detail = await repository.issueDealConfirmation(z.string().uuid().parse(payload));
+    copyCurrentDealDocumentToDirectory(repository, detail.confirmation.issuedDocumentVersionId, destinationDir);
+    return detail;
+  });
   handle(IPC_CHANNELS.markDealConfirmationSentForSignature, (_event, payload: unknown) => repository.markDealConfirmationSentForSignature(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.importSignedDealConfirmationDocument, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.object({ token: z.string().uuid().optional(), sourcePath: z.string().optional(), notes: z.string().nullable().optional() }) }).parse(payload);
@@ -830,7 +865,13 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid() }).parse(payload);
     return repository.reserveDealConfirmationNumber(data.organizationId, data.ownLegalEntityId);
   });
-  handle(IPC_CHANNELS.generateConfirmationReport, (_event, payload: unknown) => repository.generateConfirmationReport(payload));
+  handle(IPC_CHANNELS.generateConfirmationReport, async (_event, payload: unknown) => {
+    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar o relatorio de confirmacoes");
+    if (!destinationDir) return null;
+    const report = await repository.generateConfirmationReport(payload);
+    const exportedPath = copyGeneratedFileToDirectory(report.storedFilePath, destinationDir, report.fileName);
+    return { ...report, fileName: basename(exportedPath), storedFilePath: exportedPath };
+  });
   handle(IPC_CHANNELS.getDealConfirmationSummary, (_event, payload: unknown) => repository.getDealConfirmationSummary(payload));
   handle(IPC_CHANNELS.selectSignedDealPdf, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "PDF assinado", extensions: ["pdf"] }] });
@@ -858,6 +899,39 @@ function findXmlFiles(folder: string, includeSubfolders: boolean): string[] {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".xml")) result.push(full);
   });
   return result;
+}
+
+async function selectExportDirectory(title: string): Promise<string | null> {
+  const result = await dialog.showOpenDialog({ title, properties: ["openDirectory", "createDirectory"] });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+}
+
+function copyGeneratedFileToDirectory(sourcePath: string | null | undefined, destinationDir: string, fileName?: string | null): string {
+  if (!sourcePath) throw new Error("Arquivo gerado nao encontrado.");
+  mkdirSync(destinationDir, { recursive: true });
+  const targetPath = join(destinationDir, sanitizeExportFileName(fileName || basename(sourcePath)));
+  copyFileSync(sourcePath, targetPath);
+  return targetPath;
+}
+
+function copyChargeDocumentsToDirectory(detail: ClientChargeDetail, destinationDir: string): void {
+  copyGeneratedFileToDirectory(detail.charge.pdfFilePath, destinationDir);
+  if (detail.charge.excelFilePath) copyGeneratedFileToDirectory(detail.charge.excelFilePath, destinationDir);
+  if (detail.charge.imageFilePath) copyGeneratedFileToDirectory(detail.charge.imageFilePath, destinationDir);
+}
+
+function copyCurrentDealDocumentToDirectory(repository: AppRepository, documentVersionId: string | null | undefined, destinationDir: string): void {
+  if (!documentVersionId) throw new Error("Documento gerado nao encontrado.");
+  const document = repository.getDealDocumentVersion(documentVersionId);
+  copyGeneratedFileToDirectory(document.storedFilePath, destinationDir, document.originalFileName);
+}
+
+function sanitizeExportFileName(fileName: string): string {
+  const sanitized = Array.from(fileName)
+    .map((char) => (char.charCodeAt(0) < 32 || /[<>:"/\\|?*]/.test(char) ? "-" : char))
+    .join("")
+    .trim();
+  return sanitized || "arquivo-gerado";
 }
 
 function normalizeSpreadsheetRow(raw: Record<string, string>, mapping: Record<string, string>, defaults: Record<string, unknown>): {

@@ -89,6 +89,20 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("deletes a confirmation with linked data and stored documents", async () => {
+    const { repo, db, seller, buyer, product } = setup();
+    const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    const storedPath = issued.documents.find((doc) => doc.documentType === "ISSUED_ORIGINAL")?.storedFilePath;
+    expect(storedPath && existsSync(storedPath)).toBe(true);
+
+    expect(repo.deleteDealConfirmation(issued.confirmation.id)).toBe(true);
+
+    expect(repo.listDealConfirmations({ organizationId: villaId }).some((item) => item.id === issued.confirmation.id)).toBe(false);
+    expect(() => repo.getDealConfirmation(issued.confirmation.id)).toThrow(/nao encontrada/);
+    expect(storedPath ? existsSync(storedPath) : true).toBe(false);
+    db.close();
+  });
+
   it("creates from operation and fiscal document without changing billing status", async () => {
     const { repo, db, product } = setup();
     const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });

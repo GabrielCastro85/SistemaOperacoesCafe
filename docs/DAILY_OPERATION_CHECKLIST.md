@@ -4,7 +4,7 @@
 - Verificar pendencias em Notas e operacoes.
 - Conferir importacoes de planilha e XML com alerta.
 - Revisar notas em rascunho antes de confirmar.
-- Conferir operacoes internas/externas e compra/venda.
+- Conferir compra/venda e se a venda e na mesma UF ou em outra UF.
 - Revisar cobrancas em rascunho e operacoes reservadas.
 - Conferir conta-corrente de clientes com saldo aberto.
 - Verificar vencimentos no Financeiro.

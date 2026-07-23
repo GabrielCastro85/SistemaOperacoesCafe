@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { existsSync, unlinkSync } from "node:fs";
 import {
   legalEntityInputSchema,
   locationInputSchema,
@@ -96,6 +97,7 @@ import type {
   ClientLedgerEntry,
   ClientPayment,
   BillingSummary,
+  DashboardAlerts,
   PartnerRateSummaryRow,
   ExpenseCategory,
   CostCenter,
@@ -507,8 +509,8 @@ export class AppRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
-      this.db.prepare("INSERT INTO business_partners (id, organization_id, display_name, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(id, data.organizationId, data.displayName, data.notes, data.isActive ? 1 : 0, now, now);
+      this.db.prepare("INSERT INTO business_partners (id, organization_id, display_name, notes, is_active, credit_limit_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, data.organizationId, data.displayName, data.notes, data.isActive ? 1 : 0, data.creditLimitCents ?? null, now, now);
       data.roles.forEach((role) => this.addBusinessPartnerRole(id, role, now));
     });
     transaction();
@@ -522,8 +524,8 @@ export class AppRepository {
     if (data.roles.length === 0) throw new Error("Parceiro deve possuir pelo menos um papel.");
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
-      this.db.prepare("UPDATE business_partners SET organization_id = ?, display_name = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?")
-        .run(data.organizationId, data.displayName, data.notes, data.isActive ? 1 : 0, now, id);
+      this.db.prepare("UPDATE business_partners SET organization_id = ?, display_name = ?, notes = ?, is_active = ?, credit_limit_cents = ?, updated_at = ? WHERE id = ?")
+        .run(data.organizationId, data.displayName, data.notes, data.isActive ? 1 : 0, data.creditLimitCents ?? null, now, id);
       this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
       data.roles.forEach((role) => this.addBusinessPartnerRole(id, role, now));
     });
@@ -1880,6 +1882,77 @@ export class AppRepository {
     };
   }
 
+  private static readonly WAITING_SIGNATURE_ALERT_DAYS = 7;
+  private static readonly CREDIT_LIMIT_ALERT_PERCENT = 90;
+
+  getDashboardAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts {
+    this.assertOrganizationWritable(organizationId);
+    const today = new Date().toISOString().slice(0, 10);
+    const partners = this.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    const partnerName = (id: string): string => partners.find((item) => item.id === id)?.displayName ?? id;
+
+    const overdueCharges = this.listClientCharges({ organizationId })
+      .filter((charge) => !ownLegalEntityId || charge.ownLegalEntityId === ownLegalEntityId)
+      .filter((charge) => charge.status === "OVERDUE")
+      .map((charge) => ({
+        chargeId: charge.id,
+        chargeNumber: charge.chargeNumber,
+        partnerId: charge.clientPartnerId,
+        partnerName: partnerName(charge.clientPartnerId),
+        dueDate: charge.dueDate ?? "",
+        daysOverdue: charge.dueDate ? daysBetweenDates(charge.dueDate, today) : 0,
+        openAmountCents: charge.openAmountCents
+      }))
+      .sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+    const waitingSignatureConfirmations = this.listDealConfirmations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, signatureStatus: "WAITING_SIGNATURE" })
+      .map((confirmation) => {
+        const sentAt = confirmation.sentForSignatureAt ?? confirmation.issuedAt ?? confirmation.createdAt;
+        return { confirmation, daysWaiting: daysBetweenDates(sentAt, today) };
+      })
+      .filter((item) => item.daysWaiting >= AppRepository.WAITING_SIGNATURE_ALERT_DAYS)
+      .map((item) => {
+        const buyerParty = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ? AND party_role = 'BUYER' LIMIT 1").get(item.confirmation.id) as DbRecord | undefined;
+        let buyerName = item.confirmation.temporaryReference;
+        if (buyerParty) {
+          try { buyerName = (JSON.parse(String(buyerParty.snapshot_json)) as { name?: string }).name || buyerName; } catch { /* keep fallback */ }
+        }
+        return {
+          confirmationId: item.confirmation.id,
+          confirmationNumber: item.confirmation.confirmationNumber ?? item.confirmation.temporaryReference,
+          buyerName,
+          daysWaiting: item.daysWaiting
+        };
+      })
+      .sort((a, b) => b.daysWaiting - a.daysWaiting);
+
+    const partnersNearCreditLimit = partners
+      .filter((partner) => (partner.creditLimitCents ?? 0) > 0)
+      .map((partner) => {
+        const outstanding = this.db.prepare(`
+          SELECT COALESCE(SUM(open_amount_cents), 0) AS total
+          FROM client_charges
+          WHERE organization_id = ?
+            AND client_partner_id = ?
+            ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""}
+            AND status NOT IN ('CANCELLED', 'REPLACED')
+        `).get(...(ownLegalEntityId ? [organizationId, partner.id, ownLegalEntityId] : [organizationId, partner.id])) as { total: number };
+        const creditLimitCents = partner.creditLimitCents ?? 0;
+        const outstandingCents = Number(outstanding.total);
+        return {
+          partnerId: partner.id,
+          partnerName: partner.displayName,
+          creditLimitCents,
+          outstandingCents,
+          percentUsed: creditLimitCents ? Math.round((outstandingCents / creditLimitCents) * 100) : 0
+        };
+      })
+      .filter((item) => item.percentUsed >= AppRepository.CREDIT_LIMIT_ALERT_PERCENT)
+      .sort((a, b) => b.percentUsed - a.percentUsed);
+
+    return { overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit };
+  }
+
   getInstallationProfile(): InstallationProfile | null {
     const row = this.db.prepare("SELECT * FROM installation_profiles ORDER BY created_at DESC LIMIT 1").get() as
       | Record<string, unknown>
@@ -2043,7 +2116,7 @@ export class AppRepository {
     const createOperations = resolution.createOperations !== false;
     const operationType = resolution.operationType === "PURCHASE" || resolution.operationType === "SALE" ? resolution.operationType : own.operationType;
     const pending: string[] = [];
-    if (!operationScope) pending.push("Classificacao interna/externa nao definida.");
+    if (!operationScope) pending.push("UF da venda nao definida.");
     const totals = extracted.totals as Record<string, unknown> | undefined;
     const doc = this.createFiscalDocument({
       organizationId: job.organizationId,
@@ -3464,6 +3537,38 @@ export class AppRepository {
     return this.getDealConfirmation(draft.confirmation.id);
   }
 
+  deleteDealConfirmation(id: string): boolean {
+    const detail = this.getDealConfirmation(id);
+    this.assertOrganizationWritable(detail.confirmation.organizationId);
+    const documentPaths = detail.documents.map((document) => document.storedFilePath).filter(Boolean);
+    const trx = this.db.transaction(() => {
+      this.db.prepare("UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL, updated_at = ? WHERE replaced_by_confirmation_id = ?").run(new Date().toISOString(), id);
+      [
+        "deal_confirmation_status_history",
+        "deal_confirmation_document_versions",
+        "deal_confirmation_signers",
+        "deal_payment_terms",
+        "deal_confirmation_clauses",
+        "deal_confirmation_fiscal_documents",
+        "deal_confirmation_operations",
+        "deal_confirmation_items",
+        "deal_confirmation_parties"
+      ].forEach((tableName) => {
+        this.db.prepare(`DELETE FROM ${tableName} WHERE deal_confirmation_id = ?`).run(id);
+      });
+      this.db.prepare("DELETE FROM deal_confirmations WHERE id = ?").run(id);
+    });
+    trx();
+    documentPaths.forEach((filePath) => {
+      try {
+        if (existsSync(filePath)) unlinkSync(filePath);
+      } catch {
+        // A remocao do registro e mais importante; a integridade de documentos consegue apontar sobras depois.
+      }
+    });
+    return true;
+  }
+
   updateDealConfirmationDraft(id: string, input: unknown): DealConfirmationDetail {
     this.assertDealEditable(id);
     const data = dealConfirmationUpdateSchema.parse(input);
@@ -4605,6 +4710,12 @@ function addDays(value: string, days: number): string {
   const date = parseLocalDate(value);
   date.setDate(date.getDate() + days);
   return isoDate(date);
+}
+
+function daysBetweenDates(fromValue: string, toValue: string): number {
+  const from = parseLocalDate(fromValue.slice(0, 10));
+  const to = parseLocalDate(toValue.slice(0, 10));
+  return Math.round((to.getTime() - from.getTime()) / 86_400_000);
 }
 
 function addMonthsSafe(value: string, months: number): string {

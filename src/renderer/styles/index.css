@@ -1927,6 +1927,48 @@ table th {
   justify-content: space-between;
 }
 
+.partners-list-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.operation-warning-card {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d49a39;
+  border-radius: var(--radius-md);
+  background: #fff4df;
+  color: #5f3706;
+}
+
+.compact-crud-page {
+  align-content: start;
+  gap: 14px;
+}
+
+.compact-crud-page .ui-page-header {
+  margin-bottom: 4px;
+}
+
+.compact-crud-page .admin-block {
+  gap: 14px;
+}
+
+.compact-crud-page .admin-block h3 {
+  margin: 0;
+}
+
+.compact-crud-page .table {
+  margin-block: 0;
+}
+
+.service-rate-toolbar {
+  grid-template-columns: minmax(240px, 420px) minmax(160px, 220px) auto;
+  justify-content: start;
+}
+
 .partner-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -2402,6 +2444,14 @@ table th {
   font-size: 13px;
 }
 
+.auth-caps-warning {
+  display: block;
+  margin-top: 4px;
+  color: #92710a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .users-grid {
   grid-template-columns: 1.3fr 1fr 1.3fr 0.8fr 1.4fr;
 }
@@ -2823,6 +2873,30 @@ table th {
 
 .status-list p:nth-child(3) span {
   background: #2e5f87;
+}
+
+.alert-list {
+  display: grid;
+  gap: 10px;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  font: inherit;
+  color: var(--color-text);
+}
+
+.alert-item:hover {
+  border-color: var(--color-accent);
 }
 
 .dashboard-grid--compact {

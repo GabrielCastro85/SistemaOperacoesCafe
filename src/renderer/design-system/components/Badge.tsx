@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { StatusTone } from "../../types/ui";
+import { formatStatusLabel } from "../../../shared/utils/statusLabels";
 
 export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: StatusTone }): JSX.Element {
   return <span className={`ui-badge ui-badge--${tone}`}>{children}</span>;
@@ -28,5 +29,5 @@ const statusToneMap: Record<string, StatusTone> = {
 };
 
 export function StatusBadge({ status, label }: { status: string; label?: string }): JSX.Element {
-  return <Badge tone={statusToneMap[status] ?? "neutral"}>{label ?? status}</Badge>;
+  return <Badge tone={statusToneMap[status] ?? "neutral"}>{label ?? formatStatusLabel(status)}</Badge>;
 }

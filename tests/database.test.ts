@@ -31,7 +31,7 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("018_legal_entity_confirmation_defaults");
+    expect(getCurrentMigration(db)).toBe("019_business_partner_credit_limit");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });

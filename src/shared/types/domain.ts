@@ -424,6 +424,7 @@ export interface BusinessPartner {
   notes: string | null;
   roles: BusinessPartnerRole[];
   isActive: boolean;
+  creditLimitCents: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1564,6 +1565,37 @@ export interface DealConfirmationSummary {
   cancelled: number;
   withoutFiscalDocument: number;
   withoutOperation: number;
+}
+
+export interface DashboardOverdueChargeAlert {
+  chargeId: string;
+  chargeNumber: string | null;
+  partnerId: string;
+  partnerName: string;
+  dueDate: string;
+  daysOverdue: number;
+  openAmountCents: number;
+}
+
+export interface DashboardWaitingSignatureAlert {
+  confirmationId: string;
+  confirmationNumber: string;
+  buyerName: string;
+  daysWaiting: number;
+}
+
+export interface DashboardCreditLimitAlert {
+  partnerId: string;
+  partnerName: string;
+  creditLimitCents: number;
+  outstandingCents: number;
+  percentUsed: number;
+}
+
+export interface DashboardAlerts {
+  overdueCharges: DashboardOverdueChargeAlert[];
+  waitingSignatureConfirmations: DashboardWaitingSignatureAlert[];
+  partnersNearCreditLimit: DashboardCreditLimitAlert[];
 }
 
 export interface ConfirmationReportFilters {

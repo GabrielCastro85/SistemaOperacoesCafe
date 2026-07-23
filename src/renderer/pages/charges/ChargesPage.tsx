@@ -6,6 +6,8 @@ import { Feedback } from "../../components/feedback/Feedback";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { requestTextInput } from "../../utils/dialogs";
+import { formatOperationScope } from "../../../shared/utils/operationLabels";
+import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 
 function decimalTextBr(value: string | null | undefined): string {
   return value ? value.replace(".", ",") : "0";
@@ -39,6 +41,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [surchargeInput, setSurchargeInput] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [searchedOperations, setSearchedOperations] = useState(false);
+  const [chargesTab, setChargesTab] = useState<"gerar" | "resumo" | "historico">("gerar");
 
   const load = useCallback(async () => {
     const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
@@ -120,6 +123,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: row.partnerId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: operations.map((item) => item.id) });
       setClientId(row.partnerId);
       setDetail(draft);
+      setChargesTab("gerar");
       setMessage(`Rascunho gerado para ${row.partnerDisplayName}.`);
       await load();
       await loadPartnerSummary();
@@ -131,8 +135,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function issue(): Promise<void> {
     if (!detail) return;
     const issued = await window.operationsCafe.issueClientCharge(detail.charge.id);
+    if (!issued) {
+      setMessage("Emissao cancelada. Nenhuma pasta foi escolhida.");
+      return;
+    }
     setDetail(issued);
-    setMessage("Cobranca emitida com documentos.");
+    setMessage("Cobranca emitida e documentos salvos na pasta escolhida.");
     await load();
   }
 
@@ -141,6 +149,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     try {
       let current = detail;
       const shouldRegenerateDocuments = !["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status);
+      let documentGenerationCanceled = false;
       if (advanceCents > 0) {
         current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: advanceCents, sortOrder: 10, reason: "Ajuste manual" });
       }
@@ -151,13 +160,18 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: surchargeCents, sortOrder: 30, reason: "Ajuste manual" });
       }
       if (shouldRegenerateDocuments && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0)) {
-        current = await window.operationsCafe.regenerateChargeDocuments(current.charge.id);
+        const regenerated = await window.operationsCafe.regenerateChargeDocuments(current.charge.id);
+        if (regenerated) {
+          current = regenerated;
+        } else {
+          documentGenerationCanceled = true;
+        }
       }
       setDetail(current);
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
-      setMessage(shouldRegenerateDocuments ? "Ajustes aplicados e documentos regenerados." : "Ajustes aplicados.");
+      setMessage(documentGenerationCanceled ? "Ajustes aplicados. Geracao dos documentos foi cancelada." : shouldRegenerateDocuments ? "Ajustes aplicados e documentos regenerados na pasta escolhida." : "Ajustes aplicados.");
       await load();
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao aplicar ajustes."}`);
@@ -193,6 +207,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         <article><span>Operacoes nao cobradas</span><strong>{summary?.unbilledOperations ?? 0}</strong></article>
       </div>
 
+      <div className="settings-tabs">
+        <button className={chargesTab === "gerar" ? "active" : ""} onClick={() => setChargesTab("gerar")}>Gerar cobranca</button>
+        <button className={chargesTab === "resumo" ? "active" : ""} onClick={() => setChargesTab("resumo")}>Resumo do periodo</button>
+        <button className={chargesTab === "historico" ? "active" : ""} onClick={() => setChargesTab("historico")}>Historico</button>
+      </div>
+
+      {chargesTab === "gerar" && (
       <AdminBlock title="Gerar cobranca">
         <div className="charge-context-note">
           <span>CNPJ ativo para cobranca</span>
@@ -220,7 +241,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             {eligible.length ? (
               <div className="table">
                 <div className="table-head charge-operation-grid"><span>Data</span><span>Tipo</span><span>Sacas</span><span>R$/saca</span><span>Servico</span><span>Status</span></div>
-                {eligible.map((op) => <div key={op.id} className="table-row charge-operation-grid"><span>{op.operationDate}</span><span>{op.operationScope}</span><span>{decimalTextBr(op.quantitySacks)}</span><span>{formatCurrencyFromCents(op.appliedRateValueCents)}</span><span>{formatCurrencyFromCents(op.serviceAmountCents)}</span><span>{op.billingStatus}</span></div>)}
+                {eligible.map((op) => <div key={op.id} className="table-row charge-operation-grid"><span>{op.operationDate}</span><span>{formatOperationScope(op.operationScope)}</span><span>{decimalTextBr(op.quantitySacks)}</span><span>{formatCurrencyFromCents(op.appliedRateValueCents)}</span><span>{formatCurrencyFromCents(op.serviceAmountCents)}</span><span>{formatStatusLabel(op.billingStatus)}</span></div>)}
               </div>
             ) : (
               <EmptyState
@@ -238,7 +259,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     <div key={op.id} className="table-row charge-diagnostic-grid">
                       <span>{op.operationDate}</span>
                       <span>{legalEntityLabel(op.ownLegalEntityId)}</span>
-                      <span>{op.status} / {op.billingStatus}</span>
+                      <span>{formatCombinedStatusLabel(op.status, op.billingStatus)}</span>
                       <span>{decimalTextBr(op.quantitySacks)}</span>
                       <span>{formatCurrencyFromCents(op.appliedRateValueCents)}</span>
                       <span>{formatCurrencyFromCents(op.serviceAmountCents)}</span>
@@ -278,12 +299,14 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           </div>
         </div>
       </AdminBlock>
+      )}
 
+      {chargesTab === "resumo" && (
       <AdminBlock title="Resumo do periodo por cliente">
-        <p className="muted">Sacas e valor de servico por cliente, separado entre operacoes internas e externas. Clientes sem movimento no periodo aparecem zerados.</p>
+        <p className="muted">Sacas e valor de servico por cliente, separado entre vendas na mesma UF e em outra UF. Clientes sem movimento no periodo aparecem zerados.</p>
         <label className="inline-check"><input type="checkbox" checked={includeAlreadyBilled} onChange={(event) => setIncludeAlreadyBilled(event.target.checked)} /> Incluir operacoes ja cobradas</label>
         <div className="table">
-          <div className="table-head partner-summary-grid"><span>Cliente</span><span>Sacas interno</span><span>Sacas externo</span><span>Valor interno</span><span>Valor externo</span><span>Total</span><span>Acoes</span></div>
+          <div className="table-head partner-summary-grid"><span>Cliente</span><span>Sacas mesma UF</span><span>Sacas outra UF</span><span>Valor mesma UF</span><span>Valor outra UF</span><span>Total</span><span>Acoes</span></div>
           {partnerSummary.map((row) => (
             <div key={row.partnerId} className="table-row partner-summary-grid">
               <span>{row.partnerDisplayName}</span>
@@ -297,8 +320,9 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           ))}
         </div>
       </AdminBlock>
+      )}
 
-      {detail ? <AdminBlock title={`Detalhe ${detail.charge.chargeNumber ?? "Rascunho"}`}>
+      {chargesTab === "gerar" && detail ? <AdminBlock title={`Detalhe ${detail.charge.chargeNumber ?? "Rascunho"}`}>
         <div className="cards">
           <article><span>Subtotal</span><strong>{formatCurrencyFromCents(detail.charge.subtotalServicesCents)}</strong></article>
           <article><span>Ajustes +</span><strong>{formatCurrencyFromCents(detail.charge.additionsCents)}</strong></article>
@@ -309,9 +333,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="toolbar"><button onClick={() => void registerPayment()}>Registrar pagamento</button></div>
       </AdminBlock> : null}
 
+      {chargesTab === "historico" && (
       <AdminBlock title="Historico de cobrancas">
-        <div className="table"><div className="table-head charge-grid"><span>Numero</span><span>Cliente</span><span>Periodo</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Status</span><span>Acoes</span></div>{charges.map((charge) => <div key={charge.id} className="table-row charge-grid"><span>{charge.chargeNumber ?? "Rascunho"}</span><span>{partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? charge.clientPartnerId}</span><span>{charge.periodStart} a {charge.periodEnd}</span><span>{formatCurrencyFromCents(charge.finalAmountCents)}</span><span>{formatCurrencyFromCents(charge.paidAmountCents)}</span><span>{formatCurrencyFromCents(charge.openAmountCents)}</span><span>{charge.status}</span><span><button onClick={() => window.operationsCafe.getClientCharge(charge.id).then(setDetail)}>Abrir</button></span></div>)}</div>
+        <div className="table"><div className="table-head charge-grid"><span>Numero</span><span>Cliente</span><span>Periodo</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Status</span><span>Acoes</span></div>{charges.map((charge) => <div key={charge.id} className="table-row charge-grid"><span>{charge.chargeNumber ?? "Rascunho"}</span><span>{partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? charge.clientPartnerId}</span><span>{charge.periodStart} a {charge.periodEnd}</span><span>{formatCurrencyFromCents(charge.finalAmountCents)}</span><span>{formatCurrencyFromCents(charge.paidAmountCents)}</span><span>{formatCurrencyFromCents(charge.openAmountCents)}</span><span>{formatStatusLabel(charge.status)}</span><span><button onClick={() => window.operationsCafe.getClientCharge(charge.id).then((opened) => { setDetail(opened); setChargesTab("gerar"); })}>Abrir</button></span></div>)}</div>
       </AdminBlock>
+      )}
       <Feedback message={message} />
     </section>
   );

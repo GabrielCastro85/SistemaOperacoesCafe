@@ -8,6 +8,8 @@ import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { parseNfeExtractedPreview, resolveOwnAndCounterparty } from "./xmlPreview";
+import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
+import { formatStatusLabel } from "../../../shared/utils/statusLabels";
 
 function decimalTextBr(value: string | null): string {
   return value ? value.replace(".", ",") : "-";
@@ -39,7 +41,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [sacks, setSacks] = useState("1");
   const [scope, setScope] = useState<OperationScope>("EXTERNAL");
   const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
-  const [pageTab, setPageTab] = useState<"documents" | "spreadsheets" | "xml">("documents");
+  const [pageTab, setPageTab] = useState<"documents" | "spreadsheets" | "xml">("xml");
   const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
   const [importJob, setImportJob] = useState<{ job: SpreadsheetImportJob; rows: SpreadsheetImportRow[] } | null>(null);
@@ -357,6 +359,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedXmlParties = resolveOwnAndCounterparty(selectedXmlPreview, data.legalEntities);
   const selectedXmlItem = selectedXmlPreview?.items[0] ?? null;
+  const selectedXmlOwnMismatch = Boolean(
+    selectedXmlParties.ownEntityLabel &&
+    ownLegalEntity &&
+    selectedXmlParties.ownEntityLabel !== ownLegalEntity.tradeName
+  );
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
   const xmlJobStatus = xmlJob?.job.status;
   const xmlImportSteps: StepperStep[] = [
@@ -378,7 +385,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const detailMainItem = detail?.items[0] ?? null;
   const detailMainOperation = detail?.operations[0] ?? null;
   const operationTypeLabel = detailMainOperation?.operationType === "PURCHASE" ? "Compra" : detailMainOperation?.operationType === "SALE" ? "Venda" : "-";
-  const operationScopeLabel = detailMainOperation?.operationScope === "INTERNAL" ? "Interna" : detailMainOperation?.operationScope === "EXTERNAL" ? "Externa" : "-";
+  const operationScopeLabel = formatOperationScope(detailMainOperation?.operationScope);
 
   return (
     <section className="content-section settings">
@@ -427,20 +434,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span>{doc.status}</span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>;
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>;
         })}</div>
       </AdminBlock>
       {detail ? <AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
         <div className="invoice-detail-layout">
           <section className="invoice-action-card invoice-action-card--wide">
-            <header><span>{detail.items.length ? "Dados da nota" : "Adicionar item"}</span><strong>{detail.items.length ? "Preenchido pelo XML/regra" : "Produto e classificacao"}</strong></header>
+            <header><span>{detail.items.length ? "Dados da nota" : "Adicionar item"}</span><strong>{detail.items.length ? "Preenchido pelo XML/regra" : "Produto e classificacao fiscal"}</strong></header>
             {detailMainItem || detailMainOperation ? (
               <div className="invoice-auto-summary">
                 <div><span>Produto</span><strong>{detailMainItem?.description ?? products.find((product) => product.id === detailMainOperation?.productId)?.name ?? "-"}</strong></div>
                 <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${detailMainItem.unit}` : "-"}</strong></div>
                 <div><span>Preco comercial</span><strong>{detailMainItem ? decimalTextBr(detailMainItem.unitPriceDecimal) : "-"}</strong></div>
                 <div><span>Sacas</span><strong>{detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
-                <div><span>Classificacao</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
+                <div><span>UF da venda</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
                 <div><span>Servico calculado</span><strong>{detailMainOperation ? `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/saca)` : "-"}</strong></div>
               </div>
             ) : null}
@@ -448,7 +455,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <FormGrid>
               <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
               <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
+              <SelectField label="UF da venda" value={scope} onChange={(value) => setScope(value as OperationScope)} options={OPERATION_SCOPE_OPTIONS} />
               <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
               <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
               <TextField label="Sacas" value={sacks} onChange={setSacks} />
@@ -472,8 +479,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
         <div className="cards">
           <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${item.unit}`).join(" | ") || "Nenhum"}</strong></article>
-          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${op.operationScope}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
-          <article><span>Status</span><strong>{detail.document.status}</strong></article>
+          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${formatOperationScope(op.operationScope)}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
+          <article><span>Status</span><strong>{formatStatusLabel(detail.document.status)}</strong></article>
         </div>
       </AdminBlock> : null}
       </>}
@@ -492,7 +499,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {importJob ? <div className="cards"><article><span>Total</span><strong>{importJob.job.totalRows}</strong></article><article><span>Validas</span><strong>{importJob.job.validRows}</strong></article><article><span>Avisos</span><strong>{importJob.job.warningRows}</strong></article><article><span>Duplicadas</span><strong>{importJob.job.duplicateRows}</strong></article><article><span>Erros</span><strong>{importJob.job.errorRows}</strong></article><article><span>Importadas</span><strong>{importJob.job.importedRows}</strong></article></div> : null}
       </AdminBlock>
       <AdminBlock title="Historico de importacoes">
-        <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span>{job.status}</span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter importação", label: "Motivo da reversão" }).then((reason) => { if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span><StatusBadge status={job.status} /></span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter importação", label: "Motivo da reversão" }).then((reason) => { if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock>
       </>}
       {pageTab === "xml" && <>
@@ -537,6 +544,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <h3>Dados extraidos</h3>
             {selectedXmlPreview ? (
               <>
+                {selectedXmlOwnMismatch ? (
+                  <div className="operation-warning-card">
+                    <strong>Atencao: XML de outro CNPJ</strong>
+                    <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity?.tradeName}. Troque o CNPJ ativo antes de salvar a nota.</span>
+                  </div>
+                ) : null}
                 <dl className="kv-list">
                   <div><dt>Empresa</dt><dd>{selectedXmlParties.ownEntityLabel ?? "Nao identificada"}</dd></div>
                   <div><dt>Cliente</dt><dd>{selectedXmlParties.counterpartyLabel ?? "Nao identificado"}</dd></div>
@@ -568,7 +581,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <FormGrid>
               <SelectField label="Cliente padrao (usado so se o CNPJ/nome do contraparte nao for reconhecido)" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
               <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <SelectField label="Interna/externa" value={scope} onChange={(value) => setScope(value as OperationScope)} options={[["INTERNAL", "Interna"], ["EXTERNAL", "Externa"]]} />
+              <SelectField label="UF da venda" value={scope} onChange={(value) => setScope(value as OperationScope)} options={OPERATION_SCOPE_OPTIONS} />
             </FormGrid>
             <div className="toolbar">
               <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
@@ -619,7 +632,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
       </AdminBlock>
       <AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span>{job.status}</span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock>
       </>}
       <Feedback message={message} />
