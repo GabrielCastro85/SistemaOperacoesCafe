@@ -168,6 +168,45 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("creates confirmation from a fiscal document linked to a shared client from another organization", () => {
+    const { repo, db, product } = setup();
+    const sharedBuyer = repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Compartilhado Grao", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const doc = repo.createFiscalDocument({
+      organizationId: villaId,
+      ownLegalEntityId,
+      responsiblePartnerId: sharedBuyer.id,
+      partnerLegalEntityId: null,
+      accessKey: null,
+      documentNumber: "NF-SHARED-1",
+      series: "1",
+      issueDate: "2026-07-18",
+      totalAmountCents: 100000,
+      hasPendingIssues: false,
+      pendingNotes: null,
+      notes: null
+    });
+    const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "10", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 100000, sacksQuantity: "10" });
+    repo.addOperation({
+      fiscalDocumentId: doc.document.id,
+      fiscalDocumentItemId: item.id,
+      ownLegalEntityId,
+      responsiblePartnerId: sharedBuyer.id,
+      productId: product.id,
+      operationType: "SALE",
+      operationScope: "EXTERNAL",
+      operationDate: "2026-07-18",
+      quantitySacks: "10",
+      manualRateValueCents: null,
+      manualOverrideReason: null,
+      notes: null
+    });
+    repo.confirmFiscalDocument(doc.document.id);
+    const confirmation = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    const withBuyer = repo.addDealConfirmationParty({ dealConfirmationId: confirmation.confirmation.id, partyRole: "BUYER", businessPartnerId: sharedBuyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    expect(withBuyer.businessPartnerId).toBe(sharedBuyer.id);
+    db.close();
+  });
+
   it("blocks another organization, duplicated links and handles cancel/replace/report/dashboard", async () => {
     const { repo, db, seller, buyer, graoPartner, product } = setup();
     const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);

@@ -4255,7 +4255,6 @@ export class AppRepository {
     }
     if (data.businessPartnerId) {
       const partner = this.getBusinessPartner(data.businessPartnerId);
-      if (partner.organizationId !== organizationId) throw new Error("Participante pertence a outra organizacao.");
       const entity = data.partnerLegalEntityId ? this.getPartnerLegalEntity(data.partnerLegalEntityId) : this.listPartnerLegalEntities(partner.id).find((item) => item.isPrimary) ?? null;
       if (entity && entity.businessPartnerId !== partner.id) throw new Error("Estabelecimento pertence a outro parceiro.");
       return { name: entity?.tradeName ?? partner.displayName, legalName: entity?.legalName ?? null, taxId: entity?.cnpj ?? null, stateRegistration: entity?.stateRegistration ?? null, addressLine: entity?.addressLine ?? null, addressNumber: entity?.addressNumber ?? null, addressComplement: entity?.addressComplement ?? null, district: entity?.district ?? null, city: entity?.city ?? null, state: entity?.state ?? null, postalCode: entity?.postalCode ?? null, phone: entity?.phone ?? null, email: entity?.email ?? null, representativeName: data.representativeName ?? null, role: data.partyRole };
