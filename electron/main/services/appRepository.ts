@@ -4644,8 +4644,8 @@ export class AppRepository {
   }
 
   private assertClientPartner(businessPartnerId: string, organizationId: string): BusinessPartner {
+    void organizationId;
     const partner = this.getBusinessPartner(businessPartnerId);
-    if (partner.organizationId !== organizationId) throw new Error("Parceiro pertence a outra organizacao.");
     if (!partner.roles.includes("CLIENT")) throw new Error("Somente parceiros com papel Cliente podem usar esta configuracao.");
     return partner;
   }
