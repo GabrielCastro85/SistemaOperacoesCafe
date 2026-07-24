@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import type { AppDirectories } from "../../../src/shared/types/domain.js";
 
-const RESET_MARKER_KEY = "beta_1_operational_reset_preserve_clients_v1";
+const RESET_MARKER_KEY = "beta_1_operational_reset_preserve_clients_v2";
 
 const OPERATIONAL_TABLES = [
   "payable_document_attachments",
@@ -43,8 +43,8 @@ const OPERATIONAL_TABLES = [
   "local_sessions"
 ];
 
-export function runBetaOperationalResetIfNeeded(db: Database.Database, directories: AppDirectories, appVersion: string, isPackaged: boolean): boolean {
-  if (!isPackaged || !appVersion.includes("beta")) return false;
+export function runBetaOperationalResetIfNeeded(db: Database.Database, directories: AppDirectories, _appVersion: string, isPackaged: boolean): boolean {
+  if (!isPackaged) return false;
   if (!tableExists(db, "app_settings")) return false;
   const marker = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(RESET_MARKER_KEY) as { value: string } | undefined;
   if (marker?.value === "done") return false;
