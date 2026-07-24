@@ -3548,6 +3548,8 @@ export class AppRepository {
     const fiscalDocuments = data.fiscalDocumentIds.map((documentId) => this.getFiscalDocument(documentId).document);
     const documentOwnIds = [...new Set(fiscalDocuments.map((document) => document.ownLegalEntityId))];
     if (documentOwnIds.length > 1) throw new Error("Selecione notas do mesmo CNPJ proprio para gerar uma confirmacao.");
+    const reusable = this.findActiveDealConfirmationForFiscalDocuments(data.fiscalDocumentIds);
+    if (reusable) return reusable;
     const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: documentOwnIds[0] ?? data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
     const trx = this.db.transaction(() => {
       data.fiscalDocumentIds.forEach((documentId) => {
@@ -4390,6 +4392,21 @@ export class AppRepository {
     const next = Number(row.current_number) + 1;
     this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(next, now, row.id);
     return `${String(row.prefix ?? "")}${String(next).padStart(Number(row.padding), "0")}`;
+  }
+
+  private findActiveDealConfirmationForFiscalDocuments(fiscalDocumentIds: string[]): DealConfirmationDetail | null {
+    const placeholders = fiscalDocumentIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT dc.id AS id, COUNT(DISTINCT dcfd.fiscal_document_id) AS linkedCount
+      FROM deal_confirmations dc
+      JOIN deal_confirmation_fiscal_documents dcfd ON dcfd.deal_confirmation_id = dc.id
+      WHERE dc.status NOT IN ('CANCELLED', 'REPLACED')
+        AND dcfd.fiscal_document_id IN (${placeholders})
+      GROUP BY dc.id
+      ORDER BY dc.created_at ASC
+    `).all(...fiscalDocumentIds) as Array<{ id: string; linkedCount: number }>;
+    const match = rows.find((row) => Number(row.linkedCount) === fiscalDocumentIds.length) ?? rows[0];
+    return match ? this.getDealConfirmation(match.id) : null;
   }
 
   private defaultDealConfirmationPrefix(organizationId: string, ownLegalEntityId: string): string {

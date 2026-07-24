@@ -168,8 +168,8 @@ describe("deal confirmations", () => {
     db.close();
   });
 
-  it("creates confirmation from a fiscal document linked to a shared client from another organization", () => {
-    const { repo, db, product } = setup();
+  it("creates confirmation from a fiscal document linked to a shared client from another organization", async () => {
+    const { repo, db, seller, product } = setup();
     const sharedBuyer = repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Compartilhado Grao", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
     const doc = repo.createFiscalDocument({
       organizationId: villaId,
@@ -202,8 +202,17 @@ describe("deal confirmations", () => {
     });
     repo.confirmFiscalDocument(doc.document.id);
     const confirmation = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    repo.addDealConfirmationParty({ dealConfirmationId: confirmation.confirmation.id, partyRole: "SELLER", businessPartnerId: seller.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 1 });
     const withBuyer = repo.addDealConfirmationParty({ dealConfirmationId: confirmation.confirmation.id, partyRole: "BUYER", businessPartnerId: sharedBuyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
     expect(withBuyer.businessPartnerId).toBe(sharedBuyer.id);
+    repo.updateDealConfirmationDraft(confirmation.confirmation.id, { deliveryLocationSnapshot: "Armazem", paymentTermsSnapshot: "A vista", generalTermsSnapshot: "Padrao" });
+    repo.addDealConfirmationClause({ dealConfirmationId: confirmation.confirmation.id, clauseNumber: "1", title: "Conferencia", clauseText: "Clausula revisada.", sortOrder: 0, isVisible: true });
+    const preview = await repo.generateDealConfirmationPreview(confirmation.confirmation.id);
+    const reused = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    expect(reused.confirmation.id).toBe(confirmation.confirmation.id);
+    expect(reused.confirmation.confirmationNumber).toBe(preview.confirmation.confirmationNumber);
+    const issued = await repo.issueDealConfirmation(reused.confirmation.id);
+    expect(issued.confirmation.confirmationNumber).toBe(preview.confirmation.confirmationNumber);
     db.close();
   });
 
