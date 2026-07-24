@@ -3300,8 +3300,7 @@ export class AppRepository {
     if (data.defaultCostCenterId) this.assertCostCenterScope(data.defaultCostCenterId, data.organizationId);
     if (data.defaultLocationId) this.assertLocationScope(data.defaultLocationId, data.organizationId, data.ownLegalEntityId);
     if (data.supplierPartnerId) {
-      const partner = this.getBusinessPartner(data.supplierPartnerId);
-      if (partner.organizationId !== data.organizationId) throw new Error("Fornecedor fora da organizacao.");
+      this.getBusinessPartner(data.supplierPartnerId);
     }
     if (data.supplierLegalEntityId) {
       const legal = this.getPartnerLegalEntity(data.supplierLegalEntityId);

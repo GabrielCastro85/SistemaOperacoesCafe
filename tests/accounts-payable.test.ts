@@ -8,6 +8,7 @@ import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/se
 
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
+const graoId = "22222222-2222-4222-8222-222222222222";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 
 function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase> } {
@@ -50,6 +51,15 @@ describe("accounts payable", () => {
     const partial = repo.allocatePayablePayment({ payablePaymentId: payment.id, accountPayableId: draft.payable.id, amountCents: 40000 });
     expect(partial.payable.status).toBe("PARTIALLY_PAID");
     expect(partial.payable.openAmountCents).toBe(56000);
+    db.close();
+  });
+
+  it("creates an account payable with a shared supplier from another organization", () => {
+    const { repo, db } = setup();
+    const category = repo.listExpenseCategories(villaId)[0];
+    const supplier = repo.createBusinessPartner({ organizationId: graoId, displayName: "Fornecedor Compartilhado", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, supplierLegalEntityId: null, payeeNameSnapshot: supplier.displayName, payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null, source: "MANUAL", description: "Servico compartilhado", documentType: "BOLETO", documentNumber: "SUP-1", competenceDate: "2026-08-01", issueDate: null, dueDate: "2026-08-10", originalAmountCents: 45000, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", notes: null, internalNotes: null });
+    expect(draft.payable.supplierPartnerId).toBe(supplier.id);
     db.close();
   });
 
