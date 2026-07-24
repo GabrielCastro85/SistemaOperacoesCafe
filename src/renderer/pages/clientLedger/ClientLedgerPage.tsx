@@ -3,7 +3,8 @@ import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, Client
 import { formatCnpj, formatCurrencyFromCents, formatDateBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { BuildingIcon, EmptyState, PageHeader } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
-import { SelectField, TextField } from "../../components/forms/LegacyFields";
+import { TextField } from "../../components/forms/LegacyFields";
+import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { ClientLedgerTable } from "./components/ClientLedgerTable";
 
@@ -12,6 +13,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [clientId, setClientId] = useState("");
+  const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [clientLegalEntities, setClientLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [showClientDetails, setShowClientDetails] = useState(false);
   const [entries, setEntries] = useState<ClientLedgerEntry[]>([]);
@@ -19,8 +21,9 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const clients = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clients);
+    setPartnerLegalEntities((await Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     const selected = clientId || clients[0]?.id || "";
     setClientId(selected);
     if (selected) {
@@ -55,7 +58,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
 
       <AdminBlock title="Cliente">
         <FormGrid>
-          <SelectField label="Cliente" value={clientId} onChange={setClientId} options={partners.map((item) => [item.id, item.displayName])} />
+          <PartnerQuickSearch label="Cliente" value={clientId} onChange={setClientId} partners={partners} legalEntities={partnerLegalEntities} />
         </FormGrid>
         {client ? (
           <div className="client-header-card">

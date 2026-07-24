@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   ActiveContext,
   AppPermission,
@@ -225,6 +225,7 @@ const IPC_CHANNELS = {
   selectXmlFile: "xmlFiles:selectFile",
   selectXmlFiles: "xmlFiles:selectFiles",
   selectXmlFolder: "xmlFiles:selectFolder",
+  registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",
   createXmlImportDraft: "xmlImports:createDraft",
   addXmlImportFiles: "xmlImports:addFiles",
@@ -546,6 +547,8 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
+  registerDroppedXmlFiles: (paths: string[]) => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
+  getDroppedFilePaths: (files: File[]) => string[];
   inspectXmlFiles: (tokens: string[]) => Promise<XmlFileInspection[]>;
   createXmlImportDraft: (input: unknown) => Promise<XmlImportJob>;
   addXmlImportFiles: (input: { jobId: string; tokens: string[] }) => Promise<{ job: XmlImportJob; files: XmlImportFile[] }>;
@@ -880,6 +883,8 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
+  registerDroppedXmlFiles: (paths) => ipcRenderer.invoke(IPC_CHANNELS.registerDroppedXmlFiles, { paths }) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
+  getDroppedFilePaths: (files) => files.map((file) => webUtils.getPathForFile(file)).filter((path) => path.length > 0),
   inspectXmlFiles: (tokens) => ipcRenderer.invoke(IPC_CHANNELS.inspectXmlFiles, tokens) as Promise<XmlFileInspection[]>,
   createXmlImportDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createXmlImportDraft, input) as Promise<XmlImportJob>,
   addXmlImportFiles: (input) => ipcRenderer.invoke(IPC_CHANNELS.addXmlImportFiles, input) as Promise<{ job: XmlImportJob; files: XmlImportFile[] }>,

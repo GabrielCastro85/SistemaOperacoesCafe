@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, BusinessPartnerRole, CnpjLookupResult, PartnerContact } from "../../../shared/types/domain";
 import { formatCnpj, formatCurrencyFromCents, formatDateBr, isValidCnpj, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
 import { PageHeader } from "../../design-system";
@@ -6,6 +6,7 @@ import { Feedback } from "../../components/feedback/Feedback";
 import { TextField } from "../../components/forms/LegacyFields";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { requestDecision } from "../../utils/dialogs";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 const roleLabels: Record<BusinessPartnerRole, string> = { CLIENT: "Cliente", SUPPLIER: "Fornecedor", SELLER: "Vendedor", BUYER: "Comprador", DESTINATION: "Destino", CARRIER: "Transportadora", SERVICE_PROVIDER: "Prestador de servico", OTHER: "Outro" };
 const roleOptions: BusinessPartnerRole[] = ["CLIENT", "BUYER", "SUPPLIER", "SELLER", "DESTINATION", "CARRIER", "SERVICE_PROVIDER", "OTHER"];
 type PartnerModalMode = "create" | "edit" | null;
@@ -49,10 +50,12 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   const [editPartnerRoles, setEditPartnerRoles] = useState<BusinessPartnerRole[]>([]);
   const [editingLegalEntityId, setEditingLegalEntityId] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<PartnerModalMode>(null);
+  const scrollTo = useAutoScroll();
+  const partnersListRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    setItems(await window.operationsCafe.listBusinessPartners({ organizationId, search, status: "active" }));
-  }, [organizationId, search]);
+    setItems(await window.operationsCafe.listBusinessPartners({ search, status: "active" }));
+  }, [search]);
   useEffect(() => { void load(); }, [load]);
 
   async function loadDetail(partner: BusinessPartner): Promise<void> {
@@ -213,6 +216,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       await load();
       await loadDetail(partner);
       closePartnerModal();
+      scrollTo(partnersListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cadastrar cliente manualmente."}`);
     }
@@ -241,6 +245,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       setMessage("Cadastro do cliente atualizado.");
       await load();
       await loadDetail(updated);
+      scrollTo(partnersListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao atualizar cliente."}`);
     }
@@ -292,6 +297,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       await load();
       await loadDetail(partner);
       closePartnerModal();
+      scrollTo(partnersListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cadastrar cliente pelo CNPJ."}`);
     }
@@ -346,6 +352,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       }
       setMessage("Cliente excluido definitivamente.");
       await load();
+      scrollTo(partnersListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir cliente."}`);
     }
@@ -383,6 +390,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   return (
     <section className="content-section settings compact-crud-page partners-page">
       <PageHeader title="Clientes e parceiros" eyebrow="Comercial" description="Cadastre clientes, compradores, vendedores, fornecedores, CNPJs e contatos." />
+      <div ref={partnersListRef}>
       <AdminBlock title="Clientes e parceiros">
         <div className="partners-list-panel">
           <div className="partners-list-toolbar">
@@ -396,6 +404,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
           </div>
         </div>
       </AdminBlock>
+      </div>
       {modalMode ? (
         <div className="partner-modal-backdrop" role="presentation">
           <div className="partner-modal" role="dialog" aria-modal="true" aria-label={modalMode === "create" ? "Cadastrar cliente" : "Editar cliente"}>
@@ -554,5 +563,3 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     </section>
   );
 }
-
-

@@ -380,7 +380,7 @@ function buildSummarySvg(input: { organization: Organization; client: BusinessPa
       <text x="248" y="${y}" class="cell">${escapeXml(clipText(item.productNameSnapshot ?? "-", 34))}</text>
       <text x="540" y="${y}" class="cell">${escapeXml(formatOperationScope(item.operationScopeSnapshot))}</text>
       <text x="662" y="${y}" class="cell right">${escapeXml(decimalTextBr(item.quantitySacksDecimalSnapshot))}</text>
-      <text x="805" y="${y}" class="cell right">R$ ${escapeXml(formatCents(item.serviceAmountCentsSnapshot))}</text>
+      <text x="805" y="${y}" class="cell right">R$ ${escapeXml(formatCents(item.serviceAmountCentsSnapshot))} x NF ${escapeXml(item.fiscalDocumentNumberSnapshot ?? "-")}</text>
     `;
   }).join("");
   const emptyRows = rows.length === 0 ? `<text x="48" y="266" class="cell">Nenhuma operacao vinculada a esta cobranca.</text>` : "";
@@ -421,13 +421,14 @@ function buildSummarySvg(input: { organization: Organization; client: BusinessPa
   <text x="248" y="236" class="head">PRODUTO</text>
   <text x="540" y="236" class="head">TIPO</text>
   <text x="662" y="236" class="head right">SACAS</text>
-  <text x="805" y="236" class="head right">SERVICO</text>
+  <text x="805" y="236" class="head right">VALOR X NF</text>
   ${rowMarkup}
   ${emptyRows}
 
   <rect x="34" y="350" width="832" height="48" rx="8" fill="#edf7ed" stroke="${accent}"/>
-  <text x="52" y="381" class="label">Valor final a cobrar</text>
-  <text x="805" y="383" class="value right">R$ ${escapeXml(formatCents(charge.finalAmountCents))}</text>
+  <text x="52" y="371" class="label">${charge.paidAmountCents > 0 ? "Valor em aberto" : "Valor final a cobrar"}</text>
+  ${charge.paidAmountCents > 0 ? `<text x="52" y="392" class="muted">Pago: R$ ${escapeXml(formatCents(charge.paidAmountCents))} de R$ ${escapeXml(formatCents(charge.finalAmountCents))}</text>` : ""}
+  <text x="805" y="383" class="value right">R$ ${escapeXml(formatCents(charge.openAmountCents))}</text>
 </svg>`;
   return svg;
 }

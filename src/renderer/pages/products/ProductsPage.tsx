@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { BootstrapData, Product } from "../../../shared/types/domain";
 import { DataTable, DecimalInput, PageHeader, StatusBadge } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
 import { TextField } from "../../components/forms/LegacyFields";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
+import { formatProductUnit } from "../../../shared/utils/productLabels";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 
 const productLabels: Record<Product["category"], string> = {
   COFFEE_ARABICA: "Cafe Arabica",
@@ -18,6 +20,8 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
   const [name, setName] = useState("");
   const [weight, setWeight] = useState("60");
   const [message, setMessage] = useState<string | null>(null);
+  const scrollTo = useAutoScroll();
+  const productsListRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     setProducts(await window.operationsCafe.listProducts({ organizationId, status: "all" }));
@@ -44,6 +48,7 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
       setMessage("Produto salvo.");
       await load();
       await refresh();
+      scrollTo(productsListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar produto."}`);
     }
@@ -59,6 +64,7 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
           <button className="primary" onClick={() => void saveProduct()} disabled={!name.trim()}>Cadastrar produto</button>
         </FormGrid>
       </AdminBlock>
+      <div ref={productsListRef}>
       <AdminBlock title="Produtos cadastrados">
         <DataTable
           rows={products}
@@ -67,12 +73,13 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
             { key: "name", header: "Nome", render: (row) => row.name },
             { key: "code", header: "Codigo", render: (row) => row.code ?? "-" },
             { key: "category", header: "Categoria", render: (row) => productLabels[row.category] },
-            { key: "unit", header: "Unidade", render: (row) => row.defaultUnit },
+            { key: "unit", header: "Unidade", render: (row) => formatProductUnit(row.defaultUnit) },
             { key: "weight", header: "Peso saca", align: "right", render: (row) => (row.defaultSackWeightKg ? `${row.defaultSackWeightKg} kg` : "-") },
             { key: "status", header: "Status", render: (row) => <StatusBadge status={row.isActive ? "ACTIVE" : "INACTIVE"} label={row.isActive ? "Ativo" : "Inativo"} /> }
           ]}
         />
       </AdminBlock>
+      </div>
       <Feedback message={message} />
     </section>
   );

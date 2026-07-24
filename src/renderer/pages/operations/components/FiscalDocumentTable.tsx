@@ -1,5 +1,5 @@
 import type { FiscalDocument } from "../../../../shared/types/domain";
-import { formatCurrencyFromCents } from "../../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateOnlyBr } from "../../../../shared/utils/format";
 import { Button, DataTable } from "../../../design-system";
 import { FiscalDocumentStatusBadge } from "./FiscalDocumentStatusBadge";
 
@@ -9,7 +9,7 @@ export function FiscalDocumentTable({ documents, onOpen }: { documents: FiscalDo
       rows={documents}
       getRowKey={(row) => row.id}
       columns={[
-        { key: "issueDate", header: "Emissão", render: (row) => row.issueDate },
+        { key: "issueDate", header: "Emissão", render: (row) => formatDateOnlyBr(row.issueDate) },
         { key: "number", header: "NF", render: (row) => row.documentNumber },
         { key: "series", header: "Série", render: (row) => row.series },
         { key: "source", header: "Origem", render: (row) => row.source },

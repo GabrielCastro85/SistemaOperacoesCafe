@@ -1,22 +1,30 @@
-import React, { useCallback, useEffect, useState } from "react";
-import type { BootstrapData, BusinessPartner, OperationScope, Product, ServiceRateRule } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, parseCurrencyToCents } from "../../../shared/utils/format";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, OperationScope, Product, ServiceRateRule } from "../../../shared/types/domain";
+import { formatCurrencyFromCents, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { Feedback } from "../../components/feedback/Feedback";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
+import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
-import { PageHeader } from "../../design-system";
+import { DateInput, PageHeader } from "../../design-system";
 import { requestDecision } from "../../utils/dialogs";
 import { OPERATION_SCOPE_LABELS, SERVICE_RATE_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 
 const scopeLabels = OPERATION_SCOPE_LABELS;
 type RateRuleModalMode = "create" | "edit" | null;
+const OPEN_ENDED_EFFECTIVE_FROM = "1900-01-01";
+
+function currentMonthStart(): string {
+  return new Date().toISOString().slice(0, 8) + "01";
+}
 
 const emptyRuleForm = {
   partnerId: "",
   productId: "",
   scope: "EXTERNAL" as OperationScope,
   value: "5,00",
-  effectiveFrom: new Date().toISOString().slice(0, 10),
+  noDefinedValidity: false,
+  effectiveFrom: currentMonthStart(),
   effectiveTo: "",
   priority: "1",
   notes: ""
@@ -25,6 +33,7 @@ const emptyRuleForm = {
 export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [rules, setRules] = useState<ServiceRateRule[]>([]);
   const [search, setSearch] = useState("");
@@ -33,12 +42,15 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
   const [editingRule, setEditingRule] = useState<ServiceRateRule | null>(null);
   const [form, setForm] = useState(emptyRuleForm);
   const [message, setMessage] = useState<string | null>(null);
+  const scrollTo = useAutoScroll();
+  const rulesListRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    const clientPartners = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    const clientPartners = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     const activeRules = await window.operationsCafe.listServiceRateRules({ organizationId, status: "active" });
     setPartners(clientPartners);
+    setPartnerLegalEntities((await Promise.all(clientPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     setProducts(activeProducts);
     setRules(activeRules);
   }, [organizationId]);
@@ -77,12 +89,14 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
 
   function openEditModal(rule: ServiceRateRule): void {
     setEditingRule(rule);
+    const hasNoDefinedValidity = rule.effectiveFrom === OPEN_ENDED_EFFECTIVE_FROM && !rule.effectiveTo;
     setForm({
       partnerId: rule.businessPartnerId,
       productId: rule.productId ?? "",
       scope: rule.operationScope,
       value: (rule.rateValueCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      effectiveFrom: rule.effectiveFrom,
+      noDefinedValidity: hasNoDefinedValidity,
+      effectiveFrom: hasNoDefinedValidity ? "" : rule.effectiveFrom,
       effectiveTo: rule.effectiveTo ?? "",
       priority: String(rule.priority),
       notes: rule.notes ?? ""
@@ -108,8 +122,8 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       operationScope: form.scope,
       rateType: "PER_SACK",
       rateValueCents: centsFromInput(form.value),
-      effectiveFrom: form.effectiveFrom,
-      effectiveTo: form.effectiveTo.trim() || null,
+      effectiveFrom: form.noDefinedValidity ? OPEN_ENDED_EFFECTIVE_FROM : form.effectiveFrom,
+      effectiveTo: form.noDefinedValidity ? null : form.effectiveTo.trim() || null,
       priority: Number.parseInt(form.priority, 10) || (form.productId ? 10 : 1),
       notes: form.notes.trim() || null,
       isActive: true
@@ -121,7 +135,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       setMessage("Erro: selecione um cliente para a regra.");
       return;
     }
-    if (!form.effectiveFrom) {
+    if (!form.noDefinedValidity && !form.effectiveFrom) {
       setMessage("Erro: informe a data inicial da vigencia.");
       return;
     }
@@ -139,9 +153,15 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       }
       closeModal();
       await load();
+      scrollTo(rulesListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar regra."}`);
     }
+  }
+
+  function validityLabel(rule: ServiceRateRule): string {
+    if (rule.effectiveFrom === OPEN_ENDED_EFFECTIVE_FROM && !rule.effectiveTo) return "Sem vigencia definida";
+    return `${formatDateOnlyBr(rule.effectiveFrom)} ate ${rule.effectiveTo ? formatDateOnlyBr(rule.effectiveTo) : "sem data final"}`;
   }
 
   async function deleteRule(rule: ServiceRateRule): Promise<void> {
@@ -155,6 +175,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       if (editingRule?.id === rule.id) closeModal();
       setMessage("Regra por saca excluida.");
       await load();
+      scrollTo(rulesListRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir regra."}`);
     }
@@ -163,6 +184,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
   return (
     <section className="content-section settings compact-crud-page service-rates-page">
       <PageHeader eyebrow="Regras por saca" title="Valores comerciais por cliente" description="Cadastre vigencias, produto e UF da venda para aplicar automaticamente o valor de servico por saca." />
+      <div ref={rulesListRef}>
       <AdminBlock title="Cobrancas - Regras por cliente">
         <div className="partners-list-toolbar service-rate-toolbar">
           <TextField label="Pesquisar regra" value={search} onChange={setSearch} />
@@ -177,7 +199,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
               <span>{scopeLabels[item.operationScope]}</span>
               <span>{productLabel(item.productId)}</span>
               <span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span>
-              <span>{item.effectiveFrom} ate {item.effectiveTo ?? "sem data final"}</span>
+              <span>{validityLabel(item)}</span>
               <span>{item.isActive ? "Vigente" : "Inativa"}</span>
               <span className="actions"><button onClick={() => openEditModal(item)}>Editar</button><button className="danger-action" onClick={() => void deleteRule(item)}>Excluir</button></span>
             </div>
@@ -185,6 +207,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
           {filteredRules.length === 0 ? <div className="table-row"><span>Nenhuma regra encontrada.</span></div> : null}
         </div>
       </AdminBlock>
+      </div>
       {modalMode ? (
         <div className="partner-modal-backdrop" role="presentation">
           <div className="partner-modal partner-modal--rate" role="dialog" aria-modal="true" aria-label={modalMode === "create" ? "Cadastrar regra por saca" : "Editar regra por saca"}>
@@ -205,12 +228,13 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                   </div>
                 </div>
                 <FormGrid>
-                  <SelectField label="Cliente" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} options={partners.map((item) => [item.id, item.displayName])} />
+                  <PartnerQuickSearch label="Cliente" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} partners={partners} legalEntities={partnerLegalEntities} />
                   <SelectField label="UF da venda" value={form.scope} onChange={(value) => updateForm("scope", value)} options={SERVICE_RATE_SCOPE_OPTIONS} />
                   <SelectField label="Produto" value={form.productId} onChange={(value) => updateForm("productId", value)} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
                   <TextField label="Valor por saca" value={form.value} onChange={(value) => updateForm("value", value)} />
-                  <TextField label="Inicio da vigencia" value={form.effectiveFrom} onChange={(value) => updateForm("effectiveFrom", value)} />
-                  <TextField label="Fim da vigencia" value={form.effectiveTo} onChange={(value) => updateForm("effectiveTo", value)} />
+                  <label className="checkbox"><input type="checkbox" checked={form.noDefinedValidity} onChange={(event) => setForm((current) => ({ ...current, noDefinedValidity: event.target.checked, effectiveFrom: event.target.checked ? "" : current.effectiveFrom || currentMonthStart(), effectiveTo: event.target.checked ? "" : current.effectiveTo }))} /> Sem vigencia definida</label>
+                  <DateInput label="Inicio da vigencia" value={form.effectiveFrom} disabled={form.noDefinedValidity} onChange={(event) => updateForm("effectiveFrom", event.target.value)} />
+                  <DateInput label="Fim da vigencia" value={form.effectiveTo} disabled={form.noDefinedValidity} onChange={(event) => updateForm("effectiveTo", event.target.value)} />
                   <TextField label="Prioridade" value={form.priority} onChange={(value) => updateForm("priority", value)} />
                   <TextField label="Observacoes" value={form.notes} onChange={(value) => updateForm("notes", value)} />
                 </FormGrid>

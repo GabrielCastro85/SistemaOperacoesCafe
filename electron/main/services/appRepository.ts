@@ -187,7 +187,7 @@ import {
   mapDealConfirmationTemplate,
   mapDealPaymentTerm
 } from "../database/mappers.js";
-import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, normalizeDecimalText, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
+import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, multiplyDecimalText, normalizeDecimalText, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
 import { generateChargeDocuments } from "./chargeDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
@@ -800,17 +800,55 @@ export class AppRepository {
   resolveServiceRateRule(input: unknown): ResolveRateResult {
     const data = resolveRateInputSchema.parse(input);
     this.assertClientPartner(data.businessPartnerId, data.organizationId);
-    const candidates = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, organizationId: data.organizationId, status: "active" })
-      .filter((rule) => (rule.operationScope === data.operationScope || rule.operationScope === "ALL") && rule.effectiveFrom <= data.operationDate && (!rule.effectiveTo || rule.effectiveTo >= data.operationDate))
+    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, organizationId: data.organizationId, status: "active" })
+      .filter((rule) => rule.effectiveFrom <= data.operationDate && (!rule.effectiveTo || rule.effectiveTo >= data.operationDate))
       .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
-      .filter((rule) => !rule.productId || rule.productId === data.productId)
+      .filter((rule) => !rule.productId || rule.productId === data.productId);
+    const candidates = activeRules
+      .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
       .map((rule) => ({ rule, score: (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000 }));
-    if (candidates.length === 0) return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
+    if (candidates.length === 0) {
+      const fallback = activeRules
+        .filter((rule) => rule.operationScope !== "ALL")
+        .map((rule) => ({ rule, score: (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + rule.priority / 1000 }));
+      if (fallback.length === 1) {
+        const rule = fallback[0].rule;
+        return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: "single-scope-fallback", message: "Regra unica do cliente aplicada apesar da UF da venda diferente." };
+      }
+      return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
+    }
     const max = Math.max(...candidates.map((item) => item.score));
     const best = candidates.filter((item) => item.score === max);
     if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
     const rule = best[0].rule;
     return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
+  }
+
+  private resolveServiceRateRuleForUnbilledBackfill(input: unknown): ResolveRateResult {
+    const data = resolveRateInputSchema.parse(input);
+    this.assertClientPartner(data.businessPartnerId, data.organizationId);
+    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, organizationId: data.organizationId, status: "active" })
+      .filter((rule) => !rule.effectiveTo || rule.effectiveTo >= data.operationDate)
+      .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
+      .filter((rule) => !rule.productId || rule.productId === data.productId);
+    const scoreRule = (rule: ServiceRateRule): number => (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000;
+    let candidates = activeRules
+      .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
+      .map((rule) => ({ rule, score: scoreRule(rule) }));
+    if (candidates.length === 0) {
+      candidates = activeRules
+        .filter((rule) => rule.operationScope !== "ALL")
+        .map((rule) => ({ rule, score: (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + rule.priority / 1000 }));
+    }
+    if (candidates.length === 0) return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
+    const max = Math.max(...candidates.map((item) => item.score));
+    const best = candidates
+      .filter((item) => item.score === max)
+      .sort((a, b) => a.rule.effectiveFrom.localeCompare(b.rule.effectiveFrom));
+    const sameEffectiveBest = best.filter((item) => item.rule.effectiveFrom === best[0].rule.effectiveFrom);
+    if (sameEffectiveBest.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
+    const rule = best[0].rule;
+    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: "backfill", message: "Regra ativa aplicada a operacao em aberto anterior a vigencia." };
   }
 
   listFiscalDocuments(filters: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" } = {}): FiscalDocument[] {
@@ -880,6 +918,9 @@ export class AppRepository {
       ? this.db.prepare("SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id)
       : null;
     if (linkedDeal || linkedDealOperation) throw new Error("Nota ja vinculada a confirmacao de negocio. Remova o vinculo antes de excluir.");
+    const xmlImportJobIds = this.tableExists("xml_import_files")
+      ? (this.db.prepare("SELECT DISTINCT import_job_id FROM xml_import_files WHERE fiscal_document_id = ?").all(id) as Array<{ import_job_id: string }>).map((row) => row.import_job_id)
+      : [];
     const trx = this.db.transaction(() => {
       if (this.tableExists("spreadsheet_import_rows")) this.db.prepare("UPDATE spreadsheet_import_rows SET fiscal_document_id = NULL, operation_id = NULL WHERE fiscal_document_id = ? OR operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id, id);
       if (this.tableExists("xml_import_files")) this.db.prepare("UPDATE xml_import_files SET fiscal_document_id = NULL, status = 'REVERTED', updated_at = ? WHERE fiscal_document_id = ?").run(new Date().toISOString(), id);
@@ -888,6 +929,10 @@ export class AppRepository {
       this.db.prepare("DELETE FROM operations WHERE fiscal_document_id = ?").run(id);
       this.db.prepare("DELETE FROM fiscal_document_items WHERE fiscal_document_id = ?").run(id);
       this.db.prepare("DELETE FROM fiscal_documents WHERE id = ?").run(id);
+      xmlImportJobIds.forEach((jobId) => {
+        this.recountXmlImportJob(jobId);
+        this.reconcileXmlImportJobStatus(jobId);
+      });
     });
     trx();
   }
@@ -1333,6 +1378,8 @@ export class AppRepository {
   }
 
   getXmlImportJob(id: string): { job: XmlImportJob; files: XmlImportFile[] } {
+    this.recountXmlImportJob(id);
+    this.reconcileXmlImportJobStatus(id);
     const row = this.db.prepare("SELECT * FROM xml_import_jobs WHERE id = ?").get(id) as DbRecord | undefined;
     if (!row) throw new Error("Importacao XML nao encontrada.");
     const job = mapXmlImportJob(row);
@@ -1343,6 +1390,11 @@ export class AppRepository {
 
   listXmlImportJobs(organizationId: string): XmlImportJob[] {
     this.assertOrganizationWritable(organizationId);
+    const ids = (this.db.prepare("SELECT id FROM xml_import_jobs WHERE organization_id = ?").all(organizationId) as Array<{ id: string }>).map((row) => row.id);
+    ids.forEach((id) => {
+      this.recountXmlImportJob(id);
+      this.reconcileXmlImportJobStatus(id);
+    });
     return (this.db.prepare("SELECT * FROM xml_import_jobs WHERE organization_id = ? ORDER BY created_at DESC").all(organizationId) as DbRecord[]).map(mapXmlImportJob);
   }
 
@@ -1574,7 +1626,7 @@ export class AppRepository {
       byPartner.set(row.partnerId, bucket);
     }
 
-    const clients = this.listBusinessPartners({ organizationId: data.organizationId, role: "CLIENT", status: "active" });
+    const clients = this.listBusinessPartners({ role: "CLIENT", status: "active" });
     return clients
       .map((partner): PartnerRateSummaryRow => {
         const bucket = byPartner.get(partner.id);
@@ -1612,11 +1664,22 @@ export class AppRepository {
         operationScope: operation.operationScope,
         operationDate: operation.operationDate
       });
-      if (resolved.status !== "found" || resolved.rateValueCents === null) continue;
-      const serviceAmountCents = multiplyDecimalByCents(operation.quantitySacks, resolved.rateValueCents);
-      if (operation.serviceRateRuleId === resolved.rule?.id && operation.appliedRateValueCents === resolved.rateValueCents && operation.serviceAmountCents === serviceAmountCents) continue;
+      const backfilled = resolved.status === "missing" && operation.appliedRateValueCents === 0 && operation.serviceAmountCents === 0
+        ? this.resolveServiceRateRuleForUnbilledBackfill({
+          organizationId: operation.organizationId,
+          businessPartnerId: operation.responsiblePartnerId,
+          ownLegalEntityId: operation.ownLegalEntityId,
+          productId: operation.productId,
+          operationScope: operation.operationScope,
+          operationDate: operation.operationDate
+        })
+        : resolved;
+      if (backfilled.status !== "found" || backfilled.rateValueCents === null) continue;
+      const resolvedRule = backfilled.rule;
+      const serviceAmountCents = multiplyDecimalByCents(operation.quantitySacks, backfilled.rateValueCents);
+      if (operation.serviceRateRuleId === resolvedRule?.id && operation.appliedRateValueCents === backfilled.rateValueCents && operation.serviceAmountCents === serviceAmountCents) continue;
       this.db.prepare("UPDATE operations SET service_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, updated_at = ? WHERE id = ?")
-        .run(resolved.rule?.id ?? null, resolved.rateValueCents, serviceAmountCents, now, operation.id);
+        .run(resolvedRule?.id ?? null, backfilled.rateValueCents, serviceAmountCents, now, operation.id);
     }
   }
 
@@ -1888,7 +1951,7 @@ export class AppRepository {
   getDashboardAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts {
     this.assertOrganizationWritable(organizationId);
     const today = new Date().toISOString().slice(0, 10);
-    const partners = this.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    const partners = this.listBusinessPartners({ role: "CLIENT", status: "active" });
     const partnerName = (id: string): string => partners.find((item) => item.id === id)?.displayName ?? id;
 
     const overdueCharges = this.listClientCharges({ organizationId })
@@ -2304,19 +2367,25 @@ export class AppRepository {
   private resolveSacksForXmlItem(xmlItem: Record<string, unknown>, product: Product | null, resolution: Record<string, unknown>): string | null {
     if (typeof resolution.manualSacks === "string" && resolution.manualSacks) return normalizeDecimalText(resolution.manualSacks);
     const unit = String(xmlItem.commercialUnit ?? "").trim().toUpperCase();
+    const description = String(xmlItem.description ?? "").trim().toUpperCase();
     const quantity = String(xmlItem.commercialQuantity ?? "");
     if (!quantity) return null;
-    if (["SC", "SACA", "SACAS", "SAC"].includes(unit)) return normalizeDecimalText(quantity);
-    if (unit === "KG" && product?.defaultSackWeightKg) return divideDecimalText(quantity, String(product.defaultSackWeightKg));
-    if (unit === "TON" && product?.defaultSackWeightKg) return divideDecimalText(normalizeDecimalText(`${quantity}000`), String(product.defaultSackWeightKg));
+    const sackWeightKg = product?.defaultSackWeightKg ? String(product.defaultSackWeightKg) : "60";
+    if (isXmlSackUnit(unit)) return normalizeDecimalText(quantity);
+    if (isXmlKgUnit(unit)) return divideDecimalText(quantity, sackWeightKg);
+    if (isXmlTonUnit(unit)) return divideDecimalText(multiplyDecimalText(quantity, "1000"), sackWeightKg);
+    if (isXmlBigBagUnit(unit) || description.includes("BIG BAG") || description.includes("BIGBAG")) {
+      const bigBagWeightKg = typeof resolution.bigBagWeightKg === "string" && resolution.bigBagWeightKg ? resolution.bigBagWeightKg : "1000";
+      return divideDecimalText(multiplyDecimalText(quantity, bigBagWeightKg), sackWeightKg);
+    }
     return null;
   }
 
   private mapXmlUnit(unit: string): "SACK" | "KG" | "TON" | "UNIT" {
     const normalized = unit.trim().toUpperCase();
-    if (["SC", "SACA", "SACAS", "SAC"].includes(normalized)) return "SACK";
-    if (normalized === "KG") return "KG";
-    if (["TON", "T"].includes(normalized)) return "TON";
+    if (isXmlSackUnit(normalized)) return "SACK";
+    if (isXmlKgUnit(normalized)) return "KG";
+    if (isXmlTonUnit(normalized)) return "TON";
     return "UNIT";
   }
 
@@ -2362,6 +2431,13 @@ export class AppRepository {
     const createdOperations = (this.db.prepare("SELECT COUNT(*) AS total FROM operations WHERE xml_import_job_id = ?").get(id) as { total: number }).total;
     this.db.prepare("UPDATE xml_import_jobs SET total_files = ?, valid_files = ?, warning_files = ?, duplicate_files = ?, error_files = ?, imported_notes = ?, imported_events = ?, created_operations = ? WHERE id = ?")
       .run(rows.length, count("VALID"), count("WARNING") + count("PENDING_REVIEW"), count("DUPLICATE"), count("ERROR"), importedNotes, importedEvents, createdOperations, id);
+  }
+
+  private reconcileXmlImportJobStatus(id: string): void {
+    const rows = (this.db.prepare("SELECT status FROM xml_import_files WHERE import_job_id = ?").all(id) as Array<{ status: string }>).map((row) => row.status);
+    if (rows.length > 0 && rows.every((status) => status === "REVERTED")) {
+      this.db.prepare("UPDATE xml_import_jobs SET status = 'REVERTED', reverted_at = COALESCE(reverted_at, ?) WHERE id = ?").run(new Date().toISOString(), id);
+    }
   }
 
   private tableExists(name: string): boolean {
@@ -3408,6 +3484,7 @@ export class AppRepository {
     const now = new Date().toISOString();
     const template = data.templateId ? this.getDealConfirmationTemplate(data.templateId) : this.getDefaultDealTemplate(data.organizationId, data.ownLegalEntityId);
     const bankDefaults = this.resolveDealBankDefaults(own, data);
+    const draftNumber = this.reserveNextDealConfirmationNumber(data.organizationId, data.ownLegalEntityId, now.slice(0, 4));
     const trx = this.db.transaction(() => {
       this.db.prepare(`INSERT INTO deal_confirmations (
         id, organization_id, own_legal_entity_id, template_id, confirmation_number, temporary_reference,
@@ -3416,8 +3493,8 @@ export class AppRepository {
         payment_terms_snapshot, quality_terms_snapshot, general_terms_snapshot, public_notes, internal_notes,
         brokerage_percentage_basis_points, bank_name, bank_code, bank_agency, bank_account, pix_key,
         template_snapshot_json, pending_issues_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
-        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, `TMP-${now.slice(0, 10).replace(/-/g, "")}-${id.slice(0, 8)}`, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.pixKey, template ? JSON.stringify(template) : null, now, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
+        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, draftNumber, draftNumber, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.pixKey, template ? JSON.stringify(template) : null, now, now);
       this.addDealPartyInternal({ dealConfirmationId: id, partyRole: "ISSUER", ownLegalEntityId: own.id, businessPartnerId: null, partnerLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 0 });
       this.recordDealStatus(id, null, "DRAFT", "Rascunho criado");
     });
@@ -3477,6 +3554,9 @@ export class AppRepository {
       data.fiscalDocumentIds.forEach((documentId) => {
         this.linkDealFiscalDocumentInternal(draft.confirmation.id, documentId);
         const detail = this.getFiscalDocument(documentId);
+        detail.operations.forEach((operation) => {
+          this.linkDealOperationInternal(draft.confirmation.id, operation.id);
+        });
         detail.items.forEach((item) => {
           const product = item.productId ? this.getProduct(item.productId) : null;
           this.addDealItemInternal({
@@ -3796,7 +3876,7 @@ export class AppRepository {
     const now = new Date().toISOString();
     let versionId = "";
     const trx = this.db.transaction(() => {
-      const number = this.reserveNextDealConfirmationNumber(before.confirmation.organizationId, before.confirmation.ownLegalEntityId, now.slice(0, 4));
+      const number = before.confirmation.confirmationNumber ?? this.reserveNextDealConfirmationNumber(before.confirmation.organizationId, before.confirmation.ownLegalEntityId, now.slice(0, 4));
       this.refreshDealTotals(id);
       this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, status = 'ISSUED', signature_status = 'NOT_SENT', issued_at = ?, updated_at = ?, pending_issues_json = ?, template_snapshot_json = COALESCE(template_snapshot_json, ?) WHERE id = ?")
         .run(number, now, now, JSON.stringify(issues), JSON.stringify(this.getDefaultDealTemplate(before.confirmation.organizationId, before.confirmation.ownLegalEntityId)), id);
@@ -4015,8 +4095,9 @@ export class AppRepository {
     const own = this.getLegalEntity(ownLegalEntityId);
     if (own.organizationId !== organizationId) throw new Error("CNPJ proprio pertence a outra organizacao.");
     const year = Number(new Date().toISOString().slice(0, 4));
-    const row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord | undefined;
-    const prefix = String(row?.prefix ?? `CONF-${year}-`);
+    const expectedPrefix = this.defaultDealConfirmationPrefix(organizationId, ownLegalEntityId);
+    const row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, expectedPrefix) as DbRecord | undefined;
+    const prefix = String(row?.prefix ?? expectedPrefix);
     const padding = Number(row?.padding ?? 4);
     const next = Number(row?.current_number ?? 0) + 1;
     return `${prefix}${String(next).padStart(padding, "0")}`;
@@ -4301,24 +4382,42 @@ export class AppRepository {
   private reserveNextDealConfirmationNumber(organizationId: string, ownLegalEntityId: string, yearText: string): string {
     const year = Number(yearText);
     const now = new Date().toISOString();
-    let row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord | undefined;
+    const prefix = this.defaultDealConfirmationPrefix(organizationId, ownLegalEntityId);
+    let row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, prefix) as DbRecord | undefined;
     if (!row) {
-      const own = this.getLegalEntity(ownLegalEntityId);
-      const prefix = own.documentPrefix ? `${own.documentPrefix}-${year}-` : `CONF-${year}-`;
       this.db.prepare("INSERT INTO document_sequences (id, organization_id, own_legal_entity_id, document_type, year, prefix, current_number, padding, is_active, created_at, updated_at) VALUES (?, ?, ?, 'DEAL_CONFIRMATION', ?, ?, 0, 4, 1, ?, ?)")
         .run(randomUUID(), organizationId, ownLegalEntityId, year, prefix, now, now);
-      row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord;
+      row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, prefix) as DbRecord;
     }
     const next = Number(row.current_number) + 1;
     this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(next, now, row.id);
     return `${String(row.prefix ?? "")}${String(next).padStart(Number(row.padding), "0")}`;
   }
 
+  private defaultDealConfirmationPrefix(organizationId: string, ownLegalEntityId: string): string {
+    const own = this.getLegalEntity(ownLegalEntityId);
+    const explicitPrefix = own.documentPrefix?.trim();
+    if (explicitPrefix) return explicitPrefix.endsWith(" ") ? explicitPrefix : `${explicitPrefix} `;
+    const organization = this.getOrganization(organizationId);
+    const text = `${organization.slug} ${organization.displayName} ${organization.appDisplayName} ${own.tradeName} ${own.legalName}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    if (text.includes("grao")) return "GG ";
+    if (text.includes("villa") || text.includes("coffee")) return "VC ";
+    return "CN ";
+  }
+
   private async generateDealDocument(id: string, draft: boolean): Promise<DealConfirmationDetail> {
+    if (draft) this.ensureDealConfirmationNumber(id);
     const versionId = randomUUID();
     const documentType = draft ? "GENERATED_DRAFT" : "ISSUED_ORIGINAL";
     await this.generateDealDocumentVersion(id, documentType, versionId, draft, draft ? "Previa com marca d'agua" : "Documento emitido");
     return this.getDealConfirmation(id);
+  }
+
+  private ensureDealConfirmationNumber(id: string): void {
+    const detail = this.getDealConfirmation(id);
+    if (detail.confirmation.confirmationNumber) return;
+    const number = this.reserveNextDealConfirmationNumber(detail.confirmation.organizationId, detail.confirmation.ownLegalEntityId, new Date().toISOString().slice(0, 4));
+    this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ?").run(number, new Date().toISOString(), id);
   }
 
   private async generateDealDocumentVersion(id: string, documentType: DealConfirmationDocumentVersion["documentType"], versionId: string, draft: boolean, notes: string): Promise<DealConfirmationDocumentVersion> {
@@ -4673,6 +4772,26 @@ export class AppRepository {
 function parseLocalDate(value: string): Date {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
+}
+
+function normalizeXmlUnit(value: string): string {
+  return value.trim().toUpperCase().replace(/[\s_-]+/g, "");
+}
+
+function isXmlSackUnit(value: string): boolean {
+  return ["SC", "SAC", "SACA", "SACAS", "SACK", "SACKS"].includes(normalizeXmlUnit(value));
+}
+
+function isXmlKgUnit(value: string): boolean {
+  return ["KG", "KGS", "KILO", "KILOS", "QUILO", "QUILOS"].includes(normalizeXmlUnit(value));
+}
+
+function isXmlTonUnit(value: string): boolean {
+  return ["T", "TON", "TONS", "TONELADA", "TONELADAS"].includes(normalizeXmlUnit(value));
+}
+
+function isXmlBigBagUnit(value: string): boolean {
+  return ["BB", "BAG", "BAGS", "BIGBAG", "BIGBAGS"].includes(normalizeXmlUnit(value));
 }
 
 function multiplyDecimalTexts(left: string, right: string): string {

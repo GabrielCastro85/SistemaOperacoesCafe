@@ -124,6 +124,46 @@ describe("xml imports", () => {
     db.close();
   });
 
+  it("converts XML quantities in kg, tons and big bags to equivalent sacks for billing", () => {
+    const cases = [
+      {
+        fileName: "nfe-kg.xml",
+        xml: nfeXml(makeAccessKey()).replace(/<uCom>SC<\/uCom><qCom>10\.5<\/qCom>/, "<uCom>KG</uCom><qCom>630</qCom>"),
+        unit: "KG",
+        sacks: "10.5"
+      },
+      {
+        fileName: "nfe-ton.xml",
+        xml: nfeXml(makeAccessKey()).replace(/<uCom>SC<\/uCom><qCom>10\.5<\/qCom>/, "<uCom>T</uCom><qCom>0.63</qCom>"),
+        unit: "TON",
+        sacks: "10.5"
+      },
+      {
+        fileName: "nfe-big-bag.xml",
+        xml: nfeXml(makeAccessKey()).replace("CAFE ARABICA", "CAFE ARABICA BIG BAG").replace(/<uCom>SC<\/uCom><qCom>10\.5<\/qCom>/, "<uCom>BAG</uCom><qCom>1.5</qCom>"),
+        unit: "UNIT",
+        sacks: "25"
+      }
+    ] as const;
+
+    for (const itemCase of cases) {
+      const { repo, db, partnerId, productId, dir } = setup();
+      const filePath = join(dir, itemCase.fileName);
+      writeFileSync(filePath, itemCase.xml, "utf8");
+      const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111119");
+      const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
+      const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+      repo.setXmlImportFileStoredPath(file.id, filePath);
+      const result = repo.executeXmlImportJob(job.id);
+      const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+
+      expect(detail.items[0].unit).toBe(itemCase.unit);
+      expect(detail.items[0].sacksQuantity).toBe(itemCase.sacks);
+      expect(detail.operations[0].quantitySacks).toBe(itemCase.sacks);
+      db.close();
+    }
+  });
+
   it("blocks XML import when the selected own CNPJ does not match the invoice parties", () => {
     const { repo, db, partnerId, productId, dir } = setup();
     const key = makeAccessKey();

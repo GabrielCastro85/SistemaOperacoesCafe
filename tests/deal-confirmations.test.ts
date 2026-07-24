@@ -62,9 +62,9 @@ describe("deal confirmations", () => {
     expect(repo.calculateDealTotals(draft.confirmation.id)).toEqual({ totalQuantitySacksDecimal: "1111", totalCommercialAmountCents: 111100000 });
     const preview = await repo.generateDealConfirmationPreview(draft.confirmation.id);
     expect(preview.documents[0].documentType).toBe("GENERATED_DRAFT");
-    expect(preview.confirmation.confirmationNumber).toBeNull();
+    expect(preview.confirmation.confirmationNumber).toBe("VC 0001");
     const issued = await repo.issueDealConfirmation(draft.confirmation.id);
-    expect(issued.confirmation.confirmationNumber).toMatch(/^CONF-2026-/);
+    expect(issued.confirmation.confirmationNumber).toBe("VC 0001");
     expect(issued.confirmation.status).toBe("ISSUED");
     const official = issued.documents.find((doc) => doc.documentType === "ISSUED_ORIGINAL");
     expect(official?.fileHash).toMatch(/^[a-f0-9]{64}$/);

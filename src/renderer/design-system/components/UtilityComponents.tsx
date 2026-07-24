@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import { formatDateOnlyBr } from "../../../shared/utils/format";
 import { Button } from "./Button";
 import { Input } from "./Input";
 
@@ -43,7 +44,7 @@ export function CalendarGrid({ items }: { items: Array<{ id: string; date: strin
     <div className="ui-calendar" role="list" aria-label="Calendario financeiro">
       {items.map((item) => (
         <article key={item.id} role="listitem">
-          <span>{item.date}</span>
+          <span>{formatDateOnlyBr(item.date)}</span>
           <strong>{item.title}</strong>
           {item.status ? <small>{item.status}</small> : null}
         </article>

@@ -8,6 +8,7 @@ import { PayableTimeline } from "./components/PayableTimeline";
 import { PayableValuesCard } from "./components/PayableValuesCard";
 import { useFinanceData } from "./hooks/useFinanceData";
 import { usePayableDetails } from "./hooks/usePayableDetails";
+import { formatDateOnlyBr } from "../../../shared/utils/format";
 import type { FinancePageProps } from "./types";
 
 export function PayableDetailsPage({ data, id }: FinancePageProps & { id: string | null }): JSX.Element {
@@ -33,7 +34,7 @@ export function PayableDetailsPage({ data, id }: FinancePageProps & { id: string
   }
   return (
     <section className="content-section">
-      <PageHeader eyebrow="Conta a pagar" title={detail?.payable.description ?? "Detalhe da conta"} description={detail ? `${detail.payable.payeeNameSnapshot} · ${detail.payable.dueDate} · ${detail.payable.status}` : "Carregando conta."} actions={<><Button onClick={attach}>Anexar</Button>{detail?.payable.status === "DRAFT" ? <Button onClick={() => void window.operationsCafe.confirmAccountPayable(detail.payable.id).then(reload)}>Confirmar</Button> : null}{detail && detail.payable.status !== "CANCELLED" ? <Button onClick={() => void cancel()}>Cancelar</Button> : null}</>} />
+      <PageHeader eyebrow="Conta a pagar" title={detail?.payable.description ?? "Detalhe da conta"} description={detail ? `${detail.payable.payeeNameSnapshot} · ${formatDateOnlyBr(detail.payable.dueDate)} · ${detail.payable.status}` : "Carregando conta."} actions={<><Button onClick={attach}>Anexar</Button>{detail?.payable.status === "DRAFT" ? <Button onClick={() => void window.operationsCafe.confirmAccountPayable(detail.payable.id).then(reload)}>Confirmar</Button> : null}{detail && detail.payable.status !== "CANCELLED" ? <Button onClick={() => void cancel()}>Cancelar</Button> : null}</>} />
       <Tabs active="resumo" onChange={() => undefined} items={[{ id: "resumo", label: "Resumo" }, { id: "valores", label: "Valores" }, { id: "rateio", label: "Rateio" }, { id: "pagamentos", label: "Pagamentos" }, { id: "documentos", label: "Documentos" }, { id: "historico", label: "Historico" }]} />
       <PayableSummary payable={detail?.payable ?? null} />
       <PayableValuesCard payable={detail?.payable ?? null} />

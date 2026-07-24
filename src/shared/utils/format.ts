@@ -33,8 +33,29 @@ export function formatCep(cep: string | null): string {
   return digits.replace(/^(\d{5})(\d{3})$/, "$1-$2");
 }
 
+export function formatDateOnlyBr(value: string | null | undefined): string {
+  if (!value) return "-";
+  const dateOnly = value.slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly);
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+  return value;
+}
+
 export function formatDateBr(value: string): string {
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+  if (!/[T ]\d{2}:\d{2}/.test(value)) return formatDateOnlyBr(value);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return formatDateOnlyBr(value);
+  const date = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(parsed).replace(/\//g, "-");
+  const time = new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(parsed);
+  return `${date} ${time}`;
 }
 
 export function formatCurrencyFromCents(value: number): string {

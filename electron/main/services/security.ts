@@ -23,7 +23,9 @@ export const AUTH_PUBLIC_CHANNELS = new Set([
   "auth:needsBootstrap",
   "auth:bootstrapAdmin",
   "auth:login",
-  "auth:currentSession"
+  "auth:currentSession",
+  "auth:unlock",
+  "auth:logout"
 ]);
 
 export type IpcPolicy =
@@ -32,7 +34,7 @@ export type IpcPolicy =
   | { mode: "permission"; permission: string };
 
 export const CHANNEL_PERMISSION_RULES: Array<{ pattern: RegExp; policy: IpcPolicy }> = [
-  { pattern: /^auth:(needsBootstrap|bootstrapAdmin|login|currentSession)$/, policy: { mode: "public" } },
+  { pattern: /^auth:(needsBootstrap|bootstrapAdmin|login|currentSession|unlock|logout)$/, policy: { mode: "public" } },
   { pattern: /^auth:/, policy: { mode: "authenticated" } },
   { pattern: /^users:create/, policy: { mode: "permission", permission: "users.manage" } },
   { pattern: /^users:/, policy: { mode: "permission", permission: "users.manage" } },

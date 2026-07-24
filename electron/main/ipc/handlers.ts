@@ -449,6 +449,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const files = findXmlFiles(result.filePaths[0], data.includeSubfolders === true);
     return { folder: result.filePaths[0], files: registerXmlPaths(files) };
   });
+  handle(IPC_CHANNELS.registerDroppedXmlFiles, (_event, payload: unknown) => {
+    const data = z.object({ paths: z.array(z.string().min(1)).min(1).max(100) }).parse(payload);
+    const xmlPaths = data.paths.filter((filePath) => filePath.toLowerCase().endsWith(".xml"));
+    if (xmlPaths.length === 0) throw new Error("Arraste somente arquivos XML.");
+    return registerXmlPaths(xmlPaths);
+  });
   handle(IPC_CHANNELS.inspectXmlFiles, (_event, payload: unknown) => {
     const tokens = z.array(z.string().uuid()).parse(payload);
     return tokens.map((token) => {

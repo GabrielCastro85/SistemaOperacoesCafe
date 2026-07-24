@@ -1,14 +1,17 @@
-import React, { useCallback, useEffect, useState } from "react";
-import type { BootstrapData, BusinessPartner, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, formatDateBr, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
+import { formatCurrencyFromCents, formatDateBr, formatDateOnlyBr, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
 import { EmptyState, FileDropzone, ListStepsIcon, PageHeader, StatusBadge, Stepper, Tabs } from "../../design-system";
 import type { StepperStep } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
+import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { parseNfeExtractedPreview, resolveOwnAndCounterparty } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
+import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
 
 function decimalTextBr(value: string | null): string {
@@ -21,11 +24,21 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
 }
 
+function normalizeMatchText(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const ownLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
   const [documentServiceInfo, setDocumentServiceInfo] = useState<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>({});
@@ -53,12 +66,21 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlJob, setXmlJob] = useState<{ job: XmlImportJob; files: XmlImportFile[] } | null>(null);
   const [xmlHistory, setXmlHistory] = useState<XmlImportJob[]>([]);
   const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
+  const [xmlSelectionSource, setXmlSelectionSource] = useState<"FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP">("FILE");
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
+  const scrollTo = useAutoScroll();
+  const manualDetailRef = useRef<HTMLDivElement | null>(null);
+  const spreadsheetResultRef = useRef<HTMLDivElement | null>(null);
+  const spreadsheetHistoryRef = useRef<HTMLDivElement | null>(null);
+  const xmlDataRef = useRef<HTMLDivElement | null>(null);
+  const xmlResultRef = useRef<HTMLDivElement | null>(null);
+  const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    const clientPartners = await window.operationsCafe.listBusinessPartners({ organizationId, role: "CLIENT", status: "active" });
+    const clientPartners = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clientPartners);
+    setPartnerLegalEntities((await Promise.all(clientPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     setPartnerId((current) => current || clientPartners[0]?.id || "");
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
@@ -103,6 +125,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setDetail(created);
       setMessage(created.document.duplicateWarning ?? "Nota criada.");
       await load();
+      scrollTo(manualDetailRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar nota."}`);
     }
@@ -138,6 +161,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
       setMessage("Item e operacao adicionados.");
       await load();
+      scrollTo(manualDetailRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao adicionar operacao."}`);
     }
@@ -159,30 +183,38 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setMessage(`Valor por saca alterado manualmente para ${formatCurrencyFromCents(manualRateValueCents)}.`);
   }
 
-  async function deleteCurrentDocument(): Promise<void> {
-    if (!detail) return;
+  async function deleteDocument(document: FiscalDocument): Promise<void> {
     const confirmed = await requestDecision({
       title: "Excluir nota definitivamente",
-      message: `Deseja excluir a nota ${detail.document.documentNumber}? Itens e operacoes vinculados a ela tambem serao removidos.`
+      message: `Deseja excluir a nota ${document.documentNumber}? Itens e operacoes vinculados a ela tambem serao removidos.`
     });
     if (!confirmed) return;
+    const xmlJobIdToRefresh = xmlJob?.files.some((file) => file.fiscalDocumentId === document.id) ? xmlJob.job.id : null;
     try {
-      await window.operationsCafe.deleteFiscalDocument(detail.document.id);
-      setDetail(null);
+      await window.operationsCafe.deleteFiscalDocument(document.id);
+      setDetail((current) => current?.document.id === document.id ? null : current);
+      setXmlJob((current) => current ? { ...current, files: current.files.map((file) => file.fiscalDocumentId === document.id ? { ...file, fiscalDocumentId: null, status: "REVERTED" } : file) } : current);
       setMessage("Nota excluida definitivamente.");
       await load();
+      if (xmlJobIdToRefresh) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJobIdToRefresh));
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir nota."}`);
     }
+  }
+
+  async function deleteCurrentDocument(): Promise<void> {
+    if (!detail) return;
+    await deleteDocument(detail.document);
   }
 
   async function selectSpreadsheet(): Promise<void> {
     try {
       const selected = await window.operationsCafe.selectSpreadsheetFile();
       if (!selected) return;
-      setWorkbook(selected);
-      setSelectedSheet(selected.sheets[0]?.name ?? "");
-      setMessage("Planilha selecionada.");
+    setWorkbook(selected);
+    setSelectedSheet(selected.sheets[0]?.name ?? "");
+    setMessage("Planilha selecionada.");
+    scrollTo(spreadsheetResultRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar planilha."}`);
     }
@@ -193,6 +225,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     const sheetPreview = await window.operationsCafe.previewSpreadsheetSheet({ token: workbook.token, sheetName: selectedSheet, headerRow: Number(headerRow) });
     setPreview(sheetPreview);
     setMessage("Previa carregada.");
+    scrollTo(spreadsheetResultRef);
   }
 
   async function validateSpreadsheet(): Promise<void> {
@@ -217,6 +250,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     });
     setImportJob(validated);
     setMessage("Linhas validadas.");
+    scrollTo(spreadsheetResultRef);
   }
 
   async function executeSpreadsheet(): Promise<void> {
@@ -225,6 +259,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setImportJob(executed);
     setMessage(`Importacao processada: ${executed.job.importedRows} de ${executed.job.totalRows} linha(s) importada(s).`);
     await load();
+    scrollTo(spreadsheetHistoryRef);
   }
 
   async function prepareXmlImport(source: "single" | "multiple" | "folder"): Promise<void> {
@@ -235,21 +270,45 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           : source === "multiple"
             ? await window.operationsCafe.selectXmlFiles()
             : (await window.operationsCafe.selectXmlFolder(includeXmlSubfolders)).files;
-      if (selected.length === 0) return;
-      const inspections = await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token));
-      const invalidCount = inspections.filter((file) => file.status === "ERROR").length;
-      setXmlSelections(selected);
-      setXmlQueue(inspections);
-      setXmlJob(null);
-      setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
-      setMessage(
-        invalidCount
-          ? `${inspections.length} XML(s) inspecionado(s). ${invalidCount} arquivo(s) com erro.`
-          : `${inspections.length} XML(s) inspecionado(s).`
-      );
+      await inspectSelectedXmlFiles(selected, source === "folder" ? "FOLDER" : selected.length === 1 ? "FILE" : "MULTIPLE_FILES");
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar XML."}`);
     }
+  }
+
+  async function prepareDroppedXmlImport(files: File[]): Promise<void> {
+    try {
+      const paths = window.operationsCafe.getDroppedFilePaths(files);
+      const xmlPaths = paths.filter((path) => path.toLowerCase().endsWith(".xml"));
+      if (xmlPaths.length === 0) {
+        setMessage(paths.length === 0 ? "Nao foi possivel ler o arquivo arrastado. Tente arrastar o arquivo direto do Explorador do Windows." : "Arraste somente arquivos XML da NF-e para importar.");
+        return;
+      }
+      const selected = await window.operationsCafe.registerDroppedXmlFiles(xmlPaths);
+      await inspectSelectedXmlFiles(selected, "DRAG_DROP");
+    } catch (errorValue) {
+      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao receber arquivos arrastados."}`);
+    }
+  }
+
+  async function inspectSelectedXmlFiles(
+    selected: Array<{ token: string; fileName: string; sizeBytes: number }>,
+    sourceType: "FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP"
+  ): Promise<void> {
+    if (selected.length === 0) return;
+    const inspections = await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token));
+    const invalidCount = inspections.filter((file) => file.status === "ERROR").length;
+    setXmlSelectionSource(sourceType);
+    setXmlSelections(selected);
+    setXmlQueue(inspections);
+    setXmlJob(null);
+    setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
+    setMessage(
+      invalidCount
+        ? `${inspections.length} XML(s) inspecionado(s). ${invalidCount} arquivo(s) com erro.`
+        : `${inspections.length} XML(s) inspecionado(s).`
+    );
+    scrollTo(xmlDataRef);
   }
 
   async function validateXmlImport(): Promise<void> {
@@ -257,7 +316,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     try {
       const job = await window.operationsCafe.createXmlImportDraft({
         organizationId,
-        sourceType: xmlSelections.length === 1 ? "FILE" : "MULTIPLE_FILES",
+        sourceType: xmlSelectionSource,
         selectedFolder: null,
         includeSubfolders: includeXmlSubfolders,
         settings: { clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true }
@@ -267,6 +326,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setXmlJob(validated);
       setMessage("Fila XML validada.");
       await load();
+      scrollTo(xmlResultRef);
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao validar XML."}`);
     }
@@ -279,6 +339,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setXmlJob(executed);
       setMessage("Importacao XML processada.");
       await load();
+      scrollTo(xmlHistoryRef);
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao importar XML."}`);
     }
@@ -297,6 +358,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   function xmlFileCounterparty(file: XmlImportFile): { legalName: string | null; tradeName: string | null; cnpjCpf: string | null } | null {
     const { issuer, recipient } = xmlFileParty(file);
     return operationType === "SALE" ? recipient : issuer;
+  }
+
+  function xmlFileStatusLabel(file: XmlImportFile): string | undefined {
+    return file.status === "REVERTED" && !file.fiscalDocumentId ? "Excluida" : undefined;
+  }
+
+  function xmlFileDetailMessage(file: XmlImportFile): string {
+    if (file.status === "REVERTED" && !file.fiscalDocumentId) return "Nota excluida; este XML ficou apenas no historico.";
+    return file.errorMessage ?? (file.warningCodesJson && file.warningCodesJson !== "[]" ? file.warningCodesJson : "Processado sem erro");
   }
 
   async function saveXmlFileResolution(fileId: string): Promise<void> {
@@ -365,6 +435,28 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     selectedXmlParties.ownEntityLabel !== ownLegalEntity.tradeName
   );
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
+
+  useEffect(() => {
+    if (!selectedXmlFile || !selectedXmlParties.counterpartyLabel) return;
+    const counterpartyCnpj = selectedXmlParties.counterpartyCnpj ? onlyDigits(selectedXmlParties.counterpartyCnpj) : null;
+    const byCnpj = counterpartyCnpj
+      ? partnerLegalEntities.find((entity) => entity.cnpj && onlyDigits(entity.cnpj) === counterpartyCnpj)
+      : null;
+    const byName = !byCnpj
+      ? partners.find((partner) => {
+          const counterpartyName = normalizeMatchText(selectedXmlParties.counterpartyLabel);
+          const partnerName = normalizeMatchText(partner.displayName);
+          if (!counterpartyName || !partnerName) return false;
+          return counterpartyName === partnerName || counterpartyName.includes(partnerName) || partnerName.includes(counterpartyName);
+        })
+      : null;
+    const matchedPartnerId = byCnpj?.businessPartnerId ?? byName?.id ?? "";
+    if (matchedPartnerId && matchedPartnerId !== partnerId) {
+      setPartnerId(matchedPartnerId);
+      setMessage(`Cliente reconhecido automaticamente: ${partners.find((partner) => partner.id === matchedPartnerId)?.displayName ?? selectedXmlParties.counterpartyLabel}.`);
+    }
+  }, [partnerId, partnerLegalEntities, partners, selectedXmlFile, selectedXmlParties.counterpartyCnpj, selectedXmlParties.counterpartyLabel]);
+
   const xmlJobStatus = xmlJob?.job.status;
   const xmlImportSteps: StepperStep[] = [
     { id: "import", label: "Importar arquivo", status: xmlQueue.length > 0 ? "complete" : "current" },
@@ -425,7 +517,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(visibleServiceCents)}</strong></article>
         </div>
         <FormGrid>
-          <SelectField label="Cliente responsavel" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
+          <PartnerQuickSearch label="Cliente responsavel" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
           <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
           <TextField label="Valor total" value={total} onChange={setTotal} />
@@ -434,17 +526,17 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{doc.issueDate}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button></span></div>;
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}</div>
       </AdminBlock>
-      {detail ? <AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
+      {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
         <div className="invoice-detail-layout">
           <section className="invoice-action-card invoice-action-card--wide">
             <header><span>{detail.items.length ? "Dados da nota" : "Adicionar item"}</span><strong>{detail.items.length ? "Preenchido pelo XML/regra" : "Produto e classificacao fiscal"}</strong></header>
             {detailMainItem || detailMainOperation ? (
               <div className="invoice-auto-summary">
                 <div><span>Produto</span><strong>{detailMainItem?.description ?? products.find((product) => product.id === detailMainOperation?.productId)?.name ?? "-"}</strong></div>
-                <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${detailMainItem.unit}` : "-"}</strong></div>
+                <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${formatProductUnit(detailMainItem.unit)}` : "-"}</strong></div>
                 <div><span>Preco comercial</span><strong>{detailMainItem ? decimalTextBr(detailMainItem.unitPriceDecimal) : "-"}</strong></div>
                 <div><span>Sacas</span><strong>{detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
                 <div><span>UF da venda</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
@@ -478,11 +570,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           </section>
         </div>
         <div className="cards">
-          <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${item.unit}`).join(" | ") || "Nenhum"}</strong></article>
+          <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${formatProductUnit(item.unit)}`).join(" | ") || "Nenhum"}</strong></article>
           <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${formatOperationScope(op.operationScope)}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
           <article><span>Status</span><strong>{formatStatusLabel(detail.document.status)}</strong></article>
         </div>
-      </AdminBlock> : null}
+      </AdminBlock></div> : null}
       </>}
       {pageTab === "spreadsheets" && <>
       <AdminBlock title="Importar planilha">
@@ -495,22 +587,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <button className="primary" onClick={() => void executeSpreadsheet()} disabled={!importJob}>Importar validas</button>
         </div>
         {workbook ? <p className="muted">Arquivo: {workbook.fileName} - {Math.round(workbook.sizeBytes / 1024)} KB</p> : null}
-        {preview ? <div className="table"><div className="table-head import-grid"><span>Campo</span><span>Coluna sugerida</span></div>{Object.entries(preview.suggestedMapping).map(([field, column]) => <div key={field} className="table-row import-grid"><span>{field}</span><span>{column}</span></div>)}</div> : null}
-        {importJob ? <div className="cards"><article><span>Total</span><strong>{importJob.job.totalRows}</strong></article><article><span>Validas</span><strong>{importJob.job.validRows}</strong></article><article><span>Avisos</span><strong>{importJob.job.warningRows}</strong></article><article><span>Duplicadas</span><strong>{importJob.job.duplicateRows}</strong></article><article><span>Erros</span><strong>{importJob.job.errorRows}</strong></article><article><span>Importadas</span><strong>{importJob.job.importedRows}</strong></article></div> : null}
+        <div ref={spreadsheetResultRef}>
+          {preview ? <div className="table"><div className="table-head import-grid"><span>Campo</span><span>Coluna sugerida</span></div>{Object.entries(preview.suggestedMapping).map(([field, column]) => <div key={field} className="table-row import-grid"><span>{field}</span><span>{column}</span></div>)}</div> : null}
+          {importJob ? <div className="cards"><article><span>Total</span><strong>{importJob.job.totalRows}</strong></article><article><span>Validas</span><strong>{importJob.job.validRows}</strong></article><article><span>Avisos</span><strong>{importJob.job.warningRows}</strong></article><article><span>Duplicadas</span><strong>{importJob.job.duplicateRows}</strong></article><article><span>Erros</span><strong>{importJob.job.errorRows}</strong></article><article><span>Importadas</span><strong>{importJob.job.importedRows}</strong></article></div> : null}
+        </div>
       </AdminBlock>
-      <AdminBlock title="Historico de importacoes">
+      <div ref={spreadsheetHistoryRef}><AdminBlock title="Historico de importacoes">
         <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span><StatusBadge status={job.status} /></span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter importação", label: "Motivo da reversão" }).then((reason) => { if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
-      </AdminBlock>
+      </AdminBlock></div>
       </>}
       {pageTab === "xml" && <>
       <AdminBlock title="Importacao automatica de NF-e">
         <p className="muted">Leitura de XML e captura automatica dos dados.</p>
         <div className="import-columns">
-          <div className="import-column">
+          <div className="import-column" ref={xmlDataRef}>
             <h3>Importar NF-e</h3>
             <FileDropzone
-              title="Selecione o arquivo XML"
-              description="Formatos aceitos: XML - um arquivo, varios arquivos ou uma pasta inteira"
+              title="Arraste XMLs aqui ou selecione os arquivos"
+              description="Solte um ou mais XMLs da NF-e nesta area para inspecionar automaticamente."
+              dropHint="Tambem e possivel usar os botoes abaixo para escolher arquivo, varios XMLs ou uma pasta inteira."
+              onDropFiles={(files) => void prepareDroppedXmlImport(files)}
               actions={
                 <>
                   <button onClick={() => void prepareXmlImport("single")}>Selecionar XML</button>
@@ -579,7 +675,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <h3><ListStepsIcon /> Fluxo de importacao</h3>
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             <FormGrid>
-              <SelectField label="Cliente padrao (usado so se o CNPJ/nome do contraparte nao for reconhecido)" value={partnerId} onChange={setPartnerId} options={partners.map((item) => [item.id, item.displayName])} />
+              <PartnerQuickSearch label="Cliente padrao (usado so se o CNPJ/nome do contraparte nao for reconhecido)" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
               <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
               <SelectField label="UF da venda" value={scope} onChange={(value) => setScope(value as OperationScope)} options={OPERATION_SCOPE_OPTIONS} />
             </FormGrid>
@@ -589,6 +685,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </div>
           </div>
         </div>
+        <div ref={xmlResultRef}>
         {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
         {xmlJob ? (
           <div className="table">
@@ -596,10 +693,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             {xmlJob.files.map((file) => (
               <div key={file.id} className="table-row xml-files-grid">
                 <span>{file.originalFileName}</span>
-                <span><StatusBadge status={file.status} /></span>
+                <span><StatusBadge status={file.status} label={xmlFileStatusLabel(file)} /></span>
                 <span>{file.xmlType}</span>
                 <span>{file.accessKey ?? "-"}</span>
-                <span>{file.errorMessage ?? (file.warningCodesJson && file.warningCodesJson !== "[]" ? file.warningCodesJson : "Processado sem erro")}</span>
+                <span className="row-actions">
+                  <span>{xmlFileDetailMessage(file)}</span>
+                  {file.fiscalDocumentId ? <button onClick={() => void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then(setDetail)}>Abrir nota</button> : null}
+                  {file.fiscalDocumentId ? <button className="danger" onClick={() => {
+                    const doc = documents.find((item) => item.id === file.fiscalDocumentId);
+                    if (doc) void deleteDocument(doc);
+                    else void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then((opened) => deleteDocument(opened.document));
+                  }}>Excluir nota</button> : null}
+                </span>
               </div>
             ))}
           </div>
@@ -616,10 +721,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <span>{issuer?.tradeName ?? issuer?.legalName ?? "-"}</span>
                   <span>{recipient?.tradeName ?? recipient?.legalName ?? "-"}</span>
                   <span>
-                    <select value={xmlResolutionSelections[file.id] ?? ""} onChange={(event) => setXmlResolutionSelections((current) => ({ ...current, [file.id]: event.target.value }))}>
-                      <option value="">Selecione o cliente</option>
-                      {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}
-                    </select>
+                    <PartnerQuickSearch label="Cliente" value={xmlResolutionSelections[file.id] ?? ""} onChange={(value) => setXmlResolutionSelections((current) => ({ ...current, [file.id]: value }))} partners={partners} legalEntities={partnerLegalEntities} />
                   </span>
                   <span>
                     <button disabled={!xmlResolutionSelections[file.id]} onClick={() => void saveXmlFileResolution(file.id)}>Salvar</button>
@@ -630,10 +732,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             })}
           </div>
         ) : null}
+        </div>
       </AdminBlock>
-      <AdminBlock title="Historico de XML">
+      <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
         <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
-      </AdminBlock>
+      </AdminBlock></div>
       </>}
       <Feedback message={message} />
     </section>

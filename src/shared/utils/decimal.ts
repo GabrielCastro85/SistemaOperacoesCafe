@@ -39,3 +39,12 @@ export function divideDecimalText(decimalValue: string, divisorValue: string): s
   const fraction = (result % scale).toString().padStart(6, "0").replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
+
+export function multiplyDecimalText(decimalValue: string, multiplierValue: string): string {
+  const left = decimalTextToScaled(decimalValue);
+  const right = decimalTextToScaled(multiplierValue);
+  const result = (left * right + scale / 2n) / scale;
+  const whole = result / scale;
+  const fraction = (result % scale).toString().padStart(6, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}

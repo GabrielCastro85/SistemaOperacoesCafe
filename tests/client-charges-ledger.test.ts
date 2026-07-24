@@ -101,6 +101,20 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("backfills an active client rate into older unbilled operations without a calculated value", () => {
+    const { repo, db, productId } = setup();
+    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Regra Posterior", notes: null, roles: ["CLIENT"], isActive: true });
+    createConfirmedOperation(repo, partner.id, productId, "9201", "330", "EXTERNAL");
+    expect(repo.listOperations({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: partner.id, status: "all", billingStatus: "all" })[0].serviceAmountCents).toBe(0);
+
+    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-23", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partner.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+
+    expect(eligible).toHaveLength(1);
+    expect(eligible[0]).toMatchObject({ appliedRateValueCents: 500, serviceAmountCents: 165000 });
+    db.close();
+  });
+
   it("keeps Villa MG and Villa ES billing and sacks indicators independent", () => {
     const { repo, db, partnerId, productId } = setup();
     createConfirmedOperation(repo, partnerId, productId, "9301", "100", "EXTERNAL", ownLegalEntityId);

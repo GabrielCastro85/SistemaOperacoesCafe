@@ -6,9 +6,13 @@ import { getBuildVariantConfig } from "../../src/shared/buildVariants.js";
 import { initializeDatabase } from "./database/database.js";
 import { registerIpcHandlers } from "./ipc/handlers.js";
 import { AppRepository } from "./services/appRepository.js";
+import { runBetaOperationalResetIfNeeded } from "./services/betaReset.js";
 import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js";
+import { createMainWindow } from "./windows/createMainWindow.js";
+import { createSplashWindow, showSplashError } from "./windows/createSplashWindow.js";
 
 let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
 const buildVariant = getBuildVariantConfig(resolveRuntimeVariant());
 
 // Ao rodar contra o servidor de dev do Vite, isola completamente os dados numa pasta separada
@@ -20,73 +24,6 @@ app.setName(isDevServer ? `${buildVariant.displayName} (Dev)` : buildVariant.dis
 app.setAppUserModelId(buildVariant.appId);
 app.setPath("userData", join(app.getPath("appData"), userDataDirectoryName));
 
-function resolveWindowIcon(): string | undefined {
-  const iconFileName = buildVariant.iconPath.split(/[\\/]/).at(-1);
-  const candidates = [
-    iconFileName ? join(process.resourcesPath, "icons", iconFileName) : null,
-    join(process.cwd(), buildVariant.iconPath),
-    join(app.getAppPath(), buildVariant.iconPath)
-  ].filter((candidate): candidate is string => Boolean(candidate));
-
-  return candidates.find((candidate) => existsSync(candidate));
-}
-
-function createWindow(): void {
-  const windowIcon = resolveWindowIcon();
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1180,
-    minHeight: 720,
-    title: isDevServer ? `${buildVariant.displayName} (Dev - banco isolado)` : buildVariant.displayName,
-    icon: windowIcon,
-    show: false,
-    webPreferences: {
-      preload: join(app.getAppPath(), "dist-electron", "electron", "preload", "index.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      webSecurity: true,
-      devTools: !app.isPackaged || process.env.OPERACOES_CAFE_ENABLE_DEVTOOLS === "1"
-    }
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://") && !url.startsWith("http://127.0.0.1:")) {
-      event.preventDefault();
-    }
-  });
-
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
-    log.error("Renderer failed to load", { errorCode, errorDescription, validatedUrl });
-  });
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.maximize();
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
-
-  mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    log.error("Renderer process gone", details);
-  });
-
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    log.info("Renderer console", { level, message, line, sourceId });
-  });
-
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl).catch((error: unknown) => {
-      log.error("Failed to load dev server", error);
-    });
-  } else {
-    void mainWindow.loadFile(join(app.getAppPath(), "dist", "index.html")).catch((error: unknown) => {
-      log.error("Failed to load renderer file", error);
-    });
-  }
-}
-
 function bootstrap(): void {
   const directories = resolveAppDirectories(app.getPath("userData"));
   ensureAppDirectories(directories);
@@ -94,16 +31,44 @@ function bootstrap(): void {
   log.transports.file.resolvePathFn = () => join(directories.logsDir, "main.log");
   log.info("Starting application", { variant: buildVariant.variant, appId: buildVariant.appId, userData: directories.userData });
   const db = initializeDatabase(directories);
+  if (runBetaOperationalResetIfNeeded(db, directories, app.getVersion(), app.isPackaged)) {
+    log.info("Beta operational reset completed", { preserved: "users, companies, partners, products and service rates" });
+  }
   const context = { version: app.getVersion(), directories, db, buildVariant };
   const repository = new AppRepository(db, directories);
   registerIpcHandlers(ipcMain, context, repository);
 }
 
-app.whenReady().then(() => {
+function createWindow(minSplashVisible: Promise<void> = Promise.resolve()): void {
+  mainWindow = createMainWindow({
+    buildVariant,
+    isDevServer,
+    onReadyToShow: (window) => {
+      void showMainWindowWhenReady(window, minSplashVisible);
+    }
+  });
+}
+
+async function showMainWindowWhenReady(window: BrowserWindow, minSplashVisible: Promise<void>): Promise<void> {
+  await minSplashVisible;
+  if (!splashWindow?.isDestroyed()) {
+    splashWindow?.close();
+  }
+  splashWindow = null;
+  if (window.isDestroyed()) return;
+  window.maximize();
+  window.show();
+  window.focus();
+}
+
+app.whenReady().then(async () => {
   try {
+    splashWindow = await createSplashWindow();
+    const minSplashVisible = delay(1200);
+    await delay(80);
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     bootstrap();
-    createWindow();
+    createWindow(minSplashVisible);
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
@@ -111,10 +76,17 @@ app.whenReady().then(() => {
     });
   } catch (error) {
     log.error("Fatal error during application startup", error);
+    void showSplashError(splashWindow, error instanceof Error ? error.message : String(error));
     dialog.showErrorBox("Falha ao iniciar", error instanceof Error ? error.message : String(error));
     app.quit();
   }
 });
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
 
 const singleInstance = app.requestSingleInstanceLock({ variant: buildVariant.variant });
 if (!singleInstance) {

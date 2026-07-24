@@ -1,14 +1,16 @@
-import React, { useCallback, useEffect, useState } from "react";
-import type { BootstrapData, BusinessPartner, DealClauseTemplate, DealConfirmation, DealConfirmationDetail, DealConfirmationSummary, DealConfirmationTemplate, FiscalDocument, Product } from "../../../shared/types/domain";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DealClauseTemplate, DealConfirmation, DealConfirmationDetail, DealConfirmationSummary, DealConfirmationTemplate, FiscalDocument, Product } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatDateBr } from "../../../shared/utils/format";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
-import { EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper } from "../../design-system";
+import { EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
+import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { Feedback } from "../../components/feedback/Feedback";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { ConfirmationPartyCard } from "./components/ConfirmationPartyCard";
 import { ConfirmationItemsTable } from "./components/ConfirmationItemsTable";
+import { useAutoScroll } from "../../hooks/useAutoScroll";
 
 interface SourceDocumentRow {
   document: FiscalDocument;
@@ -24,6 +26,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [previewBase64, setPreviewBase64] = useState<string | null>(null);
   const [summary, setSummary] = useState<DealConfirmationSummary | null>(null);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [templates, setTemplates] = useState<DealConfirmationTemplate[]>([]);
   const [clauses, setClauses] = useState<DealClauseTemplate[]>([]);
@@ -41,16 +44,23 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [bankAgency, setBankAgency] = useState("");
   const [bankAccount, setBankAccount] = useState("");
   const [pixKey, setPixKey] = useState("");
+  const [deliveryText, setDeliveryText] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [qualityTerms, setQualityTerms] = useState("");
+  const [generalTerms, setGeneralTerms] = useState("");
+  const [publicNotes, setPublicNotes] = useState("");
   const [deliveryRecipientId, setDeliveryRecipientId] = useState("");
   const [clauseTemplateId, setClauseTemplateId] = useState("");
   const [view, setView] = useState<"list" | "new" | "detail">("list");
   const [creationMode, setCreationMode] = useState<"notes" | "manual">("notes");
+  const scrollTo = useAutoScroll();
+  const detailRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!organizationId) return;
     const [dealList, partnerList, productList, templateList, clauseList, dealSummary] = await Promise.all([
       window.operationsCafe.listDealConfirmations({ organizationId }),
-      window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }),
+      window.operationsCafe.listBusinessPartners({ status: "active" }),
       window.operationsCafe.listProducts({ organizationId, status: "active" }),
       window.operationsCafe.listDealConfirmationTemplates({ organizationId, status: "all" }),
       window.operationsCafe.listDealClauseTemplates(organizationId),
@@ -58,6 +68,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     ]);
     setConfirmations(dealList.filter((confirmation) => !ownLegalEntityId || confirmation.ownLegalEntityId === ownLegalEntityId));
     setPartners(partnerList);
+    setPartnerLegalEntities((await Promise.all(partnerList.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     setProducts(productList);
     setTemplates(templateList);
     setClauses(clauseList);
@@ -105,6 +116,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     setBankAgency(current.confirmation.bankAgency ?? "");
     setBankAccount(current.confirmation.bankAccount ?? "");
     setPixKey(current.confirmation.pixKey ?? "");
+    setDeliveryText(current.confirmation.deliveryLocationSnapshot ?? "");
+    setPaymentTerms(current.confirmation.paymentTermsSnapshot ?? "");
+    setQualityTerms(current.confirmation.qualityTermsSnapshot ?? "");
+    setGeneralTerms(current.confirmation.generalTermsSnapshot ?? "");
+    setPublicNotes(current.confirmation.publicNotes ?? "");
   }
 
   async function createManual(): Promise<void> {
@@ -132,15 +148,22 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       setView("detail");
       setMessage("Confirmacao manual criada.");
       await load();
+      scrollTo(detailRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar confirmacao."}`);
     }
   }
 
-  async function addPartiesItemsAndSigners(confirmationId: string, skipItem = false, confirmationOwnLegalEntityId = ownLegalEntityId): Promise<void> {
+  async function addPartiesItemsAndSigners(
+    confirmationId: string,
+    skipItem = false,
+    confirmationOwnLegalEntityId = ownLegalEntityId,
+    confirmationBuyerId = buyerId,
+    confirmationDeliveryRecipientId = confirmationBuyerId
+  ): Promise<void> {
     if (confirmationOwnLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
-    if (buyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: buyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
-    if (buyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: buyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
+    if (confirmationBuyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: confirmationBuyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    if (confirmationDeliveryRecipientId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipientId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
     if (!skipItem && productId) await window.operationsCafe.addDealConfirmationItem({
       dealConfirmationId: confirmationId,
       sortOrder: 0,
@@ -163,7 +186,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       notes: null
     });
     await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.tradeName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
-    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: partners.find((item) => item.id === buyerId)?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: partners.find((item) => item.id === confirmationBuyerId)?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
   }
 
   const clientPartners = partners.filter((item) => item.roles.includes("CLIENT"));
@@ -177,9 +200,20 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function createFromNotes(): Promise<void> {
     const fiscalDocumentIds = selectedRows.map((row) => row.document.id);
     if (fiscalDocumentIds.length === 0) return;
+    const selectedBuyerIds = [...new Set(selectedRows.map((row) => row.document.responsiblePartnerId))];
+    if (selectedBuyerIds.length > 1) {
+      setMessage("Erro: selecione notas do mesmo cliente para gerar uma confirmacao.");
+      return;
+    }
+    const selectedBuyerId = selectedBuyerIds[0] ?? buyerId;
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
-      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId);
+      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, selectedBuyerId, selectedBuyerId);
+      if (selectedBuyerId) {
+        setBuyerId(selectedBuyerId);
+        setSourceClientId(selectedBuyerId);
+        setDeliveryRecipientId(selectedBuyerId);
+      }
       const refreshed = await window.operationsCafe.getDealConfirmation(created.confirmation.id);
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
@@ -187,6 +221,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       setView("detail");
       setMessage(`Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`);
       await load();
+      scrollTo(detailRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar a partir de notas."}`);
     }
@@ -198,6 +233,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     loadBankFieldsFromDetail(opened);
     await refreshPreview(opened);
     setView("detail");
+    scrollTo(detailRef);
   }
 
   async function generatePreview(): Promise<void> {
@@ -210,6 +246,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     setDetail(updated);
     await refreshPreview(updated);
     setMessage("Previa gerada e salva na pasta escolhida.");
+    scrollTo(detailRef);
   }
 
   async function issue(): Promise<void> {
@@ -223,6 +260,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     await refreshPreview(updated);
     setMessage("Confirmacao emitida e salva na pasta escolhida.");
     await load();
+    scrollTo(detailRef);
   }
 
   async function saveBankDetails(): Promise<void> {
@@ -238,6 +276,20 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     });
     setDetail(updated);
     setMessage("Dados de corretagem e banco atualizados.");
+  }
+
+  async function saveDocumentDetails(): Promise<void> {
+    if (!detail) return;
+    const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
+      deliveryLocationSnapshot: deliveryText.trim() || null,
+      paymentTermsSnapshot: paymentTerms.trim() || null,
+      qualityTermsSnapshot: qualityTerms.trim() || null,
+      generalTermsSnapshot: generalTerms.trim() || null,
+      publicNotes: publicNotes.trim() || null
+    });
+    setDetail(updated);
+    loadBankFieldsFromDetail(updated);
+    setMessage("Dados manuais da confirmacao atualizados.");
   }
 
   async function setDeliveryRecipient(): Promise<void> {
@@ -307,31 +359,6 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }
   }
 
-  async function createTemplate(): Promise<void> {
-    await window.operationsCafe.createDealConfirmationTemplate({
-      organizationId,
-      ownLegalEntityId: null,
-      name: `Template ${templates.length + 1}`,
-      description: null,
-      title: "Confirmacao de Negocio",
-      subtitle: "Cafe",
-      layoutMode: "STANDARD",
-      defaultPaymentTerms: "Conforme combinado entre as partes.",
-      defaultDeliveryTerms: "Local a definir.",
-      defaultQualityTerms: "Qualidade conforme amostra.",
-      defaultGeneralTerms: "Textos devem ser revisados pela empresa.",
-      showBroker: true,
-      showCommercialValues: true,
-      showItemOrigins: true,
-      showSignatureBlocks: true,
-      signatureBlockCount: 2,
-      isDefault: templates.length === 0,
-      isActive: true
-    });
-    setMessage("Template criado.");
-    await load();
-  }
-
   async function createClauseTemplate(): Promise<void> {
     const name = await requestTextInput({ title: "Nova clausula", label: "Nome da clausula (uso interno)" });
     if (!name) return;
@@ -342,17 +369,12 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     await load();
   }
 
-  async function generateReport(format: "PDF" | "EXCEL"): Promise<void> {
-    const report = await window.operationsCafe.generateConfirmationReport({ reportType: "CONFIRMATIONS_PERIOD", format, filters: { organizationId, ownLegalEntityId: ownLegalEntityId || null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null } });
-    setMessage(report ? `Relatorio ${format} salvo: ${report.fileName}` : "Geracao cancelada. Nenhuma pasta foi escolhida.");
-  }
-
   return (
     <section className="content-section settings">
       <PageHeader
         eyebrow="Comercial"
         title="Confirmações de negócio"
-        description="Crie confirmações, controle documentos, assinaturas externas, templates, cláusulas e relatórios comerciais."
+        description="Crie confirmações, controle documentos, assinaturas externas, cláusulas e relatórios comerciais."
       />
       {tab === "Confirmacoes" && view !== "list" && (
         <Stepper
@@ -365,7 +387,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           ]}
         />
       )}
-      <div className="settings-tabs">{["Confirmacoes", "Templates", "Clausulas", "Relatorios"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
+      <div className="settings-tabs">{["Confirmacoes", "Clausulas"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
       {tab === "Confirmacoes" && view !== "detail" && (
         <div className="cards">
           <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
@@ -401,7 +423,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
             <AdminBlock title="Criar a partir de notas fiscais">
               <p className="muted">Fluxo recomendado: selecione o cliente e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
               <FormGrid>
-                <SelectField label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} options={clientPartners.map((item) => [item.id, item.displayName])} />
+                <PartnerQuickSearch label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} partners={clientPartners} legalEntities={partnerLegalEntities} />
               </FormGrid>
               {sourceDocuments.length ? (
                 <div className="table">
@@ -435,7 +457,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
               <p className="muted">Use quando ainda não existe nota fiscal emitida para este negócio.</p>
               <p className="muted">Vendedor: <strong>{ownEntityName}</strong> (empresa/CNPJ propio selecionado no topo).</p>
               <FormGrid>
-                <SelectField label="Comprador (cliente)" value={buyerId} onChange={setBuyerId} options={clientPartners.map((item) => [item.id, item.displayName])} />
+                <PartnerQuickSearch label="Comprador (cliente)" value={buyerId} onChange={setBuyerId} partners={clientPartners} legalEntities={partnerLegalEntities} />
                 <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
                 <TextField label="Sacas" value={quantity} onChange={setQuantity} />
                 <TextField label="Preco por saca" value={price} onChange={setPrice} />
@@ -450,6 +472,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           <div className="page-title-row">
             <button onClick={() => { setView("list"); setDetail(null); setPreviewBase64(null); }}>&larr; Voltar para a lista</button>
           </div>
+          <div ref={detailRef}>
           <AdminBlock title={`Detalhe ${detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference}`}>
             <div className="confirmation-detail-columns">
               <div className="confirmation-detail-column">
@@ -457,8 +480,19 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   {detail.parties.filter((party) => party.partyRole !== "ISSUER").map((party) => <ConfirmationPartyCard key={party.id} party={party} />)}
                 </div>
                 <FormGrid>
-                  <SelectField label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} options={partners.map((item) => [item.id, item.displayName])} />
+                  <PartnerQuickSearch label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} partners={partners} legalEntities={partnerLegalEntities} />
                   <button onClick={() => void setDeliveryRecipient()} disabled={!deliveryRecipientId}>Salvar local</button>
+                </FormGrid>
+
+                <h3>Dados manuais do documento</h3>
+                <p className="muted">Use estes campos para ajustar o texto que aparece no PDF antes de gerar a previa ou emitir a confirmacao.</p>
+                <FormGrid>
+                  <Textarea label="Local de descarga no PDF" rows={3} value={deliveryText} onChange={(event) => setDeliveryText(event.target.value)} />
+                  <Textarea label="Condicao de pagamento" rows={3} value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} />
+                  <Textarea label="Qualidade" rows={3} value={qualityTerms} onChange={(event) => setQualityTerms(event.target.value)} />
+                  <Textarea label="Condicoes gerais" rows={3} value={generalTerms} onChange={(event) => setGeneralTerms(event.target.value)} />
+                  <Textarea label="Observacoes" rows={3} value={publicNotes} onChange={(event) => setPublicNotes(event.target.value)} />
+                  <button className="primary" onClick={() => void saveDocumentDetails()}>Salvar dados do documento</button>
                 </FormGrid>
 
                 <h3><HandshakeIcon /> Itens</h3>
@@ -516,11 +550,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
               </div>
             </div>
           </AdminBlock>
+          </div>
         </>
       )}
-      {tab === "Templates" && <AdminBlock title="Templates de Confirmacao"><div className="actions"><button className="primary" onClick={() => void createTemplate()}>Criar template</button></div><div className="table"><div className="table-head template-grid"><span>Nome</span><span>Layout</span><span>Padrao</span><span>Status</span><span>Acoes</span></div>{templates.map((item) => <div key={item.id} className="table-row template-grid"><span>{item.name}</span><span>{item.layoutMode}</span><span>{item.isDefault ? "Sim" : "Nao"}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span><button onClick={() => void window.operationsCafe.setDefaultDealConfirmationTemplate(item.id).then(() => load())}>Padrao</button><button onClick={() => void window.operationsCafe.duplicateDealConfirmationTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}
       {tab === "Clausulas" && <AdminBlock title="Biblioteca de Clausulas"><div className="actions"><button className="primary" onClick={() => void createClauseTemplate()}>Criar clausula</button></div><div className="table"><div className="table-head clause-grid"><span>Nome</span><span>Categoria</span><span>Titulo</span><span>Status</span><span>Acoes</span></div>{clauses.map((item) => <div key={item.id} className="table-row clause-grid"><span>{item.name}</span><span>{item.category}</span><span>{item.title ?? "-"}</span><span>{item.isActive ? "Ativa" : "Inativa"}</span><span><button onClick={() => void window.operationsCafe.duplicateDealClauseTemplate(item.id).then(() => load())}>Duplicar</button></span></div>)}</div></AdminBlock>}
-      {tab === "Relatorios" && <AdminBlock title="Relatorios de Confirmacoes"><div className="actions"><button className="primary" onClick={() => void generateReport("PDF")}>Gerar PDF</button><button onClick={() => void generateReport("EXCEL")}>Gerar Excel</button></div></AdminBlock>}
       <Feedback message={message} />
     </section>
   );

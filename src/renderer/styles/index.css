@@ -55,6 +55,96 @@ input {
   font: inherit;
 }
 
+.partner-search {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.partner-search > span {
+  font-weight: 800;
+}
+
+.partner-search input {
+  width: 100%;
+  min-height: var(--control-height);
+  border: 1px solid color-mix(in srgb, var(--color-border) 86%, #21190f);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  color: var(--color-text);
+  padding: 9px 12px;
+  font-weight: 700;
+}
+
+.partner-search__panel {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 5px);
+  left: 0;
+  width: min(760px, calc(100vw - 56px));
+  max-height: 330px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--color-border) 75%, var(--color-accent));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 98%, #fff);
+  box-shadow: 0 16px 38px rgb(17 13 8 / 20%);
+}
+
+.partner-search__head,
+.partner-search__panel button {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 0.8fr) minmax(120px, 0.7fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.partner-search__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 12px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-background) 88%, #fff);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.partner-search__panel button {
+  width: 100%;
+  min-height: 36px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  transform: none !important;
+}
+
+.partner-search__panel button:hover,
+.partner-search__panel button.active {
+  color: #fff;
+  background: color-mix(in srgb, var(--color-accent) 82%, #0b3321) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.partner-search__panel button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.partner-search__empty {
+  padding: 16px;
+  color: var(--color-text-muted);
+}
+
 button {
   cursor: pointer;
 }
@@ -276,6 +366,19 @@ input {
   background: #fff;
 }
 
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  max-width: 16px;
+  max-height: 16px;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  accent-color: var(--color-accent);
+}
+
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -306,6 +409,10 @@ input {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.checkbox input[type="checkbox"] {
+  flex: 0 0 16px;
 }
 
 .primary {
@@ -1158,6 +1265,23 @@ table th {
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface));
   padding: var(--space-5);
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.ui-dropzone > span {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.ui-dropzone.is-interactive {
+  border-width: 2px;
+}
+
+.ui-dropzone.is-dragging {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-success) 20%, transparent);
+  transform: translateY(-1px);
 }
 
 .ui-document-card,
@@ -1202,12 +1326,32 @@ table th {
   padding: var(--space-5);
 }
 
+.ui-dialog section {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ui-dialog .ui-field {
+  gap: var(--space-2);
+}
+
+.ui-dialog textarea {
+  display: block;
+  min-height: 112px;
+  resize: vertical;
+}
+
 .ui-drawer__panel header,
 .ui-dialog footer {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
   align-items: center;
+}
+
+.ui-dialog footer {
+  justify-content: flex-end;
+  padding-top: var(--space-1);
 }
 
 .ui-dialog {
@@ -1353,6 +1497,8 @@ table th {
 .settings {
   display: grid;
   gap: 18px;
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .settings-tabs,
@@ -1473,11 +1619,56 @@ table th {
 }
 
 .charge-operation-grid {
-  grid-template-columns: 120px 110px 110px 110px 130px 120px;
+  grid-template-columns: minmax(74px, 0.48fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(86px, 0.52fr) 106px;
 }
 
 .charge-diagnostic-grid {
-  grid-template-columns: 92px 1.35fr 140px 90px 110px 120px 1fr;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(180px, 1fr) minmax(180px, 0.95fr) minmax(160px, 0.85fr) 130px minmax(170px, 0.9fr);
+}
+
+.charge-detail-operation-grid {
+  grid-template-columns: 112px 92px minmax(180px, 1fr) 82px 92px minmax(160px, 0.9fr) 120px;
+}
+
+.charge-operation-grid span,
+.charge-diagnostic-grid span,
+.charge-detail-operation-grid span {
+  min-width: 0;
+}
+
+.charge-operation-grid strong,
+.charge-diagnostic-grid strong,
+.charge-detail-operation-grid strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charge-operation-grid small,
+.charge-diagnostic-grid small,
+.charge-detail-operation-grid small {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.charges-column .table-head.charge-operation-grid,
+.charges-column .table-row.charge-operation-grid {
+  min-width: 0;
+}
+
+.charge-operation-grid .row-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.charge-operation-grid .row-actions button {
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .charge-context-note,
@@ -1904,12 +2095,31 @@ table th {
   font-weight: 700;
 }
 
+.form-grid > label.checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 40px;
+}
+
 .form-grid input,
 .form-grid select,
 .form-grid textarea,
 .ui-input,
 .ui-select {
   width: 100%;
+}
+
+.form-grid input[type="checkbox"],
+.ui-field input[type="checkbox"],
+.partner-modal input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  max-width: 16px;
+  max-height: 16px;
 }
 
 .partner-detail-actions {

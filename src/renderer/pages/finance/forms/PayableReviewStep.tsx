@@ -1,6 +1,7 @@
 import { DefinitionList } from "../../../design-system";
+import { formatDateOnlyBr } from "../../../../shared/utils/format";
 import type { PayableDraftFormState } from "../hooks/usePayableDraftForm";
 
 export function PayableReviewStep({ form }: { form: PayableDraftFormState }): JSX.Element {
-  return <DefinitionList items={[{ label: "Favorecido", value: form.payee }, { label: "Descricao", value: form.description }, { label: "Valor", value: form.amount }, { label: "Vencimento", value: form.dueDate }]} />;
+  return <DefinitionList items={[{ label: "Favorecido", value: form.payee }, { label: "Descricao", value: form.description }, { label: "Valor", value: form.amount }, { label: "Vencimento", value: formatDateOnlyBr(form.dueDate) }]} />;
 }

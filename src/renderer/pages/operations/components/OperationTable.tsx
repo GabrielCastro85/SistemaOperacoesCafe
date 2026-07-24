@@ -1,5 +1,5 @@
 import type { Operation } from "../../../../shared/types/domain";
-import { formatCurrencyFromCents } from "../../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateOnlyBr } from "../../../../shared/utils/format";
 import { formatOperationScope } from "../../../../shared/utils/operationLabels";
 import { DataTable } from "../../../design-system";
 import { OperationStatusBadge } from "./OperationStatusBadge";
@@ -10,7 +10,7 @@ export function OperationTable({ operations }: { operations: Operation[] }): JSX
       rows={operations}
       getRowKey={(row) => row.id}
       columns={[
-        { key: "date", header: "Data", render: (row) => row.operationDate },
+        { key: "date", header: "Data", render: (row) => formatDateOnlyBr(row.operationDate) },
         { key: "type", header: "Compra/Venda", render: (row) => row.operationType },
         { key: "scope", header: "UF da venda", render: (row) => formatOperationScope(row.operationScope) },
         { key: "sacks", header: "Sacas", align: "right", render: (row) => row.quantitySacks },

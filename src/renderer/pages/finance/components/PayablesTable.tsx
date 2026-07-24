@@ -1,5 +1,5 @@
 import type { AccountPayable, CostCenter, ExpenseCategory, LegalEntity, Location } from "../../../../shared/types/domain";
-import { formatCurrencyFromCents } from "../../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateOnlyBr } from "../../../../shared/utils/format";
 import { DataTable, StatusBadge } from "../../../design-system";
 
 export function PayablesTable({ payables, categories, legalEntities, locations, onOpen, onConfirm, onPay, onCancel }: { payables: AccountPayable[]; categories: ExpenseCategory[]; costCenters?: CostCenter[]; legalEntities: LegalEntity[]; locations: Location[]; onOpen?: (id: string) => void; onConfirm?: (id: string) => void; onPay?: (id: string) => void; onCancel?: (id: string) => void }): JSX.Element {
@@ -8,13 +8,13 @@ export function PayablesTable({ payables, categories, legalEntities, locations, 
       rows={payables}
       getRowKey={(row) => row.id}
       columns={[
-        { key: "due", header: "Vencimento", render: (row) => row.dueDate },
+        { key: "due", header: "Vencimento", render: (row) => formatDateOnlyBr(row.dueDate) },
         { key: "description", header: "Descricao", render: (row) => row.description },
         { key: "supplier", header: "Fornecedor", render: (row) => row.payeeNameSnapshot },
         { key: "entity", header: "CNPJ proprio", render: (row) => legalEntities.find((item) => item.id === row.ownLegalEntityId)?.tradeName ?? "-" },
         { key: "location", header: "Local", render: (row) => locations.find((item) => item.id === row.defaultLocationId)?.name ?? "-" },
         { key: "category", header: "Categoria", render: (row) => categories.find((item) => item.id === row.categoryId)?.name ?? "-" },
-        { key: "competence", header: "Competencia", render: (row) => row.competenceDate.slice(0, 7) },
+        { key: "competence", header: "Competencia", render: (row) => row.competenceDate.slice(5, 7) + "-" + row.competenceDate.slice(0, 4) },
         { key: "final", header: "Valor final", align: "right", render: (row) => formatCurrencyFromCents(row.finalAmountCents ?? 0) },
         { key: "paid", header: "Pago", align: "right", render: (row) => formatCurrencyFromCents(row.paidAmountCents) },
         { key: "open", header: "Saldo", align: "right", render: (row) => formatCurrencyFromCents(row.openAmountCents ?? 0) },

@@ -1,5 +1,5 @@
 import type { DealConfirmation } from "../../../../shared/types/domain";
-import { formatCurrencyFromCents } from "../../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateOnlyBr } from "../../../../shared/utils/format";
 import { Button, DataTable, StatusBadge } from "../../../design-system";
 import { SignatureStatusBadge } from "./SignatureStatusBadge";
 
@@ -10,7 +10,7 @@ export function ConfirmationTable({ confirmations, onOpen }: { confirmations: De
       getRowKey={(row) => row.id}
       columns={[
         { key: "number", header: "Número", render: (row) => row.confirmationNumber ?? row.temporaryReference },
-        { key: "date", header: "Data", render: (row) => row.confirmationDate },
+        { key: "date", header: "Data", render: (row) => formatDateOnlyBr(row.confirmationDate) },
         { key: "sacks", header: "Sacas", align: "right", render: (row) => row.totalQuantitySacksDecimal },
         { key: "value", header: "Valor", align: "right", render: (row) => formatCurrencyFromCents(row.totalCommercialAmountCents) },
         { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} label={row.status} /> },

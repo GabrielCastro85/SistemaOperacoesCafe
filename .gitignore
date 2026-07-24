@@ -7,6 +7,7 @@ release/
 .vite/
 coverage/
 _backups_pre_consolidacao_*/
+tmp/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

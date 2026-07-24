@@ -86,7 +86,7 @@ export async function generateDealConfirmationReportFile(input: {
   if (input.format === "PDF") {
     const fileName = "relatorio-confirmacoes.pdf";
     const storedFilePath = join(baseDir, fileName);
-    writeSimplePdf(storedFilePath, buildReportLines(input));
+    writeFileSync(storedFilePath, await buildStyledConfirmationReportPdf(input));
     return { fileName, storedFilePath, fileHash: hashLocalFile(storedFilePath) };
   }
   const fileName = "relatorio-confirmacoes.xlsx";
@@ -192,6 +192,11 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
     return [snapshot.city, snapshot.state].filter(Boolean).join(" - ") || null;
   };
 
+  const partyFullAddress = (snapshot: Partial<DealPartySnapshot>): string | null => {
+    const lines = [partyAddress(snapshot), partyCity(snapshot), snapshot.postalCode ? `CEP: ${formatPostalCode(snapshot.postalCode)}` : null].filter(Boolean);
+    return lines.length ? lines.join(" - ") : null;
+  };
+
   const partyDocument = (snapshot: Partial<DealPartySnapshot>): string | null => {
     const pieces = [];
     if (snapshot.taxId) pieces.push(`CNPJ: ${formatTaxId(snapshot.taxId)}`);
@@ -214,6 +219,12 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   const partyNameForSignature = (party: (typeof detail.parties)[number] | null): string => {
     const snapshot = party ? safeJson<Partial<DealPartySnapshot>>(party.snapshotJson, {}) : {};
     return snapshot.name ?? party?.manualName ?? "Nao informado";
+  };
+
+  const deliveryLines = (party: (typeof detail.parties)[number] | null): string[] => {
+    const snapshot = party ? safeJson<Partial<DealPartySnapshot>>(party.snapshotJson, {}) : {};
+    const name = snapshot.name ?? party?.manualName ?? "Nao informado";
+    return [name, partyDocument(snapshot), partyFullAddress(snapshot)].filter((item): item is string => Boolean(item));
   };
 
   const drawParty = (title: string, party: (typeof detail.parties)[number] | null, x: number, topY: number, width: number, height: number, fallback?: Partial<DealPartySnapshot>): void => {
@@ -287,7 +298,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   currentY -= 68;
   page.drawRectangle({ x: margin, y: currentY - 38, width: contentWidth, height: 38, color: rgb(1, 0.99, 0.965), borderColor: border, borderWidth: 0.6 });
   page.drawText("Local de descarga", { x: margin + 7, y: currentY - 10, size: 6.4, font: bold, color: gold });
-  drawTextBox(page, partyLines(delivery, undefined, 3).join(" | "), margin + 7, currentY - 17, contentWidth - 14, 18, { font, bold, size: 7.2, minSize: 5.8, lineHeight: 1.08, maxLines: 2, color: ink, important: true });
+  drawTextBox(page, deliveryLines(delivery).join(" | "), margin + 7, currentY - 17, contentWidth - 14, 20, { font, bold, size: 7.1, minSize: 5.2, lineHeight: 1.08, maxLines: 3, color: ink, important: true });
   currentY -= 45;
 
   currentY = sectionTitle("Itens negociados", currentY);
@@ -297,7 +308,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
     { label: "Sacas", x: margin + 254, width: 58 },
     { label: "Peso/sc", x: margin + 318, width: 58 },
     { label: "R$/saca", x: margin + 382, width: 62 },
-    { label: "Total", x: margin + 452, width: contentWidth - 452 }
+    { label: "Total", x: margin + 452, width: contentWidth - 464 }
   ];
   page.drawRectangle({ x: margin, y: currentY - 15, width: contentWidth, height: 15, color: headerColor });
   columns.forEach((column) => page.drawText(column.label, { x: column.x, y: currentY - 10.5, size: 6.8, font: bold, color: headerText }));
@@ -320,8 +331,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   const commercialLines = [
     `Pagamento: ${confirmation.paymentTermsSnapshot ?? "Nao informado"}`,
     confirmation.deliveryLocationSnapshot ? `Entrega: ${confirmation.deliveryLocationSnapshot}` : null,
-    `Corretagem: ${confirmation.brokeragePercentageBasisPoints != null ? `${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "Nao informada"}`,
-    confirmation.publicNotes ? `Obs.: ${confirmation.publicNotes}` : null
+    `Corretagem: ${confirmation.brokeragePercentageBasisPoints != null ? `${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "Nao informada"}`
   ].filter((item): item is string => Boolean(item));
   const bankLines = [
     confirmation.bankName ? `Banco: ${confirmation.bankName}` : null,
@@ -344,15 +354,14 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   currentY -= 34;
 
   const noteLines = [
+    confirmation.publicNotes ? `Observacoes: ${confirmation.publicNotes}` : null,
     confirmation.qualityTermsSnapshot ? `Qualidade: ${confirmation.qualityTermsSnapshot}` : null,
     confirmation.generalTermsSnapshot ? `Condicoes gerais: ${confirmation.generalTermsSnapshot}` : null
   ].filter((item): item is string => Boolean(item));
-  if (noteLines.length > 0) {
-    page.drawRectangle({ x: margin, y: currentY - 28, width: contentWidth, height: 28, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.45 });
-    page.drawText("Observacoes e termos", { x: margin + 7, y: currentY - 10, size: 6.3, font: bold, color: gold });
-    drawTextBox(page, noteLines.join(" | "), margin + 7, currentY - 17, contentWidth - 14, 10, { font, bold, size: 6.4, minSize: 5.3, lineHeight: 1, maxLines: 1, color: muted });
-    currentY -= 34;
-  }
+  page.drawRectangle({ x: margin, y: currentY - 30, width: contentWidth, height: 30, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.45 });
+  page.drawText("Observacoes", { x: margin + 7, y: currentY - 10, size: 6.3, font: bold, color: gold });
+  drawTextBox(page, noteLines.join(" | ") || "Observacoes adicionais", margin + 7, currentY - 17, contentWidth - 14, 13, { font, bold, size: 6.3, minSize: 5.1, lineHeight: 1, maxLines: 2, color: muted });
+  currentY -= 36;
 
   const visibleClauses = detail.clauses.filter((clause) => clause.isVisible);
   if (visibleClauses.length > 0) {
@@ -564,7 +573,7 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
     { label: "Sacas", x: margin + 254, width: 58 },
     { label: "Peso/sc", x: margin + 318, width: 58 },
     { label: "R$/saca", x: margin + 382, width: 62 },
-    { label: "Total", x: margin + 452, width: contentWidth - 452 }
+    { label: "Total", x: margin + 452, width: contentWidth - 464 }
   ];
   page.drawRectangle({ x: margin, y: y - 16, width: contentWidth, height: 16, color: dark });
   columns.forEach((column) => page.drawText(column.label, { x: column.x, y: y - 11, size: 7, font: bold, color: rgb(1, 0.96, 0.88) }));
@@ -574,10 +583,10 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
     page.drawRectangle({ x: margin, y: y - 15, width: contentWidth, height: 15, color: rgb(1, 0.995, 0.98), borderColor: rgb(0.88, 0.82, 0.72), borderWidth: 0.35 });
     page.drawText(truncate(item.productNameSnapshot, font, 7.2, columns[0].width), { x: columns[0].x, y: y - 10.5, size: 7.2, font, color: ink });
     page.drawText(truncate(item.originSnapshot ?? "-", font, 7.2, columns[1].width), { x: columns[1].x, y: y - 10.5, size: 7.2, font, color: ink });
-    page.drawText(item.quantitySacksDecimal.replace(".", ","), { x: columns[2].x, y: y - 10.5, size: 7.2, font, color: ink });
-    page.drawText(item.sackWeightKgDecimal.replace(".", ","), { x: columns[3].x, y: y - 10.5, size: 7.2, font, color: ink });
-    page.drawText(`R$ ${item.unitPriceDecimal.replace(".", ",")}`, { x: columns[4].x, y: y - 10.5, size: 7.2, font, color: ink });
-    page.drawText(`R$ ${formatCents(item.totalAmountCents)}`, { x: columns[5].x, y: y - 10.5, size: 7.2, font: bold, color: ink });
+    drawRightText(page, item.quantitySacksDecimal.replace(".", ","), columns[2].x, y - 10.5, columns[2].width, font, 7.2, ink);
+    drawRightText(page, item.sackWeightKgDecimal.replace(".", ","), columns[3].x, y - 10.5, columns[3].width, font, 7.2, ink);
+    drawRightText(page, `R$ ${item.unitPriceDecimal.replace(".", ",")}`, columns[4].x, y - 10.5, columns[4].width, font, 7.2, ink);
+    drawRightText(page, `R$ ${formatCents(item.totalAmountCents)}`, columns[5].x, y - 10.5, columns[5].width, bold, 7.2, ink);
     y -= 16;
   });
   page.drawRectangle({ x: margin, y: y - 22, width: contentWidth, height: 22, color: soft, borderColor: border, borderWidth: 0.6 });
@@ -608,20 +617,18 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   y = blockTop - 52;
 
   const notes = [
+    confirmation.publicNotes ? `Observacoes: ${confirmation.publicNotes}` : null,
     confirmation.qualityTermsSnapshot ? `Qualidade: ${confirmation.qualityTermsSnapshot}` : null,
     confirmation.deliveryLocationSnapshot ? `Entrega: ${confirmation.deliveryLocationSnapshot}` : null,
-    confirmation.generalTermsSnapshot ? `Condicoes gerais: ${confirmation.generalTermsSnapshot}` : null,
-    confirmation.publicNotes ? `Observacoes: ${confirmation.publicNotes}` : null
+    confirmation.generalTermsSnapshot ? `Condicoes gerais: ${confirmation.generalTermsSnapshot}` : null
   ].filter((item): item is string => Boolean(item));
-  if (notes.length > 0) {
-    const notesHeight = 14 + notes.length * 10;
-    ensureSpace(notesHeight);
-    page.drawRectangle({ x: margin, y: y - notesHeight, width: contentWidth, height: notesHeight, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.5 });
-    page.drawText("Observacoes e termos", { x: margin + 8, y: y - 10, size: 6.8, font: bold, color: gold });
-    y -= 20;
-    notes.forEach((item) => { y = drawWrappedAt(item, margin + 8, y, contentWidth - 16, { size: 6.8, color: muted, lineGap: 0.5 }); });
-    y -= 3;
-  }
+  const notesHeight = Math.max(34, 14 + Math.min(notes.length || 1, 4) * 10);
+  ensureSpace(notesHeight);
+  page.drawRectangle({ x: margin, y: y - notesHeight, width: contentWidth, height: notesHeight, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.5 });
+  page.drawText("Observacoes", { x: margin + 8, y: y - 10, size: 6.8, font: bold, color: gold });
+  y -= 20;
+  (notes.length ? notes : ["Observacoes adicionais"]).slice(0, 4).forEach((item) => { y = drawWrappedAt(item, margin + 8, y, contentWidth - 16, { size: 6.8, color: muted, lineGap: 0.5 }); });
+  y -= 3;
 
   const visibleClauses = detail.clauses.filter((clause) => clause.isVisible);
   if (visibleClauses.length > 0) {
@@ -758,24 +765,177 @@ function truncate(value: string, usedFont: PDFFont, size: number, maxWidth: numb
   return `${result}...`;
 }
 
-function buildReportLines(input: Parameters<typeof generateDealConfirmationReportFile>[0]): string[] {
+async function buildStyledConfirmationReportPdf(input: Parameters<typeof generateDealConfirmationReportFile>[0]): Promise<Uint8Array> {
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const margin = 28;
+  const contentWidth = pageWidth - margin * 2;
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const colors = confirmationReportColors(input.organization, input.ownLegalEntity);
+  const logo = await embedReportLogo(doc, input.organization);
   const totalCents = input.confirmations.reduce((sum, detail) => sum + detail.confirmation.totalCommercialAmountCents, 0);
-  const lines = [
-    "Relatorio Gerencial de Confirmacoes",
-    `Organizacao: ${input.organization.displayName}`,
-    `CNPJ proprio: ${input.ownLegalEntity?.tradeName ?? "Todos"}`,
-    `Tipo: ${input.reportType}`,
-    `Registros: ${input.confirmations.length}`,
-    `Valor comercial: R$ ${formatCents(totalCents)}`,
-    "",
-    "Confirmacoes"
-  ];
+  const totalSacks = input.confirmations.reduce((sum, detail) => sum + Number(detail.confirmation.totalQuantitySacksDecimal.replace(",", ".")), 0);
+
+  const addPage = (pageNumber: number): PDFPage => {
+    const page = doc.addPage([pageWidth, pageHeight]);
+    page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: colors.background });
+    page.drawRectangle({ x: margin, y: pageHeight - margin - 88, width: contentWidth, height: 88, color: colors.header });
+    page.drawRectangle({ x: margin, y: pageHeight - margin - 90, width: contentWidth, height: 2, color: colors.accent });
+    if (logo) {
+      const size = fitReportImage(logo.width, logo.height, 54, 54);
+      page.drawImage(logo.image, { x: margin + 12, y: pageHeight - margin - 70, width: size.width, height: size.height });
+    }
+    const headerX = logo ? margin + 78 : margin + 14;
+    page.drawText("RELATORIO DE CONFIRMACOES", { x: headerX, y: pageHeight - margin - 24, size: 13.5, font: bold, color: colors.headerText });
+    page.drawText(input.ownLegalEntity?.tradeName ?? input.organization.displayName, { x: headerX, y: pageHeight - margin - 43, size: 8.5, font: bold, color: colors.headerMuted });
+    page.drawText(`Gerado em ${formatDateTime(new Date().toISOString())}`, { x: headerX, y: pageHeight - margin - 58, size: 7, font, color: colors.headerMuted });
+    drawRightText(page, `Pagina ${pageNumber}`, pageWidth - margin - 105, pageHeight - margin - 24, 90, bold, 10, colors.headerText);
+    drawRightText(page, input.organization.appDisplayName, pageWidth - margin - 150, pageHeight - margin - 42, 135, font, 7, colors.headerMuted);
+    return page;
+  };
+
+  let page = addPage(1);
+  let y = pageHeight - margin - 112;
+  drawReportInfoBox(page, "ESCOPO", [input.organization.displayName, input.ownLegalEntity?.tradeName ?? "Todos os CNPJs"], margin, y, 258, 64, { font, bold, colors });
+  drawReportInfoBox(page, "RESUMO", [`Confirmacoes: ${input.confirmations.length}`, `Valor comercial: R$ ${formatCents(totalCents)}`], margin + 270, y, 269, 64, { font, bold, colors });
+  y -= 84;
+  drawReportCards(page, y, contentWidth, margin, [
+    ["CONFIRMACOES", String(input.confirmations.length)],
+    ["SACAS", totalSacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })],
+    ["VALOR", `R$ ${formatCents(totalCents)}`],
+    ["TIPO", confirmationReportLabel(input.reportType)]
+  ], { font, bold, colors });
+  y -= 86;
+  drawReportSectionTitle(page, "Confirmacoes", margin, y, bold, colors);
+  y -= 18;
+  drawConfirmationReportTableHeader(page, margin, y, contentWidth, { bold, colors });
+  y -= 30;
+
   input.confirmations.forEach((detail) => {
-    const seller = partyName(detail, "SELLER");
-    const buyer = partyName(detail, "BUYER");
-    lines.push(`${detail.confirmation.confirmationDate} | ${detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference} | ${seller} -> ${buyer} | ${detail.confirmation.totalQuantitySacksDecimal} sacas | R$ ${formatCents(detail.confirmation.totalCommercialAmountCents)} | ${detail.confirmation.status}`);
+    if (y < 58) {
+      page = addPage(doc.getPageCount() + 1);
+      y = pageHeight - margin - 120;
+      drawReportSectionTitle(page, "Confirmacoes", margin, y, bold, colors);
+      y -= 18;
+      drawConfirmationReportTableHeader(page, margin, y, contentWidth, { bold, colors });
+      y -= 30;
+    }
+    drawConfirmationReportRow(page, detail, margin, y, contentWidth, { font, bold, colors });
+    y -= 20;
   });
-  return lines;
+
+  if (input.confirmations.length === 0) {
+    drawReportInfoBox(page, "SEM REGISTROS", ["Nenhuma confirmacao encontrada para os filtros selecionados."], margin, y + 4, contentWidth, 48, { font, bold, colors });
+  }
+
+  doc.getPages().forEach((reportPage) => {
+    reportPage.drawText("Relatorio gerencial local gerado pelo Sistema de Operacoes de Cafe.", { x: margin, y: 22, size: 6.5, font, color: colors.muted });
+  });
+  return doc.save();
+}
+
+function drawReportCards(page: PDFPage, y: number, contentWidth: number, margin: number, cards: Array<[string, string]>, style: { font: PDFFont; bold: PDFFont; colors: ReturnType<typeof confirmationReportColors> }): void {
+  const gap = 9;
+  const width = (contentWidth - gap * (cards.length - 1)) / cards.length;
+  cards.forEach(([label, value], index) => {
+    const x = margin + index * (width + gap);
+    page.drawRectangle({ x, y: y - 52, width, height: 52, color: style.colors.paper, borderColor: style.colors.border, borderWidth: 0.55 });
+    page.drawText(label, { x: x + 10, y: y - 18, size: 6.8, font: style.bold, color: style.colors.muted });
+    page.drawText(truncate(value, style.bold, 10.5, width - 20), { x: x + 10, y: y - 39, size: 10.5, font: style.bold, color: style.colors.ink });
+  });
+}
+
+function drawConfirmationReportTableHeader(page: PDFPage, x: number, y: number, width: number, style: { bold: PDFFont; colors: ReturnType<typeof confirmationReportColors> }): void {
+  page.drawRectangle({ x, y: y - 18, width, height: 18, color: style.colors.soft, borderColor: style.colors.border, borderWidth: 0.45 });
+  [
+    ["DATA", x + 8],
+    ["NUMERO", x + 58],
+    ["VENDEDOR", x + 126],
+    ["COMPRADOR", x + 244],
+    ["SACAS", x + 382],
+    ["VALOR", x + 432],
+    ["STATUS", x + 500]
+  ].forEach(([label, columnX]) => page.drawText(String(label), { x: Number(columnX), y: y - 12, size: 6.4, font: style.bold, color: style.colors.muted }));
+}
+
+function drawConfirmationReportRow(page: PDFPage, detail: DealConfirmationDetail, x: number, y: number, width: number, style: { font: PDFFont; bold: PDFFont; colors: ReturnType<typeof confirmationReportColors> }): void {
+  page.drawLine({ start: { x, y: y - 7 }, end: { x: x + width, y: y - 7 }, thickness: 0.35, color: style.colors.border });
+  page.drawText(formatDate(detail.confirmation.confirmationDate), { x: x + 8, y, size: 7, font: style.font, color: style.colors.ink });
+  page.drawText(truncate(detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference, style.font, 7, 62), { x: x + 58, y, size: 7, font: style.font, color: style.colors.ink });
+  page.drawText(truncate(partyName(detail, "SELLER"), style.font, 7, 110), { x: x + 126, y, size: 7, font: style.font, color: style.colors.ink });
+  page.drawText(truncate(partyName(detail, "BUYER"), style.font, 7, 128), { x: x + 244, y, size: 7, font: style.font, color: style.colors.ink });
+  drawRightText(page, detail.confirmation.totalQuantitySacksDecimal, x + 370, y, 42, style.font, 7, style.colors.ink);
+  drawRightText(page, formatCents(detail.confirmation.totalCommercialAmountCents), x + 420, y, 62, style.bold, 7, style.colors.ink);
+  page.drawText(truncate(detail.confirmation.status, style.font, 7, 44), { x: x + 500, y, size: 7, font: style.font, color: style.colors.ink });
+}
+
+function drawReportInfoBox(page: PDFPage, title: string, lines: string[], x: number, topY: number, width: number, height: number, style: { font: PDFFont; bold: PDFFont; colors: ReturnType<typeof confirmationReportColors> }): void {
+  page.drawRectangle({ x, y: topY - height, width, height, color: style.colors.paper, borderColor: style.colors.border, borderWidth: 0.55 });
+  page.drawText(title, { x: x + 10, y: topY - 16, size: 6.6, font: style.bold, color: style.colors.accent });
+  lines.slice(0, 3).forEach((line, index) => {
+    page.drawText(truncate(line, index === 0 ? style.bold : style.font, index === 0 ? 8.2 : 7.3, width - 20), { x: x + 10, y: topY - 32 - index * 13, size: index === 0 ? 8.2 : 7.3, font: index === 0 ? style.bold : style.font, color: style.colors.ink });
+  });
+}
+
+function drawReportSectionTitle(page: PDFPage, title: string, x: number, topY: number, bold: PDFFont, colors: ReturnType<typeof confirmationReportColors>): void {
+  page.drawRectangle({ x, y: topY - 10, width: 3, height: 10, color: colors.accent });
+  page.drawText(title, { x: x + 8, y: topY - 9, size: 8.2, font: bold, color: colors.ink });
+}
+
+async function embedReportLogo(doc: PDFDocument, organization: Organization): Promise<{ image: Awaited<ReturnType<PDFDocument["embedPng"]>>; width: number; height: number } | { image: Awaited<ReturnType<PDFDocument["embedJpg"]>>; width: number; height: number } | null> {
+  const source = resolveBrandingLogoBytes(organization);
+  if (!source) return null;
+  const ext = source.ext === "png" ? "png" : "jpeg";
+  const image = ext === "png" ? await doc.embedPng(source.bytes) : await doc.embedJpg(source.bytes);
+  return { image, width: image.width, height: image.height };
+}
+
+function fitReportImage(width: number, height: number, maxWidth: number, maxHeight: number): { width: number; height: number } {
+  const scale = Math.min(maxWidth / width, maxHeight / height);
+  return { width: width * scale, height: height * scale };
+}
+
+function confirmationReportColors(organization: Organization, ownLegalEntity: LegalEntity | null): {
+  background: PdfColor;
+  paper: PdfColor;
+  soft: PdfColor;
+  header: PdfColor;
+  headerText: PdfColor;
+  headerMuted: PdfColor;
+  ink: PdfColor;
+  muted: PdfColor;
+  border: PdfColor;
+  accent: PdfColor;
+} {
+  const isGraoBrand = `${organization.slug} ${organization.displayName} ${ownLegalEntity?.tradeName ?? ""}`.toLowerCase().includes("grao");
+  return {
+    background: rgb(0.985, 0.965, 0.925),
+    paper: rgb(1, 0.99, 0.965),
+    soft: rgb(0.965, 0.94, 0.885),
+    header: isGraoBrand ? rgb(0.015, 0.19, 0.13) : rgb(0.07, 0.055, 0.04),
+    headerText: rgb(1, 0.96, 0.88),
+    headerMuted: rgb(0.84, 0.75, 0.63),
+    ink: rgb(0.1, 0.08, 0.06),
+    muted: rgb(0.36, 0.32, 0.26),
+    border: rgb(0.73, 0.63, 0.49),
+    accent: isGraoBrand ? rgb(0.05, 0.68, 0.38) : rgb(0.69, 0.49, 0.29)
+  };
+}
+
+function confirmationReportLabel(type: ConfirmationReportType): string {
+  const labels: Record<ConfirmationReportType, string> = {
+    CONFIRMATIONS_PERIOD: "Periodo",
+    BY_SELLER: "Por vendedor",
+    BY_BUYER: "Por comprador",
+    BY_PRODUCT: "Por produto",
+    BY_STATUS: "Por status",
+    BY_SIGNATURE: "Por assinatura",
+    WITHOUT_FISCAL_DOCUMENT: "Sem NF",
+    WITHOUT_OPERATION: "Sem operacao"
+  };
+  return labels[type] ?? type;
 }
 
 async function writeReportWorkbook(filePath: string, input: Parameters<typeof generateDealConfirmationReportFile>[0]): Promise<void> {
@@ -813,43 +973,6 @@ async function writeReportWorkbook(filePath: string, input: Parameters<typeof ge
   await workbook.xlsx.writeFile(filePath);
 }
 
-function writeSimplePdf(filePath: string, lines: string[]): void {
-  mkdirSync(dirname(filePath), { recursive: true });
-  const pageHeight = 842;
-  const chunks = chunk(lines, 46);
-  const pageObjects: string[] = [];
-  const contentObjects: string[] = [];
-  chunks.forEach((pageLines, pageIndex) => {
-    const contentObjectNumber = 4 + chunks.length + pageIndex;
-    pageObjects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`);
-    const body = pageLines.map((line, index) => {
-      const y = pageHeight - 44 - index * 16;
-      const size = pageIndex === 0 && index === 1 ? 16 : 9;
-      return `BT /F1 ${size} Tf 36 ${y} Td (${escapePdf(line.slice(0, 150))}) Tj ET`;
-    }).join("\n");
-    contentObjects.push(`<< /Length ${Buffer.byteLength(body)} >>\nstream\n${body}\nendstream`);
-  });
-  const pageRefs = pageObjects.map((_object, index) => `${4 + index} 0 R`).join(" ");
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    `<< /Type /Pages /Kids [${pageRefs}] /Count ${pageObjects.length} >>`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ...pageObjects,
-    ...contentObjects
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
-  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  writeFileSync(filePath, pdf);
-}
-
 function partyName(detail: DealConfirmationDetail, role: string): string {
   const party = detail.parties.find((item) => item.partyRole === role);
   if (!party) return "";
@@ -863,12 +986,6 @@ function safeJson<T>(value: string, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
-  return chunks.length > 0 ? chunks : [[]];
 }
 
 function formatCents(value: number): string {
@@ -891,6 +1008,12 @@ function formatDate(value: string | null | undefined): string {
   return value;
 }
 
+function formatDateTime(value: string): string {
+  const [datePart, timePart = ""] = value.split("T");
+  const date = formatDate(datePart);
+  return timePart ? `${date} ${timePart.slice(0, 5)}` : date;
+}
+
 function formatTaxId(value: string | null | undefined): string {
   const digits = value?.replace(/\D/g, "") ?? "";
   if (digits.length === 14) {
@@ -900,6 +1023,12 @@ function formatTaxId(value: string | null | undefined): string {
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
   }
   return value ?? "nao informado";
+}
+
+function formatPostalCode(value: string | null | undefined): string {
+  const digits = value?.replace(/\D/g, "") ?? "";
+  if (digits.length === 8) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  return value ?? "";
 }
 
 function buildDealConfirmationFileName(input: Parameters<typeof generateDealConfirmationPdf>[0]): string {
@@ -974,8 +1103,4 @@ function simplifyCounterpartyName(value: string): string {
 
 function normalizeAscii(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-function escapePdf(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }

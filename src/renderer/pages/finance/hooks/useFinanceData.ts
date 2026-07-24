@@ -38,7 +38,7 @@ export function useFinanceData(data: BootstrapData): { finance: FinanceData; loa
         window.operationsCafe.listCostCenters({ organizationId, ownLegalEntityId, status: "all" }),
         window.operationsCafe.listFinancialAccounts({ organizationId, ownLegalEntityId, status: "all" }),
         window.operationsCafe.listAccountsPayable({ organizationId, ownLegalEntityId }),
-        window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }),
+        window.operationsCafe.listBusinessPartners({ status: "active" }),
         window.operationsCafe.getFinancialSummary(organizationId),
         window.operationsCafe.listFinancialReports({ organizationId, ownLegalEntityId }),
         window.operationsCafe.listPayablePayments({ organizationId, ownLegalEntityId }),
