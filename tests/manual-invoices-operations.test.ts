@@ -69,6 +69,45 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
+  it("creates invoice and operation with a shared client registered under another organization", () => {
+    const { repo, db, productId } = setup();
+    const graoId = "22222222-2222-4222-8222-222222222222";
+    const sharedPartner = repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Global", notes: null, roles: ["CLIENT"], isActive: true });
+    repo.createServiceRateRule({
+      organizationId: villaId,
+      businessPartnerId: sharedPartner.id,
+      ownLegalEntityId: null,
+      productId,
+      operationScope: "EXTERNAL",
+      rateType: "PER_SACK",
+      rateValueCents: 700,
+      effectiveFrom: "2026-07-01",
+      effectiveTo: null,
+      priority: 10,
+      notes: null,
+      isActive: true
+    });
+
+    const doc = repo.createFiscalDocument(sampleDocument(sharedPartner.id, "101", null));
+    const operation = repo.addOperation({
+      fiscalDocumentId: doc.document.id,
+      fiscalDocumentItemId: null,
+      ownLegalEntityId,
+      responsiblePartnerId: sharedPartner.id,
+      productId,
+      operationType: "SALE",
+      operationScope: "EXTERNAL",
+      operationDate: "2026-07-16",
+      quantitySacks: "10",
+      manualRateValueCents: null,
+      manualOverrideReason: null,
+      notes: null
+    });
+    expect(operation.appliedRateValueCents).toBe(700);
+    expect(operation.serviceAmountCents).toBe(7000);
+    db.close();
+  });
+
   it("blocks duplicate access key and warns possible duplicate without key", () => {
     const { repo, db, partnerId } = setup();
     repo.createFiscalDocument(sampleDocument(partnerId, "200", "12345678901234567890123456789012345678901234"));

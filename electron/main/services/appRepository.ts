@@ -879,8 +879,7 @@ export class AppRepository {
     this.assertOrganizationWritable(data.organizationId);
     const own = this.getLegalEntity(data.ownLegalEntityId);
     if (own.organizationId !== data.organizationId) throw new Error("CNPJ proprio pertence a outra organizacao.");
-    const partner = this.getBusinessPartner(data.responsiblePartnerId);
-    if (partner.organizationId !== data.organizationId) throw new Error("Cliente responsavel pertence a outra organizacao.");
+    this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
     if (data.accessKey) {
       const duplicate = this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ?").get(data.accessKey);
       if (duplicate) throw new Error("Chave de acesso ja cadastrada.");
@@ -901,6 +900,7 @@ export class AppRepository {
   updateFiscalDocument(id: string, input: unknown): FiscalDocumentDetail {
     this.getFiscalDocument(id);
     const data = fiscalDocumentInputSchema.parse(input);
+    this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
     const duplicateWarning = this.detectPossibleDuplicate(data, id);
     this.db.prepare(`UPDATE fiscal_documents SET own_legal_entity_id = ?, responsible_partner_id = ?, partner_legal_entity_id = ?, access_key = ?, document_number = ?, series = ?, issue_date = ?, total_amount_cents = ?, has_pending_issues = ?, pending_notes = ?, duplicate_warning = ?, notes = ?, updated_at = ? WHERE id = ?`)
       .run(data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, new Date().toISOString(), id);
