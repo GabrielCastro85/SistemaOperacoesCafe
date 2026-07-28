@@ -503,7 +503,7 @@ export interface OperationsCafeApi {
   upsertBillingProfile: (input: unknown) => Promise<ClientBillingProfile>;
   activateBillingProfile: (id: string) => Promise<ClientBillingProfile>;
   deactivateBillingProfile: (id: string) => Promise<ClientBillingProfile>;
-  listServiceRateRules: (filters?: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; status?: "active" | "inactive" | "all" }) => Promise<ServiceRateRule[]>;
+  listServiceRateRules: (filters?: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; counterpartyPartnerLegalEntityId?: string; status?: "active" | "inactive" | "all" }) => Promise<ServiceRateRule[]>;
   getServiceRateRule: (id: string) => Promise<ServiceRateRule>;
   createServiceRateRule: (input: unknown) => Promise<ServiceRateRule>;
   updateServiceRateRule: (id: string, input: unknown) => Promise<ServiceRateRule>;
@@ -522,7 +522,7 @@ export interface OperationsCafeApi {
   updateOperationManualRate: (id: string, manualRateValueCents: number, reason: string) => Promise<Operation>;
   confirmFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   cancelFiscalDocument: (id: string, reason: string) => Promise<FiscalDocumentDetail>;
-  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number }>;
+  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number }>;
   getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
@@ -590,12 +590,12 @@ export interface OperationsCafeApi {
   removeChargeAdjustment: (id: string) => Promise<ClientChargeDetail>;
   applyChargeCredit: (input: unknown) => Promise<ClientChargeDetail>;
   submitClientChargeForReview: (id: string) => Promise<ClientChargeDetail>;
-  issueClientCharge: (id: string) => Promise<ClientChargeDetail | null>;
+  issueClientCharge: (id: string) => Promise<ClientChargeDetail>;
   cancelClientCharge: (id: string, reason: string) => Promise<ClientChargeDetail>;
   listClientCharges: (filters?: { organizationId?: string; clientPartnerId?: string; status?: string }) => Promise<ClientCharge[]>;
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
-  regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail | null>;
-  openChargeDocument: (input: { chargeId: string; kind: "pdf" | "excel" | "image" }) => Promise<boolean>;
+  regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
+  openChargeDocument: (input: { chargeId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;
   createAdvance: (input: unknown) => Promise<ClientLedgerEntry>;
@@ -603,7 +603,7 @@ export interface OperationsCafeApi {
   getAvailableCredits: (organizationId: string, ownLegalEntityId: string, clientPartnerId: string) => Promise<ClientLedgerEntry[]>;
   createClientPayment: (input: unknown) => Promise<ClientPayment>;
   allocateClientPayment: (input: unknown) => Promise<ClientChargeDetail>;
-  getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<BillingSummary>;
+  getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean }) => Promise<BillingSummary>;
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
   listExpenseCategories: (organizationId: string) => Promise<ExpenseCategory[]>;
   createExpenseCategory: (input: unknown) => Promise<ExpenseCategory>;
@@ -856,6 +856,8 @@ const api: OperationsCafeApi = {
       pending: number;
       confirmed: number;
       operations: number;
+      sacksDecimal: string;
+      fiscalAmountCents: number;
       serviceAmountCents: number;
     }>,
   getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
@@ -926,11 +928,11 @@ const api: OperationsCafeApi = {
   removeChargeAdjustment: (id) => ipcRenderer.invoke(IPC_CHANNELS.removeChargeAdjustment, id) as Promise<ClientChargeDetail>,
   applyChargeCredit: (input) => ipcRenderer.invoke(IPC_CHANNELS.applyChargeCredit, input) as Promise<ClientChargeDetail>,
   submitClientChargeForReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.submitClientChargeForReview, id) as Promise<ClientChargeDetail>,
-  issueClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueClientCharge, id) as Promise<ClientChargeDetail | null>,
+  issueClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueClientCharge, id) as Promise<ClientChargeDetail>,
   cancelClientCharge: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelClientCharge, { id, reason }) as Promise<ClientChargeDetail>,
   listClientCharges: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listClientCharges, filters) as Promise<ClientCharge[]>,
   getClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.getClientCharge, id) as Promise<ClientChargeDetail>,
-  regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail | null>,
+  regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail>,
   openChargeDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.openChargeDocument, input) as Promise<boolean>,
   listLedgerEntries: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLedgerEntries, filters) as Promise<ClientLedgerEntry[]>,
   createLedgerEntry: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLedgerEntry, input) as Promise<ClientLedgerEntry>,

@@ -66,6 +66,11 @@ describe("manual invoices and operations", () => {
     expect(operation.appliedRateValueCents).toBe(500);
     expect(operation.serviceAmountCents).toBe(251150);
     expect(repo.confirmFiscalDocument(doc.document.id).document.status).toBe("CONFIRMED");
+    expect(repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId })).toMatchObject({
+      sacksDecimal: "502.3",
+      fiscalAmountCents: 100000,
+      serviceAmountCents: 251150
+    });
     db.close();
   });
 

@@ -81,54 +81,75 @@ export interface OwnAndCounterparty {
   ownEntityLabel: string | null;
   counterpartyLabel: string | null;
   counterpartyCnpj: string | null;
+  issuerLabel: string | null;
+  issuerCnpj: string | null;
+  recipientLabel: string | null;
+  recipientCnpj: string | null;
+  originLabel: string;
+  isThirdPartyOrigin: boolean;
 }
 
 /** Best-effort local preview only — the backend re-resolves the own CNPJ and counterparty independently when the file is actually imported. */
 export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, legalEntities: LegalEntity[]): OwnAndCounterparty {
-  if (!preview) return { ownEntityLabel: null, counterpartyLabel: null, counterpartyCnpj: null };
-  const issuerCnpj = preview.issuer?.cnpjCpf ? onlyDigits(preview.issuer.cnpjCpf) : null;
+  if (!preview) {
+    return {
+      ownEntityLabel: null,
+      counterpartyLabel: null,
+      counterpartyCnpj: null,
+      issuerLabel: null,
+      issuerCnpj: null,
+      recipientLabel: null,
+      recipientCnpj: null,
+      originLabel: "Nao identificada",
+      isThirdPartyOrigin: false
+    };
+  }
+  const issuerCnpj = preview.issuer?.cnpjCpf ? onlyDigits(preview.issuer.cnpjCpf) : cnpjFromAccessKey(preview.accessKey);
   const recipientCnpj = preview.recipient?.cnpjCpf ? onlyDigits(preview.recipient.cnpjCpf) : null;
+  const issuerLabel = preview.issuer?.tradeName ?? preview.issuer?.legalName ?? null;
+  const recipientLabel = preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null;
   const ownByIssuer = issuerCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj) : undefined;
   const ownByRecipient = recipientCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj) : undefined;
-  const ownByIssuerIdentity = !ownByIssuer ? findOwnByIdentity(legalEntities, preview.issuer) : undefined;
-  const ownByRecipientIdentity = !ownByRecipient ? findOwnByIdentity(legalEntities, preview.recipient) : undefined;
   if (ownByIssuer) {
-    return { ownEntityLabel: ownByIssuer.tradeName, counterpartyLabel: preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null, counterpartyCnpj: recipientCnpj };
+    return {
+      ownEntityLabel: ownByIssuer.tradeName,
+      counterpartyLabel: recipientLabel,
+      counterpartyCnpj: recipientCnpj,
+      issuerLabel,
+      issuerCnpj,
+      recipientLabel,
+      recipientCnpj,
+      originLabel: ownByIssuer.tradeName,
+      isThirdPartyOrigin: false
+    };
   }
   if (ownByRecipient) {
-    return { ownEntityLabel: ownByRecipient.tradeName, counterpartyLabel: preview.issuer?.tradeName ?? preview.issuer?.legalName ?? null, counterpartyCnpj: issuerCnpj };
+    return {
+      ownEntityLabel: ownByRecipient.tradeName,
+      counterpartyLabel: issuerLabel,
+      counterpartyCnpj: issuerCnpj,
+      issuerLabel,
+      issuerCnpj,
+      recipientLabel,
+      recipientCnpj,
+      originLabel: ownByRecipient.tradeName,
+      isThirdPartyOrigin: false
+    };
   }
-  if (ownByIssuerIdentity) {
-    return { ownEntityLabel: ownByIssuerIdentity.tradeName, counterpartyLabel: preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null, counterpartyCnpj: recipientCnpj };
-  }
-  if (ownByRecipientIdentity) {
-    return { ownEntityLabel: ownByRecipientIdentity.tradeName, counterpartyLabel: preview.issuer?.tradeName ?? preview.issuer?.legalName ?? null, counterpartyCnpj: issuerCnpj };
-  }
-  return { ownEntityLabel: null, counterpartyLabel: preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null, counterpartyCnpj: recipientCnpj };
-}
-
-function findOwnByIdentity(legalEntities: LegalEntity[], partySnapshot: NfePartySnapshot | null | undefined): LegalEntity | undefined {
-  const state = partySnapshot?.state?.toUpperCase();
-  if (!state) return undefined;
-  const stateAliases: Record<string, string[]> = {
-    MG: ["MG", "MINAS GERAIS", "MONTE SANTO DE MINAS"],
-    ES: ["ES", "ESPIRITO SANTO"],
-    SP: ["SP", "SAO PAULO"]
+  return {
+    ownEntityLabel: null,
+    counterpartyLabel: recipientLabel,
+    counterpartyCnpj: recipientCnpj,
+    issuerLabel,
+    issuerCnpj,
+    recipientLabel,
+    recipientCnpj,
+    originLabel: issuerLabel ?? "Empresa externa/terceirizada",
+    isThirdPartyOrigin: true
   };
-  const aliases = stateAliases[state] ?? [state];
-  return legalEntities.find((entity) => {
-    if (entity.state.toUpperCase() === state) return true;
-    const haystack = normalizeText(`${entity.legalName} ${entity.tradeName} ${entity.city} ${entity.state}`);
-    return aliases.some((alias) => haystack.includes(normalizeText(alias)));
-  });
 }
 
-function normalizeText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^\p{Letter}\p{Number} ]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase();
+function cnpjFromAccessKey(accessKey: string | null): string | null {
+  const key = accessKey ? onlyDigits(accessKey) : null;
+  return key && key.length === 44 ? key.slice(6, 20) : null;
 }

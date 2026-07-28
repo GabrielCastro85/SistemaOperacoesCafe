@@ -16,14 +16,17 @@ export interface ChargeDocumentResult {
   imageFileHash: string;
 }
 
-export async function generateChargeDocuments(input: {
+type ChargeDocumentsInput = {
   directories: AppDirectories;
   organization: Organization;
   ownLegalEntity: LegalEntity;
   client: BusinessPartner;
   clientLegalEntity?: BusinessPartnerLegalEntity | null;
   detail: ClientChargeDetail;
-}): Promise<ChargeDocumentResult> {
+  relatedOpenChargeDetails?: ClientChargeDetail[];
+};
+
+export async function generateChargeDocuments(input: ChargeDocumentsInput): Promise<ChargeDocumentResult> {
   const number = sanitizeSegment(input.detail.charge.chargeNumber ?? input.detail.charge.id);
   const year = (input.detail.charge.issueDate ?? input.detail.charge.createdAt).slice(0, 4);
   const baseDir = join(input.directories.chargesDir, input.organization.id, input.ownLegalEntity.id, year, number);
@@ -47,7 +50,7 @@ export async function generateChargeDocuments(input: {
 
 type PdfColor = ReturnType<typeof rgb>;
 
-async function buildChargePdf(input: { organization: Organization; ownLegalEntity: LegalEntity; client: BusinessPartner; clientLegalEntity?: BusinessPartnerLegalEntity | null; detail: ClientChargeDetail }): Promise<Uint8Array> {
+async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> {
   const { organization, ownLegalEntity, client, clientLegalEntity, detail } = input;
   const { charge } = detail;
   const pageWidth = 595.28;
@@ -94,42 +97,31 @@ async function buildChargePdf(input: { organization: Organization; ownLegalEntit
   drawInfoBox(page, "PERIODO", [`${formatDate(charge.periodStart)} a ${formatDate(charge.periodEnd)}`, `Periodicidade: ${translatePeriodicity(charge.periodicity)}`], margin + boxWidth + boxGap, y, boxWidth, 88, { font, bold, ink, muted, border, paper, gold });
 
   y -= 102;
-  drawSectionTitle(page, "Operacoes cobradas", margin, y, bold, ink, green);
+  const chargeCount = 1 + (input.relatedOpenChargeDetails?.length ?? 0);
+  const totalOpenCents = [detail, ...(input.relatedOpenChargeDetails ?? [])].reduce((total, item) => total + item.charge.openAmountCents, 0);
+  drawSectionTitle(page, chargeCount > 1 ? `Operacoes em ${chargeCount} cobrancas abertas` : "Operacoes cobradas", margin, y, bold, ink, green);
   y -= 16;
-  const tableHeight = 172;
+  const sections = summaryImageSections(input);
+  const tableContentHeight = sections.reduce((total, section) => total + 15 + section.rows.length * 12 + 15, 0);
+  const tableHeight = Math.max(226, Math.min(286, 26 + tableContentHeight));
   page.drawRectangle({ x: margin, y: y - tableHeight, width: contentWidth, height: tableHeight, color: paper, borderColor: border, borderWidth: 0.55 });
   const columns = [
-    { title: "DATA", x: margin + 8, width: 52 },
-    { title: "NF", x: margin + 66, width: 52 },
-    { title: "PRODUTO", x: margin + 124, width: 170 },
-    { title: "TIPO", x: margin + 300, width: 64 },
-    { title: "SACAS", x: margin + 370, width: 52 },
-    { title: "R$/SACA", x: margin + 428, width: 52 },
-    { title: "TOTAL", x: margin + 486, width: 44 }
+    { title: "COBRANCA", x: margin + 8, width: 62 },
+    { title: "NF", x: margin + 78, width: 36 },
+    { title: "EMPRESA", x: margin + 122, width: 142 },
+    { title: "UF DA VENDA", x: margin + 272, width: 64 },
+    { title: "SACAS", x: margin + 346, width: 44 },
+    { title: "VALOR X NF", x: margin + 400, width: 124 }
   ];
   page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: soft });
   columns.forEach((column) => page.drawText(column.title, { x: column.x, y: y - 13, size: 6.6, font: bold, color: muted }));
-  const rows = detail.operations.slice(0, 8);
-  rows.forEach((item, index) => {
-    const rowY = y - 33 - index * 20;
-    if (index % 2 === 1) page.drawRectangle({ x: margin, y: rowY - 5, width: contentWidth, height: 18, color: rgb(0.985, 0.965, 0.925) });
-    page.drawText(formatDate(item.operationDateSnapshot), { x: columns[0].x, y: rowY, size: 7, font, color: ink });
-    page.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", font, 7, columns[1].width), { x: columns[1].x, y: rowY, size: 7, font, color: ink });
-    page.drawText(truncate(item.productNameSnapshot ?? "-", font, 7, columns[2].width), { x: columns[2].x, y: rowY, size: 7, font, color: ink });
-    page.drawText(formatOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: rowY, size: 7, font, color: ink });
-    drawRightText(page, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, rowY, columns[4].width, font, 7, ink);
-    drawRightText(page, formatCents(item.serviceRateCentsSnapshot), columns[5].x, rowY, columns[5].width, font, 7, ink);
-    drawRightText(page, formatCents(item.serviceAmountCentsSnapshot), columns[6].x, rowY, columns[6].width, bold, 7, ink);
-  });
-  if (detail.operations.length > rows.length) {
-    page.drawText(`+ ${detail.operations.length - rows.length} operacao(oes) no Excel anexo`, { x: margin + 8, y: y - tableHeight + 12, size: 7.2, font: bold, color: gold });
-  }
+  drawChargeOperationSectionsPdf(page, sections, columns, margin, y - 33, contentWidth, { font, bold, ink, muted, soft, gold });
   y -= tableHeight + 20;
 
   const summaryWidth = 250;
   const paymentWidth = contentWidth - summaryWidth - boxGap;
   drawPaymentBox(page, ownLegalEntity, margin, y, paymentWidth, 118, { font, bold, ink, muted, border, paper, gold, green });
-  drawTotalsBox(page, detail, margin + paymentWidth + boxGap, y, summaryWidth, 118, { font, bold, ink, muted, border, paper, gold, green });
+  drawTotalsBox(page, detail, margin + paymentWidth + boxGap, y, summaryWidth, 118, { font, bold, ink, muted, border, paper, gold, green }, { chargeCount, totalOpenCents });
 
   y -= 136;
   drawSectionTitle(page, "Ajustes e pagamentos", margin, y, bold, ink, green);
@@ -166,8 +158,8 @@ async function writeChargeWorkbook(filePath: string, input: { client: BusinessPa
     ["Aberto", charge.openAmountCents / 100]
   ]);
   const operations = workbook.addWorksheet("Operacoes");
-  operations.addRow(["Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total"]);
-  input.detail.operations.forEach((item) => operations.addRow([item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
+  operations.addRow(["Empresa", "Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total"]);
+  input.detail.operations.forEach((item) => operations.addRow([item.ownLegalEntityNameSnapshot ?? "-", item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
   const adjustments = workbook.addWorksheet("Ajustes");
   adjustments.addRow(["Tipo", "Descricao", "Efeito", "Valor"]);
   input.detail.adjustments.forEach((item) => adjustments.addRow([item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
@@ -183,6 +175,50 @@ async function writeChargeWorkbook(filePath: string, input: { client: BusinessPa
 function drawSectionTitle(page: PDFPage, title: string, x: number, topY: number, bold: PDFFont, ink: PdfColor, green: PdfColor): void {
   page.drawRectangle({ x, y: topY - 10, width: 3, height: 10, color: green });
   page.drawText(title, { x: x + 8, y: topY - 8, size: 8.2, font: bold, color: ink });
+}
+
+function drawChargeOperationSectionsPdf(
+  page: PDFPage,
+  sections: SummarySection[],
+  columns: Array<{ title: string; x: number; width: number }>,
+  margin: number,
+  startY: number,
+  contentWidth: number,
+  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; soft: PdfColor; gold: PdfColor }
+): void {
+  if (sections.length === 0) {
+    page.drawText("Nenhuma operacao vinculada a esta cobranca.", { x: margin + 8, y: startY, size: 6.8, font: style.font, color: style.ink });
+    return;
+  }
+
+  let cursorY = startY;
+  sections.forEach((section) => {
+    page.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
+    page.drawText(truncate(section.title, style.bold, 6.8, contentWidth - 20), { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
+    cursorY -= 13;
+
+    section.rows.forEach((row) => {
+      const item = row.operation;
+      const brandColors = chargeBrandPdfColors(item.ownLegalEntityNameSnapshot);
+      if (brandColors) {
+        page.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: brandColors.background });
+        page.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: brandColors.stripe });
+      }
+      page.drawText(truncate(row.chargeNumber, style.font, 5.9, columns[0].width), { x: columns[0].x, y: cursorY, size: 5.9, font: style.font, color: style.ink });
+      page.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 5.9, columns[1].width), { x: columns[1].x, y: cursorY, size: 5.9, font: style.font, color: style.ink });
+      page.drawText(truncate(item.ownLegalEntityNameSnapshot ?? "-", style.font, 5.9, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.9, font: style.font, color: style.ink });
+      page.drawText(formatOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 5.9, font: style.font, color: style.ink });
+      drawRightText(page, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 5.9, style.ink);
+      drawRightText(page, `R$ ${formatCents(item.serviceAmountCentsSnapshot)} x NF ${item.fiscalDocumentNumberSnapshot ?? "-"}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.9, style.ink);
+      cursorY -= 12;
+    });
+
+    const subtotalY = cursorY - 1;
+    const subtotalLabel = `TOTAL: ${decimalTextBr(formatDecimal(section.sacks))} sacas - R$ ${formatCents(section.rateCents)}/saca`;
+    page.drawText(truncate(subtotalLabel, style.bold, 5.8, 210), { x: columns[3].x, y: subtotalY, size: 5.8, font: style.bold, color: style.gold });
+    drawRightText(page, `R$ ${formatCents(section.amountCents)}`, columns[5].x, subtotalY, columns[5].width, style.bold, 5.8, style.ink);
+    cursorY -= 15;
+  });
 }
 
 function drawInfoBox(
@@ -232,25 +268,27 @@ function drawTotalsBox(
   topY: number,
   width: number,
   height: number,
-  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; border: PdfColor; paper: PdfColor; gold: PdfColor; green: PdfColor }
+  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; border: PdfColor; paper: PdfColor; gold: PdfColor; green: PdfColor },
+  combined?: { chargeCount: number; totalOpenCents: number }
 ): void {
   const { charge } = detail;
+  const openAmountCents = combined && combined.chargeCount > 1 ? combined.totalOpenCents : charge.openAmountCents;
   page.drawRectangle({ x, y: topY - height, width, height, color: style.paper, borderColor: style.border, borderWidth: 0.55 });
   page.drawText("RESUMO DA COBRANCA", { x: x + 10, y: topY - 13, size: 7, font: style.bold, color: style.gold });
   const rows = [
     ["Subtotal", charge.subtotalServicesCents],
     ["Acrescimos", charge.additionsCents],
     ["Deducoes", -charge.deductionsCents],
-    ["Pago", -charge.paidAmountCents]
-  ] as const;
+    combined && combined.chargeCount > 1 ? ["Outras abertas", Math.max(0, combined.totalOpenCents - charge.openAmountCents)] : ["Pago", -charge.paidAmountCents]
+  ] as Array<readonly [string, number]>;
   rows.forEach(([label, amount], index) => {
     const rowY = topY - 30 - index * 14;
     page.drawText(label, { x: x + 10, y: rowY, size: 7.2, font: style.font, color: style.muted });
     drawRightText(page, `R$ ${formatSignedCents(amount)}`, x + width - 102, rowY, 90, style.font, 7.2, style.ink);
   });
   page.drawLine({ start: { x: x + 10, y: topY - 88 }, end: { x: x + width - 10, y: topY - 88 }, thickness: 0.55, color: style.border });
-  page.drawText("Total em aberto", { x: x + 10, y: topY - 103, size: 7.4, font: style.bold, color: style.ink });
-  drawRightText(page, `R$ ${formatCents(charge.openAmountCents)}`, x + width - 124, topY - 104, 112, style.bold, 12, style.green);
+  page.drawText(combined && combined.chargeCount > 1 ? "Total aberto geral" : "Total em aberto", { x: x + 10, y: topY - 103, size: 7.4, font: style.bold, color: style.ink });
+  drawRightText(page, `R$ ${formatCents(openAmountCents)}`, x + width - 124, topY - 104, 112, style.bold, 12, style.green);
 }
 
 async function embedLogo(doc: PDFDocument, organization: Organization): Promise<{ image: Awaited<ReturnType<PDFDocument["embedPng"]>>; width: number; height: number } | null> {
@@ -306,6 +344,30 @@ function drawRightText(page: PDFPage, value: string, x: number, y: number, width
   page.drawText(label, { x: x + width - usedFont.widthOfTextAtSize(label, size), y, size, font: usedFont, color });
 }
 
+function chargeBrandKey(value: string | null | undefined): "grao" | "villa" | "thirdParty" | null {
+  const normalized = (value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (!normalized.trim()) return null;
+  if (normalized.includes("grao")) return "grao";
+  if (normalized.includes("villa")) return "villa";
+  return "thirdParty";
+}
+
+function chargeBrandPdfColors(value: string | null | undefined): { background: PdfColor; stripe: PdfColor } | null {
+  const key = chargeBrandKey(value);
+  if (key === "grao") return { background: rgb(0.93, 0.975, 0.94), stripe: rgb(0.16, 0.55, 0.35) };
+  if (key === "villa") return { background: rgb(0.985, 0.935, 0.86), stripe: rgb(0.61, 0.42, 0.24) };
+  if (key === "thirdParty") return { background: rgb(0.92, 0.95, 0.98), stripe: rgb(0.28, 0.43, 0.62) };
+  return null;
+}
+
+function chargeBrandSvgColors(value: string | null | undefined): { background: string; stripe: string } | null {
+  const key = chargeBrandKey(value);
+  if (key === "grao") return { background: "#eaf7ee", stripe: "#2a8f5a" };
+  if (key === "villa") return { background: "#f7ecdd", stripe: "#9b6b3c" };
+  if (key === "thirdParty") return { background: "#eaf1f8", stripe: "#476f9f" };
+  return null;
+}
+
 function wrapText(value: string, usedFont: PDFFont, size: number, maxWidth: number): string[] {
   const result: string[] = [];
   value.split(/\r?\n/).forEach((paragraph) => {
@@ -329,9 +391,10 @@ function wrapText(value: string, usedFont: PDFFont, size: number, maxWidth: numb
   return result;
 }
 
-async function writeSummaryImage(basePath: string, input: { organization: Organization; client: BusinessPartner; detail: ClientChargeDetail }): Promise<string> {
+async function writeSummaryImage(basePath: string, input: ChargeDocumentsInput): Promise<string> {
   mkdirSync(dirname(basePath), { recursive: true });
   const svg = buildSummarySvg(input);
+  const height = summaryImageHeight(input);
   if (process.versions.electron) {
     try {
       const { BrowserWindow } = await import("electron");
@@ -339,7 +402,7 @@ async function writeSummaryImage(basePath: string, input: { organization: Organi
       const win = new BrowserWindow({
         show: false,
         width: 900,
-        height: 420,
+        height,
         backgroundColor: "#f8f5ed",
         webPreferences: {
           contextIsolation: true,
@@ -348,9 +411,9 @@ async function writeSummaryImage(basePath: string, input: { organization: Organi
         }
       });
       try {
-        const html = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:900px;height:420px;overflow:hidden;background:#f8f5ed}</style></head><body>${svg}</body></html>`;
+        const html = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:900px;height:${height}px;overflow:hidden;background:#f8f5ed}</style></head><body>${svg}</body></html>`;
         await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-        const image = await win.capturePage({ x: 0, y: 0, width: 900, height: 420 });
+        const image = await win.capturePage({ x: 0, y: 0, width: 900, height });
         writeFileSync(pngPath, image.toPNG());
         return pngPath;
       } finally {
@@ -365,25 +428,79 @@ async function writeSummaryImage(basePath: string, input: { organization: Organi
   return svgPath;
 }
 
-function buildSummarySvg(input: { organization: Organization; client: BusinessPartner; detail: ClientChargeDetail }): string {
+type SummaryOperationRow = {
+  chargeNumber: string;
+  operation: ClientChargeDetail["operations"][number];
+};
+
+type SummarySection = {
+  title: string;
+  rows: SummaryOperationRow[];
+  sacks: number;
+  amountCents: number;
+  rateCents: number;
+  scope: "INTERNAL" | "EXTERNAL";
+};
+
+function summaryImageOperationRows(input: ChargeDocumentsInput): SummaryOperationRow[] {
+  return [input.detail, ...(input.relatedOpenChargeDetails ?? [])].flatMap((detail) =>
+    detail.operations.map((operation) => ({
+      chargeNumber: detail.charge.chargeNumber ?? "Rascunho",
+      operation
+    }))
+  );
+}
+
+function summaryImageHeight(input: ChargeDocumentsInput): number {
+  const sections = summaryImageSections(input);
+  const visualRows = sections.reduce((sum, section) => sum + 2 + section.rows.length, 0);
+  return Math.max(520, 330 + Math.max(visualRows, 1) * 25 + 92);
+}
+
+function buildSummarySvg(input: ChargeDocumentsInput): string {
   const width = 900;
-  const height = 420;
+  const height = summaryImageHeight(input);
   const primary = safeHexColor(input.organization.primaryColor, "#17130f");
   const accent = safeHexColor(input.organization.accentColor, "#1d7a4c");
   const charge = input.detail.charge;
-  const rows = input.detail.operations.slice(0, 5);
-  const rowMarkup = rows.map((item, index) => {
-    const y = 266 + index * 28;
+  const sections = summaryImageSections(input);
+  const totalOpenCents = [input.detail, ...(input.relatedOpenChargeDetails ?? [])].reduce((sum, detail) => sum + detail.charge.openAmountCents, 0);
+  const chargeCount = 1 + (input.relatedOpenChargeDetails?.length ?? 0);
+  let cursorY = 256;
+  const sectionMarkup = sections.map((section) => {
+    const sectionY = cursorY;
+    cursorY += 25;
+    const rowsMarkup = section.rows.map((item) => {
+      const y = cursorY;
+      cursorY += 25;
+      const operation = item.operation;
+      const brandColors = chargeBrandSvgColors(operation.ownLegalEntityNameSnapshot);
+      const rowBackground = brandColors
+        ? `<rect x="34" y="${y - 16}" width="832" height="22" rx="3" fill="${brandColors.background}"/><rect x="34" y="${y - 16}" width="4" height="22" rx="2" fill="${brandColors.stripe}"/>`
+        : "";
+      return `
+      ${rowBackground}
+      <text x="48" y="${y}" class="cell">${escapeXml(clipText(item.chargeNumber, 15))}</text>
+      <text x="154" y="${y}" class="cell">${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
+      <text x="224" y="${y}" class="cell">${escapeXml(clipText(operation.ownLegalEntityNameSnapshot ?? "-", 28))}</text>
+      <text x="474" y="${y}" class="cell">${escapeXml(formatOperationScope(operation.operationScopeSnapshot))}</text>
+      <text x="626" y="${y}" class="cell right">${escapeXml(decimalTextBr(operation.quantitySacksDecimalSnapshot))}</text>
+      <text x="846" y="${y}" class="cell right">R$ ${escapeXml(formatCents(operation.serviceAmountCentsSnapshot))} x NF ${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
+    `;
+    }).join("");
+    const subtotalY = cursorY + 3;
+    cursorY += 30;
     return `
-      <text x="48" y="${y}" class="cell">${escapeXml(formatDate(item.operationDateSnapshot))}</text>
-      <text x="150" y="${y}" class="cell">${escapeXml(item.fiscalDocumentNumberSnapshot ?? "-")}</text>
-      <text x="248" y="${y}" class="cell">${escapeXml(clipText(item.productNameSnapshot ?? "-", 34))}</text>
-      <text x="540" y="${y}" class="cell">${escapeXml(formatOperationScope(item.operationScopeSnapshot))}</text>
-      <text x="662" y="${y}" class="cell right">${escapeXml(decimalTextBr(item.quantitySacksDecimalSnapshot))}</text>
-      <text x="805" y="${y}" class="cell right">R$ ${escapeXml(formatCents(item.serviceAmountCentsSnapshot))} x NF ${escapeXml(item.fiscalDocumentNumberSnapshot ?? "-")}</text>
+      <rect x="34" y="${sectionY - 17}" width="832" height="22" rx="5" fill="#efe5d2"/>
+      <text x="48" y="${sectionY}" class="section">${escapeXml(section.title)}</text>
+      ${rowsMarkup}
+      <text x="474" y="${subtotalY}" class="subtotal-label">TOTAL: ${escapeXml(decimalTextBr(formatDecimal(section.sacks)))} sacas - R$ ${escapeXml(formatCents(section.rateCents))}/saca</text>
+      <text x="846" y="${subtotalY}" class="subtotal right">R$ ${escapeXml(formatCents(section.amountCents))}</text>
     `;
   }).join("");
-  const emptyRows = rows.length === 0 ? `<text x="48" y="266" class="cell">Nenhuma operacao vinculada a esta cobranca.</text>` : "";
+  const emptyRows = sections.length === 0 ? `<text x="48" y="266" class="cell">Nenhuma operacao vinculada a esta cobranca.</text>` : "";
+  const tableFooterY = sections.length ? cursorY : 292;
+  const totalBoxY = tableFooterY + 16;
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <style>
@@ -392,13 +509,16 @@ function buildSummarySvg(input: { organization: Organization; client: BusinessPa
     .muted{font:12px Arial,sans-serif;fill:#6e6253}
     .label{font:700 12px Arial,sans-serif;fill:#9a7044;text-transform:uppercase}
     .value{font:700 20px Arial,sans-serif;fill:#17130f}
-    .cell{font:13px Arial,sans-serif;fill:#17130f}
+    .cell{font:12px Arial,sans-serif;fill:#17130f}
     .head{font:700 12px Arial,sans-serif;fill:#5d5144}
+    .section{font:700 13px Arial,sans-serif;fill:#17130f}
+    .subtotal{font:700 12px Arial,sans-serif;fill:#17130f}
+    .subtotal-label{font:700 11px Arial,sans-serif;fill:#9a7044}
     .charge-number{font:700 24px Arial,sans-serif;fill:#fff8ec;text-anchor:end}
     .charge-date{font:700 13px Arial,sans-serif;fill:#d9c6a8;text-anchor:end}
     .right{text-anchor:end}
   </style>
-  <rect width="900" height="420" fill="#f8f5ed"/>
+  <rect width="900" height="${height}" fill="#f8f5ed"/>
   <rect x="0" y="0" width="900" height="88" fill="${primary}"/>
   <rect x="0" y="88" width="900" height="4" fill="${accent}"/>
   <text x="34" y="38" class="title">FECHAMENTO DE SERVICOS</text>
@@ -414,23 +534,88 @@ function buildSummarySvg(input: { organization: Organization; client: BusinessPa
   <text x="470" y="142" class="label">Periodo</text>
   <text x="470" y="166" class="value">${escapeXml(formatDate(charge.periodStart))} a ${escapeXml(formatDate(charge.periodEnd))}</text>
 
-  <text x="34" y="202" class="label">Operacoes cobradas</text>
+  <text x="34" y="202" class="label">${chargeCount > 1 ? `Operacoes em ${chargeCount} cobrancas abertas` : "Operacoes cobradas"}</text>
   <rect x="34" y="216" width="832" height="1" fill="#d8c8aa"/>
-  <text x="48" y="236" class="head">DATA</text>
-  <text x="150" y="236" class="head">NF</text>
-  <text x="248" y="236" class="head">PRODUTO</text>
-  <text x="540" y="236" class="head">TIPO</text>
-  <text x="662" y="236" class="head right">SACAS</text>
-  <text x="805" y="236" class="head right">VALOR X NF</text>
-  ${rowMarkup}
+  <text x="48" y="236" class="head">COBRANCA</text>
+  <text x="154" y="236" class="head">NF</text>
+  <text x="224" y="236" class="head">EMPRESA</text>
+  <text x="474" y="236" class="head">UF DA VENDA</text>
+  <text x="626" y="236" class="head right">SACAS</text>
+  <text x="846" y="236" class="head right">VALOR X NF</text>
+  ${sectionMarkup}
   ${emptyRows}
 
-  <rect x="34" y="350" width="832" height="48" rx="8" fill="#edf7ed" stroke="${accent}"/>
-  <text x="52" y="371" class="label">${charge.paidAmountCents > 0 ? "Valor em aberto" : "Valor final a cobrar"}</text>
-  ${charge.paidAmountCents > 0 ? `<text x="52" y="392" class="muted">Pago: R$ ${escapeXml(formatCents(charge.paidAmountCents))} de R$ ${escapeXml(formatCents(charge.finalAmountCents))}</text>` : ""}
-  <text x="805" y="383" class="value right">R$ ${escapeXml(formatCents(charge.openAmountCents))}</text>
+  <rect x="34" y="${totalBoxY}" width="832" height="48" rx="8" fill="#edf7ed" stroke="${accent}"/>
+  <text x="52" y="${totalBoxY + 21}" class="label">${chargeCount > 1 ? "Valor total em aberto" : charge.paidAmountCents > 0 ? "Valor em aberto" : "Valor final a cobrar"}</text>
+  ${chargeCount > 1 ? `<text x="52" y="${totalBoxY + 42}" class="muted">Inclui a cobranca atual e outras cobrancas abertas do mesmo cliente no periodo.</text>` : charge.paidAmountCents > 0 ? `<text x="52" y="${totalBoxY + 42}" class="muted">Pago: R$ ${escapeXml(formatCents(charge.paidAmountCents))} de R$ ${escapeXml(formatCents(charge.finalAmountCents))}</text>` : ""}
+  <text x="805" y="${totalBoxY + 33}" class="value right">R$ ${escapeXml(formatCents(totalOpenCents))}</text>
 </svg>`;
   return svg;
+}
+
+function summaryImageSections(input: ChargeDocumentsInput): SummarySection[] {
+  const clientShort = clientShortName(input.client.displayName);
+  const sections = new Map<string, SummarySection>();
+  for (const row of summaryImageOperationRows(input)) {
+    const operation = row.operation;
+    const key = `${operation.operationScopeSnapshot}|${operation.serviceRateCentsSnapshot}`;
+    if (!sections.has(key)) {
+      const scopeText = operation.operationScopeSnapshot === "INTERNAL" ? "INTERNO" : "EXTERNO";
+      sections.set(key, { title: `${clientShort} ${scopeText}`, rows: [], sacks: 0, amountCents: 0, rateCents: operation.serviceRateCentsSnapshot, scope: operation.operationScopeSnapshot });
+    }
+    const section = sections.get(key);
+    if (!section) continue;
+    section.rows.push(row);
+    section.sacks += decimalNumber(operation.quantitySacksDecimalSnapshot);
+    section.amountCents += operation.serviceAmountCentsSnapshot;
+  }
+  const rawSections = Array.from(sections.values());
+  const defaultInternalRateCents = Math.max(0, ...rawSections.filter((section) => section.scope === "INTERNAL").map((section) => section.rateCents));
+  return rawSections.map((section) => {
+    const scopeText = section.scope === "INTERNAL" ? "INTERNO" : "EXTERNO";
+    const destinations = Array.from(new Set(section.rows.map((row) => row.operation.destinationNameSnapshot?.trim()).filter((value): value is string => Boolean(value))));
+    if (section.scope === "INTERNAL") {
+      if (destinations.length === 1 && section.rateCents !== defaultInternalRateCents) {
+        return {
+          ...section,
+          title: `${clientShort} ${destinationShortName(destinations[0])}`
+        };
+      }
+      return {
+        ...section,
+        title: `${clientShort} ${scopeText}`
+      };
+    }
+    return {
+      ...section,
+      title: destinations.length === 1 ? `${clientShort} VENDAS ${destinations[0].toUpperCase()}` : `${clientShort} ${scopeText}`
+    };
+  }).sort((a, b) => sectionRank(a.title) - sectionRank(b.title) || a.title.localeCompare(b.title, "pt-BR"));
+}
+
+function sectionRank(title: string): number {
+  if (title.includes("INTERNO")) return 0;
+  if (title.includes("VENDAS")) return 1;
+  if (title.includes("EXTERNO")) return 2;
+  return 3;
+}
+
+function clientShortName(value: string): string {
+  const first = value.trim().split(/\s+/)[0];
+  return first ? first.toUpperCase() : "CLIENTE";
+}
+
+function destinationShortName(value: string): string {
+  const first = value.trim().split(/\s+/)[0];
+  return first ? first.toUpperCase() : value.toUpperCase();
+}
+
+function decimalNumber(value: string): number {
+  return Number(value.replace(",", ".")) || 0;
+}
+
+function formatDecimal(value: number): string {
+  return value.toLocaleString("pt-BR", { maximumFractionDigits: 6 });
 }
 
 function hashFile(filePath: string): string {

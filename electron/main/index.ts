@@ -6,7 +6,6 @@ import { getBuildVariantConfig } from "../../src/shared/buildVariants.js";
 import { initializeDatabase } from "./database/database.js";
 import { registerIpcHandlers } from "./ipc/handlers.js";
 import { AppRepository } from "./services/appRepository.js";
-import { runBetaOperationalResetIfNeeded } from "./services/betaReset.js";
 import { seedClientMasterDataIfNeeded } from "./services/clientSeed.js";
 import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js";
 import { createMainWindow } from "./windows/createMainWindow.js";
@@ -32,9 +31,6 @@ function bootstrap(): void {
   log.transports.file.resolvePathFn = () => join(directories.logsDir, "main.log");
   log.info("Starting application", { variant: buildVariant.variant, appId: buildVariant.appId, userData: directories.userData });
   const db = initializeDatabase(directories);
-  if (runBetaOperationalResetIfNeeded(db, directories, app.getVersion(), app.isPackaged)) {
-    log.info("Beta operational reset completed", { preserved: "users, companies, partners, products and service rates" });
-  }
   const seededClients = seedClientMasterDataIfNeeded(db);
   if (seededClients > 0) {
     log.info("Client master data seed completed", { partners: seededClients });

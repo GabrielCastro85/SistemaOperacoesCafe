@@ -175,7 +175,18 @@ export const businessPartnerInputSchema = z.object({
   notes: nullableText,
   roles: z.array(businessPartnerRoleSchema).min(1),
   isActive: z.boolean(),
-  creditLimitCents: z.number().int().min(0).nullable().optional()
+  creditLimitCents: z.number().int().min(0).nullable().optional(),
+  documentNumber: z.string().transform(digits).pipe(z.string().min(11).max(14)).nullable().optional(),
+  email: z.string().trim().email().nullable().optional(),
+  phone: z.string().transform(digits).pipe(z.string().min(8).max(13)).nullable().optional(),
+  mobile: z.string().transform(digits).pipe(z.string().min(8).max(13)).nullable().optional(),
+  postalCode: z.string().transform(digits).pipe(z.string().length(8)).nullable().optional(),
+  addressLine: nullableText.optional().default(null),
+  addressNumber: nullableText.optional().default(null),
+  addressComplement: nullableText.optional().default(null),
+  district: nullableText.optional().default(null),
+  city: nullableText.optional().default(null),
+  state: ufSchema.nullable().optional().default(null)
 });
 
 export const partnerLegalEntityInputSchema = z
@@ -244,6 +255,7 @@ export const serviceRateRuleInputSchema = z
     organizationId: z.string().uuid(),
     businessPartnerId: z.string().uuid(),
     ownLegalEntityId: z.string().uuid().nullable(),
+    counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional().default(null),
     productId: z.string().uuid().nullable(),
     operationScope: operationScopeSchema,
     rateType: rateTypeSchema,
@@ -260,6 +272,7 @@ export const resolveRateInputSchema = z.object({
   organizationId: z.string().uuid(),
   businessPartnerId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid().nullable(),
+  counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional().default(null),
   productId: z.string().uuid().nullable(),
   operationScope: operationScopeSchema.exclude(["ALL"]),
   operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -435,25 +448,27 @@ export const paymentMethodSchema = z.enum(["PIX", "BANK_TRANSFER", "CASH", "CHEC
 export const suggestChargePeriodsInputSchema = z.object({
   organizationId: z.string().uuid(),
   clientPartnerId: z.string().uuid(),
-  ownLegalEntityId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
   periodicity: billingPeriodicitySchema.optional(),
   referenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
 });
 
 export const eligibleOperationsInputSchema = z.object({
   organizationId: z.string().uuid(),
-  ownLegalEntityId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
   clientPartnerId: z.string().uuid(),
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  includeAllCompanies: z.boolean().optional()
 });
 
 export const partnerRateSummaryInputSchema = z.object({
   organizationId: z.string().uuid(),
-  ownLegalEntityId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  includeAlreadyBilled: z.boolean().optional()
+  includeAlreadyBilled: z.boolean().optional(),
+  includeAllCompanies: z.boolean().optional()
 });
 
 export const clientChargeDraftInputSchema = z.object({

@@ -2,7 +2,7 @@ import { dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
-import type { BrandingAssetKind, ClientChargeDetail } from "../../../src/shared/types/domain.js";
+import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -282,7 +282,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.activateBillingProfile, (_event, payload: unknown) => repository.activateBillingProfile(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivateBillingProfile, (_event, payload: unknown) => repository.deactivateBillingProfile(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listServiceRateRules, (_event, payload: unknown) =>
-    repository.listServiceRateRules(z.object({ businessPartnerId: z.string().uuid().optional(), organizationId: z.string().uuid().optional(), operationScope: z.string().optional(), productId: z.string().uuid().optional(), ownLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
+    repository.listServiceRateRules(z.object({ businessPartnerId: z.string().uuid().optional(), organizationId: z.string().uuid().optional(), operationScope: z.string().optional(), productId: z.string().uuid().optional(), ownLegalEntityId: z.string().uuid().optional(), counterpartyPartnerLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
   );
   handle(IPC_CHANNELS.getServiceRateRule, (_event, payload: unknown) => repository.getServiceRateRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createServiceRateRule, (_event, payload: unknown) => repository.createServiceRateRule(payload));
@@ -573,11 +573,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.applyChargeCredit, (_event, payload: unknown) => repository.applyCredit(payload));
   handle(IPC_CHANNELS.submitClientChargeForReview, (_event, payload: unknown) => repository.submitClientChargeForReview(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.issueClientCharge, async (_event, payload: unknown) => {
-    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar os documentos da cobranca");
-    if (!destinationDir) return null;
-    const detail = await repository.issueClientCharge(z.string().uuid().parse(payload));
-    copyChargeDocumentsToDirectory(detail, destinationDir);
-    return detail;
+    return repository.issueClientCharge(z.string().uuid().parse(payload));
   });
   handle(IPC_CHANNELS.cancelClientCharge, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
@@ -586,16 +582,16 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.listClientCharges, (_event, payload: unknown) => repository.listClientCharges(z.object({ organizationId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional(), status: z.string().optional() }).optional().parse(payload) ?? {}));
   handle(IPC_CHANNELS.getClientCharge, (_event, payload: unknown) => repository.getClientCharge(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.regenerateChargeDocuments, async (_event, payload: unknown) => {
-    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar os documentos da cobranca");
-    if (!destinationDir) return null;
-    const detail = await repository.regenerateChargeDocuments(z.string().uuid().parse(payload));
-    copyChargeDocumentsToDirectory(detail, destinationDir);
-    return detail;
+    return repository.regenerateChargeDocuments(z.string().uuid().parse(payload));
   });
   handle(IPC_CHANNELS.openChargeDocument, async (_event, payload: unknown) => {
-    const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "excel", "image"]) }).parse(payload);
-    const filePath = repository.getChargeDocumentPath(data.chargeId, data.kind);
-    const result = await shell.openPath(filePath);
+    const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);
+    const regenerated = await repository.regenerateChargeDocuments(data.chargeId);
+    const filePath = repository.getChargeDocumentPath(regenerated.charge.id, data.kind);
+    const destinationDir = await selectExportDirectory(`Escolha a pasta para salvar ${data.kind === "pdf" ? "o PDF" : "a imagem"} da cobranca`);
+    if (!destinationDir) return false;
+    const exportedPath = copyGeneratedFileToDirectory(filePath, destinationDir);
+    const result = await shell.openPath(exportedPath);
     if (result) throw new Error(result);
     return true;
   });
@@ -610,7 +606,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.createClientPayment, (_event, payload: unknown) => repository.createClientPayment(payload));
   handle(IPC_CHANNELS.allocateClientPayment, (_event, payload: unknown) => repository.allocatePayment(payload));
   handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) =>
-    repository.getBillingSummary(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() })]).parse(payload))
+    repository.getBillingSummary(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), includeAllCompanies: z.boolean().optional() })]).parse(payload))
   );
   handle(IPC_CHANNELS.getDashboardAlerts, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload);
@@ -918,12 +914,6 @@ function copyGeneratedFileToDirectory(sourcePath: string | null | undefined, des
   const targetPath = join(destinationDir, sanitizeExportFileName(fileName || basename(sourcePath)));
   copyFileSync(sourcePath, targetPath);
   return targetPath;
-}
-
-function copyChargeDocumentsToDirectory(detail: ClientChargeDetail, destinationDir: string): void {
-  copyGeneratedFileToDirectory(detail.charge.pdfFilePath, destinationDir);
-  if (detail.charge.excelFilePath) copyGeneratedFileToDirectory(detail.charge.excelFilePath, destinationDir);
-  if (detail.charge.imageFilePath) copyGeneratedFileToDirectory(detail.charge.imageFilePath, destinationDir);
 }
 
 function copyCurrentDealDocumentToDirectory(repository: AppRepository, documentVersionId: string | null | undefined, destinationDir: string): void {

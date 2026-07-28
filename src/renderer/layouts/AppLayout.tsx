@@ -23,6 +23,9 @@ import {
 import { formatCnpj } from "../../shared/utils/format";
 import { resolveOrganizationLogoSrc } from "../../shared/branding/branding";
 import type { NavigationItem } from "../app/navigation";
+import flagEspiritoSanto from "../assets/flags/bandeira-espirito-santo.svg";
+import flagMinasGerais from "../assets/flags/bandeira-minas-gerais.svg";
+import flagSaoPaulo from "../assets/flags/bandeira-sao-paulo.svg";
 
 export interface AppLayoutProps {
   variant: AppVariant;
@@ -82,6 +85,22 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
   }
 }
 
+function stateFlagClass(state: string | null | undefined): string {
+  const normalized = (state ?? "").trim().toUpperCase();
+  if (["MG", "ES", "SP"].includes(normalized)) return `context-pill--state-${normalized.toLowerCase()}`;
+  return "context-pill--state-generic";
+}
+
+function stateFlagSrc(state: string | null | undefined): string | null {
+  const normalized = (state ?? "").trim().toUpperCase();
+  const flags: Record<string, string> = {
+    ES: flagEspiritoSanto,
+    MG: flagMinasGerais,
+    SP: flagSaoPaulo
+  };
+  return flags[normalized] ?? null;
+}
+
 export function AppLayout({
   variant,
   organization,
@@ -104,6 +123,7 @@ export function AppLayout({
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveOrganizationLogoSrc(organization, variant);
+  const activeStateFlagSrc = stateFlagSrc(legalEntity?.state);
   const legalEntityLabel = legalEntity ? `${legalEntity.tradeName} - ${formatCnpj(legalEntity.cnpj)}` : "Nenhum CNPJ ativo";
   const userLabel = session.permissions.includes("users.manage") ? "Administrador" : "Usuario";
 
@@ -167,7 +187,8 @@ export function AppLayout({
               ))}
             </select>
           </label>
-          <div className="context-pill context-pill--active-company">
+          <div className={`context-pill context-pill--active-company ${stateFlagClass(legalEntity?.state)}`}>
+            {activeStateFlagSrc ? <img className="context-pill__state-flag" src={activeStateFlagSrc} alt="" aria-hidden="true" /> : null}
             <span>Operando em</span>
             <strong>{legalEntity?.tradeName ?? organization?.displayName ?? "Empresa nao selecionada"}</strong>
             <small>{legalEntity ? formatCnpj(legalEntity.cnpj) : "CNPJ pendente"}</small>

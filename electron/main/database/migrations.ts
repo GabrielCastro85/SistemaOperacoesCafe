@@ -2448,5 +2448,52 @@ export const migrations: Migration[] = [
         db.exec("ALTER TABLE business_partners ADD COLUMN credit_limit_cents INTEGER");
       }
     }
+  },
+  {
+    name: "020_business_partner_client_profile",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(business_partners)").all() as Array<{ name: string }>).map((column) => column.name);
+      const additions: Array<[string, string]> = [
+        ["document_number", "TEXT"],
+        ["email", "TEXT"],
+        ["phone", "TEXT"],
+        ["mobile", "TEXT"],
+        ["postal_code", "TEXT"],
+        ["address_line", "TEXT"],
+        ["address_number", "TEXT"],
+        ["address_complement", "TEXT"],
+        ["district", "TEXT"],
+        ["city", "TEXT"],
+        ["state", "TEXT"]
+      ];
+      additions.forEach(([column, type]) => {
+        if (!columns.includes(column)) {
+          db.exec(`ALTER TABLE business_partners ADD COLUMN ${column} ${type}`);
+        }
+      });
+    }
+  },
+  {
+    name: "021_service_rate_rule_counterparty_scope",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(service_rate_rules)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("counterparty_partner_legal_entity_id")) {
+        db.exec("ALTER TABLE service_rate_rules ADD COLUMN counterparty_partner_legal_entity_id TEXT");
+      }
+      db.exec("CREATE INDEX IF NOT EXISTS idx_service_rate_rules_counterparty_partner_legal_entity_id ON service_rate_rules(counterparty_partner_legal_entity_id)");
+    }
+  },
+  {
+    name: "022_client_charge_operation_company_snapshot",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(client_charge_operations)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("own_legal_entity_id_snapshot")) {
+        db.exec("ALTER TABLE client_charge_operations ADD COLUMN own_legal_entity_id_snapshot TEXT");
+      }
+      if (!columns.includes("own_legal_entity_name_snapshot")) {
+        db.exec("ALTER TABLE client_charge_operations ADD COLUMN own_legal_entity_name_snapshot TEXT");
+      }
+      db.exec("CREATE INDEX IF NOT EXISTS idx_client_charge_operations_own_legal_entity_snapshot ON client_charge_operations(own_legal_entity_id_snapshot)");
+    }
   }
 ];

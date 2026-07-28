@@ -17,6 +17,12 @@ interface SourceDocumentRow {
   sacks: string;
 }
 
+interface DealPartyTarget {
+  businessPartnerId: string;
+  partnerLegalEntityId: string | null;
+  displayName: string;
+}
+
 export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
@@ -158,12 +164,12 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     confirmationId: string,
     skipItem = false,
     confirmationOwnLegalEntityId = ownLegalEntityId,
-    confirmationBuyerId = buyerId,
-    confirmationDeliveryRecipientId = confirmationBuyerId
+    confirmationBuyer: DealPartyTarget | null = buyerId ? partnerTargetFromPartnerId(buyerId) : null,
+    confirmationDeliveryRecipient: DealPartyTarget | null = confirmationBuyer
   ): Promise<void> {
     if (confirmationOwnLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
-    if (confirmationBuyerId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: confirmationBuyerId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
-    if (confirmationDeliveryRecipientId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipientId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
+    if (confirmationBuyer) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: confirmationBuyer.businessPartnerId, partnerLegalEntityId: confirmationBuyer.partnerLegalEntityId, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    if (confirmationDeliveryRecipient) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipient.businessPartnerId, partnerLegalEntityId: confirmationDeliveryRecipient.partnerLegalEntityId, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
     if (!skipItem && productId) await window.operationsCafe.addDealConfirmationItem({
       dealConfirmationId: confirmationId,
       sortOrder: 0,
@@ -186,7 +192,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       notes: null
     });
     await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.tradeName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
-    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: partners.find((item) => item.id === confirmationBuyerId)?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: confirmationBuyer?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
   }
 
   const clientPartners = partners.filter((item) => item.roles.includes("CLIENT"));
@@ -206,14 +212,28 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       return;
     }
     const selectedBuyerId = selectedBuyerIds[0] ?? buyerId;
+    const nfCompanyEntityIds = [...new Set(selectedRows.map((row) => row.document.partnerLegalEntityId).filter((id): id is string => Boolean(id)))];
+    if (nfCompanyEntityIds.length === 0) {
+      setMessage("Erro: a nota selecionada nao tem empresa da NF vinculada. Abra a nota, vincule a empresa e tente novamente.");
+      return;
+    }
+    if (nfCompanyEntityIds.length > 1) {
+      setMessage("Erro: selecione notas da mesma empresa da NF para gerar uma unica confirmacao.");
+      return;
+    }
+    const nfCompanyTarget = partnerTargetFromLegalEntityId(nfCompanyEntityIds[0]);
+    if (!nfCompanyTarget) {
+      setMessage("Erro: a empresa da NF nao foi encontrada no cadastro. Cadastre/atualize a empresa da nota e tente novamente.");
+      return;
+    }
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
-      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, selectedBuyerId, selectedBuyerId);
+      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
       if (selectedBuyerId) {
-        setBuyerId(selectedBuyerId);
         setSourceClientId(selectedBuyerId);
-        setDeliveryRecipientId(selectedBuyerId);
       }
+      setBuyerId(nfCompanyTarget.businessPartnerId);
+      setDeliveryRecipientId(nfCompanyTarget.businessPartnerId);
       const refreshed = await window.operationsCafe.getDealConfirmation(created.confirmation.id);
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
@@ -225,6 +245,29 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao criar a partir de notas."}`);
     }
+  }
+
+  function partnerTargetFromPartnerId(partnerId: string): DealPartyTarget | null {
+    const partner = partners.find((item) => item.id === partnerId);
+    if (!partner) return null;
+    const primaryEntity = partnerLegalEntities.find((item) => item.businessPartnerId === partnerId && item.isPrimary) ?? null;
+    return {
+      businessPartnerId: partner.id,
+      partnerLegalEntityId: primaryEntity?.id ?? null,
+      displayName: primaryEntity?.tradeName ?? primaryEntity?.legalName ?? partner.displayName
+    };
+  }
+
+  function partnerTargetFromLegalEntityId(legalEntityId: string): DealPartyTarget | null {
+    const entity = partnerLegalEntities.find((item) => item.id === legalEntityId);
+    if (!entity) return null;
+    const partner = partners.find((item) => item.id === entity.businessPartnerId);
+    if (!partner) return null;
+    return {
+      businessPartnerId: partner.id,
+      partnerLegalEntityId: entity.id,
+      displayName: entity.tradeName ?? entity.legalName ?? partner.displayName
+    };
   }
 
   async function openConfirmation(id: string): Promise<void> {
@@ -367,6 +410,18 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     await window.operationsCafe.createDealClauseTemplate({ organizationId, name, title: null, clauseText, category: "GENERAL", isActive: true });
     setMessage("Clausula cadastrada na biblioteca.");
     await load();
+  }
+
+  function dealPartyName(role: string): string {
+    const party = detail?.parties.find((item) => item.partyRole === role);
+    if (!party) return "-";
+    try {
+      const snapshot = JSON.parse(party.snapshotJson) as { name?: string; legalName?: string; taxId?: string };
+      const taxId = snapshot.taxId ? ` - ${snapshot.taxId}` : "";
+      return `${snapshot.name ?? snapshot.legalName ?? party.manualName ?? "Participante"}${taxId}`;
+    } catch {
+      return party.manualName ?? "Participante";
+    }
   }
 
   return (
@@ -525,6 +580,24 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   <article><span>Operacoes</span><strong>{detail.operations.length}</strong></article>
                   <article><span>Versoes</span><strong>{detail.documents.length}</strong></article>
                   <article><span>Pendencias</span><strong>{detail.pendingIssues.length}</strong></article>
+                </div>
+                <div className="confirmation-issue-review">
+                  <div className="section-title-row">
+                    <div>
+                      <h3>Revisao antes de emitir</h3>
+                      <p className="muted">Confira os principais dados que vao para a previa e para o PDF definitivo.</p>
+                    </div>
+                    <span className="summary-pill">{detail.confirmation.confirmationNumber ?? detail.confirmation.temporaryReference}</span>
+                  </div>
+                  <div className="confirmation-review-grid">
+                    <article><span>Vendedor</span><strong>{dealPartyName("SELLER")}</strong></article>
+                    <article><span>Comprador</span><strong>{dealPartyName("BUYER")}</strong></article>
+                    <article><span>Local de descarga</span><strong>{deliveryText || dealPartyName("DELIVERY_RECIPIENT")}</strong></article>
+                    <article><span>Notas selecionadas</span><strong>{detail.fiscalDocuments.map((doc) => `NF ${doc.documentNumber}`).join(", ") || "-"}</strong></article>
+                    <article><span>Observacoes</span><strong>{publicNotes || "Sem observacoes"}</strong></article>
+                    <article><span>Dados bancarios</span><strong>{[bankName, bankAgency ? `Ag. ${bankAgency}` : "", bankAccount ? `Conta ${bankAccount}` : "", pixKey ? `PIX ${pixKey}` : ""].filter(Boolean).join(" · ") || "Nao informado"}</strong></article>
+                  </div>
+                  {detail.pendingIssues.length ? <p className="charge-blocked-note">Existem pendencias nesta confirmacao. Revise antes de emitir definitivamente.</p> : null}
                 </div>
                 <div className="actions">
                   <button onClick={() => void generatePreview()}>Gerar previa</button>

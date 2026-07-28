@@ -32,7 +32,7 @@ export function PartnerQuickSearch({
   placeholder?: string;
   disabled?: boolean;
 }): JSX.Element {
-  const wrapperRef = useRef<HTMLLabelElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const selectedPartner = partners.find((partner) => partner.id === value);
   const [query, setQuery] = useState(partnerLabel(selectedPartner));
   const [open, setOpen] = useState(false);
@@ -88,8 +88,8 @@ export function PartnerQuickSearch({
   }
 
   return (
-    <label className="partner-search" ref={wrapperRef}>
-      <span>{label}</span>
+    <div className="partner-search" ref={wrapperRef}>
+      <span className="partner-search__label">{label}</span>
       <input
         value={query}
         placeholder={placeholder}
@@ -131,8 +131,10 @@ export function PartnerQuickSearch({
               type="button"
               className={index === activeIndex ? "active" : ""}
               onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => selectPartner(item.partner)}
-              onDoubleClick={() => selectPartner(item.partner)}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                selectPartner(item.partner);
+              }}
             >
               <span>{item.partner.displayName}</span>
               <span>{item.entity?.cnpj ? formatCnpj(item.entity.cnpj) : "-"}</span>
@@ -143,6 +145,6 @@ export function PartnerQuickSearch({
           )}
         </div>
       ) : null}
-    </label>
+    </div>
   );
 }

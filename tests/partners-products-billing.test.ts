@@ -65,11 +65,35 @@ describe("partners, products and billing", () => {
     const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Antigo", notes: null, roles: ["CLIENT"], isActive: true });
     const legalEntity = repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
 
-    const updatedPartner = repo.updateBusinessPartner(partner.id, { organizationId: villaId, displayName: "Cliente Atualizado", notes: "Cadastro revisado", roles: ["CLIENT", "BUYER"], isActive: true });
+    const updatedPartner = repo.updateBusinessPartner(partner.id, {
+      organizationId: villaId,
+      displayName: "Cliente Atualizado",
+      notes: "Cadastro revisado",
+      roles: ["CLIENT", "BUYER"],
+      isActive: true,
+      documentNumber: "123.456.789-01",
+      email: "cliente@example.com",
+      phone: "(35) 3333-4444",
+      mobile: "(35) 99999-8888",
+      postalCode: "37750-000",
+      addressLine: "Rua Central",
+      addressNumber: "123",
+      addressComplement: "Sala 2",
+      district: "Centro",
+      city: "Andradas",
+      state: "MG"
+    });
     const updatedEntity = repo.updatePartnerLegalEntity(legalEntity.id, { ...samplePartnerEntity(partner.id, cnpjA, true), legalName: "Cliente Atualizado Ltda", tradeName: "Cliente Atualizado", email: "novo@example.com" });
 
     expect(updatedPartner.displayName).toBe("Cliente Atualizado");
     expect(updatedPartner.roles).toEqual(["BUYER", "CLIENT"]);
+    expect(updatedPartner.documentNumber).toBe("12345678901");
+    expect(updatedPartner.email).toBe("cliente@example.com");
+    expect(updatedPartner.phone).toBe("3533334444");
+    expect(updatedPartner.mobile).toBe("35999998888");
+    expect(updatedPartner.postalCode).toBe("37750000");
+    expect(updatedPartner.city).toBe("Andradas");
+    expect(repo.listBusinessPartners({ search: "99999" }).map((item) => item.id)).toContain(partner.id);
     expect(updatedEntity.legalName).toBe("Cliente Atualizado Ltda");
     expect(updatedEntity.email).toBe("novo@example.com");
     db.close();
@@ -116,6 +140,12 @@ describe("partners, products and billing", () => {
     const resolved = repo.resolveServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", operationDate: "2026-07-16" });
     expect(resolved.status).toBe("found");
     expect(resolved.rateValueCents).toBe(875);
+    const primavera = repo.createBusinessPartner({ organizationId: villaId, displayName: "Primavera Coffee", notes: null, roles: ["BUYER"], isActive: true });
+    const primaveraEntity = repo.createPartnerLegalEntity(samplePartnerEntity(primavera.id, cnpjB, true));
+    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: primaveraEntity.id, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 30, notes: "Primavera", isActive: true });
+    const primaveraResolved = repo.resolveServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, counterpartyPartnerLegalEntityId: primaveraEntity.id, productId: product.id, operationScope: "EXTERNAL", operationDate: "2026-07-16" });
+    expect(primaveraResolved.status).toBe("found");
+    expect(primaveraResolved.rateValueCents).toBe(400);
     expect(() => repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 900, effectiveFrom: "2026-07-10", effectiveTo: null, priority: 10, notes: null, isActive: true })).toThrow(/conflitante/);
     repo.deleteServiceRateRule(specificRule.id);
     expect(() => repo.getServiceRateRule(specificRule.id)).toThrow(/Regra nao encontrada/);

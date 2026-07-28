@@ -103,6 +103,21 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("reuses the number of a deleted confirmation", async () => {
+    const { repo, db, seller, buyer, product } = setup();
+    const first = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    const deleted = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    expect(first.confirmation.confirmationNumber).toBe("VC 0001");
+    expect(deleted.confirmation.confirmationNumber).toBe("VC 0002");
+
+    expect(repo.deleteDealConfirmation(deleted.confirmation.id)).toBe(true);
+
+    const reused = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    expect(reused.confirmation.confirmationNumber).toBe("VC 0002");
+    expect(repo.listDealConfirmations({ organizationId: villaId }).map((item) => item.confirmationNumber).sort()).toEqual(["VC 0001", "VC 0002"]);
+    db.close();
+  });
+
   it("creates from operation and fiscal document without changing billing status", async () => {
     const { repo, db, product } = setup();
     const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });

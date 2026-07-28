@@ -22,7 +22,7 @@ export const navigationGroups: NavigationGroup[] = [
   {
     title: "Comercial",
     items: [
-      { id: "partners", label: "Clientes e parceiros", legacyMenu: "Clientes", path: "/partners", icon: "◉" },
+      { id: "partners", label: "Cadastros comerciais", legacyMenu: "Clientes", path: "/partners", icon: "◉" },
       { id: "products", label: "Produtos", legacyMenu: "Produtos", path: "/products", icon: "□" },
       { id: "rates", label: "Regras por saca", legacyMenu: "Regras por saca", path: "/billing/rates", icon: "◇" },
       { id: "confirmations", label: "Confirmações", legacyMenu: "Confirmacoes", path: "/confirmations", icon: "✓" }

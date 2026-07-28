@@ -425,6 +425,17 @@ export interface BusinessPartner {
   roles: BusinessPartnerRole[];
   isActive: boolean;
   creditLimitCents: number | null;
+  documentNumber: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  postalCode: string | null;
+  addressLine: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  district: string | null;
+  city: string | null;
+  state: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -522,6 +533,7 @@ export interface ServiceRateRule {
   organizationId: string;
   businessPartnerId: string;
   ownLegalEntityId: string | null;
+  counterpartyPartnerLegalEntityId: string | null;
   productId: string | null;
   operationScope: OperationScope;
   rateType: RateType;
@@ -899,6 +911,8 @@ export interface ClientChargeOperation {
   id: string;
   clientChargeId: string;
   operationId: string;
+  ownLegalEntityIdSnapshot: string | null;
+  ownLegalEntityNameSnapshot: string | null;
   operationDateSnapshot: string;
   fiscalDocumentNumberSnapshot: string | null;
   fiscalDocumentSeriesSnapshot: string | null;

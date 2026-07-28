@@ -20,7 +20,7 @@ export type AppRouteId =
 export const routeTitleById: Record<AppRouteId, string> = {
   dashboard: "Dashboard",
   invoices: "Notas e operações",
-  partners: "Clientes e parceiros",
+  partners: "Cadastros comerciais",
   products: "Produtos",
   rates: "Regras por saca",
   charges: "Cobranças",

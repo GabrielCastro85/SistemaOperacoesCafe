@@ -5,6 +5,10 @@ import { resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 
 const REMEMBER_KEY = "operationsCafe.rememberedOrganizationId";
 
+function isOperationalLegalEntity(entity: LegalEntity): boolean {
+  return entity.documentPrefix !== "TERC-XML";
+}
+
 export function rememberedOrganizationId(): string | null {
   try {
     return window.localStorage.getItem(REMEMBER_KEY);
@@ -35,7 +39,7 @@ export function OrganizationPickerPage({
   defaultLegalEntityId: string | null;
   onSelect: (organizationId: string, legalEntityId: string) => void;
 }): JSX.Element {
-  const activeLegalEntities = legalEntities.filter((entity) => entity.isActive);
+  const activeLegalEntities = legalEntities.filter((entity) => entity.isActive && isOperationalLegalEntity(entity));
   const firstEntity = activeLegalEntities.find((entity) => entity.id === defaultLegalEntityId) ?? activeLegalEntities.find((entity) => entity.organizationId === defaultOrganizationId) ?? activeLegalEntities[0] ?? null;
   const [selectedId, setSelectedId] = useState(firstEntity?.id ?? "");
   const [submitting, setSubmitting] = useState(false);

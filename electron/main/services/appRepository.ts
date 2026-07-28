@@ -489,10 +489,9 @@ export class AppRepository {
     return (this.db.prepare("SELECT * FROM business_partners ORDER BY display_name").all() as DbRecord[])
       .map((row) => mapBusinessPartner(row, this.getPartnerRoles(String(row.id))))
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
-      .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
       .filter((item) => !filters.role || item.roles.includes(filters.role))
       .filter((item) => this.matchesStatus(item.isActive, filters.status))
-      .filter((item) => this.matchesSearch([item.displayName], filters.search));
+      .filter((item) => this.matchesSearch([item.displayName, item.documentNumber ?? "", item.email ?? "", item.phone ?? "", item.mobile ?? "", item.city ?? ""], filters.search));
   }
 
   getBusinessPartner(id: string): BusinessPartner {
@@ -509,8 +508,31 @@ export class AppRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
-      this.db.prepare("INSERT INTO business_partners (id, organization_id, display_name, notes, is_active, credit_limit_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, data.organizationId, data.displayName, data.notes, data.isActive ? 1 : 0, data.creditLimitCents ?? null, now, now);
+      this.db.prepare(`INSERT INTO business_partners (
+        id, organization_id, display_name, notes, is_active, credit_limit_cents, document_number, email, phone, mobile,
+        postal_code, address_line, address_number, address_complement, district, city, state, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(
+          id,
+          data.organizationId,
+          data.displayName,
+          data.notes,
+          data.isActive ? 1 : 0,
+          data.creditLimitCents ?? null,
+          data.documentNumber ?? null,
+          data.email ?? null,
+          data.phone ?? null,
+          data.mobile ?? null,
+          data.postalCode ?? null,
+          data.addressLine,
+          data.addressNumber,
+          data.addressComplement,
+          data.district,
+          data.city,
+          data.state,
+          now,
+          now
+        );
       data.roles.forEach((role) => this.addBusinessPartnerRole(id, role, now));
     });
     transaction();
@@ -524,8 +546,30 @@ export class AppRepository {
     if (data.roles.length === 0) throw new Error("Parceiro deve possuir pelo menos um papel.");
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
-      this.db.prepare("UPDATE business_partners SET organization_id = ?, display_name = ?, notes = ?, is_active = ?, credit_limit_cents = ?, updated_at = ? WHERE id = ?")
-        .run(data.organizationId, data.displayName, data.notes, data.isActive ? 1 : 0, data.creditLimitCents ?? null, now, id);
+      this.db.prepare(`UPDATE business_partners SET
+        organization_id = ?, display_name = ?, notes = ?, is_active = ?, credit_limit_cents = ?, document_number = ?, email = ?,
+        phone = ?, mobile = ?, postal_code = ?, address_line = ?, address_number = ?, address_complement = ?, district = ?,
+        city = ?, state = ?, updated_at = ? WHERE id = ?`)
+        .run(
+          data.organizationId,
+          data.displayName,
+          data.notes,
+          data.isActive ? 1 : 0,
+          data.creditLimitCents ?? null,
+          data.documentNumber ?? null,
+          data.email ?? null,
+          data.phone ?? null,
+          data.mobile ?? null,
+          data.postalCode ?? null,
+          data.addressLine,
+          data.addressNumber,
+          data.addressComplement,
+          data.district,
+          data.city,
+          data.state,
+          now,
+          id
+        );
       this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
       data.roles.forEach((role) => this.addBusinessPartnerRole(id, role, now));
     });
@@ -747,14 +791,14 @@ export class AppRepository {
   activateBillingProfile(id: string): ClientBillingProfile { return this.setBillingProfileActive(id, true); }
   deactivateBillingProfile(id: string): ClientBillingProfile { return this.setBillingProfileActive(id, false); }
 
-  listServiceRateRules(filters: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; status?: "active" | "inactive" | "all" } = {}): ServiceRateRule[] {
+  listServiceRateRules(filters: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; counterpartyPartnerLegalEntityId?: string; status?: "active" | "inactive" | "all" } = {}): ServiceRateRule[] {
     return (this.db.prepare("SELECT * FROM service_rate_rules ORDER BY effective_from DESC, priority DESC").all() as DbRecord[]).map(mapServiceRateRule)
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
       .filter((item) => !filters.businessPartnerId || item.businessPartnerId === filters.businessPartnerId)
-      .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
       .filter((item) => !filters.operationScope || item.operationScope === filters.operationScope)
       .filter((item) => !filters.productId || item.productId === filters.productId)
       .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
+      .filter((item) => !filters.counterpartyPartnerLegalEntityId || item.counterpartyPartnerLegalEntityId === filters.counterpartyPartnerLegalEntityId)
       .filter((item) => this.matchesStatus(item.isActive, filters.status));
   }
 
@@ -771,8 +815,8 @@ export class AppRepository {
     this.assertServiceRateRule(data);
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO service_rate_rules (id, organization_id, business_partner_id, own_legal_entity_id, product_id, operation_scope, rate_type, rate_value_cents, effective_from, effective_to, priority, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(id, data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.productId, data.operationScope, data.rateType, data.rateValueCents, data.effectiveFrom, data.effectiveTo, data.priority, data.notes, data.isActive ? 1 : 0, now, now);
+    this.db.prepare("INSERT INTO service_rate_rules (id, organization_id, business_partner_id, own_legal_entity_id, counterparty_partner_legal_entity_id, product_id, operation_scope, rate_type, rate_value_cents, effective_from, effective_to, priority, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.counterpartyPartnerLegalEntityId, data.productId, data.operationScope, data.rateType, data.rateValueCents, data.effectiveFrom, data.effectiveTo, data.priority, data.notes, data.isActive ? 1 : 0, now, now);
     return this.getServiceRateRule(id);
   }
 
@@ -780,8 +824,8 @@ export class AppRepository {
     this.getServiceRateRule(id);
     const data = serviceRateRuleInputSchema.parse(input);
     this.assertServiceRateRule(data, id);
-    this.db.prepare("UPDATE service_rate_rules SET organization_id = ?, business_partner_id = ?, own_legal_entity_id = ?, product_id = ?, operation_scope = ?, rate_type = ?, rate_value_cents = ?, effective_from = ?, effective_to = ?, priority = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?")
-      .run(data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.productId, data.operationScope, data.rateType, data.rateValueCents, data.effectiveFrom, data.effectiveTo, data.priority, data.notes, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    this.db.prepare("UPDATE service_rate_rules SET organization_id = ?, business_partner_id = ?, own_legal_entity_id = ?, counterparty_partner_legal_entity_id = ?, product_id = ?, operation_scope = ?, rate_type = ?, rate_value_cents = ?, effective_from = ?, effective_to = ?, priority = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?")
+      .run(data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.counterpartyPartnerLegalEntityId, data.productId, data.operationScope, data.rateType, data.rateValueCents, data.effectiveFrom, data.effectiveTo, data.priority, data.notes, data.isActive ? 1 : 0, new Date().toISOString(), id);
     return this.getServiceRateRule(id);
   }
 
@@ -800,46 +844,36 @@ export class AppRepository {
   resolveServiceRateRule(input: unknown): ResolveRateResult {
     const data = resolveRateInputSchema.parse(input);
     this.assertClientPartner(data.businessPartnerId, data.organizationId);
-    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, organizationId: data.organizationId, status: "active" })
+    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, status: "active" })
       .filter((rule) => rule.effectiveFrom <= data.operationDate && (!rule.effectiveTo || rule.effectiveTo >= data.operationDate))
       .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
+      .filter((rule) => !rule.counterpartyPartnerLegalEntityId || rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId)
       .filter((rule) => !rule.productId || rule.productId === data.productId);
     const candidates = activeRules
       .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
-      .map((rule) => ({ rule, score: (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000 }));
+      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000 }));
     if (candidates.length === 0) {
-      const fallback = activeRules
-        .filter((rule) => rule.operationScope !== "ALL")
-        .map((rule) => ({ rule, score: (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + rule.priority / 1000 }));
-      if (fallback.length === 1) {
-        const rule = fallback[0].rule;
-        return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: "single-scope-fallback", message: "Regra unica do cliente aplicada apesar da UF da venda diferente." };
-      }
       return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
     }
     const max = Math.max(...candidates.map((item) => item.score));
     const best = candidates.filter((item) => item.score === max);
     if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
     const rule = best[0].rule;
-    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
+    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
   }
 
   private resolveServiceRateRuleForUnbilledBackfill(input: unknown): ResolveRateResult {
     const data = resolveRateInputSchema.parse(input);
     this.assertClientPartner(data.businessPartnerId, data.organizationId);
-    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, organizationId: data.organizationId, status: "active" })
+    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, status: "active" })
       .filter((rule) => !rule.effectiveTo || rule.effectiveTo >= data.operationDate)
       .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
+      .filter((rule) => !rule.counterpartyPartnerLegalEntityId || rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId)
       .filter((rule) => !rule.productId || rule.productId === data.productId);
-    const scoreRule = (rule: ServiceRateRule): number => (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000;
-    let candidates = activeRules
+    const scoreRule = (rule: ServiceRateRule): number => (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000;
+    const candidates = activeRules
       .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
       .map((rule) => ({ rule, score: scoreRule(rule) }));
-    if (candidates.length === 0) {
-      candidates = activeRules
-        .filter((rule) => rule.operationScope !== "ALL")
-        .map((rule) => ({ rule, score: (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + rule.priority / 1000 }));
-    }
     if (candidates.length === 0) return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
     const max = Math.max(...candidates.map((item) => item.score));
     const best = candidates
@@ -878,7 +912,7 @@ export class AppRepository {
     const data = fiscalDocumentInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     const own = this.getLegalEntity(data.ownLegalEntityId);
-    if (own.organizationId !== data.organizationId) throw new Error("CNPJ proprio pertence a outra organizacao.");
+    if (own.organizationId !== data.organizationId && !this.isThirdPartyLegalEntity(own)) throw new Error("CNPJ proprio pertence a outra organizacao.");
     this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
     if (data.accessKey) {
       const duplicate = this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ?").get(data.accessKey);
@@ -970,6 +1004,7 @@ export class AppRepository {
       organizationId: detail.document.organizationId,
       businessPartnerId: data.responsiblePartnerId,
       ownLegalEntityId: data.ownLegalEntityId,
+      counterpartyPartnerLegalEntityId: detail.document.partnerLegalEntityId,
       productId: data.productId,
       operationScope: data.operationScope,
       operationDate: data.operationDate
@@ -1018,19 +1053,23 @@ export class AppRepository {
     return this.getFiscalDocument(id);
   }
 
-  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; serviceAmountCents: number } {
+  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } {
     const organizationId = typeof input === "string" ? input : input.organizationId;
     const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
     this.assertOrganizationWritable(organizationId);
     this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
     const docs = this.listFiscalDocuments({ organizationId, ownLegalEntityId });
     const operations = this.listOperations({ organizationId, ownLegalEntityId });
+    const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
+    const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
       confirmed: docs.filter((doc) => doc.status === "CONFIRMED").length,
       operations: operations.length,
-      serviceAmountCents: operations.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+      sacksDecimal: activeOperations.length ? sumDecimalTexts(activeOperations.map((operation) => operation.quantitySacks)) : "0",
+      fiscalAmountCents: activeDocs.reduce((sum, doc) => sum + doc.totalAmountCents, 0),
+      serviceAmountCents: activeOperations.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
@@ -1357,12 +1396,13 @@ export class AppRepository {
     this.db.prepare("UPDATE xml_import_jobs SET status = 'PROCESSING', started_at = ? WHERE id = ?").run(now, id);
     current.files.forEach((file) => {
       if (!["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(file.status)) return;
-      const resolution = { ...settings, ...(file.resolutionDataJson ? JSON.parse(file.resolutionDataJson) as Record<string, unknown> : {}) };
+      const fileResolution = file.resolutionDataJson ? JSON.parse(file.resolutionDataJson) as Record<string, unknown> : {};
+      const resolution = { ...settings, ...fileResolution };
       if (resolution.ignore === true) {
         this.db.prepare("UPDATE xml_import_files SET status = 'SKIPPED', updated_at = ? WHERE id = ?").run(new Date().toISOString(), file.id);
         return;
       }
-      const trx = this.db.transaction(() => this.processXmlImportFile(current.job, file, resolution));
+      const trx = this.db.transaction(() => this.processXmlImportFile(current.job, file, resolution, fileResolution));
       try {
         trx();
       } catch (error) {
@@ -1573,44 +1613,69 @@ export class AppRepository {
   findEligibleOperations(input: unknown): Operation[] {
     const data = eligibleOperationsInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
-    this.refreshOperationServiceRates({
-      organizationId: data.organizationId,
-      ownLegalEntityId: data.ownLegalEntityId,
-      responsiblePartnerId: data.clientPartnerId,
-      periodStart: data.periodStart,
-      periodEnd: data.periodEnd
-    });
+    if (data.includeAllCompanies) {
+      this.refreshAllOrganizationOperationServiceRates({ responsiblePartnerId: data.clientPartnerId, periodStart: data.periodStart, periodEnd: data.periodEnd });
+    } else {
+      this.refreshOperationServiceRates({
+        organizationId: data.organizationId,
+        ownLegalEntityId: data.ownLegalEntityId ?? undefined,
+        responsiblePartnerId: data.clientPartnerId,
+        periodStart: data.periodStart,
+        periodEnd: data.periodEnd
+      });
+    }
+    const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
+    const ownLegalEntityClause = data.includeAllCompanies || !data.ownLegalEntityId ? "" : "AND operations.own_legal_entity_id = ?";
+    const params: unknown[] = [];
+    if (!data.includeAllCompanies) params.push(data.organizationId);
+    if (!data.includeAllCompanies && data.ownLegalEntityId) params.push(data.ownLegalEntityId);
+    params.push(data.clientPartnerId, data.periodStart, data.periodEnd);
     return (this.db.prepare(`
       SELECT * FROM operations
-      WHERE organization_id = ?
-        AND own_legal_entity_id = ?
+      WHERE 1 = 1
+        ${organizationClause}
+        ${ownLegalEntityClause}
         AND responsible_partner_id = ?
         AND operation_date BETWEEN ? AND ?
         AND status = 'CONFIRMED'
         AND billing_status = 'UNBILLED'
       ORDER BY operation_date, created_at
-    `).all(data.organizationId, data.ownLegalEntityId, data.clientPartnerId, data.periodStart, data.periodEnd) as DbRecord[]).map(mapOperation);
+    `).all(...params) as DbRecord[]).map(mapOperation);
   }
 
   getPartnerRateSummary(input: unknown): PartnerRateSummaryRow[] {
     const data = partnerRateSummaryInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
-    this.refreshOperationServiceRates({
-      organizationId: data.organizationId,
-      ownLegalEntityId: data.ownLegalEntityId,
-      periodStart: data.periodStart,
-      periodEnd: data.periodEnd
-    });
-    const billingStatusClause = data.includeAlreadyBilled ? "" : "AND billing_status = 'UNBILLED'";
+    if (data.includeAllCompanies) {
+      this.refreshAllOrganizationOperationServiceRates({ periodStart: data.periodStart, periodEnd: data.periodEnd });
+    } else {
+      this.refreshOperationServiceRates({
+        organizationId: data.organizationId,
+        ownLegalEntityId: data.ownLegalEntityId ?? undefined,
+        periodStart: data.periodStart,
+        periodEnd: data.periodEnd
+      });
+    }
+    const billingStatusClause = data.includeAlreadyBilled
+      ? ""
+      : "AND (operations.billing_status = 'UNBILLED' OR (operations.billing_status = 'BILLED' AND client_charges.open_amount_cents > 0 AND client_charges.status NOT IN ('PAID', 'CANCELLED', 'REPLACED')))";
+    const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
+    const ownLegalEntityClause = data.includeAllCompanies || !data.ownLegalEntityId ? "" : "AND operations.own_legal_entity_id = ?";
+    const params: unknown[] = [];
+    if (!data.includeAllCompanies) params.push(data.organizationId);
+    if (!data.includeAllCompanies && data.ownLegalEntityId) params.push(data.ownLegalEntityId);
+    params.push(data.periodStart, data.periodEnd);
     const rows = this.db.prepare(`
-      SELECT responsible_partner_id AS partnerId, operation_scope AS scope, quantity_sacks_decimal AS sacks, service_amount_cents AS amountCents
+      SELECT operations.responsible_partner_id AS partnerId, operations.operation_scope AS scope, operations.quantity_sacks_decimal AS sacks, operations.service_amount_cents AS amountCents
       FROM operations
-      WHERE organization_id = ?
-        AND own_legal_entity_id = ?
-        AND operation_date BETWEEN ? AND ?
-        AND status = 'CONFIRMED'
+      LEFT JOIN client_charges ON client_charges.id = operations.client_charge_id
+      WHERE 1 = 1
+        ${organizationClause}
+        ${ownLegalEntityClause}
+        AND operations.operation_date BETWEEN ? AND ?
+        AND operations.status = 'CONFIRMED'
         ${billingStatusClause}
-    `).all(data.organizationId, data.ownLegalEntityId, data.periodStart, data.periodEnd) as Array<{ partnerId: string; scope: "INTERNAL" | "EXTERNAL"; sacks: string; amountCents: number }>;
+    `).all(...params) as Array<{ partnerId: string; scope: "INTERNAL" | "EXTERNAL"; sacks: string; amountCents: number }>;
 
     const byPartner = new Map<string, { internalSacks: string[]; externalSacks: string[]; internalAmountCents: number; externalAmountCents: number; operationCount: number }>();
     for (const row of rows) {
@@ -1660,6 +1725,7 @@ export class AppRepository {
         organizationId: operation.organizationId,
         businessPartnerId: operation.responsiblePartnerId,
         ownLegalEntityId: operation.ownLegalEntityId,
+        counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId),
         productId: operation.productId,
         operationScope: operation.operationScope,
         operationDate: operation.operationDate
@@ -1669,6 +1735,7 @@ export class AppRepository {
           organizationId: operation.organizationId,
           businessPartnerId: operation.responsiblePartnerId,
           ownLegalEntityId: operation.ownLegalEntityId,
+          counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId),
           productId: operation.productId,
           operationScope: operation.operationScope,
           operationDate: operation.operationDate
@@ -1681,6 +1748,18 @@ export class AppRepository {
       this.db.prepare("UPDATE operations SET service_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, updated_at = ? WHERE id = ?")
         .run(resolvedRule?.id ?? null, backfilled.rateValueCents, serviceAmountCents, now, operation.id);
     }
+  }
+
+  private refreshAllOrganizationOperationServiceRates(filters: { responsiblePartnerId?: string; periodStart?: string; periodEnd?: string }): void {
+    const rows = this.db.prepare("SELECT id FROM organizations WHERE is_active = 1").all() as Array<{ id: string }>;
+    rows.forEach((row) => {
+      this.refreshOperationServiceRates({
+        organizationId: row.id,
+        responsiblePartnerId: filters.responsiblePartnerId,
+        periodStart: filters.periodStart,
+        periodEnd: filters.periodEnd
+      });
+    });
   }
 
   createClientChargeDraft(input: unknown): ClientChargeDetail {
@@ -1828,13 +1907,30 @@ export class AppRepository {
     const ownLegalEntity = this.getLegalEntity(detail.charge.ownLegalEntityId);
     const client = this.getBusinessPartner(detail.charge.clientPartnerId);
     const clientLegalEntity = this.listPartnerLegalEntities(client.id).find((entity) => entity.isPrimary && entity.isActive) ?? this.listPartnerLegalEntities(client.id).find((entity) => entity.isActive) ?? null;
-    const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, clientLegalEntity, detail });
+    const relatedOpenChargeDetails = this.listRelatedOpenChargeDetailsForDocuments(detail);
+    const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, clientLegalEntity, detail, relatedOpenChargeDetails });
     const version = detail.documents.length + 1;
     const now = new Date().toISOString();
     this.db.prepare("INSERT INTO charge_document_versions (id, client_charge_id, version, pdf_file_path, pdf_file_hash, excel_file_path, excel_file_hash, image_file_path, image_file_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(randomUUID(), id, version, result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.excelFileHash, result.imageFilePath, result.imageFileHash, now);
     this.db.prepare("UPDATE client_charges SET pdf_file_path = ?, pdf_file_hash = ?, excel_file_path = ?, image_file_path = ?, updated_at = ? WHERE id = ?").run(result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.imageFilePath, now, id);
     return this.getClientCharge(id);
+  }
+
+  private listRelatedOpenChargeDetailsForDocuments(detail: ClientChargeDetail): ClientChargeDetail[] {
+    const charge = detail.charge;
+    const rows = this.db.prepare(`
+      SELECT id
+      FROM client_charges
+      WHERE id != ?
+        AND client_partner_id = ?
+        AND status NOT IN ('PAID', 'CANCELLED', 'REPLACED')
+        AND open_amount_cents > 0
+        AND period_start <= ?
+        AND period_end >= ?
+      ORDER BY period_start, charge_number, created_at
+    `).all(charge.id, charge.clientPartnerId, charge.periodEnd, charge.periodStart) as DbRecord[];
+    return rows.map((row) => this.getClientCharge(String(row.id)));
   }
 
   getChargeDocumentPath(chargeId: string, kind: "pdf" | "excel" | "image"): string {
@@ -1924,14 +2020,20 @@ export class AppRepository {
     return (this.db.prepare(`SELECT * FROM client_ledger_entries WHERE ${clauses.join(" AND ")} ORDER BY entry_date DESC, created_at DESC`).all(...params) as DbRecord[]).map(mapClientLedgerEntry);
   }
 
-  getBillingSummary(input: string | { organizationId: string; ownLegalEntityId?: string | null }): BillingSummary {
+  getBillingSummary(input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean }): BillingSummary {
     const organizationId = typeof input === "string" ? input : input.organizationId;
     const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
+    const includeAllCompanies = typeof input !== "string" && Boolean(input.includeAllCompanies);
     this.assertOrganizationWritable(organizationId);
-    this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
-    const charges = (this.db.prepare(`SELECT * FROM client_charges WHERE organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status != 'CANCELLED'`).all(...(ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId])) as DbRecord[]).map(mapClientCharge);
-    const credits = this.db.prepare(`SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status = 'CONFIRMED'`).get(...(ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId])) as { total: number };
-    const unbilledRows = this.listOperations({ organizationId, ownLegalEntityId, status: "CONFIRMED", billingStatus: "UNBILLED" });
+    if (includeAllCompanies) this.refreshAllOrganizationOperationServiceRates({});
+    else this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
+    const chargeWhere = includeAllCompanies ? "status != 'CANCELLED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status != 'CANCELLED'`;
+    const chargeParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
+    const charges = (this.db.prepare(`SELECT * FROM client_charges WHERE ${chargeWhere}`).all(...chargeParams) as DbRecord[]).map(mapClientCharge);
+    const creditWhere = includeAllCompanies ? "status = 'CONFIRMED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status = 'CONFIRMED'`;
+    const creditParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
+    const credits = this.db.prepare(`SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE ${creditWhere}`).get(...creditParams) as { total: number };
+    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, status: "CONFIRMED", billingStatus: "UNBILLED" });
     const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
@@ -2150,7 +2252,7 @@ export class AppRepository {
     };
   }
 
-  private processXmlImportFile(job: XmlImportJob, file: XmlImportFile, resolution: Record<string, unknown>): void {
+  private processXmlImportFile(job: XmlImportJob, file: XmlImportFile, resolution: Record<string, unknown>, fileResolution: Record<string, unknown> = {}): void {
     if (!file.extractedDataJson) throw new Error("Arquivo XML sem dados extraidos.");
     const extracted = JSON.parse(file.extractedDataJson) as Record<string, unknown>;
     if (file.xmlType.startsWith("EVENT_")) {
@@ -2175,17 +2277,21 @@ export class AppRepository {
         .run("Cliente responsavel nao identificado automaticamente pelo CNPJ/nome do contraparte. Associe manualmente e reprocesse.", new Date().toISOString(), file.id);
       return;
     }
-    const operationScope = resolution.operationScope === "INTERNAL" || resolution.operationScope === "EXTERNAL" ? resolution.operationScope : null;
+    const explicitFileScope = fileResolution.operationScope === "INTERNAL" || fileResolution.operationScope === "EXTERNAL" ? fileResolution.operationScope : null;
+    const inferredOperationScope = this.inferOperationScopeForXml(extracted, own.ownLegalEntityId, own.direction);
+    const defaultScope = resolution.operationScope === "INTERNAL" || resolution.operationScope === "EXTERNAL" ? resolution.operationScope : null;
+    const operationScope = explicitFileScope ?? inferredOperationScope ?? defaultScope;
     const createOperations = resolution.createOperations !== false;
     const operationType = resolution.operationType === "PURCHASE" || resolution.operationType === "SALE" ? resolution.operationType : own.operationType;
     const pending: string[] = [];
     if (!operationScope) pending.push("UF da venda nao definida.");
+    const counterpartyLegalEntityId = this.resolveCounterpartyLegalEntityForXml(extracted, own.ownLegalEntityId, own.direction);
     const totals = extracted.totals as Record<string, unknown> | undefined;
     const doc = this.createFiscalDocument({
       organizationId: job.organizationId,
       ownLegalEntityId: own.ownLegalEntityId,
       responsiblePartnerId,
-      partnerLegalEntityId: null,
+      partnerLegalEntityId: counterpartyLegalEntityId,
       accessKey: file.accessKey,
       documentNumber: String(extracted.number ?? ""),
       series: extracted.series ? String(extracted.series) : null,
@@ -2193,7 +2299,7 @@ export class AppRepository {
       totalAmountCents: Number(totals?.invoiceAmountCents ?? 0),
       hasPendingIssues: pending.length > 0,
       pendingNotes: pending.length ? pending.join(" ") : null,
-      notes: String(extracted.nature ?? "")
+      notes: [String(extracted.nature ?? ""), own.isThirdParty ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
     this.db.prepare(`UPDATE fiscal_documents SET source = 'XML', xml_file_path = ?, xml_file_hash = ?, protocol_number = ?, protocol_date = ?, authorization_status_code = ?, authorization_status_message = ?, xml_import_job_id = ?, direction = ?, fiscal_snapshot_json = ?, updated_at = ? WHERE id = ?`)
@@ -2270,10 +2376,11 @@ export class AppRepository {
     organizationId: string,
     extracted: Record<string, unknown>,
     resolution: Record<string, unknown>
-  ): { ownLegalEntityId: string | null; direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"; operationType: "PURCHASE" | "SALE"; errorMessage?: string } {
+  ): { ownLegalEntityId: string | null; direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"; operationType: "PURCHASE" | "SALE"; isThirdParty?: boolean; errorMessage?: string } {
     const issuer = extracted.issuer as Record<string, unknown> | undefined;
     const recipient = extracted.recipient as Record<string, unknown> | undefined;
-    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? ""));
+    const accessKeyIssuerDoc = this.issuerCnpjFromAccessKey(this.stringOrNull(extracted.accessKey));
+    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? "")) || accessKeyIssuerDoc || "";
     const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
     const allEntities = this.listLegalEntities({ status: "all" });
     if (typeof resolution.ownLegalEntityId === "string") {
@@ -2281,7 +2388,16 @@ export class AppRepository {
       if (!selectedOwn || selectedOwn.organizationId !== organizationId) throw new Error("CNPJ proprio selecionado nao pertence a organizacao atual.");
       if (!selectedOwn.isActive) throw new Error("CNPJ proprio selecionado esta inativo.");
       if (selectedOwn.cnpj && selectedOwn.cnpj !== issuerDoc && selectedOwn.cnpj !== recipientDoc) {
-        throw new Error("XML nao pertence ao CNPJ proprio selecionado. Troque a empresa ativa antes de importar ou selecione o CNPJ correto.");
+        const ownIssuerMatch = allEntities.find((entity) => entity.cnpj === issuerDoc && !this.isThirdPartyLegalEntity(entity));
+        const ownRecipientMatch = allEntities.find((entity) => entity.cnpj === recipientDoc && !this.isThirdPartyLegalEntity(entity));
+        if (ownIssuerMatch) {
+          throw new Error(`XML pertence a ${ownIssuerMatch.tradeName}. Troque a empresa ativa antes de importar.`);
+        }
+        if (!issuerDoc && ownRecipientMatch) {
+          throw new Error(`XML pertence a ${ownRecipientMatch.tradeName}. Troque a empresa ativa antes de importar.`);
+        }
+        const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
+        return { ownLegalEntityId: thirdParty.id, direction: "OUTBOUND", operationType: "SALE", isThirdParty: true };
       }
       if (selectedOwn.cnpj && selectedOwn.cnpj === issuerDoc) return { ownLegalEntityId: selectedOwn.id, direction: "OUTBOUND", operationType: "SALE" };
       if (selectedOwn.cnpj && selectedOwn.cnpj === recipientDoc) return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
@@ -2289,58 +2405,76 @@ export class AppRepository {
     }
     const issuerOwn = allEntities.find((entity) => entity.organizationId === organizationId && entity.cnpj === issuerDoc);
     const recipientOwn = allEntities.find((entity) => entity.organizationId === organizationId && entity.cnpj === recipientDoc);
-    const otherOrg = allEntities.find((entity) => entity.organizationId !== organizationId && (entity.cnpj === issuerDoc || entity.cnpj === recipientDoc));
-    if (otherOrg) throw new Error("XML pertence a CNPJ de outra organizacao.");
+    const otherOrgIssuer = allEntities.find((entity) => entity.organizationId !== organizationId && entity.cnpj === issuerDoc);
+    const otherOrgRecipient = allEntities.find((entity) => entity.organizationId !== organizationId && entity.cnpj === recipientDoc);
+    if (otherOrgIssuer && !this.isThirdPartyLegalEntity(otherOrgIssuer)) throw new Error(`XML pertence a ${otherOrgIssuer.tradeName}. Troque a empresa ativa antes de importar.`);
+    if (!issuerDoc && otherOrgRecipient && !this.isThirdPartyLegalEntity(otherOrgRecipient)) throw new Error(`XML pertence a ${otherOrgRecipient.tradeName}. Troque a empresa ativa antes de importar.`);
     if (issuerOwn && !issuerOwn.isActive) throw new Error("CNPJ proprio emitente esta inativo.");
     if (recipientOwn && !recipientOwn.isActive) throw new Error("CNPJ proprio destinatario esta inativo.");
     if (issuerOwn) return { ownLegalEntityId: issuerOwn.id, direction: "OUTBOUND", operationType: "SALE" };
     if (recipientOwn) return { ownLegalEntityId: recipientOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
 
     const organizationEntities = allEntities.filter((entity) => entity.organizationId === organizationId);
-    const issuerByIdentity = this.resolveOwnLegalEntityByXmlParty(organizationEntities, issuer);
-    const recipientByIdentity = this.resolveOwnLegalEntityByXmlParty(organizationEntities, recipient);
-    if (issuerByIdentity && !issuerByIdentity.isActive) throw new Error("CNPJ proprio emitente esta inativo.");
-    if (recipientByIdentity && !recipientByIdentity.isActive) throw new Error("CNPJ proprio destinatario esta inativo.");
-    if (issuerByIdentity) return { ownLegalEntityId: issuerByIdentity.id, direction: "OUTBOUND", operationType: "SALE" };
-    if (recipientByIdentity) return { ownLegalEntityId: recipientByIdentity.id, direction: "INBOUND", operationType: "PURCHASE" };
-
-    const issuerLabel = [issuerDoc || "sem CNPJ", this.stringOrNull(issuer?.state) ?? null, this.stringOrNull(issuer?.legalName) ?? null].filter(Boolean).join(" - ");
-    const recipientLabel = [recipientDoc || "sem CNPJ", this.stringOrNull(recipient?.state) ?? null, this.stringOrNull(recipient?.legalName) ?? null].filter(Boolean).join(" - ");
-    return {
-      ownLegalEntityId: null,
-      direction: "UNKNOWN",
-      operationType: "SALE",
-      errorMessage: `CNPJ proprio nao identificado. Cadastre o CNPJ proprio da empresa ou selecione a empresa/CNPJ correto. Emitente: ${issuerLabel || "-"}; Destinatario: ${recipientLabel || "-"}.`
-    };
+    const selectedOwnId = typeof resolution.ownLegalEntityId === "string" ? resolution.ownLegalEntityId : this.getInstallationProfile()?.defaultLegalEntityId;
+    const selectedOwn = selectedOwnId ? allEntities.find((entity) => entity.id === selectedOwnId) ?? null : organizationEntities.find((entity) => entity.isActive) ?? null;
+    if (!selectedOwn) {
+      const issuerLabel = [issuerDoc || "sem CNPJ", this.stringOrNull(issuer?.state) ?? null, this.stringOrNull(issuer?.legalName) ?? null].filter(Boolean).join(" - ");
+      const recipientLabel = [recipientDoc || "sem CNPJ", this.stringOrNull(recipient?.state) ?? null, this.stringOrNull(recipient?.legalName) ?? null].filter(Boolean).join(" - ");
+      return {
+        ownLegalEntityId: null,
+        direction: "UNKNOWN",
+        operationType: "SALE",
+        errorMessage: `CNPJ proprio nao identificado. Cadastre o CNPJ proprio da empresa ou selecione a empresa/CNPJ correto. Emitente: ${issuerLabel || "-"}; Destinatario: ${recipientLabel || "-"}.`
+      };
+    }
+    const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
+    return { ownLegalEntityId: thirdParty.id, direction: "OUTBOUND", operationType: "SALE", isThirdParty: true };
   }
 
-  private resolveOwnLegalEntityByXmlParty(entities: LegalEntity[], party: Record<string, unknown> | undefined): LegalEntity | null {
-    const state = this.stringOrNull(party?.state)?.toUpperCase() ?? null;
-    if (!state) return null;
-    const stateAliases: Record<string, string[]> = {
-      MG: ["MG", "MINAS GERAIS", "MONTE SANTO DE MINAS"],
-      ES: ["ES", "ESPIRITO SANTO"],
-      SP: ["SP", "SAO PAULO"]
-    };
-    const aliases = stateAliases[state] ?? [state];
-    const matches = entities.filter((entity) => {
-      if (entity.state?.toUpperCase() === state) return true;
-      const haystack = this.normalizeName(`${entity.legalName} ${entity.tradeName} ${entity.city} ${entity.state}`);
-      return aliases.some((alias) => haystack.includes(this.normalizeName(alias)));
+  private isThirdPartyLegalEntity(entity: Pick<LegalEntity, "documentPrefix" | "tradeName" | "legalName">): boolean {
+    return entity.documentPrefix === "TERC-XML" || this.normalizeName(`${entity.tradeName} ${entity.legalName}`).includes("TERCEIRIZAD");
+  }
+
+  private getOrCreateThirdPartyLegalEntityFromXml(organizationId: string, party: Record<string, unknown> | undefined, fallbackOwn: LegalEntity): LegalEntity {
+    const cnpj = this.onlyDigits(String(party?.cnpjCpf ?? ""));
+    if (!cnpj || cnpj.length !== 14) throw new Error("Nota terceirizada sem CNPJ de emitente valido.");
+    const existing = this.listLegalEntities({ status: "all" }).find((entity) => entity.cnpj === cnpj);
+    if (existing) return existing;
+    const legalName = this.stringOrNull(party?.legalName) ?? this.stringOrNull(party?.tradeName) ?? `Terceirizada ${cnpj}`;
+    const tradeName = this.stringOrNull(party?.tradeName) ?? legalName;
+    const partyState = this.stringOrNull(party?.state)?.toUpperCase() ?? "";
+    const partyPostalCode = this.onlyDigits(String(party?.postalCode ?? ""));
+    return this.createLegalEntity({
+      organizationId,
+      legalName,
+      tradeName,
+      cnpj,
+      stateRegistration: this.stringOrNull(party?.stateRegistration),
+      municipalRegistration: null,
+      email: null,
+      phone: null,
+      addressLine: this.stringOrNull(party?.addressLine) ?? "Endereco nao informado",
+      addressNumber: this.stringOrNull(party?.addressNumber) ?? "S/N",
+      addressComplement: this.stringOrNull(party?.addressComplement),
+      district: this.stringOrNull(party?.district) ?? "Nao informado",
+      city: this.stringOrNull(party?.city) ?? fallbackOwn.city,
+      state: (/^[A-Z]{2}$/.test(partyState) ? partyState : fallbackOwn.state) as LegalEntity["state"],
+      postalCode: partyPostalCode.length === 8 ? partyPostalCode : fallbackOwn.postalCode || "00000000",
+      documentPrefix: "TERC-XML",
+      defaultBankName: null,
+      defaultBankCode: null,
+      defaultBankAgency: null,
+      defaultBankAccount: null,
+      defaultPixKey: null,
+      isDraft: true,
+      isActive: true
     });
-    return matches.find((entity) => entity.isActive) ?? matches[0] ?? null;
   }
 
   private resolveCounterpartyPartnerForXml(organizationId: string, extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
-    const ownEntity = this.listLegalEntities({ organizationId, status: "all" }).find((entity) => entity.id === ownLegalEntityId);
-    const ownCnpj = ownEntity?.cnpj ?? null;
-    const issuer = extracted.issuer as Record<string, unknown> | undefined;
-    const recipient = extracted.recipient as Record<string, unknown> | undefined;
-    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? ""));
-    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
-    const counterpartyIsRecipient = direction === "OUTBOUND" || (direction === "UNKNOWN" && ownCnpj !== null && issuerDoc === ownCnpj);
-    const counterpartyDoc = counterpartyIsRecipient ? recipientDoc : issuerDoc;
-    const counterpartyParty = counterpartyIsRecipient ? recipient : issuer;
+    const counterparty = this.resolveXmlCounterparty(extracted, ownLegalEntityId, direction);
+    const counterpartyDoc = counterparty.documentNumber;
+    const counterpartyParty = counterparty.party;
     const counterpartyTradeName = this.stringOrNull(counterpartyParty?.tradeName);
     const counterpartyLegalName = this.stringOrNull(counterpartyParty?.legalName);
 
@@ -2362,6 +2496,51 @@ export class AppRepository {
       if (aliasMatch) return aliasMatch.businessPartnerId;
     }
     return null;
+  }
+
+  private resolveCounterpartyLegalEntityForXml(extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
+    const counterpartyDoc = this.resolveXmlCounterparty(extracted, ownLegalEntityId, direction).documentNumber;
+    if (!counterpartyDoc || counterpartyDoc.length !== 14) return null;
+    const row = this.db.prepare(`
+      SELECT ple.id AS id
+      FROM partner_legal_entities ple
+      JOIN business_partners bp ON bp.id = ple.business_partner_id
+      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
+      LIMIT 1
+    `).get(counterpartyDoc) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  private inferOperationScopeForXml(extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): "INTERNAL" | "EXTERNAL" | null {
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerState = this.stringOrNull(issuer?.state)?.toUpperCase() ?? null;
+    const recipientState = this.stringOrNull(recipient?.state)?.toUpperCase() ?? null;
+    if (issuerState && recipientState) return issuerState === recipientState ? "INTERNAL" : "EXTERNAL";
+
+    const ownEntity = this.listLegalEntities({ status: "all" }).find((entity) => entity.id === ownLegalEntityId);
+    const ownState = this.stringOrNull(ownEntity?.state)?.toUpperCase() ?? null;
+    const counterpartyState = this.stringOrNull(this.resolveXmlCounterparty(extracted, ownLegalEntityId, direction).party?.state)?.toUpperCase() ?? null;
+    if (!ownState || !counterpartyState) return null;
+    return ownState === counterpartyState ? "INTERNAL" : "EXTERNAL";
+  }
+
+  private resolveXmlCounterparty(extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): { party: Record<string, unknown> | undefined; documentNumber: string } {
+    const ownEntity = this.listLegalEntities({ status: "all" }).find((entity) => entity.id === ownLegalEntityId);
+    const ownCnpj = ownEntity?.cnpj ?? null;
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? "")) || this.issuerCnpjFromAccessKey(this.stringOrNull(extracted.accessKey)) || "";
+    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    const counterpartyIsRecipient = direction === "OUTBOUND" || (direction === "UNKNOWN" && ownCnpj !== null && issuerDoc === ownCnpj);
+    return counterpartyIsRecipient
+      ? { party: recipient, documentNumber: recipientDoc }
+      : { party: issuer, documentNumber: issuerDoc };
+  }
+
+  private issuerCnpjFromAccessKey(accessKey: string | null): string | null {
+    const key = this.onlyDigits(accessKey ?? "");
+    return key.length === 44 ? key.slice(6, 20) : null;
   }
 
   private resolveSacksForXmlItem(xmlItem: Record<string, unknown>, product: Product | null, resolution: Record<string, unknown>): string | null {
@@ -2457,17 +2636,19 @@ export class AppRepository {
     const now = new Date().toISOString();
     operationIds.forEach((operationId) => {
       const operation = this.getOperation(operationId);
-      if (operation.organizationId !== charge.organizationId || operation.ownLegalEntityId !== charge.ownLegalEntityId || operation.responsiblePartnerId !== charge.clientPartnerId) throw new Error("Operacao fora do escopo da cobranca.");
+      if (operation.responsiblePartnerId !== charge.clientPartnerId) throw new Error("Operacao fora do escopo da cobranca.");
       if (operation.status !== "CONFIRMED") throw new Error("Somente operacoes confirmadas entram em cobranca.");
       if (operation.billingStatus !== "UNBILLED" && operation.clientChargeId !== charge.id) throw new Error("Operacao ja reservada ou cobrada.");
       const doc = this.getFiscalDocument(operation.fiscalDocumentId).document;
       const product = operation.productId ? this.getProduct(operation.productId) : null;
+      const ownLegalEntity = this.getLegalEntity(operation.ownLegalEntityId);
+      const counterpartyName = doc.partnerLegalEntityId ? this.getPartnerLegalEntity(doc.partnerLegalEntityId).tradeName : null;
       this.db.prepare(`INSERT INTO client_charge_operations (
-        id, client_charge_id, operation_id, operation_date_snapshot, fiscal_document_number_snapshot,
-        fiscal_document_series_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
+        id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot, fiscal_document_number_snapshot,
+        fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
         service_rate_cents_snapshot, service_amount_cents_snapshot, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), charge.id, operation.id, operation.operationDate, doc.documentNumber, doc.series, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, ownLegalEntity.tradeName, counterpartyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
     });
   }
@@ -4100,7 +4281,7 @@ export class AppRepository {
     const row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, expectedPrefix) as DbRecord | undefined;
     const prefix = String(row?.prefix ?? expectedPrefix);
     const padding = Number(row?.padding ?? 4);
-    const next = Number(row?.current_number ?? 0) + 1;
+    const next = this.findNextReusableDealConfirmationNumber(organizationId, ownLegalEntityId, year, prefix);
     return `${prefix}${String(next).padStart(padding, "0")}`;
   }
 
@@ -4389,9 +4570,32 @@ export class AppRepository {
         .run(randomUUID(), organizationId, ownLegalEntityId, year, prefix, now, now);
       row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, prefix) as DbRecord;
     }
-    const next = Number(row.current_number) + 1;
-    this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(next, now, row.id);
+    const next = this.findNextReusableDealConfirmationNumber(organizationId, ownLegalEntityId, year, String(row.prefix ?? prefix));
+    const current = Math.max(Number(row.current_number), next);
+    this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(current, now, row.id);
     return `${String(row.prefix ?? "")}${String(next).padStart(Number(row.padding), "0")}`;
+  }
+
+  private findNextReusableDealConfirmationNumber(organizationId: string, ownLegalEntityId: string, year: number, prefix: string): number {
+    const rows = this.db.prepare(`
+      SELECT confirmation_number AS confirmationNumber
+      FROM deal_confirmations
+      WHERE organization_id = ?
+        AND own_legal_entity_id = ?
+        AND confirmation_number IS NOT NULL
+        AND confirmation_date >= ?
+        AND confirmation_date <= ?
+    `).all(organizationId, ownLegalEntityId, `${year}-01-01`, `${year}-12-31`) as Array<{ confirmationNumber: string | null }>;
+    const used = new Set<number>();
+    rows.forEach((row) => {
+      const number = row.confirmationNumber ?? "";
+      if (!number.startsWith(prefix)) return;
+      const suffix = number.slice(prefix.length).trim();
+      if (/^\d+$/.test(suffix)) used.add(Number(suffix));
+    });
+    let next = 1;
+    while (used.has(next)) next += 1;
+    return next;
   }
 
   private findActiveDealConfirmationForFiscalDocuments(fiscalDocumentIds: string[]): DealConfirmationDetail | null {
@@ -4661,7 +4865,7 @@ export class AppRepository {
   private assertClientPartner(businessPartnerId: string, organizationId: string): BusinessPartner {
     void organizationId;
     const partner = this.getBusinessPartner(businessPartnerId);
-    if (!partner.roles.includes("CLIENT")) throw new Error("Somente parceiros com papel Cliente podem usar esta configuracao.");
+    if (!partner.roles.includes("CLIENT")) throw new Error("Somente cadastros com papel Cliente/corretor podem usar esta configuracao.");
     return partner;
   }
 
@@ -4684,10 +4888,14 @@ export class AppRepository {
       const product = this.getProduct(data.productId);
       if (product.organizationId !== data.organizationId) throw new Error("Produto pertence a outra organizacao.");
     }
-    const overlaps = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, organizationId: data.organizationId, status: "active" }).filter((rule) => {
+    if (data.counterpartyPartnerLegalEntityId) {
+      this.getPartnerLegalEntity(data.counterpartyPartnerLegalEntityId);
+    }
+    const overlaps = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, status: "active" }).filter((rule) => {
       if (rule.id === exceptId) return false;
       const sameScope =
         rule.ownLegalEntityId === data.ownLegalEntityId &&
+        rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId &&
         rule.productId === data.productId &&
         rule.operationScope === data.operationScope &&
         rule.rateType === data.rateType;
@@ -4711,6 +4919,11 @@ export class AppRepository {
     const operation = mapOperation(row);
     if (!this.isOrganizationAllowed(operation.organizationId)) throw new Error("Operacao nao autorizada.");
     return operation;
+  }
+
+  private getOperationCounterpartyPartnerLegalEntityId(fiscalDocumentId: string): string | null {
+    const row = this.db.prepare("SELECT partner_legal_entity_id FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as { partner_legal_entity_id: string | null } | undefined;
+    return row?.partner_legal_entity_id ?? null;
   }
 
   private getSpreadsheetMappingTemplate(id: string): SpreadsheetMappingTemplate {

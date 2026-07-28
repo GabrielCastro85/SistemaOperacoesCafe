@@ -20,6 +20,7 @@ function currentMonthStart(): string {
 
 const emptyRuleForm = {
   partnerId: "",
+  counterpartyPartnerLegalEntityId: "",
   productId: "",
   scope: "EXTERNAL" as OperationScope,
   value: "5,00",
@@ -59,8 +60,9 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
 
   const filteredRules = rules.filter((rule) => {
     const partnerName = partnerLabel(rule.businessPartnerId);
+    const counterpartyName = counterpartyLabel(rule.counterpartyPartnerLegalEntityId);
     const productName = productLabel(rule.productId);
-    const haystack = `${partnerName} ${productName} ${scopeLabels[rule.operationScope]}`.toLowerCase();
+    const haystack = `${partnerName} ${counterpartyName} ${productName} ${scopeLabels[rule.operationScope]}`.toLowerCase();
     return (!scopeFilter || rule.operationScope === scopeFilter) && haystack.includes(search.trim().toLowerCase());
   });
 
@@ -70,6 +72,10 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
 
   function productLabel(id: string | null): string {
     return id ? products.find((product) => product.id === id)?.name ?? id : "Todos";
+  }
+
+  function counterpartyLabel(id: string | null): string {
+    return id ? partnerLegalEntities.find((entity) => entity.id === id)?.tradeName ?? id : "Todas";
   }
 
   function updateForm(field: keyof typeof emptyRuleForm, value: string): void {
@@ -92,6 +98,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
     const hasNoDefinedValidity = rule.effectiveFrom === OPEN_ENDED_EFFECTIVE_FROM && !rule.effectiveTo;
     setForm({
       partnerId: rule.businessPartnerId,
+      counterpartyPartnerLegalEntityId: rule.counterpartyPartnerLegalEntityId ?? "",
       productId: rule.productId ?? "",
       scope: rule.operationScope,
       value: (rule.rateValueCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
@@ -118,6 +125,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       organizationId,
       businessPartnerId: form.partnerId,
       ownLegalEntityId: null,
+      counterpartyPartnerLegalEntityId: form.counterpartyPartnerLegalEntityId || null,
       productId: form.productId || null,
       operationScope: form.scope,
       rateType: "PER_SACK",
@@ -132,7 +140,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
 
   async function saveRule(): Promise<void> {
     if (!form.partnerId) {
-      setMessage("Erro: selecione um cliente para a regra.");
+      setMessage("Erro: selecione um cliente/corretor para a regra.");
       return;
     }
     if (!form.noDefinedValidity && !form.effectiveFrom) {
@@ -183,19 +191,20 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
 
   return (
     <section className="content-section settings compact-crud-page service-rates-page">
-      <PageHeader eyebrow="Regras por saca" title="Valores comerciais por cliente" description="Cadastre vigencias, produto e UF da venda para aplicar automaticamente o valor de servico por saca." />
+      <PageHeader eyebrow="Regras por saca" title="Valores comerciais por cliente/corretor" description="Cadastre vigencias, produto e UF da venda para aplicar automaticamente o valor de servico por saca do corretor responsavel." />
       <div ref={rulesListRef}>
-      <AdminBlock title="Cobrancas - Regras por cliente">
+      <AdminBlock title="Cobrancas - Regras por cliente/corretor">
         <div className="partners-list-toolbar service-rate-toolbar">
           <TextField label="Pesquisar regra" value={search} onChange={setSearch} />
           <SelectField label="UF da venda" value={scopeFilter} onChange={setScopeFilter} options={[["", "Todos"], ...SERVICE_RATE_SCOPE_OPTIONS]} />
           <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar regra</button>
         </div>
         <div className="table">
-          <div className="table-head rate-grid"><span>Cliente</span><span>UF da venda</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span><span>Acoes</span></div>
+          <div className="table-head rate-grid"><span>Cliente/corretor</span><span>Empresa da nota</span><span>UF da venda</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span><span>Acoes</span></div>
           {filteredRules.map((item) => (
             <div key={item.id} className="table-row rate-grid">
               <span>{partnerLabel(item.businessPartnerId)}</span>
+              <span>{counterpartyLabel(item.counterpartyPartnerLegalEntityId)}</span>
               <span>{scopeLabels[item.operationScope]}</span>
               <span>{productLabel(item.productId)}</span>
               <span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span>
@@ -214,7 +223,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
             <header className="partner-modal__header">
               <div>
                 <span>{modalMode === "create" ? "Nova regra" : "Regra existente"}</span>
-                <strong>{modalMode === "create" ? "Cadastrar regra por saca" : `Editar regra de ${editingRule ? partnerLabel(editingRule.businessPartnerId) : "cliente"}`}</strong>
+                <strong>{modalMode === "create" ? "Cadastrar regra por saca" : `Editar regra de ${editingRule ? partnerLabel(editingRule.businessPartnerId) : "cliente/corretor"}`}</strong>
               </div>
               <button className="partner-modal__close" onClick={closeModal} aria-label="Fechar">x</button>
             </header>
@@ -224,11 +233,12 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                   <span className="partner-action-icon" aria-hidden="true">$</span>
                   <div>
                     <strong>Dados da regra</strong>
-                    <small>Escolha o cliente, produto opcional, se a venda e na mesma UF ou em outra UF, e o valor comercial por saca.</small>
+                    <small>Escolha o cliente/corretor, produto opcional, se a venda e na mesma UF ou em outra UF, e o valor comercial por saca.</small>
                   </div>
                 </div>
                 <FormGrid>
-                  <PartnerQuickSearch label="Cliente" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} partners={partners} legalEntities={partnerLegalEntities} />
+                  <PartnerQuickSearch label="Cliente/corretor" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} partners={partners} legalEntities={partnerLegalEntities} />
+                  <SelectField label="Empresa da nota especifica" value={form.counterpartyPartnerLegalEntityId} onChange={(value) => updateForm("counterpartyPartnerLegalEntityId", value)} options={[["", "Todas"], ...partnerLegalEntities.map((item) => [item.id, item.tradeName] as [string, string])]} />
                   <SelectField label="UF da venda" value={form.scope} onChange={(value) => updateForm("scope", value)} options={SERVICE_RATE_SCOPE_OPTIONS} />
                   <SelectField label="Produto" value={form.productId} onChange={(value) => updateForm("productId", value)} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
                   <TextField label="Valor por saca" value={form.value} onChange={(value) => updateForm("value", value)} />

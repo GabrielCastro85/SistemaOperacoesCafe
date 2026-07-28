@@ -4,6 +4,10 @@ import type { BillingSummary, BootstrapData, DashboardAlerts, DealConfirmationSu
 import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
 import { Badge, Button, Card, CheckCircleIcon, CoinsIcon, EmptyState, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 
+function isOperationalLegalEntity(entity: LegalEntity): boolean {
+  return entity.documentPrefix !== "TERC-XML";
+}
+
 export function Splash(): JSX.Element {
   return (
     <main className="splash">
@@ -16,7 +20,7 @@ export function Splash(): JSX.Element {
 
 export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (profile: InstallationProfile) => void }): JSX.Element {
   const variant = "multiempresa";
-  const activeLegalEntities = data.legalEntities.filter((entity) => entity.isActive);
+  const activeLegalEntities = data.legalEntities.filter((entity) => entity.isActive && isOperationalLegalEntity(entity));
   const firstLegalEntity = activeLegalEntities[0] ?? data.legalEntities[0] ?? null;
   const [legalEntityId, setLegalEntityId] = useState(data.profile?.defaultLegalEntityId ?? firstLegalEntity?.id ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +93,7 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
 export function Dashboard({ organizations, legalEntities, locations, organizationId, ownLegalEntityId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string; ownLegalEntityId?: string | null }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
+  const [operationalIndicators, setOperationalIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } | null>(null);
   const [alerts, setAlerts] = useState<DashboardAlerts | null>(null);
   const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
@@ -97,10 +102,12 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     if (!organizationId) return;
     void Promise.all([
       window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }),
+      window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId }),
       window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
       window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
-    ]).then(([billing, confirmations, dashboardAlerts]) => {
+    ]).then(([billing, operations, confirmations, dashboardAlerts]) => {
       setBillingSummary(billing);
+      setOperationalIndicators(operations);
       setConfirmationSummary(confirmations);
       setAlerts(dashboardAlerts);
     });
@@ -112,9 +119,9 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   }, [organizationId, ownLegalEntityId, chartYear]);
 
   const totalReceivable = billingSummary?.openCents ?? 0;
-  const totalCommercialAmount = confirmationSummary?.totalCommercialAmountCents ?? 0;
+  const totalCommercialAmount = operationalIndicators?.fiscalAmountCents ?? 0;
   const confirmationCount = confirmationSummary?.issued ?? 0;
-  const sacks = Number(confirmationSummary?.totalSacksDecimal ?? 0);
+  const sacks = Number(operationalIndicators?.sacksDecimal ?? 0);
   const maxMonthlyAmount = Math.max(1, ...monthlyTotals.map((item) => item.amountCents));
   const maxMonthlySacks = Math.max(1, ...monthlyTotals.map((item) => Number(item.sacksDecimal)));
   const monthBars = monthlyTotals.length ? monthlyTotals.map((item) => Math.round((item.amountCents / maxMonthlyAmount) * 100)) : Array.from({ length: 12 }, () => 0);
@@ -133,8 +140,8 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     <section className="content-section">
       <PageHeader eyebrow="Visao geral" title="Dashboard operacional" description="Indicadores locais para operacao, recebimentos, financeiro interno e confirmacoes de negocio." />
       <div className="dashboard-grid dashboard-grid--hero">
-        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume comercial confirmado</small></Card>
-        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das operacoes</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das confirmacoes emitidas</small></Card>
+        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
+        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
         <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
         <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
       </div>

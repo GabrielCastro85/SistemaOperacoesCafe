@@ -62,6 +62,10 @@ import { UsersPage } from "../pages/settings/users/UsersPage";
 import { legacyMenuFromPath, pathFromLegacyMenu } from "./navigation";
 import { AppProviders } from "./providers";
 
+function isOperationalLegalEntity(entity: { documentPrefix: string | null }): boolean {
+  return entity.documentPrefix !== "TERC-XML";
+}
+
 export default function App(): JSX.Element {
   return (
     <AppProviders>
@@ -133,7 +137,7 @@ function RoutedApp(): JSX.Element {
 
   const organization = data.organizations.find((item) => item.id === profile.defaultOrganizationId) ?? data.organizations[0] ?? null;
   const legalEntity = data.legalEntities.find((item) => item.id === profile.defaultLegalEntityId) ?? null;
-  const orgEntities = data.legalEntities.filter((item) => item.organizationId === organization?.id && item.isActive);
+  const orgEntities = data.legalEntities.filter((item) => item.organizationId === organization?.id && item.isActive && isOperationalLegalEntity(item));
   const activeMenu = legacyMenuFromPath(path);
   const canSwitchOrg = Boolean(profile.allowOrganizationSwitch && profile.appVariant === "multiempresa");
 

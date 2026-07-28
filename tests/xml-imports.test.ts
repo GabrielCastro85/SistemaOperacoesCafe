@@ -164,6 +164,48 @@ describe("xml imports", () => {
     }
   });
 
+  it("classifies mixed XML batches by each counterparty state automatically", () => {
+    const { repo, db, partnerId, productId, dir } = setup();
+    repo.createServiceRateRule({
+      organizationId: villaId,
+      businessPartnerId: partnerId,
+      ownLegalEntityId: null,
+      productId,
+      operationScope: "INTERNAL",
+      rateType: "PER_SACK",
+      rateValueCents: 500,
+      effectiveFrom: "2026-07-01",
+      effectiveTo: null,
+      priority: 10,
+      notes: null,
+      isActive: true
+    });
+    const internalPath = join(dir, "nfe-mg.xml");
+    const externalPath = join(dir, "nfe-sp.xml");
+    writeFileSync(internalPath, nfeXml(makeAccessKey(9101)).replace("<cMun>3550308</cMun><xMun>Sao Paulo</xMun><UF>SP</UF>", "<cMun>3139409</cMun><xMun>Manhuacu</xMun><UF>MG</UF>"), "utf8");
+    writeFileSync(externalPath, nfeXml(makeAccessKey(9102)), "utf8");
+    const internalInspection = inspectXmlFile(internalPath, "11111111-1111-4111-8111-111111111121");
+    const externalInspection = inspectXmlFile(externalPath, "11111111-1111-4111-8111-111111111122");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "MULTIPLE_FILES",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId, clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true }
+    });
+    const internalFile = repo.addXmlImportFile({ importJobId: job.id, originalFileName: internalInspection.originalFileName, fileHash: internalInspection.fileHash, fileSize: internalInspection.fileSize, xmlType: internalInspection.xmlType, accessKey: internalInspection.accessKey, status: internalInspection.status, errorCode: null, errorMessage: null, warningCodes: internalInspection.warnings, extractedData: internalInspection.extractedData, resolutionData: null });
+    const externalFile = repo.addXmlImportFile({ importJobId: job.id, originalFileName: externalInspection.originalFileName, fileHash: externalInspection.fileHash, fileSize: externalInspection.fileSize, xmlType: externalInspection.xmlType, accessKey: externalInspection.accessKey, status: externalInspection.status, errorCode: null, errorMessage: null, warningCodes: externalInspection.warnings, extractedData: externalInspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(internalFile.id, internalPath);
+    repo.setXmlImportFileStoredPath(externalFile.id, externalPath);
+
+    const result = repo.executeXmlImportJob(job.id);
+
+    expect(result.job.importedNotes).toBe(2);
+    const operationScopes = result.files.map((file) => repo.getFiscalDocument(file.fiscalDocumentId as string).operations[0].operationScope).sort();
+    expect(operationScopes).toEqual(["EXTERNAL", "INTERNAL"]);
+    db.close();
+  });
+
   it("blocks XML import when the selected own CNPJ does not match the invoice parties", () => {
     const { repo, db, partnerId, productId, dir } = setup();
     const key = makeAccessKey();
@@ -182,8 +224,38 @@ describe("xml imports", () => {
     const result = repo.executeXmlImportJob(job.id);
     expect(result.job.importedNotes).toBe(0);
     expect(result.files[0].status).toBe("ERROR");
-    expect(result.files[0].errorMessage).toContain("XML nao pertence ao CNPJ proprio selecionado");
+    expect(result.files[0].errorMessage).toContain("Troque a empresa ativa antes de importar");
     expect(repo.listFiscalDocuments({ organizationId: villaId, ownLegalEntityId: villaEsLegalEntityId })).toHaveLength(0);
+    db.close();
+  });
+
+  it("accepts XML from a third-party issuer as a billing-only operation", () => {
+    const { repo, db, partnerId, productId, dir } = setup();
+    const key = makeAccessKey();
+    const thirdPartyCnpj = "99888777000166";
+    const filePath = join(dir, "nfe-third-party.xml");
+    const xml = nfeXml(key)
+      .replace(`<CNPJ>${ownCnpj}</CNPJ>`, `<CNPJ>${thirdPartyCnpj}</CNPJ>`)
+      .replace("<xNome>Emitente Cafe Ltda</xNome>", "<xNome>Terceirizada Cafe Ltda</xNome>");
+    writeFileSync(filePath, xml, "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111119");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId, clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.job.importedNotes).toBe(1);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    const thirdParty = repo.getLegalEntity(detail.document.ownLegalEntityId);
+    expect(thirdParty.cnpj).toBe(thirdPartyCnpj);
+    expect(thirdParty.documentPrefix).toBe("TERC-XML");
+    expect(detail.document.notes).toContain("Nota terceirizada");
+    expect(detail.operations[0].serviceAmountCents).toBeGreaterThan(0);
     db.close();
   });
 
@@ -223,7 +295,54 @@ describe("xml imports", () => {
     db.close();
   });
 
-  it("identifies the own legal entity by state/name when its CNPJ is still pending", () => {
+  it("keeps the selected broker as billing client even when the XML company is registered", () => {
+    const { repo, db, partnerId: brokerId, productId, dir } = setup();
+    const company = repo.createBusinessPartner({ organizationId: villaId, displayName: "Empresa da nota", notes: null, roles: ["CLIENT", "BUYER"], isActive: true });
+    repo.createPartnerLegalEntity({
+      businessPartnerId: company.id,
+      legalName: "Cliente XML Ltda",
+      tradeName: "Cliente XML Ltda",
+      cnpj: partnerCnpj,
+      stateRegistration: null,
+      municipalRegistration: null,
+      email: null,
+      phone: null,
+      addressLine: null,
+      addressNumber: null,
+      addressComplement: null,
+      district: null,
+      city: null,
+      state: null,
+      postalCode: null,
+      isPrimary: true,
+      isActive: true,
+      isDraft: false
+    });
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-broker-overrides-company.xml");
+    writeFileSync(filePath, nfeXml(key), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111110");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { clientPartnerId: brokerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = repo.executeXmlImportJob(job.id);
+    expect(result.job.importedNotes).toBe(1);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    expect(detail.document.responsiblePartnerId).toBe(brokerId);
+    expect(detail.operations[0].responsiblePartnerId).toBe(brokerId);
+    expect(detail.document.responsiblePartnerId).not.toBe(company.id);
+    expect(repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: brokerId, periodStart: "2026-01-01", periodEnd: "2026-12-31" })).toHaveLength(1);
+    expect(repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: company.id, periodStart: "2026-01-01", periodEnd: "2026-12-31" })).toHaveLength(0);
+    db.close();
+  });
+
+  it("does not identify an own legal entity by state/name when the CNPJ does not match", () => {
     const { repo, db, partnerId, productId, dir } = setup();
     repo.updateLegalEntity(ownLegalEntityId, {
       organizationId: villaId,
@@ -276,7 +395,8 @@ describe("xml imports", () => {
     expect(result.files[0].errorMessage).toBeNull();
     expect(result.job.importedNotes).toBe(1);
     const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
-    expect(detail.document.ownLegalEntityId).toBe(ownLegalEntityId);
+    expect(detail.document.ownLegalEntityId).not.toBe(ownLegalEntityId);
+    expect(repo.getLegalEntity(detail.document.ownLegalEntityId).documentPrefix).toBe("TERC-XML");
     expect(detail.document.responsiblePartnerId).toBe(partnerId);
     expect(detail.document.direction).toBe("OUTBOUND");
     db.close();
@@ -342,8 +462,10 @@ describe("xml imports", () => {
   });
 });
 
-function makeAccessKey(): string {
-  const body = "3126071122233300018155001000009001100009001";
+function makeAccessKey(sequence = 9001): string {
+  const number = String(sequence).padStart(9, "0");
+  const control = String(sequence).padStart(8, "0");
+  const body = `3126071122233300018155001${number}1${control}`;
   let weight = 2;
   let sum = 0;
   for (let index = body.length - 1; index >= 0; index -= 1) {

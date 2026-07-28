@@ -9,7 +9,7 @@ import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
-import { parseNfeExtractedPreview, resolveOwnAndCounterparty } from "./xmlPreview";
+import { parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
@@ -24,13 +24,11 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
 }
 
-function normalizeMatchText(value: string | null | undefined): string {
-  return (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .trim()
-    .toUpperCase();
+function inferXmlOperationScope(preview: NfeExtractedPreview | null): OperationScope | null {
+  const issuerState = preview?.issuer?.state?.trim().toUpperCase() ?? "";
+  const recipientState = preview?.recipient?.state?.trim().toUpperCase() ?? "";
+  if (!issuerState || !recipientState) return null;
+  return issuerState === recipientState ? "INTERNAL" : "EXTERNAL";
 }
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
@@ -68,6 +66,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
   const [xmlSelectionSource, setXmlSelectionSource] = useState<"FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP">("FILE");
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
+  const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const scrollTo = useAutoScroll();
   const manualDetailRef = useRef<HTMLDivElement | null>(null);
@@ -81,7 +80,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     const clientPartners = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clientPartners);
     setPartnerLegalEntities((await Promise.all(clientPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
-    setPartnerId((current) => current || clientPartners[0]?.id || "");
+    setPartnerId((current) => (clientPartners.some((partner) => partner.id === current) ? current : ""));
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
@@ -302,6 +301,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlSelections(selected);
     setXmlQueue(inspections);
     setXmlJob(null);
+    setXmlScopeOverrides({});
     setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
     setMessage(
       invalidCount
@@ -313,13 +313,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function validateXmlImport(): Promise<void> {
     if (xmlSelections.length === 0) return;
+    if (!partnerId) {
+      setMessage("Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
+      scrollTo(xmlDataRef);
+      return;
+    }
     try {
       const job = await window.operationsCafe.createXmlImportDraft({
         organizationId,
         sourceType: xmlSelectionSource,
         selectedFolder: null,
         includeSubfolders: includeXmlSubfolders,
-        settings: { clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true }
+        settings: { ownLegalEntityId, clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true }
       });
       const added = await window.operationsCafe.addXmlImportFiles({ jobId: job.id, tokens: xmlSelections.map((file) => file.token) });
       const validated = await window.operationsCafe.validateXmlImportJob(added.job.id);
@@ -334,6 +339,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
+    if (!partnerId) {
+      setMessage("Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
+      scrollTo(xmlDataRef);
+      return;
+    }
     try {
       const executed = await window.operationsCafe.executeXmlImportJob({ jobId: xmlJob.job.id, tokens: xmlSelections.map((file) => file.token) });
       setXmlJob(executed);
@@ -375,7 +385,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     try {
       await window.operationsCafe.updateXmlImportFileResolution(fileId, { clientPartnerId });
       if (xmlJob) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJob.job.id));
-      setMessage("Cliente associado. Clique em \"Importar XMLs\" novamente para reprocessar.");
+      setMessage("Cliente/corretor associado. Clique em \"Importar XMLs\" novamente para reprocessar.");
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar resolucao."}`);
     }
@@ -419,7 +429,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         });
       }
       await saveXmlFileResolution(file.id);
-      setMessage("Cliente associado e CNPJ/apelido cadastrado. Proximas notas desse contraparte serao reconhecidas automaticamente.");
+      setMessage("Cliente/corretor associado e empresa/apelido cadastrado. Proximas notas desse contraparte poderao ser vinculadas a ele.");
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao cadastrar CNPJ/alias."}`);
     }
@@ -429,33 +439,28 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedXmlParties = resolveOwnAndCounterparty(selectedXmlPreview, data.legalEntities);
   const selectedXmlItem = selectedXmlPreview?.items[0] ?? null;
+  const selectedXmlInferredScope = inferXmlOperationScope(selectedXmlPreview);
+  const selectedXmlScope = selectedXmlFile ? xmlScopeOverrides[selectedXmlFile.token] ?? selectedXmlInferredScope ?? scope : scope;
   const selectedXmlOwnMismatch = Boolean(
     selectedXmlParties.ownEntityLabel &&
     ownLegalEntity &&
     selectedXmlParties.ownEntityLabel !== ownLegalEntity.tradeName
   );
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
-
-  useEffect(() => {
-    if (!selectedXmlFile || !selectedXmlParties.counterpartyLabel) return;
-    const counterpartyCnpj = selectedXmlParties.counterpartyCnpj ? onlyDigits(selectedXmlParties.counterpartyCnpj) : null;
-    const byCnpj = counterpartyCnpj
-      ? partnerLegalEntities.find((entity) => entity.cnpj && onlyDigits(entity.cnpj) === counterpartyCnpj)
-      : null;
-    const byName = !byCnpj
-      ? partners.find((partner) => {
-          const counterpartyName = normalizeMatchText(selectedXmlParties.counterpartyLabel);
-          const partnerName = normalizeMatchText(partner.displayName);
-          if (!counterpartyName || !partnerName) return false;
-          return counterpartyName === partnerName || counterpartyName.includes(partnerName) || partnerName.includes(counterpartyName);
-        })
-      : null;
-    const matchedPartnerId = byCnpj?.businessPartnerId ?? byName?.id ?? "";
-    if (matchedPartnerId && matchedPartnerId !== partnerId) {
-      setPartnerId(matchedPartnerId);
-      setMessage(`Cliente reconhecido automaticamente: ${partners.find((partner) => partner.id === matchedPartnerId)?.displayName ?? selectedXmlParties.counterpartyLabel}.`);
-    }
-  }, [partnerId, partnerLegalEntities, partners, selectedXmlFile, selectedXmlParties.counterpartyCnpj, selectedXmlParties.counterpartyLabel]);
+  const xmlBatchRows = xmlQueue.map((file) => {
+    const preview = parseNfeExtractedPreview(file.extractedData ?? null);
+    const parties = resolveOwnAndCounterparty(preview, data.legalEntities);
+    const firstItem = preview?.items[0] ?? null;
+    const inferredScope = inferXmlOperationScope(preview);
+    return {
+      file,
+      preview,
+      parties,
+      firstItem,
+      operationScope: xmlScopeOverrides[file.token] ?? inferredScope ?? scope
+    };
+  });
+  const validXmlBatchRows = xmlBatchRows.filter((row) => row.file.status !== "ERROR");
 
   const xmlJobStatus = xmlJob?.job.status;
   const xmlImportSteps: StepperStep[] = [
@@ -517,13 +522,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(visibleServiceCents)}</strong></article>
         </div>
         <FormGrid>
-          <PartnerQuickSearch label="Cliente responsavel" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+          <PartnerQuickSearch label="Cliente/corretor responsavel" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
           <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
         </FormGrid>
-        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
+        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente/corretor</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
           return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
@@ -632,7 +637,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
             )}
             <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection}>Validar fila</button>
+              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || !partnerId}>Validar fila</button>
             </div>
           </div>
 
@@ -646,9 +651,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity?.tradeName}. Troque o CNPJ ativo antes de salvar a nota.</span>
                   </div>
                 ) : null}
+                {selectedXmlParties.isThirdPartyOrigin ? (
+                  <div className="operation-warning-card operation-warning-card--neutral">
+                    <strong>Nota de empresa externa/terceirizada</strong>
+                    <span>Este XML nao pertence aos CNPJs Villa ou Grao cadastrados como proprios. Ele pode ser salvo para entrar nas cobrancas do cliente/corretor responsavel.</span>
+                  </div>
+                ) : null}
                 <dl className="kv-list">
-                  <div><dt>Empresa</dt><dd>{selectedXmlParties.ownEntityLabel ?? "Nao identificada"}</dd></div>
-                  <div><dt>Cliente</dt><dd>{selectedXmlParties.counterpartyLabel ?? "Nao identificado"}</dd></div>
+                  <div><dt>Origem reconhecida</dt><dd>{selectedXmlParties.originLabel}</dd></div>
+                  <div><dt>Emitente da nota</dt><dd>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</dd></div>
+                  <div><dt>Destinatario da nota</dt><dd>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</dd></div>
                   <div><dt>Produto</dt><dd>{selectedXmlItem?.description ?? "-"}</dd></div>
                   <div><dt>Quantidade</dt><dd>{decimalTextBr(selectedXmlItem?.commercialQuantity ?? null)} sacas</dd></div>
                   <div><dt>R$/saca</dt><dd>{selectedXmlItem?.commercialUnitValue ? formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100)) : "-"}</dd></div>
@@ -675,16 +687,55 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <h3><ListStepsIcon /> Fluxo de importacao</h3>
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             <FormGrid>
-              <PartnerQuickSearch label="Cliente padrao (usado so se o CNPJ/nome do contraparte nao for reconhecido)" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+              <PartnerQuickSearch label="Cliente/corretor responsavel pela cobranca" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
               <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <SelectField label="UF da venda" value={scope} onChange={(value) => setScope(value as OperationScope)} options={OPERATION_SCOPE_OPTIONS} />
+              <SelectField
+                label="UF da venda"
+                value={selectedXmlScope}
+                onChange={(value) => {
+                  const nextScope = value as OperationScope;
+                  if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: nextScope }));
+                  setScope(nextScope);
+                }}
+                options={OPERATION_SCOPE_OPTIONS}
+              />
             </FormGrid>
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
-              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob}>Salvar nota</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || !partnerId}>Salvar nota</button>
             </div>
           </div>
         </div>
+        {xmlQueue.length ? (
+          <div className="xml-batch-review">
+            <div className="section-title-row">
+              <div>
+                <h3>Revisao da fila</h3>
+                <p className="muted">Confira todos os XMLs antes de validar e salvar. Clique em uma linha para ver os detalhes completos ao lado.</p>
+              </div>
+              <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
+            </div>
+            <div className="table">
+              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Cliente da nota</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Status</span></div>
+              {xmlBatchRows.map((row) => (
+                <button
+                  key={row.file.token}
+                  type="button"
+                  className={`table-row xml-batch-grid xml-batch-row ${row.file.token === selectedXmlFile?.token ? "active" : ""}`}
+                  onClick={() => setSelectedXmlToken(row.file.token)}
+                >
+                  <span><strong>{row.file.originalFileName}</strong><small>NF {row.preview?.number ?? "-"} · {row.preview?.issuedAt ? formatDateBr(row.preview.issuedAt) : "data nao lida"}</small></span>
+                  <span><strong>{row.parties.originLabel}</strong><small>{row.parties.isThirdPartyOrigin ? "Terceirizada/externa" : "CNPJ proprio"}</small></span>
+                  <span>{row.parties.recipientLabel ?? row.parties.issuerLabel ?? "Nao identificado"}</span>
+                  <span>{row.firstItem?.description ?? "-"}</span>
+                  <span>{decimalTextBr(row.firstItem?.commercialQuantity ?? null)}</span>
+                  <span>{formatOperationScope(row.operationScope)}</span>
+                  <span><StatusBadge status={row.file.status} /></span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div ref={xmlResultRef}>
         {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
         {xmlJob ? (
@@ -711,7 +762,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         {xmlJob && xmlJob.files.some((file) => file.status === "PENDING_REVIEW") ? (
           <div className="table">
-            <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente</span><span>Acoes</span></div>
+            <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente/corretor</span><span>Acoes</span></div>
             {xmlJob.files.filter((file) => file.status === "PENDING_REVIEW").map((file) => {
               const { issuer, recipient } = xmlFileParty(file);
               return (
@@ -721,7 +772,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <span>{issuer?.tradeName ?? issuer?.legalName ?? "-"}</span>
                   <span>{recipient?.tradeName ?? recipient?.legalName ?? "-"}</span>
                   <span>
-                    <PartnerQuickSearch label="Cliente" value={xmlResolutionSelections[file.id] ?? ""} onChange={(value) => setXmlResolutionSelections((current) => ({ ...current, [file.id]: value }))} partners={partners} legalEntities={partnerLegalEntities} />
+                    <PartnerQuickSearch label="Cliente/corretor" value={xmlResolutionSelections[file.id] ?? ""} onChange={(value) => setXmlResolutionSelections((current) => ({ ...current, [file.id]: value }))} partners={partners} legalEntities={partnerLegalEntities} />
                   </span>
                   <span>
                     <button disabled={!xmlResolutionSelections[file.id]} onClick={() => void saveXmlFileResolution(file.id)}>Salvar</button>
