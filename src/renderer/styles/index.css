@@ -721,6 +721,11 @@ input[type="checkbox"] {
   background: color-mix(in srgb, var(--color-sidebar-text) 10%, transparent);
 }
 
+.sidebar-collapse:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-sidebar-text));
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
 .app-sidebar__nav {
   display: grid;
   align-content: start;
@@ -772,6 +777,11 @@ input[type="checkbox"] {
   background: color-mix(in srgb, var(--color-sidebar-text) 12%, transparent);
 }
 
+.app-sidebar__nav button.active .nav-icon {
+  color: #fffaf0;
+  background: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
 .nav-icon svg {
   width: 17px;
   height: 17px;
@@ -783,6 +793,14 @@ input[type="checkbox"] {
   gap: 2px;
   padding-top: var(--space-4);
   border-top: 1px solid color-mix(in srgb, var(--color-sidebar-text) 16%, transparent);
+}
+
+.app-sidebar__footer strong {
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  font-size: 11px;
 }
 
 .professional-shell.is-collapsed .app-sidebar {
@@ -864,7 +882,7 @@ input[type="checkbox"] {
 
 .context-pill--user {
   padding-left: var(--space-4);
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid color-mix(in srgb, var(--brand-secondary) 30%, transparent);
 }
 
 .context-pill--active-company {
@@ -3296,7 +3314,10 @@ table th {
 
 .app-sidebar__brand strong {
   color: color-mix(in srgb, var(--brand-secondary) 78%, white);
-  font-size: 15px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 16.5px;
+  letter-spacing: -0.005em;
 }
 
 .app-sidebar__nav button {
@@ -3319,7 +3340,7 @@ table th {
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  border-left: 1px solid rgb(255 255 255 / 10%);
+  border-left: 1px solid color-mix(in srgb, var(--brand-secondary) 14%, transparent);
 }
 
 .app-topbar {
@@ -3357,7 +3378,10 @@ table th {
 
 .page-context strong {
   color: color-mix(in srgb, var(--brand-secondary) 74%, white);
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 19px;
+  letter-spacing: -0.005em;
 }
 
 .app-topbar select,
