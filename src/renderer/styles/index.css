@@ -1005,7 +1005,7 @@ input[type="checkbox"] {
 }
 
 .dashboard-grid article,
-.dashboard-grid .ui-card {
+.dashboard-grid--hero .ui-card {
   display: grid;
   gap: var(--space-2);
   min-height: 124px;
@@ -1016,7 +1016,7 @@ input[type="checkbox"] {
 }
 
 .dashboard-grid article span,
-.dashboard-grid .ui-card span {
+.dashboard-grid--hero .ui-card span {
   color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 800;
@@ -1024,12 +1024,12 @@ input[type="checkbox"] {
 }
 
 .dashboard-grid article strong,
-.dashboard-grid .ui-card strong {
+.dashboard-grid--hero .ui-card strong {
   font-size: 24px;
 }
 
 .dashboard-grid article small,
-.dashboard-grid .ui-card small {
+.dashboard-grid--hero .ui-card small {
   color: var(--color-text-muted);
 }
 
@@ -3505,7 +3505,7 @@ table tbody tr:hover {
 .ui-card h2,
 .ui-page-header h1,
 .dashboard-grid article strong,
-.dashboard-grid .ui-card strong {
+.dashboard-grid--hero .ui-card strong {
   color: #1c1711;
 }
 
@@ -3540,7 +3540,7 @@ table tbody tr:hover {
 }
 
 .dashboard-grid article span.kpi-icon,
-.dashboard-grid .ui-card span.kpi-icon {
+.dashboard-grid--hero .ui-card span.kpi-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4236,8 +4236,7 @@ table tbody tr:hover {
   }
 
   .cards article,
-  .dashboard-grid article,
-  .dashboard-grid .ui-card {
+  .dashboard-grid article {
     min-height: 92px;
     padding: 14px;
   }
