@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { AuthSession } from "../../../shared/types/domain";
+import { EmptyState } from "../../design-system";
 
 interface AuthPageProps {
   onSession: (session: AuthSession | null) => void;
@@ -147,10 +148,7 @@ export function LockScreen({ session, onSession }: AuthPageProps & { session: Au
 export function AccessDeniedPage(): JSX.Element {
   return (
     <section className="content-section">
-      <div className="empty-state">
-        <strong>Acesso negado</strong>
-        <p>Seu usuario nao possui permissao para abrir esta area.</p>
-      </div>
+      <EmptyState title="Acesso negado" description="Seu usuario nao possui permissao para abrir esta area." />
     </section>
   );
 }
