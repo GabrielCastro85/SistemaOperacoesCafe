@@ -10,5 +10,5 @@ const groups = [
 ];
 
 export function SettingsHomePage(): JSX.Element {
-  return <section className="content-section"><PageHeader eyebrow="Administracao" title="Configuracoes" description="Escolha um cadastro ou ajuste administrativo sem renderizar todos os formularios na mesma tela." /><div className="cards">{groups.map((group) => <Card key={group.title}><h2>{group.title}</h2>{group.items.map(([label, route]) => <button key={route} onClick={() => { window.location.hash = `#${route}`; }}>{label}</button>)}</Card>)}</div></section>;
+  return <section className="content-section"><PageHeader eyebrow="Administracao" title="Configuracoes" description="Escolha um cadastro ou ajuste administrativo sem renderizar todos os formularios na mesma tela." /><div className="cards">{groups.map((group) => <Card key={group.title} title={group.title}>{group.items.map(([label, route]) => <button key={route} onClick={() => { window.location.hash = `#${route}`; }}>{label}</button>)}</Card>)}</div></section>;
 }

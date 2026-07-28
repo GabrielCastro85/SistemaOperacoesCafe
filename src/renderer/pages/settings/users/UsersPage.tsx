@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AppRole, AppUser, AuthSession } from "../../../../shared/types/domain";
+import { PageHeader } from "../../../design-system";
 
 export function UsersPage(): JSX.Element {
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -46,8 +47,8 @@ export function UsersPage(): JSX.Element {
   }
 
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Configuracoes</span><h1>Usuarios</h1><p>Cadastro local, bloqueio e atribuicao inicial de roles.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Configuracoes" title="Usuarios" description="Cadastro local, bloqueio e atribuicao inicial de roles." />
       {isAdmin ? <div className="form-grid">
         <label>Nome<input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
         <label>Usuario<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} /></label>

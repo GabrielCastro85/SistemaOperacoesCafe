@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AuditEvent, AuditIntegrityResult } from "../../../shared/types/domain";
+import { PageHeader } from "../../design-system";
 
 export function AuditPage(): JSX.Element {
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -16,8 +17,8 @@ export function AuditPage(): JSX.Element {
   }, []);
 
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Auditoria</span><h1>Eventos do sistema</h1><p>Registro imutavel com sanitizacao e encadeamento SHA-256.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Auditoria" title="Eventos do sistema" description="Registro imutavel com sanitizacao e encadeamento SHA-256." />
       <div className="cards">
         <article className="card"><span>Integridade</span><h3>{integrity?.valid ? "Valida" : "Pendente"}</h3><p>{integrity?.checkedEvents ?? 0} eventos verificados</p></article>
         <article className="card"><span>Eventos</span><h3>{events.length}</h3><p>Ultimos registros locais</p></article>

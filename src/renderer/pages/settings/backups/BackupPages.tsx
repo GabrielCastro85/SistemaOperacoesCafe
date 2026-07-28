@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BackupInspection, BackupJob, BackupSettings, BackupType } from "../../../../shared/types/domain";
+import { EmptyState, PageHeader } from "../../../design-system";
 
 export function BackupsPage(): JSX.Element {
   const [backups, setBackups] = useState<BackupJob[]>([]);
@@ -14,8 +15,8 @@ export function BackupsPage(): JSX.Element {
   useEffect(() => { void load(); }, []);
 
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Seguranca local</span><h1>Backups</h1><p>Pacotes .cafebackup com banco, documentos, manifesto e hashes.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Seguranca local" title="Backups" description="Pacotes .cafebackup com banco, documentos, manifesto e hashes." />
       <div className="actions"><button className="primary" onClick={() => { window.location.hash = "#/settings/backups/new"; }}>Novo backup</button><button onClick={() => { window.location.hash = "#/settings/restore"; }}>Restaurar</button><button onClick={() => { window.location.hash = "#/settings/backups/settings"; }}>Configurar automatico</button></div>
       <div className="cards">
         <article className="card"><span>Automatico</span><h3>{settings?.frequency ?? "..."}</h3><p>{settings?.automaticBackupEnabled ? "Ativo" : "Desativado"}</p></article>
@@ -61,8 +62,8 @@ export function BackupCreatePage(): JSX.Element {
   }
 
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Novo backup</span><h1>Criar backup</h1><p>O backup completo e recomendado para recuperacao de desastre.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Novo backup" title="Criar backup" description="O backup completo e recomendado para recuperacao de desastre." />
       <div className="form-grid">
         <label>Tipo<select value={backupType} onChange={(event) => setBackupType(event.target.value as BackupType)}><option value="FULL">Completo</option><option value="DATABASE_ONLY">Somente banco</option></select></label>
         <label>Destino<select value={destinationType} onChange={(event) => setDestinationType(event.target.value as "INTERNAL" | "EXTERNAL")}><option value="INTERNAL">Interno</option><option value="EXTERNAL">Externo</option></select></label>
@@ -87,8 +88,8 @@ export function BackupDetailsPage({ id }: { id: string | null }): JSX.Element {
   }
   if (!backup) return <section className="content-section"><p>Carregando backup.</p></section>;
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Backup</span><h1>{backup.fileName}</h1><p>{backup.status} · {backup.backupType} · {backup.encrypted ? "Criptografado" : "Sem criptografia"}</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Backup" title={backup.fileName} description={`${backup.status} · ${backup.backupType} · ${backup.encrypted ? "Criptografado" : "Sem criptografia"}`} />
       <div className="actions"><button onClick={() => void verify()}>Verificar pacote</button><button onClick={() => void window.operationsCafe.protectBackup(backup.id, "Protegido manualmente").then(setBackup)}>Proteger</button><button onClick={() => void window.operationsCafe.unprotectBackup(backup.id).then(setBackup)}>Desproteger</button></div>
       <dl className="ui-definition-list"><div><dt>Hash</dt><dd>{backup.fileHash ?? "-"}</dd></div><div><dt>Banco</dt><dd>{backup.databaseHash ?? "-"}</dd></div><div><dt>Migration</dt><dd>{backup.migrationVersion ?? "-"}</dd></div></dl>
       {inspection ? <pre className="json-preview">{JSON.stringify(inspection.manifest ?? inspection.errors, null, 2)}</pre> : null}
@@ -104,8 +105,8 @@ export function BackupSettingsPage(): JSX.Element {
     setSettings(await window.operationsCafe.updateBackupSettings({ ...settings, ...next }));
   }
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Backups automaticos</span><h1>Configuracao</h1><p>Executa somente quando o aplicativo estiver aberto.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Backups automaticos" title="Configuracao" description="Executa somente quando o aplicativo estiver aberto." />
       <div className="form-grid">
         <label>Frequencia<select value={settings.frequency} onChange={(event) => void save({ frequency: event.target.value as BackupSettings["frequency"], automaticBackupEnabled: event.target.value !== "DISABLED" })}><option value="DISABLED">Desativado</option><option value="DAILY">Diario</option><option value="WEEKLY">Semanal</option><option value="MONTHLY">Mensal</option></select></label>
         <label>Retencao maxima<input type="number" value={settings.retentionMaxCount} onChange={(event) => void save({ retentionMaxCount: Number(event.target.value) })} /></label>
@@ -139,8 +140,8 @@ export function RestorePage(): JSX.Element {
     }
   }
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Restauracao</span><h1>Restaurar instalacao</h1><p>Dados atuais serao substituidos apos backup pre-restauracao.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Restauracao" title="Restaurar instalacao" description="Dados atuais serao substituidos apos backup pre-restauracao." />
       <div className="form-grid"><button onClick={() => void select()}>Selecionar backup</button><label>Senha do backup<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><button onClick={() => void inspect()}>Validar</button><label>Senha atual do usuario<input type="password" autoComplete="off" value={currentUserPassword} onChange={(event) => setCurrentUserPassword(event.target.value)} /></label><button className="primary" onClick={() => void restore()}>Confirmar restauracao</button></div>
       <p className="muted">{path ?? "Nenhum arquivo selecionado."}</p>
       {inspection ? <pre className="json-preview">{JSON.stringify(inspection, null, 2)}</pre> : null}
@@ -152,8 +153,8 @@ export function RestorePage(): JSX.Element {
 export function IntegrityPage(): JSX.Element {
   const [result, setResult] = useState<unknown>(null);
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Integridade</span><h1>Banco, documentos e backups</h1><p>Verificacoes locais com quick_check, documentos ausentes e orfaos.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Integridade" title="Banco, documentos e backups" description="Verificacoes locais com quick_check, documentos ausentes e orfaos." />
       <div className="actions"><button onClick={() => void window.operationsCafe.runQuickIntegrityCheck().then(setResult)}>Banco rapido</button><button onClick={() => void window.operationsCafe.checkDocumentIntegrity().then(setResult)}>Documentos</button><button onClick={() => void window.operationsCafe.findOrphanFiles().then(setResult)}>Orfaos</button><button onClick={() => void window.operationsCafe.generateIntegrityReport().then(setResult)}>Gerar relatorio</button></div>
       {result ? <pre className="json-preview">{JSON.stringify(result, null, 2)}</pre> : null}
     </section>
@@ -162,9 +163,9 @@ export function IntegrityPage(): JSX.Element {
 
 export function RetentionPage(): JSX.Element {
   return (
-    <section className="content-section">
-      <div className="page-header"><span>Retencao</span><h1>Politica conservadora</h1><p>Backups protegidos e documentos oficiais nao sao removidos automaticamente.</p></div>
-      <div className="empty-state"><strong>Retencao ativa para backups</strong><p>Ajuste a quantidade maxima em Configuracao de backups. Limpeza automatica apaga apenas backups nao protegidos.</p></div>
+    <section className="content-section settings">
+      <PageHeader eyebrow="Retencao" title="Politica conservadora" description="Backups protegidos e documentos oficiais nao sao removidos automaticamente." />
+      <EmptyState title="Retencao ativa para backups" description="Ajuste a quantidade maxima em Configuracao de backups. Limpeza automatica apaga apenas backups nao protegidos." />
     </section>
   );
 }
