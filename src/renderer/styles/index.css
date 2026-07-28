@@ -1239,6 +1239,17 @@ textarea {
 .ui-alert--warning::before { background: var(--color-warning); }
 .ui-alert--success::before { background: var(--color-success); }
 
+.feedback {
+  margin: 0;
+  padding: 10px var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--color-info) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-info) 8%, var(--color-surface-muted));
+  color: var(--color-info);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .ui-empty {
   justify-items: center;
   padding: var(--space-6);

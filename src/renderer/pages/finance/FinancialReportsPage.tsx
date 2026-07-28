@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FinancialReportType } from "../../../shared/types/domain";
 import { Button, DateInput, FilterBar, PageHeader, Select } from "../../design-system";
+import { Feedback } from "../../components/feedback/Feedback";
 import { FinancialReportPreview } from "./components/FinancialReportPreview";
 import { useFinanceData } from "./hooks/useFinanceData";
 import { financialReportOptions, type FinancePageProps } from "./types";
@@ -25,5 +26,5 @@ export function FinancialReportsPage({ data }: FinancePageProps): JSX.Element {
     await reload();
     setMessage(`Relatorio ${format} salvo: ${report.fileName}`);
   }
-  return <section className="content-section"><PageHeader eyebrow="Relatorios" title="Relatorios financeiros" description="Selecione filtros, visualize previa e gere PDF ou Excel local." actions={<><Button onClick={() => void generate("PDF")}>Gerar PDF</Button><Button onClick={() => void generate("EXCEL")}>Gerar Excel</Button></>} /><FilterBar activeCount={[dateStart, dateEnd].filter(Boolean).length}><Select label="Tipo" value={reportType} onChange={(event) => setReportType(event.target.value as FinancialReportType)}>{financialReportOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</Select><DateInput label="Inicio" value={dateStart} onChange={(event) => setDateStart(event.target.value)} /><DateInput label="Fim" value={dateEnd} onChange={(event) => setDateEnd(event.target.value)} /><Button onClick={() => void refreshPreview()}>Visualizar previa</Button></FilterBar>{message ? <p className="form-feedback">{message}</p> : null}<FinancialReportPreview preview={preview} reports={finance.reports} onOpen={(id) => void window.operationsCafe.openFinancialReport(id)} /></section>;
+  return <section className="content-section"><PageHeader eyebrow="Relatorios" title="Relatorios financeiros" description="Selecione filtros, visualize previa e gere PDF ou Excel local." actions={<><Button onClick={() => void generate("PDF")}>Gerar PDF</Button><Button onClick={() => void generate("EXCEL")}>Gerar Excel</Button></>} /><FilterBar activeCount={[dateStart, dateEnd].filter(Boolean).length}><Select label="Tipo" value={reportType} onChange={(event) => setReportType(event.target.value as FinancialReportType)}>{financialReportOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</Select><DateInput label="Inicio" value={dateStart} onChange={(event) => setDateStart(event.target.value)} /><DateInput label="Fim" value={dateEnd} onChange={(event) => setDateEnd(event.target.value)} /><Button onClick={() => void refreshPreview()}>Visualizar previa</Button></FilterBar><Feedback message={message} /><FinancialReportPreview preview={preview} reports={finance.reports} onOpen={(id) => void window.operationsCafe.openFinancialReport(id)} /></section>;
 }
