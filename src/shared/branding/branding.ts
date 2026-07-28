@@ -43,7 +43,7 @@ const configs: Record<AppVariant, BrandingConfig> = {
       surface: "#F8F0E4",
       text: "#1B1712"
     },
-    logoCandidates: ["assets/branding/villa/logo.png", "assets/branding/villa/logo.svg", "assets/branding/villa/logo.webp"],
+    logoCandidates: ["assets/branding/villa/logo.svg", "assets/branding/villa/logo.png", "assets/branding/villa/logo.webp"],
     iconCandidates: ["assets/branding/villa/icon.png", "assets/branding/villa/icon.svg", "assets/branding/villa/icon.webp"]
   },
   grao: {
@@ -57,7 +57,7 @@ const configs: Record<AppVariant, BrandingConfig> = {
       surface: "#F7F4EA",
       text: "#17231C"
     },
-    logoCandidates: ["assets/branding/grao/logo.png", "assets/branding/grao/logo.svg", "assets/branding/grao/logo.webp"],
+    logoCandidates: ["assets/branding/grao/logo.svg", "assets/branding/grao/logo.png", "assets/branding/grao/logo.webp"],
     iconCandidates: ["assets/branding/grao/icon.png", "assets/branding/grao/icon.svg", "assets/branding/grao/icon.webp"]
   },
   multiempresa: {
@@ -87,7 +87,7 @@ export function getAllBrandingConfigs(): BrandingConfig[] {
 export function resolveOrganizationLogoSrc(organization: Organization | null, variant: AppVariant = "multiempresa"): string | null {
   if (organization?.logoPath?.startsWith("data:")) return organization.logoPath;
   const name = `${organization?.displayName ?? ""} ${organization?.appDisplayName ?? ""}`.toLowerCase();
-  if (variant === "villa" || name.includes("villa")) return "assets/branding/villa/logo.png";
-  if (variant === "grao" || name.includes("grao") || name.includes("grão")) return "assets/branding/grao/logo.png";
+  if (variant === "villa" || name.includes("villa")) return "assets/branding/villa/logo.svg";
+  if (variant === "grao" || name.includes("grao") || name.includes("grão")) return "assets/branding/grao/logo.svg";
   return null;
 }

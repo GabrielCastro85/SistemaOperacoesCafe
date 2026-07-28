@@ -57,8 +57,8 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
     <main className="auth-shell">
       <section className="auth-panel">
         <div className="auth-brand-row">
-          <img src="assets/branding/villa/logo.png" alt="" />
-          <img src="assets/branding/grao/logo.png" alt="" />
+          <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
+          <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
         </div>
         <span className="auth-eyebrow">Primeiro acesso</span>
         <h1>Criar administrador local</h1>
@@ -92,8 +92,8 @@ export function LoginPage({ onSession }: AuthPageProps): JSX.Element {
     <main className="auth-shell">
       <section className="auth-panel">
         <div className="auth-brand-row">
-          <img src="assets/branding/villa/logo.png" alt="" />
-          <img src="assets/branding/grao/logo.png" alt="" />
+          <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
+          <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
         </div>
         <span className="auth-eyebrow">Sistema de Operacoes de Cafe</span>
         <h1>Entrar</h1>
@@ -128,8 +128,8 @@ export function LockScreen({ session, onSession }: AuthPageProps & { session: Au
     <div className="lock-screen">
       <section className="auth-panel">
         <div className="auth-brand-row">
-          <img src="assets/branding/villa/logo.png" alt="" />
-          <img src="assets/branding/grao/logo.png" alt="" />
+          <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
+          <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
         </div>
         <span className="auth-eyebrow">Sessao bloqueada</span>
         <h1>{session.user.displayName}</h1>
