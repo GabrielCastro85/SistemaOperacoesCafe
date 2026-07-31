@@ -1,4 +1,5 @@
 import { dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import log from "electron-log/main.js";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -17,6 +18,8 @@ import { inspectXmlFile, safeXmlTargetName } from "../services/xmlNfeService.js"
 import { lookupCnpj } from "../services/cnpjLookupService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
+import { acknowledgeSyncUpdates, getSyncStatus } from "../services/syncStatusService.js";
+import { checkForUpdates, getUpdateStatus, quitAndInstallUpdate } from "../services/updaterService.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
@@ -45,6 +48,17 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
     currentMigration: getCurrentMigration(context.db),
     databaseStatus: "ok"
   };
+}
+
+/**
+ * O push pro Supabase depois de uma escrita local nunca deve travar a acao
+ * do usuario (offline/RLS/rede sao esperados) -- mas silenciar o erro por
+ * completo escondeu justamente o bug real que motivou isso: cadastro que
+ * ja existia local antes da migracao, sem existir no Supabase, falhando
+ * por violacao de FK sem ninguem saber. Loga sempre; so' nao propaga.
+ */
+function logPushFailure(context: string, error: unknown): void {
+  log.warn(`Falha ao sincronizar com o Supabase (${context})`, error instanceof Error ? error.message : error);
 }
 
 export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository): void {
@@ -151,6 +165,50 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.updateInstallationProfile, (_event, payload: unknown) => repository.updateInstallationProfile(payload));
   handle(IPC_CHANNELS.getActiveContext, () => repository.getActiveContext());
   handle(IPC_CHANNELS.getDiagnostics, () => createDiagnostics(context, repository));
+  handle(IPC_CHANNELS.syncSharedData, async () => {
+    // "Sincronizar agora" faz os dois sentidos: primeiro reenvia qualquer
+    // cadastro local que ainda nao tenha chegado no Supabase (cobre o caso
+    // de cadastro anterior a conectar, ou de uma tentativa de push anterior
+    // que falhou silenciosamente), depois puxa o que mudou nos outros PCs.
+    const pushed = await repository.pushAllLocalReferenceDataToShared();
+    const pulled = await repository.syncSharedDataDown();
+    acknowledgeSyncUpdates();
+    return { pushed, pulled };
+  });
+  handle(IPC_CHANNELS.getSharedSyncStatus, () => getSyncStatus());
+  handle(IPC_CHANNELS.sharedAuthStatus, async () => {
+    const session = await context.sharedRepository.getSession();
+    return { connected: Boolean(session), email: session?.user.email ?? null };
+  });
+  handle(IPC_CHANNELS.sharedAuthSignIn, async (_event, payload: unknown) => {
+    const data = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(payload);
+    const session = await context.sharedRepository.signInWithPassword(data.email, data.password);
+    // Ao conectar, empurra pro Supabase qualquer cadastro (organizacoes,
+    // CNPJs, clientes, produtos, regras) que ja existia local ANTES deste PC
+    // se conectar -- senao qualquer nota/operacao nova referenciando esse
+    // cadastro falharia ao sincronizar (violacao de FK do lado do Postgres),
+    // ja que o cadastro em si nunca teria chegado la'. Depois, puxa o que
+    // outros PCs ja tinham compartilhado, pra deixar este PC atualizado nos
+    // dois sentidos logo ao conectar.
+    const referenceDataPushed = await repository.pushAllLocalReferenceDataToShared();
+    const failed = referenceDataPushed.filter((entry) => entry.error);
+    if (failed.length > 0) log.warn("Falha ao enviar cadastro local existente pro Supabase", failed);
+    await repository.syncSharedDataDown().catch((error) => logPushFailure("syncSharedDataDown apos conectar", error));
+    return { connected: true, email: session.user.email ?? null, referenceDataPushed };
+  });
+  handle(IPC_CHANNELS.sharedAuthSignOut, async () => {
+    await context.sharedRepository.signOut();
+    return { connected: false, email: null };
+  });
+  handle(IPC_CHANNELS.getUpdateStatus, () => getUpdateStatus());
+  handle(IPC_CHANNELS.checkForUpdates, () => {
+    checkForUpdates();
+    return getUpdateStatus();
+  });
+  handle(IPC_CHANNELS.quitAndInstallUpdate, () => {
+    quitAndInstallUpdate();
+    return null;
+  });
   handle(IPC_CHANNELS.setActiveLegalEntity, (_event, payload: unknown) => {
     const legalEntityId = z.string().uuid().parse(payload);
     return repository.setActiveLegalEntity(legalEntityId);
@@ -172,6 +230,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.deactivateOrganization, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), replacementOrganizationId: z.string().uuid().optional() }).parse(payload);
     return repository.deactivateOrganization(data.id, data.replacementOrganizationId);
+  });
+  handle(IPC_CHANNELS.deleteOrganization, async (_event, payload: unknown) => {
+    await repository.deleteOrganization(z.string().uuid().parse(payload));
+    return null;
   });
   handle(IPC_CHANNELS.selectOrganizationBrandingAsset, async (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), kind: brandingAssetKindSchema }).parse(payload);
@@ -207,6 +269,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ id: z.string().uuid(), replacementLegalEntityId: z.string().uuid().optional() }).parse(payload);
     return repository.deactivateLegalEntity(data.id, data.replacementLegalEntityId);
   });
+  handle(IPC_CHANNELS.deleteLegalEntity, async (_event, payload: unknown) => {
+    await repository.deleteLegalEntity(z.string().uuid().parse(payload));
+    return null;
+  });
   handle(IPC_CHANNELS.listLocations, (_event, payload: unknown) =>
     repository.listLocations(
       z
@@ -239,6 +305,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.updateBusinessPartner(data.id, data.input);
   });
   handle(IPC_CHANNELS.deleteBusinessPartner, (_event, payload: unknown) => repository.deleteBusinessPartner(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.permanentlyDeleteBusinessPartner, async (_event, payload: unknown) => {
+    await repository.permanentlyDeleteBusinessPartner(z.string().uuid().parse(payload));
+    return null;
+  });
   handle(IPC_CHANNELS.activateBusinessPartner, (_event, payload: unknown) => repository.activateBusinessPartner(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivateBusinessPartner, (_event, payload: unknown) => repository.deactivateBusinessPartner(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.addBusinessPartnerRole, (_event, payload: unknown) => {
@@ -250,12 +320,21 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.removeBusinessPartnerRole(data.id, data.role);
   });
   handle(IPC_CHANNELS.listPartnerLegalEntities, (_event, payload: unknown) => repository.listPartnerLegalEntities(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), search: z.string().optional() }).parse(payload);
+    return repository.listUnlinkedPartnerLegalEntities(data.organizationId, data.search);
+  });
   handle(IPC_CHANNELS.createPartnerLegalEntity, (_event, payload: unknown) => repository.createPartnerLegalEntity(payload));
   handle(IPC_CHANNELS.lookupCnpj, (_event, payload: unknown) => lookupCnpj(z.string().min(1).parse(payload)));
   handle(IPC_CHANNELS.updatePartnerLegalEntity, (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     return repository.updatePartnerLegalEntity(data.id, data.input);
   });
+  handle(IPC_CHANNELS.linkPartnerLegalEntity, (_event, payload: unknown) => {
+    const data = z.object({ legalEntityId: z.string().uuid(), businessPartnerId: z.string().uuid() }).parse(payload);
+    return repository.linkPartnerLegalEntityToPartner(data.legalEntityId, data.businessPartnerId);
+  });
+  handle(IPC_CHANNELS.unlinkPartnerLegalEntity, (_event, payload: unknown) => repository.unlinkPartnerLegalEntityFromPartner(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.activatePartnerLegalEntity, (_event, payload: unknown) => repository.activatePartnerLegalEntity(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivatePartnerLegalEntity, (_event, payload: unknown) => repository.deactivatePartnerLegalEntity(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listPartnerContacts, (_event, payload: unknown) => repository.listPartnerContacts(z.string().uuid().parse(payload)));
@@ -294,6 +373,19 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.activateServiceRateRule, (_event, payload: unknown) => repository.activateServiceRateRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivateServiceRateRule, (_event, payload: unknown) => repository.deactivateServiceRateRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.resolveServiceRateRule, (_event, payload: unknown) => repository.resolveServiceRateRule(payload));
+  handle(IPC_CHANNELS.listPurchaseRateRules, (_event, payload: unknown) =>
+    repository.listPurchaseRateRules(z.object({ businessPartnerId: z.string().uuid().optional(), organizationId: z.string().uuid().optional(), operationScope: z.string().optional(), productId: z.string().uuid().optional(), ownLegalEntityId: z.string().uuid().optional(), counterpartyPartnerLegalEntityId: z.string().uuid().optional(), status: z.enum(["active", "inactive", "all"]).optional() }).optional().parse(payload) ?? {})
+  );
+  handle(IPC_CHANNELS.getPurchaseRateRule, (_event, payload: unknown) => repository.getPurchaseRateRule(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.createPurchaseRateRule, (_event, payload: unknown) => repository.createPurchaseRateRule(payload));
+  handle(IPC_CHANNELS.updatePurchaseRateRule, (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    return repository.updatePurchaseRateRule(data.id, data.input);
+  });
+  handle(IPC_CHANNELS.deletePurchaseRateRule, (_event, payload: unknown) => repository.deletePurchaseRateRule(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.activatePurchaseRateRule, (_event, payload: unknown) => repository.activatePurchaseRateRule(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.deactivatePurchaseRateRule, (_event, payload: unknown) => repository.deactivatePurchaseRateRule(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.resolvePurchaseRateRule, (_event, payload: unknown) => repository.resolvePurchaseRateRule(payload));
   handle(IPC_CHANNELS.listFiscalDocuments, (_event, payload: unknown) =>
     repository.listFiscalDocuments(
       z
@@ -308,13 +400,23 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     )
   );
   handle(IPC_CHANNELS.getFiscalDocument, (_event, payload: unknown) => repository.getFiscalDocument(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.createFiscalDocument, (_event, payload: unknown) => repository.createFiscalDocument(payload));
-  handle(IPC_CHANNELS.updateFiscalDocument, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.createFiscalDocument, async (_event, payload: unknown) => {
+    const result = repository.createFiscalDocument(payload);
+    await repository.pushFiscalDocumentToShared(result.document.id).catch((error) => logPushFailure("createFiscalDocument", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.updateFiscalDocument, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
-    return repository.updateFiscalDocument(data.id, data.input);
+    const result = repository.updateFiscalDocument(data.id, data.input);
+    await repository.pushFiscalDocumentToShared(result.document.id).catch((error) => logPushFailure("updateFiscalDocument", error));
+    return result;
   });
   handle(IPC_CHANNELS.deleteFiscalDocument, (_event, payload: unknown) => repository.deleteFiscalDocument(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.addFiscalDocumentItem, (_event, payload: unknown) => repository.addFiscalDocumentItem(payload));
+  handle(IPC_CHANNELS.addFiscalDocumentItem, async (_event, payload: unknown) => {
+    const result = repository.addFiscalDocumentItem(payload);
+    await repository.pushFiscalDocumentToShared(result.fiscalDocumentId).catch((error) => logPushFailure("addFiscalDocumentItem", error));
+    return result;
+  });
   handle(IPC_CHANNELS.listOperations, (_event, payload: unknown) =>
     repository.listOperations(
       z
@@ -331,22 +433,38 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         .parse(payload) ?? {}
     )
   );
-  handle(IPC_CHANNELS.addOperation, (_event, payload: unknown) => repository.addOperation(payload));
-  handle(IPC_CHANNELS.updateOperationManualRate, (_event, payload: unknown) => {
-    const data = z.object({ id: z.string().uuid(), manualRateValueCents: z.number().int().min(0), reason: z.string().min(1) }).parse(payload);
-    return repository.updateOperationManualRate(data.id, data.manualRateValueCents, data.reason);
+  handle(IPC_CHANNELS.addOperation, async (_event, payload: unknown) => {
+    const result = repository.addOperation(payload);
+    await repository.pushFiscalDocumentToShared(result.fiscalDocumentId).catch((error) => logPushFailure("addOperation", error));
+    return result;
   });
-  handle(IPC_CHANNELS.confirmFiscalDocument, (_event, payload: unknown) => repository.confirmFiscalDocument(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.cancelFiscalDocument, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.updateOperationManualRate, async (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), manualRateValueCents: z.number().int().min(0), reason: z.string().min(1) }).parse(payload);
+    const result = repository.updateOperationManualRate(data.id, data.manualRateValueCents, data.reason);
+    await repository.pushFiscalDocumentToShared(result.fiscalDocumentId).catch((error) => logPushFailure("updateOperationManualRate", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.confirmFiscalDocument, async (_event, payload: unknown) => {
+    const result = repository.confirmFiscalDocument(z.string().uuid().parse(payload));
+    await repository.pushFiscalDocumentToShared(result.document.id).catch((error) => logPushFailure("confirmFiscalDocument", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.cancelFiscalDocument, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
-    return repository.cancelFiscalDocument(data.id, data.reason);
+    const result = repository.cancelFiscalDocument(data.id, data.reason);
+    await repository.pushFiscalDocumentToShared(result.document.id).catch((error) => logPushFailure("cancelFiscalDocument", error));
+    return result;
   });
   handle(IPC_CHANNELS.getOperationalIndicators, (_event, payload: unknown) =>
-    repository.getOperationalIndicators(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() })]).parse(payload))
+    repository.getOperationalIndicators(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), periodStart: z.string().nullable().optional(), periodEnd: z.string().nullable().optional() })]).parse(payload))
   );
   handle(IPC_CHANNELS.getMonthlyOperationTotals, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), year: z.number().int().min(2000).max(2100) }).parse(payload);
     return repository.getMonthlyOperationTotals(data.organizationId, data.year, data.ownLegalEntityId);
+  });
+  handle(IPC_CHANNELS.getPartnerPeriodSackSummary, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), businessPartnerId: z.string().uuid(), periodStart: z.string().nullable().optional(), periodEnd: z.string().nullable().optional() }).parse(payload);
+    return repository.getPartnerPeriodSackSummary(data);
   });
   handle(IPC_CHANNELS.selectSpreadsheetFile, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Planilhas Excel", extensions: ["xlsx"] }] });
@@ -551,33 +669,63 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.deactivateOperationClassificationRule, (_event, payload: unknown) => repository.deactivateOperationClassificationRule(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.resolveOperationClassificationRule, (_event, payload: unknown) => repository.resolveOperationClassificationRule(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), issuerPartnerLegalEntityId: z.string().uuid().nullable().optional(), recipientPartnerLegalEntityId: z.string().uuid().nullable().optional(), productId: z.string().uuid().nullable().optional() }).parse(payload)));
   handle(IPC_CHANNELS.compareXmlWithExisting, (_event, payload: unknown) => repository.compareXmlWithExisting(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.mergeXmlIntoExisting, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.mergeXmlIntoExisting, async (_event, payload: unknown) => {
     const data = z.object({ fileId: z.string().uuid(), decision: z.string().min(1) }).parse(payload);
-    return repository.mergeXmlIntoExisting(data.fileId, data.decision);
+    const result = repository.mergeXmlIntoExisting(data.fileId, data.decision);
+    await repository.pushFiscalDocumentToShared(result.document.id).catch((error) => logPushFailure("mergeXmlIntoExisting", error));
+    return result;
   });
   handle(IPC_CHANNELS.getFiscalDocumentMergeHistory, (_event, payload: unknown) => repository.getFiscalDocumentMergeHistory(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.suggestChargePeriods, (_event, payload: unknown) => repository.suggestChargePeriods(payload));
   handle(IPC_CHANNELS.findEligibleChargeOperations, (_event, payload: unknown) => repository.findEligibleOperations(payload));
   handle(IPC_CHANNELS.getPartnerRateSummary, (_event, payload: unknown) => repository.getPartnerRateSummary(payload));
-  handle(IPC_CHANNELS.createClientChargeDraft, (_event, payload: unknown) => repository.createClientChargeDraft(payload));
-  handle(IPC_CHANNELS.reserveChargeOperations, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.createClientChargeDraft, async (_event, payload: unknown) => {
+    const result = repository.createClientChargeDraft(payload);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("createClientChargeDraft", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.reserveChargeOperations, async (_event, payload: unknown) => {
     const data = z.object({ clientChargeId: z.string().uuid(), operationIds: z.array(z.string().uuid()) }).parse(payload);
-    return repository.reserveOperations(data.clientChargeId, data.operationIds);
+    const result = repository.reserveOperations(data.clientChargeId, data.operationIds);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("reserveOperations", error));
+    return result;
   });
-  handle(IPC_CHANNELS.releaseChargeOperations, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.releaseChargeOperations, async (_event, payload: unknown) => {
     const data = z.object({ clientChargeId: z.string().uuid(), operationIds: z.array(z.string().uuid()).optional() }).parse(payload);
-    return repository.releaseOperations(data.clientChargeId, data.operationIds);
+    const result = repository.releaseOperations(data.clientChargeId, data.operationIds);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("releaseOperations", error));
+    return result;
   });
-  handle(IPC_CHANNELS.addChargeAdjustment, (_event, payload: unknown) => repository.addChargeAdjustment(payload));
-  handle(IPC_CHANNELS.removeChargeAdjustment, (_event, payload: unknown) => repository.removeChargeAdjustment(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.applyChargeCredit, (_event, payload: unknown) => repository.applyCredit(payload));
-  handle(IPC_CHANNELS.submitClientChargeForReview, (_event, payload: unknown) => repository.submitClientChargeForReview(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.addChargeAdjustment, async (_event, payload: unknown) => {
+    const result = repository.addChargeAdjustment(payload);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("addChargeAdjustment", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.removeChargeAdjustment, async (_event, payload: unknown) => {
+    const result = repository.removeChargeAdjustment(z.string().uuid().parse(payload));
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("removeChargeAdjustment", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.applyChargeCredit, async (_event, payload: unknown) => {
+    const result = repository.applyCredit(payload);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("applyCredit", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.submitClientChargeForReview, async (_event, payload: unknown) => {
+    const result = repository.submitClientChargeForReview(z.string().uuid().parse(payload));
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("submitClientChargeForReview", error));
+    return result;
+  });
   handle(IPC_CHANNELS.issueClientCharge, async (_event, payload: unknown) => {
-    return repository.issueClientCharge(z.string().uuid().parse(payload));
+    const result = await repository.issueClientCharge(z.string().uuid().parse(payload));
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("issueClientCharge", error));
+    return result;
   });
-  handle(IPC_CHANNELS.cancelClientCharge, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.cancelClientCharge, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
-    return repository.cancelClientCharge(data.id, data.reason);
+    const result = repository.cancelClientCharge(data.id, data.reason);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("cancelClientCharge", error));
+    return result;
   });
   handle(IPC_CHANNELS.listClientCharges, (_event, payload: unknown) => repository.listClientCharges(z.object({ organizationId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional(), status: z.string().optional() }).optional().parse(payload) ?? {}));
   handle(IPC_CHANNELS.getClientCharge, (_event, payload: unknown) => repository.getClientCharge(z.string().uuid().parse(payload)));
@@ -596,15 +744,35 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return true;
   });
   handle(IPC_CHANNELS.listLedgerEntries, (_event, payload: unknown) => repository.listLedgerEntries(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional() }).parse(payload)));
-  handle(IPC_CHANNELS.createLedgerEntry, (_event, payload: unknown) => repository.createLedgerEntry(payload));
-  handle(IPC_CHANNELS.createAdvance, (_event, payload: unknown) => repository.createAdvance(payload));
-  handle(IPC_CHANNELS.createCredit, (_event, payload: unknown) => repository.createCredit(payload));
+  handle(IPC_CHANNELS.createLedgerEntry, async (_event, payload: unknown) => {
+    const result = repository.createLedgerEntry(payload);
+    await repository.pushClientLedgerEntryToShared(result.id).catch((error) => logPushFailure("createLedgerEntry", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.createAdvance, async (_event, payload: unknown) => {
+    const result = repository.createAdvance(payload);
+    await repository.pushClientLedgerEntryToShared(result.id).catch((error) => logPushFailure("createAdvance", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.createCredit, async (_event, payload: unknown) => {
+    const result = repository.createCredit(payload);
+    await repository.pushClientLedgerEntryToShared(result.id).catch((error) => logPushFailure("createCredit", error));
+    return result;
+  });
   handle(IPC_CHANNELS.getAvailableCredits, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid(), clientPartnerId: z.string().uuid() }).parse(payload);
     return repository.getAvailableCredits(data.organizationId, data.ownLegalEntityId, data.clientPartnerId);
   });
-  handle(IPC_CHANNELS.createClientPayment, (_event, payload: unknown) => repository.createClientPayment(payload));
-  handle(IPC_CHANNELS.allocateClientPayment, (_event, payload: unknown) => repository.allocatePayment(payload));
+  handle(IPC_CHANNELS.createClientPayment, async (_event, payload: unknown) => {
+    const result = repository.createClientPayment(payload);
+    await repository.pushClientPaymentToShared(result.id).catch((error) => logPushFailure("createClientPayment", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.allocateClientPayment, async (_event, payload: unknown) => {
+    const result = repository.allocatePayment(payload);
+    await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("allocatePayment", error));
+    return result;
+  });
   handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) =>
     repository.getBillingSummary(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), includeAllCompanies: z.boolean().optional() })]).parse(payload))
   );
@@ -638,24 +806,47 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.deactivateFinancialAccount, (_event, payload: unknown) => repository.deactivateFinancialAccount(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listAccountsPayable, (_event, payload: unknown) => repository.listAccountsPayable(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional(), status: z.string().optional(), supplierPartnerId: z.string().uuid().optional() }).parse(payload)));
   handle(IPC_CHANNELS.getAccountPayable, (_event, payload: unknown) => repository.getAccountPayable(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.createAccountPayableDraft, (_event, payload: unknown) => repository.createAccountPayableDraft(payload));
-  handle(IPC_CHANNELS.updateAccountPayable, (_event, payload: unknown) => {
-    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
-    return repository.updateAccountPayable(data.id, data.input);
+  handle(IPC_CHANNELS.listAccountPayableOperations, (_event, payload: unknown) => repository.listAccountPayableOperations(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.createAccountPayableDraft, async (_event, payload: unknown) => {
+    const result = repository.createAccountPayableDraft(payload);
+    await repository.pushAccountPayableToShared(result.payable.id).catch((error) => logPushFailure("createAccountPayableDraft", error));
+    return result;
   });
-  handle(IPC_CHANNELS.confirmAccountPayable, (_event, payload: unknown) => repository.confirmAccountPayable(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.duplicateAccountPayable, (_event, payload: unknown) => repository.duplicateAccountPayable(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.updateAccountPayable, async (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
+    const result = repository.updateAccountPayable(data.id, data.input);
+    await repository.pushAccountPayableToShared(result.payable.id).catch((error) => logPushFailure("updateAccountPayable", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.confirmAccountPayable, async (_event, payload: unknown) => {
+    const result = repository.confirmAccountPayable(z.string().uuid().parse(payload));
+    await repository.pushAccountPayableToShared(result.payable.id).catch((error) => logPushFailure("confirmAccountPayable", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.duplicateAccountPayable, async (_event, payload: unknown) => {
+    const result = repository.duplicateAccountPayable(z.string().uuid().parse(payload));
+    await repository.pushAccountPayableToShared(result.payable.id).catch((error) => logPushFailure("duplicateAccountPayable", error));
+    return result;
+  });
   handle(IPC_CHANNELS.findPossiblePayableDuplicates, (_event, payload: unknown) => repository.findPossiblePayableDuplicates(payload));
   handle(IPC_CHANNELS.addPayableAllocation, (_event, payload: unknown) => repository.addPayableAllocation(payload));
   handle(IPC_CHANNELS.removePayableAllocation, (_event, payload: unknown) => repository.removePayableAllocation(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.contestAccountPayable, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.contestAccountPayable, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
-    return repository.contestAccountPayable(data.id, data.reason);
+    const result = repository.contestAccountPayable(data.id, data.reason);
+    await repository.pushAccountPayableToShared(result.payable.id).catch((error) => logPushFailure("contestAccountPayable", error));
+    return result;
   });
-  handle(IPC_CHANNELS.cancelAccountPayable, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.cancelAccountPayable, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
-    return repository.cancelAccountPayable(data.id, data.reason);
+    const result = repository.cancelAccountPayable(data.id, data.reason);
+    await repository.pushAccountPayableToShared(result.payable.id).catch((error) => logPushFailure("cancelAccountPayable", error));
+    return result;
   });
+  handle(IPC_CHANNELS.getSupplierPurchaseSummary, (_event, payload: unknown) => repository.getSupplierPurchaseSummary(payload));
+  handle(IPC_CHANNELS.findEligiblePurchaseOperations, (_event, payload: unknown) => repository.findEligiblePurchaseOperations(payload));
+  // generatePurchaseSettlement ja' empurra pro Supabase por dentro (ver appRepository.ts) -- sem push duplicado aqui.
+  handle(IPC_CHANNELS.generatePurchaseSettlement, (_event, payload: unknown) => repository.generatePurchaseSettlement(payload));
   handle(IPC_CHANNELS.listPayableRecurringTemplates, (_event, payload: unknown) => repository.listPayableRecurringTemplates(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createPayableRecurringTemplate, (_event, payload: unknown) => repository.createPayableRecurringTemplate(payload));
   handle(IPC_CHANNELS.previewPayableRecurringGeneration, (_event, payload: unknown) => {
@@ -668,11 +859,25 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.createPayableInstallmentGroup, (_event, payload: unknown) => repository.createPayableInstallmentGroup(payload));
   handle(IPC_CHANNELS.getPayableInstallmentGroup, (_event, payload: unknown) => repository.getPayableInstallmentGroup(z.string().uuid().parse(payload)));
-  handle(IPC_CHANNELS.createPayablePayment, (_event, payload: unknown) => repository.createPayablePayment(payload));
-  handle(IPC_CHANNELS.allocatePayablePayment, (_event, payload: unknown) => repository.allocatePayablePayment(payload));
-  handle(IPC_CHANNELS.cancelPayablePayment, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.createPayablePayment, async (_event, payload: unknown) => {
+    const result = repository.createPayablePayment(payload);
+    await repository.pushPayablePaymentToShared(result.id).catch((error) => logPushFailure("createPayablePayment", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.allocatePayablePayment, async (_event, payload: unknown) => {
+    const data = z.object({ payablePaymentId: z.string().uuid(), accountPayableId: z.string().uuid(), amountCents: z.number().int().positive() }).parse(payload);
+    const result = repository.allocatePayablePayment(payload);
+    await repository.pushPayablePaymentToShared(data.payablePaymentId).catch((error) => logPushFailure("allocatePayablePayment", error));
+    await repository.pushAccountPayableToShared(data.accountPayableId).catch((error) => logPushFailure("allocatePayablePayment", error));
+    return result;
+  });
+  handle(IPC_CHANNELS.cancelPayablePayment, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
-    return repository.cancelPayablePayment(data.id, data.reason);
+    const payableIds = repository.getPayablePaymentAllocatedPayableIds(data.id);
+    const result = repository.cancelPayablePayment(data.id, data.reason);
+    await repository.pushPayablePaymentToShared(result.id).catch((error) => logPushFailure("cancelPayablePayment", error));
+    for (const payableId of payableIds) await repository.pushAccountPayableToShared(payableId).catch((error) => logPushFailure("cancelPayablePayment", error));
+    return result;
   });
   handle(IPC_CHANNELS.listPayablePayments, (_event, payload: unknown) => repository.listPayablePayments(z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().optional() }).parse(payload)));
   handle(IPC_CHANNELS.getFinancialSummary, (_event, payload: unknown) => repository.getFinancialSummary(z.string().uuid().parse(payload)));

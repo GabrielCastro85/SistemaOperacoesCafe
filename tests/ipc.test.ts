@@ -6,6 +6,7 @@ import { initializeDatabase } from "../electron/main/database/database";
 import { createDiagnostics } from "../electron/main/ipc/handlers";
 import { AppRepository } from "../electron/main/services/appRepository";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
+import { SharedRepository } from "../electron/main/services/sharedRepository";
 import { buildVariantConfigs } from "../src/shared/buildVariants";
 
 const tempDirs: string[] = [];
@@ -31,7 +32,7 @@ describe("diagnostics IPC handler logic", () => {
       allowLegalEntitySwitch: true,
       completedSetup: true
     });
-    const diagnostics = createDiagnostics({ version: "1.0.0-rc.1", directories, db, buildVariant: buildVariantConfigs.multiempresa }, repo);
+    const diagnostics = createDiagnostics({ version: "1.0.0-rc.1", directories, db, buildVariant: buildVariantConfigs.multiempresa, sharedRepository: new SharedRepository(directories) }, repo);
     expect(diagnostics.databaseStatus).toBe("ok");
     expect(diagnostics.activeVariant).toBe("multiempresa");
     expect(diagnostics.productName).toBe("Sistema de Operacoes de Cafe");

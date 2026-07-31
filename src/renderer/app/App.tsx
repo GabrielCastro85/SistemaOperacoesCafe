@@ -38,6 +38,8 @@ import { RecurringPayablesPage } from "../pages/finance/RecurringPayablesPage";
 import { OperationsPage } from "../pages/operations/OperationsPage";
 import { PartnersPage } from "../pages/partners/PartnersPage";
 import { ProductsPage } from "../pages/products/ProductsPage";
+import { PurchaseRateRulesPage } from "../pages/purchaseRates/PurchaseRateRulesPage";
+import { PurchaseSettlementsPage } from "../pages/purchaseSettlements/PurchaseSettlementsPage";
 import { ServiceRateRulesPage } from "../pages/serviceRates/ServiceRateRulesPage";
 import { BrandingSettingsPage } from "../pages/settings/branding/BrandingSettingsPage";
 import { BackupCreatePage, BackupDetailsPage, BackupsPage, BackupSettingsPage, IntegrityPage, RestorePage, RetentionPage } from "../pages/settings/backups/BackupPages";
@@ -209,6 +211,8 @@ function renderRoute(
   if (path.startsWith("/billing/rates") || path.startsWith("/rates")) return <ServiceRateRulesPage data={data} />;
   if (path.startsWith("/charges")) return <ChargesPage data={data} />;
   if (path.startsWith("/client-ledger")) return <ClientLedgerPage data={data} />;
+  if (path.startsWith("/finance/purchase-settlements")) return <PurchaseSettlementsPage data={data} />;
+  if (path.startsWith("/finance/purchase-rates")) return <PurchaseRateRulesPage data={data} />;
   if (path.startsWith("/finance/payables/new")) return <PayableCreatePage data={data} />;
   if (path.startsWith("/finance/payables/")) return <PayableDetailsPage data={data} id={routeTail(path, "/finance/payables/")} />;
   if (path.startsWith("/finance/payables")) return <PayablesPage data={data} />;

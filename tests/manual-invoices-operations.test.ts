@@ -12,7 +12,7 @@ const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 const villaEsLegalEntityId = "33333333-3333-4333-8333-333333333332";
 
-function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
+async function setup(): Promise<{ repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string }> {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-step4-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
@@ -28,9 +28,9 @@ function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabas
     allowLegalEntitySwitch: true,
     completedSetup: true
   });
-  const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Manual", notes: null, roles: ["CLIENT"], isActive: true });
+  const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Manual", notes: null, roles: ["CLIENT"], isActive: true });
   const product = repo.listProducts({ organizationId: villaId })[0];
-  repo.createServiceRateRule({
+  await repo.createServiceRateRule({
     organizationId: villaId,
     businessPartnerId: partner.id,
     ownLegalEntityId: null,
@@ -57,8 +57,8 @@ describe("manual invoices and operations", () => {
     expect(multiplyDecimalByCents("502.3", 500)).toBe(251150);
   });
 
-  it("creates manual invoice, items and operation with automatic rate", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("creates manual invoice, items and operation with automatic rate", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     const doc = repo.createFiscalDocument(sampleDocument(partnerId, "100", null));
     expect(doc.document.status).toBe("DRAFT");
     const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId, description: "Cafe", quantity: "502.3", unit: "SACK", unitPriceDecimal: "1234.5678", totalAmountCents: 100000, sacksQuantity: "502.3" });
@@ -74,11 +74,11 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
-  it("creates invoice and operation with a shared client registered under another organization", () => {
-    const { repo, db, productId } = setup();
+  it("creates invoice and operation with a shared client registered under another organization", async () => {
+    const { repo, db, productId } = await setup();
     const graoId = "22222222-2222-4222-8222-222222222222";
-    const sharedPartner = repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Global", notes: null, roles: ["CLIENT"], isActive: true });
-    repo.createServiceRateRule({
+    const sharedPartner = await repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Global", notes: null, roles: ["CLIENT"], isActive: true });
+    await repo.createServiceRateRule({
       organizationId: villaId,
       businessPartnerId: sharedPartner.id,
       ownLegalEntityId: null,
@@ -113,8 +113,8 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
-  it("blocks duplicate access key and warns possible duplicate without key", () => {
-    const { repo, db, partnerId } = setup();
+  it("blocks duplicate access key and warns possible duplicate without key", async () => {
+    const { repo, db, partnerId } = await setup();
     repo.createFiscalDocument(sampleDocument(partnerId, "200", "12345678901234567890123456789012345678901234"));
     expect(() => repo.createFiscalDocument(sampleDocument(partnerId, "201", "12345678901234567890123456789012345678901234"))).toThrow(/Chave/);
     repo.createFiscalDocument(sampleDocument(partnerId, "300", null));
@@ -123,8 +123,8 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
-  it("requires reason for manual override and recalculates service amount", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("requires reason for manual override and recalculates service amount", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     const doc = repo.createFiscalDocument(sampleDocument(partnerId, "400", null));
     const operation = repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: null, ownLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-16", quantitySacks: "10.5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
     expect(() => repo.updateOperationManualRate(operation.id, 750, "")).toThrow(/Motivo/);
@@ -132,8 +132,8 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
-  it("handles pending documents and cancellation", () => {
-    const { repo, db, partnerId } = setup();
+  it("handles pending documents and cancellation", async () => {
+    const { repo, db, partnerId } = await setup();
     const doc = repo.createFiscalDocument({ ...sampleDocument(partnerId, "500", null), hasPendingIssues: true, pendingNotes: "Conferir peso" });
     expect(doc.document.status).toBe("PENDING");
     expect(() => repo.confirmFiscalDocument(doc.document.id)).toThrow(/pendencias/);
@@ -142,8 +142,8 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
-  it("filters invoices by own legal entity and deletes an unbilled wrong invoice completely", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("filters invoices by own legal entity and deletes an unbilled wrong invoice completely", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     const mgDoc = repo.createFiscalDocument(sampleDocument(partnerId, "660", null));
     const esDoc = repo.createFiscalDocument({ ...sampleDocument(partnerId, "661", null), ownLegalEntityId: villaEsLegalEntityId });
     const item = repo.addFiscalDocumentItem({ fiscalDocumentId: esDoc.document.id, productId, description: "Cafe", quantity: "475", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 47500000, sacksQuantity: "475" });

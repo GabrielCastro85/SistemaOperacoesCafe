@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("admin services", () => {
-  it("normalizes installation profile to the single multiempresa app and allows organizations", () => {
+  it("normalizes installation profile to the single multiempresa app and allows organizations", async () => {
     const { repo, db } = setup();
     const profile = repo.saveInstallationProfile({
       installationName: "Villa",
@@ -39,33 +39,33 @@ describe("admin services", () => {
     });
     expect(profile.appVariant).toBe("multiempresa");
     expect(profile.allowOrganizationSwitch).toBe(true);
-    expect(repo.createOrganization(sampleOrganization("nova")).slug).toBe("nova");
-    expect(() => repo.createOrganization(sampleOrganization("nova"))).toThrow(/Slug/);
+    expect((await repo.createOrganization(sampleOrganization("nova"))).slug).toBe("nova");
+    await expect(repo.createOrganization(sampleOrganization("nova"))).rejects.toThrow(/Slug/);
     db.close();
   });
 
-  it("creates, edits, activates and deactivates LegalEntity with CNPJ validation", () => {
+  it("creates, edits, activates and deactivates LegalEntity with CNPJ validation", async () => {
     const { repo, db } = setup();
     repo.saveInstallationProfile(baseProfile());
-    expect(() => repo.createLegalEntity({ ...sampleLegalEntity(villaId), cnpj: "11111111111111" })).toThrow(/CNPJ invalido/);
-    const created = repo.createLegalEntity(sampleLegalEntity(villaId));
+    await expect(repo.createLegalEntity({ ...sampleLegalEntity(villaId), cnpj: "11111111111111" })).rejects.toThrow(/CNPJ invalido/);
+    const created = await repo.createLegalEntity(sampleLegalEntity(villaId));
     expect(created.cnpj).toBe(validCnpj);
-    expect(() => repo.createLegalEntity({ ...sampleLegalEntity(villaId), tradeName: "Duplicado" })).toThrow(/CNPJ ja cadastrado/);
-    const edited = repo.updateLegalEntity(created.id, { ...sampleLegalEntity(villaId), tradeName: "Villa Editada", isDraft: false });
+    await expect(repo.createLegalEntity({ ...sampleLegalEntity(villaId), tradeName: "Duplicado" })).rejects.toThrow(/CNPJ ja cadastrado/);
+    const edited = await repo.updateLegalEntity(created.id, { ...sampleLegalEntity(villaId), tradeName: "Villa Editada", isDraft: false });
     expect(edited.tradeName).toBe("Villa Editada");
-    expect(repo.deactivateLegalEntity(created.id).isActive).toBe(false);
-    expect(repo.activateLegalEntity(created.id).isActive).toBe(true);
+    expect((await repo.deactivateLegalEntity(created.id)).isActive).toBe(false);
+    expect((await repo.activateLegalEntity(created.id)).isActive).toBe(true);
     db.close();
   });
 
-  it("prevents Location linked to a LegalEntity from another organization", () => {
+  it("prevents Location linked to a LegalEntity from another organization", async () => {
     const { repo, db } = setup();
     repo.saveInstallationProfile({ ...baseProfile(), appVariant: "multiempresa", allowOrganizationSwitch: true });
-    expect(() => repo.createLocation({ ...sampleLocation(villaId), legalEntityId: graoEntityId })).toThrow(/mesma organizacao/);
-    const created = repo.createLocation(sampleLocation(villaId));
+    await expect(repo.createLocation({ ...sampleLocation(villaId), legalEntityId: graoEntityId })).rejects.toThrow(/mesma organizacao/);
+    const created = await repo.createLocation(sampleLocation(villaId));
     expect(created.type).toBe("WAREHOUSE");
     expect(repo.listLocations({ type: "WAREHOUSE" }).some((item) => item.id === created.id)).toBe(true);
-    expect(repo.deactivateLocation(created.id).isActive).toBe(false);
+    expect((await repo.deactivateLocation(created.id)).isActive).toBe(false);
     db.close();
   });
 
@@ -78,6 +78,28 @@ describe("admin services", () => {
     const copied = copyBrandingAssetFromPath(directories, villaId, "logo", logo);
     expect(copied).toContain(join("settings", "branding", villaId, "logo.png"));
     expect(() => copyBrandingAssetFromPath(directories, villaId, "logo", text)).toThrow(/Formato/);
+    db.close();
+  });
+
+  it("skips third-party XML placeholder entities when picking the default legal entity on organization switch", async () => {
+    // Reproduz o bug do card "Operando em" mostrando o nome de um terceiro (ex: um
+    // fornecedor terceirizado importado via XML): esses registros viram legal_entities
+    // reais com documentPrefix "TERC-XML", e como listLegalEntities ordena por
+    // trade_name, um terceiro cujo nome comeca com letra anterior (ex: "Alfa...")
+    // era escolhido como "primeira empresa ativa" ao trocar de grupo.
+    const { repo, db } = setup();
+    repo.saveInstallationProfile({ ...baseProfile(), appVariant: "multiempresa", allowOrganizationSwitch: true });
+    const draft = await repo.createLegalEntity({
+      ...sampleLegalEntity(villaId),
+      tradeName: "Alfa Terceirizada",
+      cnpj: "11444777000161",
+      documentPrefix: "TERC-XML",
+      isDraft: true
+    });
+    const profile = repo.setActiveOrganization(villaId);
+    expect(profile.defaultLegalEntityId).not.toBe(draft.id);
+    const picked = repo.getLegalEntity(profile.defaultLegalEntityId!);
+    expect(picked.documentPrefix).not.toBe("TERC-XML");
     db.close();
   });
 

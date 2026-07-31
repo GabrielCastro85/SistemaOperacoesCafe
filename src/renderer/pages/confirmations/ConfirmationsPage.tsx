@@ -42,6 +42,9 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [quantity, setQuantity] = useState("685");
   const [price, setPrice] = useState("1000.0000");
   const [sourceClientId, setSourceClientId] = useState("");
+  const [sourceSearchMode, setSourceSearchMode] = useState<"corretor" | "empresa">("corretor");
+  const [sourceLegalEntityId, setSourceLegalEntityId] = useState("");
+  const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocumentRow[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<Record<string, boolean>>({});
   const [brokerageInput, setBrokerageInput] = useState("");
@@ -92,8 +95,21 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   }, [load]);
 
   const loadSourceDocuments = useCallback(async () => {
-    if (!sourceClientId) return;
-    const documents = (await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "CONFIRMED" })).filter((item) => item.responsiblePartnerId === sourceClientId);
+    // Busca por corretor: mesmo comportamento de sempre (nota atribuida a
+    // esse cliente/corretor, sem olhar qual empresa emitiu). Busca por
+    // empresa/CNPJ: pedido do dono -- pesquisa a empresa e traz TODAS as
+    // notas emitidas por aquele CNPJ, independente de qual corretor ficou
+    // responsavel, pra escolher quais entram na confirmacao.
+    if (sourceSearchMode === "corretor") {
+      if (!sourceClientId) { setSourceDocuments([]); return; }
+    } else if (!sourceLegalEntityId) {
+      setSourceDocuments([]);
+      return;
+    }
+    const allDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "CONFIRMED" });
+    const documents = sourceSearchMode === "corretor"
+      ? allDocuments.filter((item) => item.responsiblePartnerId === sourceClientId)
+      : allDocuments.filter((item) => item.partnerLegalEntityId === sourceLegalEntityId);
     const rows = await Promise.all(documents.map(async (document): Promise<SourceDocumentRow> => {
       const detailDoc = await window.operationsCafe.getFiscalDocument(document.id);
       const sacks = detailDoc.items.map((item) => item.sacksQuantity).filter((value): value is string => Boolean(value));
@@ -101,7 +117,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }));
     setSourceDocuments(rows);
     setSelectedDocumentIds({});
-  }, [organizationId, ownLegalEntityId, sourceClientId]);
+  }, [organizationId, ownLegalEntityId, sourceClientId, sourceSearchMode, sourceLegalEntityId]);
 
   useEffect(() => { void loadSourceDocuments(); }, [loadSourceDocuments]);
 
@@ -196,6 +212,16 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   }
 
   const clientPartners = partners.filter((item) => item.roles.includes("CLIENT"));
+  const companySearchResults = (() => {
+    const term = companySearchTerm.trim().toUpperCase();
+    if (!term) return [];
+    const digitsTerm = term.replace(/\D/g, "");
+    return partnerLegalEntities.filter((entity) =>
+      entity.tradeName.toUpperCase().includes(term) ||
+      entity.legalName.toUpperCase().includes(term) ||
+      (digitsTerm && entity.cnpj?.includes(digitsTerm))
+    );
+  })();
   const ownEntityName = data.legalEntities.find((item) => item.id === ownLegalEntityId)?.tradeName ?? "Empresa propria";
   const selectedCount = Object.values(selectedDocumentIds).filter(Boolean).length;
   const selectedRows = sourceDocuments.filter((row) => selectedDocumentIds[row.document.id]);
@@ -228,7 +254,14 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
-      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
+      // As notas selecionadas podem ja estar vinculadas a uma confirmacao ativa -- nesse caso o backend
+      // devolve essa confirmacao existente em vez de criar outra (evita duplicar o negocio). Quando isso
+      // acontece ela ja vem com partes/itens/signatarios preenchidos, entao NAO chame addPartiesItemsAndSigners
+      // de novo aqui, ou cada re-clique duplica vendedor/comprador/destinatario e os dois signatarios.
+      const wasReused = created.parties.length > 0 || created.signers.length > 0;
+      if (!wasReused) {
+        await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
+      }
       if (selectedBuyerId) {
         setSourceClientId(selectedBuyerId);
       }
@@ -239,7 +272,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       loadBankFieldsFromDetail(refreshed);
       setPreviewBase64(null);
       setView("detail");
-      setMessage(`Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`);
+      setMessage(
+        wasReused
+          ? `Notas ja vinculadas a confirmacao ${created.confirmation.confirmationNumber ?? "em rascunho"} existente -- reaproveitando em vez de criar outra.`
+          : `Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`
+      );
       await load();
       scrollTo(detailRef);
     } catch (errorValue) {
@@ -476,10 +513,34 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           </div>
           {creationMode === "notes" && (
             <AdminBlock title="Criar a partir de notas fiscais">
-              <p className="muted">Fluxo recomendado: selecione o cliente e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
-              <FormGrid>
-                <PartnerQuickSearch label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} partners={clientPartners} legalEntities={partnerLegalEntities} />
-              </FormGrid>
+              <p className="muted">Fluxo recomendado: busque por cliente/corretor ou por empresa/CNPJ e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
+              <div className="settings-tabs">
+                <button className={sourceSearchMode === "corretor" ? "active" : ""} onClick={() => { setSourceSearchMode("corretor"); setSourceLegalEntityId(""); setCompanySearchTerm(""); }}>Buscar por cliente/corretor</button>
+                <button className={sourceSearchMode === "empresa" ? "active" : ""} onClick={() => { setSourceSearchMode("empresa"); setSourceClientId(""); }}>Buscar por empresa/CNPJ</button>
+              </div>
+              {sourceSearchMode === "corretor" ? (
+                <FormGrid>
+                  <PartnerQuickSearch label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} partners={clientPartners} legalEntities={partnerLegalEntities} />
+                </FormGrid>
+              ) : (
+                <FormGrid>
+                  <TextField label="Buscar empresa por nome ou CNPJ" value={companySearchTerm} onChange={(value) => { setCompanySearchTerm(value); setSourceLegalEntityId(""); }} />
+                  {companySearchTerm.trim() ? (
+                    <div className="table">
+                      {companySearchResults.length ? companySearchResults.map((entity) => (
+                        <div key={entity.id} className="table-row">
+                          <button
+                            className={entity.id === sourceLegalEntityId ? "partner-action-button partner-action-button--primary" : "partner-action-button"}
+                            onClick={() => setSourceLegalEntityId(entity.id)}
+                          >
+                            {entity.tradeName} - {entity.cnpj}
+                          </button>
+                        </div>
+                      )) : <div className="table-row"><span>Nenhuma empresa encontrada.</span></div>}
+                    </div>
+                  ) : null}
+                </FormGrid>
+              )}
               {sourceDocuments.length ? (
                 <div className="table">
                   <div className="table-head confirmation-source-grid"><span></span><span>NF</span><span>Emissao</span><span>Sacas</span><span>Valor total</span></div>
@@ -494,7 +555,12 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   ))}
                 </div>
               ) : (
-                <EmptyState title="Nenhuma nota confirmada" description="Este cliente ainda nao possui notas fiscais confirmadas para gerar uma confirmacao." />
+                <EmptyState
+                  title="Nenhuma nota confirmada"
+                  description={sourceSearchMode === "corretor"
+                    ? "Este cliente/corretor ainda nao possui notas fiscais confirmadas para gerar uma confirmacao."
+                    : "Essa empresa ainda nao possui notas fiscais confirmadas para gerar uma confirmacao."}
+                />
               )}
               <div className="confirmation-source-stats">
                 <span>{selectedCount} nota(s) selecionada(s)</span>

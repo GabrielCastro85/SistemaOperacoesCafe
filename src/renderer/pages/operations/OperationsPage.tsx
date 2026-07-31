@@ -36,6 +36,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const ownLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [secondaryPartners, setSecondaryPartners] = useState<BusinessPartner[]>([]);
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
@@ -66,6 +67,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
   const [xmlSelectionSource, setXmlSelectionSource] = useState<"FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP">("FILE");
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
+  const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const scrollTo = useAutoScroll();
@@ -77,10 +79,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    const clientPartners = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
-    setPartners(clientPartners);
-    setPartnerLegalEntities((await Promise.all(clientPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
-    setPartnerId((current) => (clientPartners.some((partner) => partner.id === current) ? current : ""));
+    const roleForOperationType = operationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
+    // Nota triangulada: o segundo parceiro (a outra perna, compra ou venda)
+    // precisa ter o papel OPOSTO ao do parceiro principal selecionado acima.
+    const secondaryRole = roleForOperationType === "SUPPLIER" ? "CLIENT" : "SUPPLIER";
+    const [rolePartners, oppositeRolePartners] = await Promise.all([
+      window.operationsCafe.listBusinessPartners({ role: roleForOperationType, status: "active" }),
+      window.operationsCafe.listBusinessPartners({ role: secondaryRole, status: "active" })
+    ]);
+    setPartners(rolePartners);
+    setSecondaryPartners(oppositeRolePartners);
+    setPartnerLegalEntities((await Promise.all(rolePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    setPartnerId((current) => (rolePartners.some((partner) => partner.id === current) ? current : ""));
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
@@ -99,7 +109,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     })));
     setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
     setXmlHistory(await window.operationsCafe.listXmlImportJobs(organizationId));
-  }, [organizationId, ownLegalEntityId]);
+  }, [organizationId, ownLegalEntityId, operationType]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -112,6 +122,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ownLegalEntityId,
         responsiblePartnerId: partnerId,
         partnerLegalEntityId: null,
+        operationType,
         accessKey: onlyDigits(accessKey),
         documentNumber: number,
         series: null,
@@ -314,7 +325,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   async function validateXmlImport(): Promise<void> {
     if (xmlSelections.length === 0) return;
     if (!partnerId) {
-      setMessage("Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
+      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
       scrollTo(xmlDataRef);
       return;
     }
@@ -340,14 +351,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
     if (!partnerId) {
-      setMessage("Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
+      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
       scrollTo(xmlDataRef);
       return;
     }
     try {
       const executed = await window.operationsCafe.executeXmlImportJob({ jobId: xmlJob.job.id, tokens: xmlSelections.map((file) => file.token) });
       setXmlJob(executed);
-      setMessage("Importacao XML processada.");
+      const warningCount = executed.job.itemsWithoutOperation;
+      setMessage(
+        warningCount > 0
+          ? `Importacao XML processada. ${warningCount} item(ns) nao geraram operacao (produto ou unidade nao reconhecidos) -- revise a coluna "Alerta" nas notas abaixo.`
+          : "Importacao XML processada."
+      );
       await load();
       scrollTo(xmlHistoryRef);
     } catch (errorValue) {
@@ -382,10 +398,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   async function saveXmlFileResolution(fileId: string): Promise<void> {
     const clientPartnerId = xmlResolutionSelections[fileId];
     if (!clientPartnerId) return;
+    const secondaryPartnerId = xmlSecondaryResolutionSelections[fileId] || null;
     try {
-      await window.operationsCafe.updateXmlImportFileResolution(fileId, { clientPartnerId });
+      await window.operationsCafe.updateXmlImportFileResolution(fileId, { clientPartnerId, secondaryPartnerId });
       if (xmlJob) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJob.job.id));
-      setMessage("Cliente/corretor associado. Clique em \"Importar XMLs\" novamente para reprocessar.");
+      setMessage(
+        secondaryPartnerId
+          ? "Nota triangulada: parceiro principal e secundario associados. Clique em \"Importar XMLs\" novamente para reprocessar."
+          : "Cliente/corretor associado. Clique em \"Importar XMLs\" novamente para reprocessar."
+      );
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar resolucao."}`);
     }
@@ -483,6 +504,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const detailMainOperation = detail?.operations[0] ?? null;
   const operationTypeLabel = detailMainOperation?.operationType === "PURCHASE" ? "Compra" : detailMainOperation?.operationType === "SALE" ? "Venda" : "-";
   const operationScopeLabel = formatOperationScope(detailMainOperation?.operationScope);
+  // Nota triangulada: a mesma nota gerou uma operacao de compra (fornecedor)
+  // e uma de venda (corretor/cliente) a partir da mesma remessa.
+  const allKnownPartners = [...partners, ...secondaryPartners];
+  const partnerName = (id: string | null | undefined): string => (id ? allKnownPartners.find((partner) => partner.id === id)?.displayName ?? id : "-");
+  const isTriangulatedDetail = Boolean(detail?.document.secondaryResponsiblePartnerId);
+  const purchaseLeg = detail?.operations.find((op) => op.operationType === "PURCHASE") ?? null;
+  const saleLeg = detail?.operations.find((op) => op.operationType === "SALE") ?? null;
 
   return (
     <section className="content-section settings">
@@ -522,7 +550,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(visibleServiceCents)}</strong></article>
         </div>
         <FormGrid>
-          <PartnerQuickSearch label="Cliente/corretor responsavel" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+          <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel" : "Cliente/corretor responsavel"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
           <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
           <TextField label="Valor total" value={total} onChange={setTotal} />
@@ -531,7 +560,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente/corretor</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span>{info?.missingRate ? "Sem valor por saca" : doc.duplicateWarning ?? "-"}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
+          const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}</div>
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
@@ -549,9 +579,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </div>
             ) : null}
             {detail.items.length ? <p className="muted">Os campos abaixo servem apenas para adicionar outro item/operacao manualmente nesta nota.</p> : null}
+            <p className="muted">Compra/venda: <strong>{operationType === "PURCHASE" ? "Compra" : "Venda"}</strong> (definido na criacao da nota, mesmo para todos os itens dela).</p>
             <FormGrid>
               <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
-              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
               <SelectField label="UF da venda" value={scope} onChange={(value) => setScope(value as OperationScope)} options={OPERATION_SCOPE_OPTIONS} />
               <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
               <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
@@ -579,6 +609,32 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${formatOperationScope(op.operationScope)}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
           <article><span>Status</span><strong>{formatStatusLabel(detail.document.status)}</strong></article>
         </div>
+        {isTriangulatedDetail ? (
+          <div className="operation-warning-card operation-warning-card--neutral">
+            <strong>Nota triangulada</strong>
+            <span>
+              Compra: {partnerName(purchaseLeg?.responsiblePartnerId)}
+              {purchaseLeg ? ` — ${formatCurrencyFromCents(purchaseLeg.appliedRateValueCents)}/saca (${formatCurrencyFromCents(purchaseLeg.serviceAmountCents)})` : " — sem operacao ainda"}
+              {" | "}
+              Venda: {partnerName(saleLeg?.responsiblePartnerId)}
+              {saleLeg ? ` — ${formatCurrencyFromCents(saleLeg.appliedRateValueCents)}/saca (${formatCurrencyFromCents(saleLeg.serviceAmountCents)})` : " — sem operacao ainda"}
+            </span>
+          </div>
+        ) : null}
+        {detail.rateHistory && detail.rateHistory.length > 0 ? (
+          <div className="cards">
+            <article className="rate-history-card">
+              <span>Historico de tarifa</span>
+              <strong>
+                {detail.rateHistory.map((entry) => (
+                  <span key={entry.id} className="rate-history-entry">
+                    {formatDateOnlyBr(entry.changedAt)}: {entry.previousRateValueCents !== null ? formatCurrencyFromCents(entry.previousRateValueCents) : "sem valor"} → {entry.newRateValueCents !== null ? formatCurrencyFromCents(entry.newRateValueCents) : "sem valor"}{entry.reason ? ` (${entry.reason})` : ""}
+                  </span>
+                ))}
+              </strong>
+            </article>
+          </div>
+        ) : null}
       </AdminBlock></div> : null}
       </>}
       {pageTab === "spreadsheets" && <>
@@ -648,13 +704,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 {selectedXmlOwnMismatch ? (
                   <div className="operation-warning-card">
                     <strong>Atencao: XML de outro CNPJ</strong>
-                    <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity?.tradeName}. Troque o CNPJ ativo antes de salvar a nota.</span>
+                    <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity?.tradeName}. A nota sera salva na empresa correta do XML para entrar nas cobrancas.</span>
                   </div>
                 ) : null}
                 {selectedXmlParties.isThirdPartyOrigin ? (
                   <div className="operation-warning-card operation-warning-card--neutral">
                     <strong>Nota de empresa externa/terceirizada</strong>
-                    <span>Este XML nao pertence aos CNPJs Villa ou Grao cadastrados como proprios. Ele pode ser salvo para entrar nas cobrancas do cliente/corretor responsavel.</span>
+                    <span>Este XML nao pertence aos CNPJs Villa ou Grao cadastrados como proprios. Ele pode ser salvo para entrar nas cobrancas do cliente/corretor responsavel. Se o emitente e o destinatario ja estiverem cadastrados como empresas vinculadas (um a um fornecedor, outro a um cliente/corretor), o sistema reconhece automaticamente e gera as duas operacoes — compra e venda — a partir da mesma remessa. Se nao reconhecer sozinho, associe o segundo parceiro manualmente na tabela de revisao abaixo apos validar a fila.</span>
                   </div>
                 ) : null}
                 <dl className="kv-list">
@@ -687,7 +743,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <h3><ListStepsIcon /> Fluxo de importacao</h3>
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             <FormGrid>
-              <PartnerQuickSearch label="Cliente/corretor responsavel pela cobranca" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
               <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
               <SelectField
                 label="UF da venda"
@@ -737,7 +793,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           </div>
         ) : null}
         <div ref={xmlResultRef}>
-        {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article></div> : null}
+        {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article><article><span>Itens sem operacao</span><strong>{xmlJob.job.itemsWithoutOperation}</strong></article></div> : null}
         {xmlJob ? (
           <div className="table">
             <div className="table-head xml-files-grid"><span>Arquivo</span><span>Status</span><span>Tipo</span><span>Chave</span><span>Detalhe</span></div>
@@ -762,7 +818,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         {xmlJob && xmlJob.files.some((file) => file.status === "PENDING_REVIEW") ? (
           <div className="table">
-            <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente/corretor</span><span>Acoes</span></div>
+            <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente/corretor</span><span>Segundo parceiro (nota triangulada)</span><span>Acoes</span></div>
             {xmlJob.files.filter((file) => file.status === "PENDING_REVIEW").map((file) => {
               const { issuer, recipient } = xmlFileParty(file);
               return (
@@ -773,6 +829,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <span>{recipient?.tradeName ?? recipient?.legalName ?? "-"}</span>
                   <span>
                     <PartnerQuickSearch label="Cliente/corretor" value={xmlResolutionSelections[file.id] ?? ""} onChange={(value) => setXmlResolutionSelections((current) => ({ ...current, [file.id]: value }))} partners={partners} legalEntities={partnerLegalEntities} />
+                  </span>
+                  <span>
+                    <PartnerQuickSearch
+                      label={operationType === "PURCHASE" ? "Corretor/cliente (venda)" : "Fornecedor (compra)"}
+                      placeholder="So' se essa nota tambem gerar a outra ponta (compra + venda)"
+                      value={xmlSecondaryResolutionSelections[file.id] ?? ""}
+                      onChange={(value) => setXmlSecondaryResolutionSelections((current) => ({ ...current, [file.id]: value }))}
+                      partners={secondaryPartners}
+                    />
                   </span>
                   <span>
                     <button disabled={!xmlResolutionSelections[file.id]} onClick={() => void saveXmlFileResolution(file.id)}>Salvar</button>
@@ -786,7 +851,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
       </AdminBlock>
       <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock></div>
       </>}
       <Feedback message={message} />

@@ -36,36 +36,36 @@ afterEach(() => {
 });
 
 describe("partners, products and billing", () => {
-  it("creates partner with multiple roles and blocks duplicate/empty roles", () => {
+  it("creates partner with multiple roles and blocks duplicate/empty roles", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Fazenda Boa Vista", notes: null, roles: ["CLIENT", "BUYER"], isActive: true });
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Fazenda Boa Vista", notes: null, roles: ["CLIENT", "BUYER"], isActive: true });
     expect(partner.roles).toEqual(["BUYER", "CLIENT"]);
-    expect(() => repo.addBusinessPartnerRole(partner.id, "CLIENT")).toThrow(/Papel/);
-    expect(() => repo.updateBusinessPartner(partner.id, { organizationId: villaId, displayName: "Sem papel", notes: null, roles: [], isActive: true })).toThrow();
-    expect(repo.deactivateBusinessPartner(partner.id).isActive).toBe(false);
-    expect(repo.activateBusinessPartner(partner.id).isActive).toBe(true);
+    await expect(repo.addBusinessPartnerRole(partner.id, "CLIENT")).rejects.toThrow(/Papel/);
+    await expect(repo.updateBusinessPartner(partner.id, { organizationId: villaId, displayName: "Sem papel", notes: null, roles: [], isActive: true })).rejects.toThrow();
+    expect((await repo.deactivateBusinessPartner(partner.id)).isActive).toBe(false);
+    expect((await repo.activateBusinessPartner(partner.id)).isActive).toBe(true);
     db.close();
   });
 
-  it("handles partner legal entities and primary constraints", () => {
+  it("handles partner legal entities and primary constraints", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente ABC", notes: null, roles: ["CLIENT"], isActive: true });
-    expect(() => repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, "11111111111111", true))).toThrow(/CNPJ invalido/);
-    const first = repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente ABC", notes: null, roles: ["CLIENT"], isActive: true });
+    await expect(repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, "11111111111111", true))).rejects.toThrow(/CNPJ invalido/);
+    const first = await repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
     expect(first.cnpj).toBe(cnpjA);
-    expect(() => repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, false))).toThrow(/Cliente ABC/);
-    const second = repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjB, true));
+    await expect(repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, false))).rejects.toThrow(/Cliente ABC/);
+    const second = await repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjB, true));
     expect(repo.listPartnerLegalEntities(partner.id).filter((item) => item.isPrimary)).toHaveLength(1);
     expect(second.isPrimary).toBe(true);
     db.close();
   });
 
-  it("updates existing partner and legal entity registration data", () => {
+  it("updates existing partner and legal entity registration data", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Antigo", notes: null, roles: ["CLIENT"], isActive: true });
-    const legalEntity = repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Antigo", notes: null, roles: ["CLIENT"], isActive: true });
+    const legalEntity = await repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
 
-    const updatedPartner = repo.updateBusinessPartner(partner.id, {
+    const updatedPartner = await repo.updateBusinessPartner(partner.id, {
       organizationId: villaId,
       displayName: "Cliente Atualizado",
       notes: "Cadastro revisado",
@@ -83,7 +83,7 @@ describe("partners, products and billing", () => {
       city: "Andradas",
       state: "MG"
     });
-    const updatedEntity = repo.updatePartnerLegalEntity(legalEntity.id, { ...samplePartnerEntity(partner.id, cnpjA, true), legalName: "Cliente Atualizado Ltda", tradeName: "Cliente Atualizado", email: "novo@example.com" });
+    const updatedEntity = await repo.updatePartnerLegalEntity(legalEntity.id, { ...samplePartnerEntity(partner.id, cnpjA, true), legalName: "Cliente Atualizado Ltda", tradeName: "Cliente Atualizado", email: "novo@example.com" });
 
     expect(updatedPartner.displayName).toBe("Cliente Atualizado");
     expect(updatedPartner.roles).toEqual(["BUYER", "CLIENT"]);
@@ -99,71 +99,78 @@ describe("partners, products and billing", () => {
     db.close();
   });
 
-  it("creates contacts and products with validation", () => {
+  it("creates contacts and products with validation", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Contato Cliente", notes: null, roles: ["CLIENT"], isActive: true });
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Contato Cliente", notes: null, roles: ["CLIENT"], isActive: true });
     const contact = repo.createPartnerContact({ businessPartnerId: partner.id, partnerLegalEntityId: null, name: "Maria", department: null, email: "maria@example.com", phone: "31999999999", mobile: null, preferredContactMethod: "EMAIL", isPrimary: true, notes: null, isActive: true });
     expect(contact.isPrimary).toBe(true);
-    const product = repo.createProduct({ organizationId: villaId, name: "Cafe Especial", code: "ESP", category: "COFFEE_ARABICA", defaultUnit: "SACK", defaultSackWeightKg: 60.5, description: null, isActive: true });
+    const product = await repo.createProduct({ organizationId: villaId, name: "Cafe Especial", code: "ESP", category: "COFFEE_ARABICA", defaultUnit: "SACK", defaultSackWeightKg: 60.5, description: null, isActive: true });
     expect(product.defaultSackWeightKg).toBe(60.5);
-    expect(() => repo.createProduct({ organizationId: villaId, name: "Duplicado", code: "ESP", category: "OTHER", defaultUnit: "UNIT", defaultSackWeightKg: null, description: null, isActive: true })).toThrow(/Codigo/);
+    await expect(repo.createProduct({ organizationId: villaId, name: "Duplicado", code: "ESP", category: "OTHER", defaultUnit: "UNIT", defaultSackWeightKg: null, description: null, isActive: true })).rejects.toThrow(/Codigo/);
     db.close();
   });
 
-  it("permanently deletes partner registration data instead of deactivating it", () => {
+  it("archives partner registration data instead of deleting it, preserving history", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Removivel", notes: null, roles: ["CLIENT"], isActive: true });
-    const legalEntity = repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Removivel", notes: null, roles: ["CLIENT"], isActive: true });
+    const legalEntity = await repo.createPartnerLegalEntity(samplePartnerEntity(partner.id, cnpjA, true));
     repo.createPartnerContact({ businessPartnerId: partner.id, partnerLegalEntityId: legalEntity.id, name: "Maria", department: null, email: "maria@example.com", phone: "31999999999", mobile: null, preferredContactMethod: "EMAIL", isPrimary: true, notes: null, isActive: true });
-    repo.upsertBillingProfile({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, periodicity: "MONTHLY", closingWeekday: null, closingDayOfMonth: 30, dueDaysAfterClosing: 5, autoIncludeUnbilledOperations: true, notes: null, isActive: true });
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: null, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 1, notes: null, isActive: true });
+    await repo.upsertBillingProfile({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, periodicity: "MONTHLY", closingWeekday: null, closingDayOfMonth: 30, dueDaysAfterClosing: 5, autoIncludeUnbilledOperations: true, notes: null, isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: null, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 1, notes: null, isActive: true });
 
-    repo.deleteBusinessPartner(partner.id);
+    await repo.deleteBusinessPartner(partner.id);
 
-    expect(() => repo.getBusinessPartner(partner.id)).toThrow(/Parceiro nao encontrado/);
-    expect(db.prepare("SELECT COUNT(*) AS count FROM partner_legal_entities WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS count FROM partner_contacts WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS count FROM client_billing_profiles WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS count FROM service_rate_rules WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 0 });
+    // Arquivar preserva o cadastro (nao apaga) -- so' marca tudo como inativo,
+    // pra nao perder o historico de notas/cobrancas ja vinculado ao parceiro.
+    expect(repo.getBusinessPartner(partner.id).isActive).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM partner_legal_entities WHERE business_partner_id = ? AND is_active = 1").get(partner.id)).toMatchObject({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM partner_legal_entities WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM partner_contacts WHERE business_partner_id = ? AND is_active = 1").get(partner.id)).toMatchObject({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM partner_contacts WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM client_billing_profiles WHERE business_partner_id = ? AND is_active = 1").get(partner.id)).toMatchObject({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM client_billing_profiles WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM service_rate_rules WHERE business_partner_id = ? AND is_active = 1").get(partner.id)).toMatchObject({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM service_rate_rules WHERE business_partner_id = ?").get(partner.id)).toMatchObject({ count: 1 });
     db.close();
   });
 
-  it("creates billing profile and resolves most specific rate rule", () => {
+  it("creates billing profile and resolves most specific rate rule", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Rate", notes: null, roles: ["CLIENT"], isActive: true });
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Rate", notes: null, roles: ["CLIENT"], isActive: true });
     const product = repo.listProducts({ organizationId: villaId })[0];
-    expect(repo.upsertBillingProfile({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, periodicity: "MONTHLY", closingWeekday: null, closingDayOfMonth: 30, dueDaysAfterClosing: 5, autoIncludeUnbilledOperations: true, notes: null, isActive: true }).periodicity).toBe("MONTHLY");
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: null, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 1, notes: null, isActive: true });
-    const specificRule = repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 850, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
-    const editedRule = repo.updateServiceRateRule(specificRule.id, { organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 875, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: "Valor revisado", isActive: true });
+    expect((await repo.upsertBillingProfile({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, periodicity: "MONTHLY", closingWeekday: null, closingDayOfMonth: 30, dueDaysAfterClosing: 5, autoIncludeUnbilledOperations: true, notes: null, isActive: true })).periodicity).toBe("MONTHLY");
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: null, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 1, notes: null, isActive: true });
+    const specificRule = await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 850, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const editedRule = await repo.updateServiceRateRule(specificRule.id, { organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 875, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: "Valor revisado", isActive: true });
     expect(editedRule.rateValueCents).toBe(875);
     const resolved = repo.resolveServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", operationDate: "2026-07-16" });
     expect(resolved.status).toBe("found");
     expect(resolved.rateValueCents).toBe(875);
-    const primavera = repo.createBusinessPartner({ organizationId: villaId, displayName: "Primavera Coffee", notes: null, roles: ["BUYER"], isActive: true });
-    const primaveraEntity = repo.createPartnerLegalEntity(samplePartnerEntity(primavera.id, cnpjB, true));
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: primaveraEntity.id, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 30, notes: "Primavera", isActive: true });
+    const primavera = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Primavera Coffee", notes: null, roles: ["BUYER"], isActive: true });
+    const primaveraEntity = await repo.createPartnerLegalEntity(samplePartnerEntity(primavera.id, cnpjB, true));
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: primaveraEntity.id, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 30, notes: "Primavera", isActive: true });
     const primaveraResolved = repo.resolveServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, counterpartyPartnerLegalEntityId: primaveraEntity.id, productId: product.id, operationScope: "EXTERNAL", operationDate: "2026-07-16" });
     expect(primaveraResolved.status).toBe("found");
     expect(primaveraResolved.rateValueCents).toBe(400);
-    expect(() => repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 900, effectiveFrom: "2026-07-10", effectiveTo: null, priority: 10, notes: null, isActive: true })).toThrow(/conflitante/);
-    repo.deleteServiceRateRule(specificRule.id);
+    await expect(repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 900, effectiveFrom: "2026-07-10", effectiveTo: null, priority: 10, notes: null, isActive: true })).rejects.toThrow(/conflitante/);
+    await repo.deleteServiceRateRule(specificRule.id);
     expect(() => repo.getServiceRateRule(specificRule.id)).toThrow(/Regra nao encontrada/);
     db.close();
   });
 
-  it("returns missing when no rate applies and blocks billing for non-client", () => {
+  it("returns missing when no rate applies and blocks billing for non-client", async () => {
     const { repo, db } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Fornecedor", notes: null, roles: ["SUPPLIER"], isActive: true });
-    expect(() => repo.upsertBillingProfile({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, periodicity: "MONTHLY", closingWeekday: null, closingDayOfMonth: 1, dueDaysAfterClosing: 0, autoIncludeUnbilledOperations: false, notes: null, isActive: true })).toThrow(/Cliente/);
-    const client = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Regra", notes: null, roles: ["CLIENT"], isActive: true });
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Fornecedor", notes: null, roles: ["SUPPLIER"], isActive: true });
+    await expect(repo.upsertBillingProfile({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, periodicity: "MONTHLY", closingWeekday: null, closingDayOfMonth: 1, dueDaysAfterClosing: 0, autoIncludeUnbilledOperations: false, notes: null, isActive: true })).rejects.toThrow(/Cliente/);
+    const client = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Regra", notes: null, roles: ["CLIENT"], isActive: true });
     expect(repo.resolveServiceRateRule({ organizationId: villaId, businessPartnerId: client.id, ownLegalEntityId: null, productId: null, operationScope: "INTERNAL", operationDate: "2026-07-16" }).status).toBe("missing");
     db.close();
   });
 });
 
-function samplePartnerEntity(businessPartnerId: string, cnpj: string, isPrimary: boolean) {
+function samplePartnerEntity(businessPartnerId: string | null, cnpj: string, isPrimary: boolean) {
   return {
+    organizationId: villaId,
     businessPartnerId,
     legalName: "Cliente ABC Ltda",
     tradeName: "Cliente ABC",

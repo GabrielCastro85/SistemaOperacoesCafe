@@ -1,11 +1,25 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
-import type { BillingSummary, BootstrapData, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
+import type { BillingSummary, BootstrapData, BusinessPartner, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
-import { Badge, Button, Card, CheckCircleIcon, CoinsIcon, EmptyState, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
+import { Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
+import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 
 function isOperationalLegalEntity(entity: LegalEntity): boolean {
   return entity.documentPrefix !== "TERC-XML";
+}
+
+function localDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function currentMonthToDateRange(): { periodStart: string; periodEnd: string } {
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), 1);
+  return { periodStart: localDateInputValue(start), periodEnd: localDateInputValue(today) };
 }
 
 export function Splash(): JSX.Element {
@@ -97,13 +111,19 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const [alerts, setAlerts] = useState<DashboardAlerts | null>(null);
   const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
+  const [periodStart, setPeriodStart] = useState(() => currentMonthToDateRange().periodStart);
+  const [periodEnd, setPeriodEnd] = useState(() => currentMonthToDateRange().periodEnd);
+  const [businessPartners, setBusinessPartners] = useState<BusinessPartner[]>([]);
+  const [partnerSearchId, setPartnerSearchId] = useState("");
+  const [partnerSackSummary, setPartnerSackSummary] = useState<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number } | null>(null);
+  const [partnerSummaryLoading, setPartnerSummaryLoading] = useState(false);
 
   useEffect(() => {
     if (!organizationId) return;
     void Promise.all([
       window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }),
-      window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId }),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
+      window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId, periodStart: periodStart || null, periodEnd: periodEnd || null }),
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: periodStart || null, dateEnd: periodEnd || null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
       window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
     ]).then(([billing, operations, confirmations, dashboardAlerts]) => {
       setBillingSummary(billing);
@@ -111,12 +131,29 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
       setConfirmationSummary(confirmations);
       setAlerts(dashboardAlerts);
     });
-  }, [organizationId, ownLegalEntityId]);
+  }, [organizationId, ownLegalEntityId, periodStart, periodEnd]);
 
   useEffect(() => {
     if (!organizationId) return;
     void window.operationsCafe.getMonthlyOperationTotals({ organizationId, ownLegalEntityId, year: chartYear }).then(setMonthlyTotals);
   }, [organizationId, ownLegalEntityId, chartYear]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    void window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }).then(setBusinessPartners);
+  }, [organizationId]);
+
+  useEffect(() => {
+    if (!organizationId || !partnerSearchId) {
+      setPartnerSackSummary(null);
+      return;
+    }
+    setPartnerSummaryLoading(true);
+    void window.operationsCafe
+      .getPartnerPeriodSackSummary({ organizationId, ownLegalEntityId, businessPartnerId: partnerSearchId, periodStart: periodStart || null, periodEnd: periodEnd || null })
+      .then(setPartnerSackSummary)
+      .finally(() => setPartnerSummaryLoading(false));
+  }, [organizationId, ownLegalEntityId, partnerSearchId, periodStart, periodEnd]);
 
   const totalReceivable = billingSummary?.openCents ?? 0;
   const totalCommercialAmount = operationalIndicators?.fiscalAmountCents ?? 0;
@@ -139,6 +176,10 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   return (
     <section className="content-section">
       <PageHeader eyebrow="Visao geral" title="Dashboard operacional" description="Indicadores locais para operacao, recebimentos, financeiro interno e confirmacoes de negocio." />
+      <FilterBar activeCount={[periodStart, periodEnd].filter(Boolean).length} onClear={() => { const defaults = currentMonthToDateRange(); setPeriodStart(defaults.periodStart); setPeriodEnd(defaults.periodEnd); }}>
+        <DateInput label="Periodo - inicio" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
+        <DateInput label="Periodo - fim" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
+      </FilterBar>
       <div className="dashboard-grid dashboard-grid--hero">
         <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
         <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
@@ -268,6 +309,30 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
             <article><span>Locais</span><strong>{locations.length}</strong></article>
             <article><span>Créditos</span><strong>{formatCurrencyFromCents(billingSummary?.availableCreditsCents ?? 0)}</strong></article>
           </div>
+        </Card>
+
+        <Card>
+          <div className="ui-card__header">
+            <div>
+              <span className="ui-eyebrow">Cliente/corretor</span>
+              <h2>Sacas por período</h2>
+            </div>
+          </div>
+          <PartnerQuickSearch label="Buscar cliente/corretor" value={partnerSearchId} onChange={setPartnerSearchId} partners={businessPartners} placeholder="Digite o nome do cliente/corretor" />
+          {partnerSearchId ? (
+            partnerSummaryLoading ? (
+              <p className="muted">Calculando...</p>
+            ) : partnerSackSummary ? (
+              <div className="dashboard-grid dashboard-grid--compact">
+                <article><span>Sacas no período</span><strong>{Number(partnerSackSummary.sacksDecimal).toLocaleString("pt-BR")}</strong></article>
+                <article><span>Notas fiscais</span><strong>{partnerSackSummary.documentCount}</strong></article>
+                <article><span>Operações</span><strong>{partnerSackSummary.operationCount}</strong></article>
+                <article><span>Valor de serviço</span><strong>{formatCurrencyFromCents(partnerSackSummary.serviceAmountCents)}</strong></article>
+              </div>
+            ) : null
+          ) : (
+            <EmptyState title="Nenhum cliente selecionado" description="Busque um cliente/corretor para ver quantas sacas ele movimentou no período escolhido." />
+          )}
         </Card>
       </div>
     </section>

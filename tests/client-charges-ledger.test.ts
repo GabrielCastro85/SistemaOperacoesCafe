@@ -14,7 +14,7 @@ const graoId = "22222222-2222-4222-8222-222222222222";
 const graoMgLegalEntityId = "44444444-4444-4444-8444-444444444441";
 const graoSpLegalEntityId = "44444444-4444-4444-8444-444444444442";
 
-function setup(organizationId = villaId, defaultLegalEntityId = ownLegalEntityId): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
+async function setup(organizationId = villaId, defaultLegalEntityId = ownLegalEntityId): Promise<{ repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string }> {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-charge-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
@@ -22,9 +22,9 @@ function setup(organizationId = villaId, defaultLegalEntityId = ownLegalEntityId
   const db = initializeDatabase(dirs);
   const repo = new AppRepository(db, dirs);
   repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: organizationId, defaultLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
-  const partner = repo.createBusinessPartner({ organizationId, displayName: "Cliente Cobranca", notes: null, roles: ["CLIENT"], isActive: true });
+  const partner = await repo.createBusinessPartner({ organizationId, displayName: "Cliente Cobranca", notes: null, roles: ["CLIENT"], isActive: true });
   const product = repo.listProducts({ organizationId })[0];
-  repo.createServiceRateRule({ organizationId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+  await repo.createServiceRateRule({ organizationId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
   return { repo, db, partnerId: partner.id, productId: product.id };
 }
 
@@ -33,15 +33,15 @@ afterEach(() => {
 });
 
 describe("client charges and ledger", () => {
-  it("suggests periods including leap-year monthly and biweekly windows", () => {
-    const { repo, db, partnerId } = setup();
+  it("suggests periods including leap-year monthly and biweekly windows", async () => {
+    const { repo, db, partnerId } = await setup();
     expect(repo.suggestChargePeriods({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodicity: "MONTHLY", referenceDate: "2024-02-20" })[0]).toMatchObject({ periodStart: "2024-02-01", periodEnd: "2024-02-29" });
     expect(repo.suggestChargePeriods({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodicity: "BIWEEKLY", referenceDate: "2026-07-20" })[0]).toMatchObject({ periodStart: "2026-07-16", periodEnd: "2026-07-31" });
     db.close();
   });
 
   it("reserves operations, applies credit, issues documents and receives partial payment", async () => {
-    const { repo, db, partnerId, productId } = setup();
+    const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "7001", "10.5");
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     expect(eligible).toHaveLength(1);
@@ -63,10 +63,10 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("summarizes internal/external sacks and value per client, zeroing clients without operations in the period", () => {
-    const { repo, db, partnerId, productId } = setup();
-    const otherPartner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Operacao", notes: null, roles: ["CLIENT"], isActive: true });
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, productId, operationScope: "INTERNAL", rateType: "PER_SACK", rateValueCents: 300, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+  it("summarizes internal/external sacks and value per client, zeroing clients without operations in the period", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    const otherPartner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Operacao", notes: null, roles: ["CLIENT"], isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, productId, operationScope: "INTERNAL", rateType: "PER_SACK", rateValueCents: 300, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
     createConfirmedOperation(repo, partnerId, productId, "9001", "10.5", "EXTERNAL");
     createConfirmedOperation(repo, partnerId, productId, "9002", "4.5", "INTERNAL");
 
@@ -86,8 +86,8 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("lists client operations across legal entities for billing diagnostics", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("lists client operations across legal entities for billing diagnostics", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "9101", "310", "EXTERNAL");
     const operations = repo.listOperations({ organizationId: villaId, responsiblePartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31", status: "all", billingStatus: "all" });
     expect(operations).toHaveLength(1);
@@ -101,13 +101,13 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("backfills an active client rate into older unbilled operations without a calculated value", () => {
-    const { repo, db, productId } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Regra Posterior", notes: null, roles: ["CLIENT"], isActive: true });
+  it("backfills an active client rate into older unbilled operations without a calculated value", async () => {
+    const { repo, db, productId } = await setup();
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Regra Posterior", notes: null, roles: ["CLIENT"], isActive: true });
     createConfirmedOperation(repo, partner.id, productId, "9201", "330", "EXTERNAL");
     expect(repo.listOperations({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: partner.id, status: "all", billingStatus: "all" })[0].serviceAmountCents).toBe(0);
 
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-23", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-23", effectiveTo: null, priority: 10, notes: null, isActive: true });
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partner.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
 
     expect(eligible).toHaveLength(1);
@@ -115,8 +115,8 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("keeps Villa MG and Villa ES billing and sacks indicators independent", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("keeps Villa MG and Villa ES billing and sacks indicators independent", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "9301", "100", "EXTERNAL", ownLegalEntityId);
     createConfirmedOperation(repo, partnerId, productId, "9302", "250", "EXTERNAL", villaEsLegalEntityId);
 
@@ -136,8 +136,8 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("keeps Grao & Grao MG and SP billing and sacks indicators independent", () => {
-    const { repo, db, partnerId, productId } = setup(graoId, graoMgLegalEntityId);
+  it("keeps Grao & Grao MG and SP billing and sacks indicators independent", async () => {
+    const { repo, db, partnerId, productId } = await setup(graoId, graoMgLegalEntityId);
     createConfirmedOperation(repo, partnerId, productId, "9401", "80", "EXTERNAL", graoMgLegalEntityId, graoId);
     createConfirmedOperation(repo, partnerId, productId, "9402", "175", "EXTERNAL", graoSpLegalEntityId, graoId);
 
@@ -157,12 +157,12 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("refreshes unbilled operation service values when a rate rule is created after the note", () => {
-    const { repo, db, productId } = setup();
-    const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Diamante", notes: null, roles: ["CLIENT"], isActive: true });
+  it("refreshes unbilled operation service values when a rate rule is created after the note", async () => {
+    const { repo, db, productId } = await setup();
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Diamante", notes: null, roles: ["CLIENT"], isActive: true });
     createConfirmedOperation(repo, partner.id, productId, "9102", "310", "EXTERNAL");
     expect(repo.listOperations({ organizationId: villaId, responsiblePartnerId: partner.id })[0].serviceAmountCents).toBe(0);
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partner.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     expect(eligible).toHaveLength(1);
     expect(eligible[0].appliedRateValueCents).toBe(500);
@@ -174,8 +174,8 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("releases reserved operations when draft is cancelled", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("releases reserved operations when draft is cancelled", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "2");
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "CUSTOM", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: null, notes: null, internalNotes: null, operationIds: [eligible[0].id] });

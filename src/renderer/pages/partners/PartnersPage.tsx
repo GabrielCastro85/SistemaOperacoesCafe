@@ -88,17 +88,28 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   const [editPartnerRoles, setEditPartnerRoles] = useState<BusinessPartnerRole[]>([]);
   const [editingLegalEntityId, setEditingLegalEntityId] = useState<string | null>(null);
   const [companyOwnerPartnerId, setCompanyOwnerPartnerId] = useState("");
+  const [linkCompanySearch, setLinkCompanySearch] = useState("");
+  const [linkCompanyResults, setLinkCompanyResults] = useState<BusinessPartnerLegalEntity[]>([]);
+  const [linkCompanySearching, setLinkCompanySearching] = useState(false);
   const [modalMode, setModalMode] = useState<PartnerModalMode>(null);
   const scrollTo = useAutoScroll();
   const partnersListRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    const visiblePartners = await window.operationsCafe.listBusinessPartners({ search, role: "CLIENT", status: "active" });
+    const searchedPartners = await window.operationsCafe.listBusinessPartners({ search, status: "active" });
     const activePartners = await window.operationsCafe.listBusinessPartners({ status: "active" });
-    setItems(visiblePartners);
+    setItems(searchedPartners.filter((partner) => partner.roles.includes("CLIENT") || partner.roles.includes("SUPPLIER")));
     setAllPartners(activePartners);
-    setAllLegalEntities((await Promise.all(activePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
-  }, [search]);
+    // Empresas/CNPJs sem cliente/corretor dono nao aparecem percorrendo os
+    // parceiros (nao tem partner.id pra' consultar) -- precisa buscar as
+    // soltas separadamente e juntar, senao a aba "Empresas/CNPJs" mostra so'
+    // as ja vinculadas.
+    const [linkedEntities, unlinkedEntities] = await Promise.all([
+      Promise.all(activePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    ]);
+    setAllLegalEntities([...linkedEntities.flat(), ...unlinkedEntities]);
+  }, [search, organizationId]);
   useEffect(() => { void load(); }, [load]);
 
   async function loadDetail(partner: BusinessPartner): Promise<void> {
@@ -115,6 +126,44 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     setLegalEntities(partnerEntities);
     setContacts(partnerContacts);
     setSelectedRateRules(rules);
+    setLinkCompanySearch("");
+    setLinkCompanyResults([]);
+  }
+
+  async function searchUnlinkedCompanies(term: string): Promise<void> {
+    setLinkCompanySearch(term);
+    if (!term.trim() || !organizationId) {
+      setLinkCompanyResults([]);
+      return;
+    }
+    setLinkCompanySearching(true);
+    try {
+      setLinkCompanyResults(await window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId, term.trim()));
+    } finally {
+      setLinkCompanySearching(false);
+    }
+  }
+
+  async function linkExistingCompany(entity: BusinessPartnerLegalEntity): Promise<void> {
+    if (!selected) return;
+    await window.operationsCafe.linkPartnerLegalEntity(entity.id, selected.id);
+    setMessage(`Empresa ${entity.tradeName} vinculada a ${selected.displayName}.`);
+    setLinkCompanySearch("");
+    setLinkCompanyResults([]);
+    await loadDetail(selected);
+    await load();
+  }
+
+  async function unlinkCompany(entity: BusinessPartnerLegalEntity): Promise<void> {
+    if (!selected) return;
+    const confirmed = await requestDecision({
+      title: "Desvincular empresa",
+      message: `Desvincular ${entity.tradeName} de ${selected.displayName}? A empresa continua cadastrada, so' fica sem cliente/corretor dono ate' ser vinculada de novo.`
+    });
+    if (!confirmed) return;
+    await window.operationsCafe.unlinkPartnerLegalEntity(entity.id);
+    await loadDetail(selected);
+    await load();
   }
 
   function updateClientForm(field: keyof ClientForm, value: string): void {
@@ -255,9 +304,11 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   }
 
   async function openEditCompanyModal(entity: BusinessPartnerLegalEntity): Promise<void> {
-    const owner = allPartners.find((partner) => partner.id === entity.businessPartnerId) ?? await window.operationsCafe.getBusinessPartner(entity.businessPartnerId);
+    const owner = entity.businessPartnerId
+      ? allPartners.find((partner) => partner.id === entity.businessPartnerId) ?? await window.operationsCafe.getBusinessPartner(entity.businessPartnerId)
+      : null;
     setSelected(owner);
-    setCompanyOwnerPartnerId(owner.id);
+    setCompanyOwnerPartnerId(owner?.id ?? "");
     setEditingLegalEntityId(entity.id);
     setDetailLegalEntityForm(legalEntityToForm(entity));
     setModalMode("editCompany");
@@ -270,10 +321,11 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     setCompanyOwnerPartnerId("");
   }
 
-  function buildLegalEntityPayload(form: LegalEntityForm, businessPartnerId: string, isPrimary: boolean, fallbackName: string): Record<string, unknown> {
+  function buildLegalEntityPayload(form: LegalEntityForm, businessPartnerId: string | null, isPrimary: boolean, fallbackName: string): Record<string, unknown> {
     const cnpjDigits = onlyDigits(form.cnpj) ?? "";
     const hasCnpj = Boolean(cnpjDigits);
     return {
+      organizationId,
       businessPartnerId,
       legalName: form.legalName.trim() || fallbackName || "Nao informado",
       tradeName: form.tradeName.trim() || form.legalName.trim() || fallbackName || "Nao informado",
@@ -487,16 +539,16 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     }
     try {
       const fallbackName = form.tradeName.trim() || form.legalName.trim();
-      let ownerId = companyOwnerPartnerId || selected?.id || "";
-      if (!ownerId) {
-        const owner = await window.operationsCafe.createBusinessPartner(buildPartnerPayload(emptyClientForm, fallbackName, ["BUYER"], "", true, organizationId));
-        ownerId = owner.id;
-      }
+      // Empresa nao precisa mais de um cliente/corretor dono desde a criacao --
+      // fica solta ("Sem cliente vinculado") ate' alguem usar "Vincular empresa
+      // existente" na ficha de um cliente/corretor, quando a relacao comercial
+      // de fato comecar.
+      const ownerId = companyOwnerPartnerId || selected?.id || null;
       if (modalMode === "editCompany" && editingLegalEntityId) {
-        await window.operationsCafe.updatePartnerLegalEntity(editingLegalEntityId, buildLegalEntityPayload(form, ownerId, true, fallbackName));
+        await window.operationsCafe.updatePartnerLegalEntity(editingLegalEntityId, buildLegalEntityPayload(form, ownerId, Boolean(ownerId), fallbackName));
         setMessage("Empresa atualizada.");
       } else {
-        await window.operationsCafe.createPartnerLegalEntity(buildLegalEntityPayload(form, ownerId, true, fallbackName));
+        await window.operationsCafe.createPartnerLegalEntity(buildLegalEntityPayload(form, ownerId, Boolean(ownerId), fallbackName));
         setMessage(cnpjDigits ? "Empresa cadastrada." : "Empresa cadastrada como rascunho sem CNPJ.");
       }
       setManualLegalEntityForm(emptyLegalEntityForm);
@@ -516,12 +568,32 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
 
   async function deletePartner(partner: BusinessPartner): Promise<void> {
     const confirmed = await requestDecision({
-      title: "Excluir cliente/corretor definitivamente",
-      message: `Deseja apagar ${partner.displayName} definitivamente? Esta acao remove empresas/CNPJs, contatos, regras, cobrancas, conta-corrente e documentos vinculados a este cliente/corretor.`
+      title: "Arquivar cliente/corretor",
+      message: `Deseja arquivar ${partner.displayName}? O cadastro, suas empresas/CNPJs, contatos e regras de tarifa ficam inativos, mas notas, cobrancas e conta-corrente ja lancados sao preservados.`
     });
     if (!confirmed) return;
     try {
       await window.operationsCafe.deleteBusinessPartner(partner.id);
+      if (selected?.id === partner.id) {
+        setSelected(null);
+        closePartnerModal();
+      }
+      setMessage("Cliente/corretor arquivado.");
+      await load();
+      scrollTo(partnersListRef);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao arquivar cliente/corretor."}`);
+    }
+  }
+
+  async function permanentlyDeletePartner(partner: BusinessPartner): Promise<void> {
+    const confirmed = await requestDecision({
+      title: "Excluir cliente/corretor definitivamente",
+      message: `Excluir ${partner.displayName} de forma DEFINITIVA e IRREVERSIVEL (diferente de arquivar). So' funciona se este cadastro nunca teve nenhuma nota, operacao ou cobranca vinculada.`
+    });
+    if (!confirmed) return;
+    try {
+      await window.operationsCafe.permanentlyDeleteBusinessPartner(partner.id);
       if (selected?.id === partner.id) {
         setSelected(null);
         closePartnerModal();
@@ -564,15 +636,18 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   }
 
   const companySearchTerm = companySearch.trim().toUpperCase();
-  const companyItems = allLegalEntities.filter((entity) => {
-    const owner = allPartners.find((partner) => partner.id === entity.businessPartnerId);
-    if (!companySearchTerm) return true;
-    return [entity.tradeName, entity.legalName, entity.cnpj, entity.city, entity.state, owner?.displayName]
-      .filter(Boolean)
-      .some((value) => String(value).toUpperCase().includes(companySearchTerm));
-  });
+  const companyItems = allLegalEntities
+    .filter((entity) => {
+      const owner = allPartners.find((partner) => partner.id === entity.businessPartnerId);
+      if (!companySearchTerm) return true;
+      return [entity.tradeName, entity.legalName, entity.cnpj, entity.city, entity.state, owner?.displayName]
+        .filter(Boolean)
+        .some((value) => String(value).toUpperCase().includes(companySearchTerm));
+    })
+    // Ordem alfabetica pelo nome da empresa, independente de ter cliente/corretor vinculado ou nao.
+    .sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR", { sensitivity: "base" }));
   const clientOptions = allPartners
-    .filter((partner) => partner.roles.includes("CLIENT"))
+    .filter((partner) => partner.roles.includes("CLIENT") || partner.roles.includes("SUPPLIER"))
     .map((partner) => [partner.id, partner.displayName] as [string, string]);
   const isCompanyModal = modalMode === "createCompany" || modalMode === "editCompany";
   const isClientCreateModal = modalMode === "createClient";
@@ -587,7 +662,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       <PageHeader title="Cadastros comerciais" eyebrow="Comercial" description="Separe clientes/corretores responsaveis pela cobranca das empresas/CNPJs que aparecem nas notas." />
       <div ref={partnersListRef}>
         <div className="sub-tabs partner-tabs" role="tablist" aria-label="Tipo de cadastro">
-          <button className={activeTab === "clients" ? "active" : ""} onClick={() => setActiveTab("clients")}>Clientes/corretores</button>
+          <button className={activeTab === "clients" ? "active" : ""} onClick={() => setActiveTab("clients")}>Clientes/corretores/fornecedores</button>
           <button className={activeTab === "companies" ? "active" : ""} onClick={() => setActiveTab("companies")}>Empresas/CNPJs</button>
         </div>
       {activeTab === "clients" ? (
@@ -595,12 +670,12 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
           <div className="partners-list-panel">
             <div className="partners-list-toolbar">
               <TextField label="Pesquisar cliente/corretor" value={search} onChange={setSearch} />
-              <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar cliente/corretor</button>
+              <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar cliente ou fornecedor</button>
             </div>
             <div className="table">
               <div className="table-head partner-grid"><span>Cliente/corretor</span><span>Papeis</span><span>Status</span><span>Atualizado</span><span>Acoes</span></div>
-              {items.map((item) => <div key={item.id} className="table-row partner-grid"><span>{item.displayName}</span><span>{item.roles.map((role) => roleLabels[role]).join(", ")}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span><span className="actions"><button onClick={() => void openEditModal(item)}>Editar</button><button className="danger-action" onClick={() => void deletePartner(item)}>Excluir</button></span></div>)}
-              {items.length === 0 ? <div className="table-row"><span>Nenhum cliente/corretor encontrado.</span></div> : null}
+              {items.map((item) => <div key={item.id} className="table-row partner-grid"><span>{item.displayName}</span><span>{item.roles.map((role) => roleLabels[role]).join(", ")}</span><span>{item.isActive ? "Ativo" : "Inativo"}</span><span>{formatDateBr(item.updatedAt)}</span><span className="actions"><button onClick={() => void openEditModal(item)}>Editar</button><button className="danger-action" onClick={() => void deletePartner(item)}>Arquivar</button><button className="danger-action" onClick={() => void permanentlyDeletePartner(item)}>Excluir</button></span></div>)}
+              {items.length === 0 ? <div className="table-row"><span>Nenhum cliente/corretor/fornecedor encontrado.</span></div> : null}
             </div>
           </div>
         </AdminBlock>
@@ -620,7 +695,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                     <span><strong>{entity.tradeName}</strong><small>{entity.legalName}</small></span>
                     <span>{formatCnpj(entity.cnpj)}{entity.isDraft ? " - rascunho" : ""}</span>
                     <span>{[entity.city, entity.state].filter(Boolean).join("/") || "-"}</span>
-                    <span>{owner?.roles.includes("CLIENT") ? owner.displayName : "Sem cliente vinculado"}</span>
+                    <span>{owner ? owner.displayName : "Sem cliente vinculado"}</span>
                     <span>{entity.isActive ? "Ativa" : "Inativa"}</span>
                     <span className="actions"><button onClick={() => void openEditCompanyModal(entity)}>Editar</button></span>
                   </div>
@@ -634,11 +709,11 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       </div>
       {modalMode ? (
         <div className="partner-modal-backdrop" role="presentation">
-          <div className="partner-modal" role="dialog" aria-modal="true" aria-label={isCompanyModal ? "Cadastrar ou editar empresa" : isClientCreateModal ? "Cadastrar cliente/corretor" : "Editar cliente/corretor"}>
+          <div className="partner-modal" role="dialog" aria-modal="true" aria-label={isCompanyModal ? "Cadastrar ou editar empresa" : isClientCreateModal ? "Cadastrar cliente ou fornecedor" : "Editar cliente/corretor"}>
             <header className="partner-modal__header">
               <div>
                 <span>{isCompanyModal ? "Cadastro de empresa" : isClientCreateModal ? "Novo cadastro" : "Cadastro existente"}</span>
-                <strong>{isCompanyModal ? modalMode === "createCompany" ? "Cadastrar empresa/CNPJ" : currentCompanyForm.tradeName || currentCompanyForm.legalName || "Editar empresa/CNPJ" : isClientCreateModal ? "Cadastrar cliente/corretor" : selected?.displayName ?? "Editar cliente/corretor"}</strong>
+                <strong>{isCompanyModal ? modalMode === "createCompany" ? "Cadastrar empresa/CNPJ" : currentCompanyForm.tradeName || currentCompanyForm.legalName || "Editar empresa/CNPJ" : isClientCreateModal ? "Cadastrar cliente ou fornecedor" : selected?.displayName ?? "Editar cliente/corretor"}</strong>
               </div>
               <button className="partner-modal__close" onClick={closePartnerModal} aria-label="Fechar">x</button>
             </header>
@@ -699,7 +774,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                     <div className="partner-action-panel__header">
                       <span className="partner-action-icon" aria-hidden="true">+</span>
                       <div>
-                        <strong>Dados do cliente/corretor</strong>
+                        <strong>Dados do cliente ou fornecedor</strong>
                         <small>Preencha manualmente ou ajuste os dados trazidos pela consulta.</small>
                       </div>
                     </div>
@@ -707,6 +782,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                       <TextField label="Nome do cliente/corretor" value={partnerName} onChange={setPartnerName} required />
                       <TextField label="Limite de credito (R$)" value={creditLimitInput} onChange={setCreditLimitInput} />
                       <label className="checkbox"><input type="checkbox" checked={roles.includes("CLIENT")} onChange={(event) => setRoles(toggleRole(roles, "CLIENT", event.target.checked))} /> Cliente/corretor</label>
+                      <label className="checkbox"><input type="checkbox" checked={roles.includes("SUPPLIER")} onChange={(event) => setRoles(toggleRole(roles, "SUPPLIER", event.target.checked))} /> Fornecedor</label>
                     </FormGrid>
                     <div className="partner-form-subtitle">
                       <strong>Dados cadastrais do cliente/corretor</strong>
@@ -812,9 +888,27 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                             <small>{formatCnpj(item.cnpj)}{item.isDraft ? " - rascunho" : ""}</small>
                           </div>
                           <button className="partner-action-button" onClick={() => void openEditCompanyModal(item)}>Editar empresa</button>
+                          <button className="partner-action-button" onClick={() => void unlinkCompany(item)}>Desvincular</button>
                         </div>
                       )) : <strong>Nenhum</strong>}
                       {selected ? <button className="partner-action-button" onClick={() => openCreateCompanyForClient(selected)}>Cadastrar empresa vinculada</button> : null}
+                      {selected ? (
+                        <div className="partner-link-company">
+                          <TextField label="Vincular empresa ja cadastrada (nome ou CNPJ)" value={linkCompanySearch} onChange={(value) => void searchUnlinkedCompanies(value)} />
+                          {linkCompanySearching ? <small>Buscando...</small> : null}
+                          {linkCompanySearch.trim() && !linkCompanySearching ? (
+                            linkCompanyResults.length ? linkCompanyResults.map((entity) => (
+                              <div key={entity.id} className="partner-record-item">
+                                <div>
+                                  <strong>{entity.tradeName}</strong>
+                                  <small>{formatCnpj(entity.cnpj)}</small>
+                                </div>
+                                <button className="partner-action-button partner-action-button--primary" onClick={() => void linkExistingCompany(entity)}>Vincular</button>
+                              </div>
+                            )) : <small>Nenhuma empresa solta encontrada com esse termo.</small>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </article>
                     <article className="partner-record-card">
                       <span>Contatos</span>
@@ -830,7 +924,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
               {isClientCreateModal ? (
                 <>
                   <button className="partner-action-button" onClick={() => { setManualLegalEntityForm(emptyLegalEntityForm); setLookupResult(null); }}>Limpar dados</button>
-                  <button className="partner-action-button partner-action-button--primary" disabled={roles.length === 0 || !organizationId} onClick={() => void saveManualPartner()}>Cadastrar cliente/corretor</button>
+                  <button className="partner-action-button partner-action-button--primary" disabled={roles.length === 0 || !organizationId} onClick={() => void saveManualPartner()}>Cadastrar cliente ou fornecedor</button>
                 </>
               ) : null}
               {isCompanyModal ? (

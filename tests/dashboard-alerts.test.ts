@@ -11,7 +11,7 @@ const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 const villaEsLegalEntityId = "33333333-3333-4333-8333-333333333332";
 
-function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
+async function setup(): Promise<{ repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string }> {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-dashboard-alerts-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
@@ -19,9 +19,9 @@ function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabas
   const db = initializeDatabase(dirs);
   const repo = new AppRepository(db, dirs);
   repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: villaId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
-  const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Alertas", notes: null, roles: ["CLIENT"], isActive: true });
+  const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Alertas", notes: null, roles: ["CLIENT"], isActive: true });
   const product = repo.listProducts({ organizationId: villaId })[0];
-  repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+  await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
   return { repo, db, partnerId: partner.id, productId: product.id };
 }
 
@@ -44,7 +44,7 @@ async function issueCharge(repo: AppRepository, partnerId: string, entityId: str
 
 describe("dashboard alerts", () => {
   it("flags an issued charge as overdue once its due date has passed", async () => {
-    const { repo, db, partnerId, productId } = setup();
+    const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "10.5");
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2020-01-10", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
@@ -58,7 +58,7 @@ describe("dashboard alerts", () => {
   });
 
   it("does not flag a charge whose due date has not passed yet", async () => {
-    const { repo, db, partnerId, productId } = setup();
+    const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "8002", "5");
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2099-01-10", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
@@ -70,8 +70,8 @@ describe("dashboard alerts", () => {
   });
 
   it("flags a deal confirmation waiting for signature for 7+ days, but not a recent one", async () => {
-    const { repo, db, partnerId, productId } = setup();
-    const seller = repo.createBusinessPartner({ organizationId: villaId, displayName: "Villa Vendedora", notes: null, roles: ["SELLER"], isActive: true });
+    const { repo, db, partnerId, productId } = await setup();
+    const seller = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Villa Vendedora", notes: null, roles: ["SELLER"], isActive: true });
 
     const oldDraft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-07-01", paymentTermsSnapshot: "A vista", deliveryLocationSnapshot: "Armazem", qualityTermsSnapshot: "Padrao", generalTermsSnapshot: "Revisado" });
     repo.addDealConfirmationParty({ dealConfirmationId: oldDraft.confirmation.id, partyRole: "SELLER", businessPartnerId: seller.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 1 });
@@ -96,15 +96,15 @@ describe("dashboard alerts", () => {
   });
 
   it("flags a client whose outstanding balance reaches 90% of its credit limit, but not one comfortably below it", async () => {
-    const { repo, db, partnerId, productId } = setup();
-    repo.updateBusinessPartner(partnerId, { organizationId: villaId, displayName: "Cliente Alertas", notes: null, roles: ["CLIENT"], isActive: true, creditLimitCents: 5500 });
+    const { repo, db, partnerId, productId } = await setup();
+    await repo.updateBusinessPartner(partnerId, { organizationId: villaId, displayName: "Cliente Alertas", notes: null, roles: ["CLIENT"], isActive: true, creditLimitCents: 5500 });
     createConfirmedOperation(repo, partnerId, productId, "8003", "10.5");
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2099-01-10", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
     await repo.issueClientCharge(draft.charge.id);
 
-    const comfortablePartner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Tranquilo", notes: null, roles: ["CLIENT"], isActive: true, creditLimitCents: 1000000 });
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: comfortablePartner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const comfortablePartner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Tranquilo", notes: null, roles: ["CLIENT"], isActive: true, creditLimitCents: 1000000 });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: comfortablePartner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
     createConfirmedOperation(repo, comfortablePartner.id, productId, "8004", "1");
     const comfortableEligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: comfortablePartner.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     const comfortableDraft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: comfortablePartner.id, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2099-01-10", notes: null, internalNotes: null, operationIds: comfortableEligible.map((item) => item.id) });
@@ -117,8 +117,8 @@ describe("dashboard alerts", () => {
   });
 
   it("does not mix credit limit balances between different own CNPJs", async () => {
-    const { repo, db, partnerId, productId } = setup();
-    repo.updateBusinessPartner(partnerId, { organizationId: villaId, displayName: "Cliente Alertas", notes: null, roles: ["CLIENT"], isActive: true, creditLimitCents: 10000 });
+    const { repo, db, partnerId, productId } = await setup();
+    await repo.updateBusinessPartner(partnerId, { organizationId: villaId, displayName: "Cliente Alertas", notes: null, roles: ["CLIENT"], isActive: true, creditLimitCents: 10000 });
 
     createConfirmedOperation(repo, partnerId, productId, "8005", "10", ownLegalEntityId);
     await issueCharge(repo, partnerId, ownLegalEntityId, "2026-07-20", "2099-01-10");

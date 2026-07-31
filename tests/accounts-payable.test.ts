@@ -27,9 +27,9 @@ afterEach(() => {
 });
 
 describe("accounts payable", () => {
-  it("creates categories, cost centers and financial accounts with scope validation", () => {
+  it("creates categories, cost centers and financial accounts with scope validation", async () => {
     const { repo, db } = setup();
-    const categories = repo.listExpenseCategories(villaId);
+    const categories = await repo.listExpenseCategories(villaId);
     expect(categories.map((item) => item.name)).toContain("Aluguel");
     const center = repo.createCostCenter({ organizationId: villaId, ownLegalEntityId, locationId: null, parentCostCenterId: null, name: "Escritorio Manhuacu", code: "MANHUACU", description: null, isActive: true });
     expect(center.isActive).toBe(true);
@@ -38,9 +38,9 @@ describe("accounts payable", () => {
     db.close();
   });
 
-  it("creates, confirms, allocates and pays an account payable", () => {
+  it("creates, confirms, allocates and pays an account payable", async () => {
     const { repo, db } = setup();
-    const category = repo.listExpenseCategories(villaId)[0];
+    const category = (await repo.listExpenseCategories(villaId))[0];
     const center = repo.createCostCenter({ organizationId: villaId, ownLegalEntityId, locationId: null, parentCostCenterId: null, name: "Administrativo", code: null, description: null, isActive: true });
     const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Imobiliaria", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: center.id, defaultLocationId: null, source: "MANUAL", description: "Aluguel", documentType: "BOLETO", documentNumber: "A-1", competenceDate: "2026-08-01", issueDate: null, dueDate: "2026-08-10", originalAmountCents: 100000, discountCents: 5000, interestCents: 1000, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", notes: null, internalNotes: null });
     expect(draft.payable.finalAmountCents).toBe(96000);
@@ -54,18 +54,18 @@ describe("accounts payable", () => {
     db.close();
   });
 
-  it("creates an account payable with a shared supplier from another organization", () => {
+  it("creates an account payable with a shared supplier from another organization", async () => {
     const { repo, db } = setup();
-    const category = repo.listExpenseCategories(villaId)[0];
-    const supplier = repo.createBusinessPartner({ organizationId: graoId, displayName: "Fornecedor Compartilhado", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const category = (await repo.listExpenseCategories(villaId))[0];
+    const supplier = await repo.createBusinessPartner({ organizationId: graoId, displayName: "Fornecedor Compartilhado", notes: null, roles: ["SUPPLIER"], isActive: true });
     const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, supplierLegalEntityId: null, payeeNameSnapshot: supplier.displayName, payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null, source: "MANUAL", description: "Servico compartilhado", documentType: "BOLETO", documentNumber: "SUP-1", competenceDate: "2026-08-01", issueDate: null, dueDate: "2026-08-10", originalAmountCents: 45000, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", notes: null, internalNotes: null });
     expect(draft.payable.supplierPartnerId).toBe(supplier.id);
     db.close();
   });
 
-  it("generates recurring payables and exact installments", () => {
+  it("generates recurring payables and exact installments", async () => {
     const { repo, db } = setup();
-    const category = repo.listExpenseCategories(villaId)[0];
+    const category = (await repo.listExpenseCategories(villaId))[0];
     const template = repo.createPayableRecurringTemplate({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Energia", categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null, description: "Energia mensal", amountMode: "VARIABLE", fixedAmountCents: null, estimatedAmountCents: 75000, frequency: "MONTHLY", dueDay: 31, generationLeadDays: 7, startDate: "2026-01-01", endDate: null, autoGenerateOnOpen: false, isActive: true });
     const preview = repo.previewPayableRecurringGeneration(template.id, 2);
     expect(preview[1].dueDate).toBe("2026-02-28");
@@ -77,9 +77,9 @@ describe("accounts payable", () => {
     db.close();
   });
 
-  it("copies payable and payment attachments, rejects invalid files and keeps internal copy", () => {
+  it("copies payable and payment attachments, rejects invalid files and keeps internal copy", async () => {
     const { repo, db } = setup();
-    const category = repo.listExpenseCategories(villaId)[0];
+    const category = (await repo.listExpenseCategories(villaId))[0];
     const sourcePdf = join(tempDirs[0], "boleto.pdf");
     const invalid = join(tempDirs[0], "script.exe");
     writeFileSync(sourcePdf, "%PDF-1.4 teste");
@@ -107,7 +107,7 @@ describe("accounts payable", () => {
 
   it("generates financial PDF and Excel reports with persisted history", async () => {
     const { repo, db } = setup();
-    const category = repo.listExpenseCategories(villaId)[0];
+    const category = (await repo.listExpenseCategories(villaId))[0];
     const detail = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Contabilidade", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null, source: "MANUAL", description: "Honorarios contabeis", documentType: null, documentNumber: null, competenceDate: "2026-08-01", issueDate: null, dueDate: "2026-08-25", originalAmountCents: 30000, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", notes: null, internalNotes: null });
     repo.confirmAccountPayable(detail.payable.id);
     const filters = { organizationId: villaId, ownLegalEntityId, dateStart: "2026-08-01", dateEnd: "2026-08-31", categoryId: null, locationId: null, costCenterId: null, supplierPartnerId: null, status: null };
@@ -119,6 +119,69 @@ describe("accounts payable", () => {
     expect(existsSync(excel.storedFilePath)).toBe(true);
     expect(pdf.fileHash).toMatch(/^[a-f0-9]{64}$/);
     expect(repo.listFinancialReportGenerations({ organizationId: villaId, ownLegalEntityId })).toHaveLength(2);
+    db.close();
+  });
+
+  it("generates a purchase settlement from a supplier-only partner and keeps the note-by-note record readable afterwards", async () => {
+    const { repo, db } = setup();
+    const category = (await repo.listExpenseCategories(villaId))[0];
+    const supplier = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo do Espirito Santo", notes: null, roles: ["SUPPLIER"], isActive: true });
+    await repo.createPurchaseRateRule({ organizationId: villaId, businessPartnerId: supplier.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId: null, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 1, notes: null, isActive: true });
+
+    const doc = repo.createFiscalDocument({
+      organizationId: villaId,
+      ownLegalEntityId,
+      responsiblePartnerId: supplier.id,
+      partnerLegalEntityId: null,
+      operationType: "PURCHASE",
+      accessKey: null,
+      documentNumber: "ENT-1",
+      series: "1",
+      issueDate: "2026-07-16",
+      totalAmountCents: 500000,
+      hasPendingIssues: false,
+      pendingNotes: null,
+      notes: null
+    });
+    const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: null, description: "Cafe", quantity: "1000", unit: "SACK", unitPriceDecimal: "5.00", totalAmountCents: 500000, sacksQuantity: "1000" });
+    const operation = repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: supplier.id, productId: null, operationType: "PURCHASE", operationScope: "EXTERNAL", operationDate: "2026-07-16", quantitySacks: "1000", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    expect(operation.serviceAmountCents).toBe(500000);
+    repo.confirmFiscalDocument(doc.document.id);
+
+    const eligible = repo.findEligiblePurchaseOperations({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(eligible.map((item) => item.id)).toEqual([operation.id]);
+
+    const settled = await repo.generatePurchaseSettlement({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, operationIds: [operation.id], categoryId: category.id, dueDate: "2026-09-25", notes: "Acerto semanal" });
+    expect(settled.payable.finalAmountCents).toBe(500000);
+    expect(settled.payable.source).toBe("IMPORT");
+    expect(settled.payable.status).toBe("OPEN");
+
+    const settledOperation = repo.getFiscalDocument(doc.document.id).operations.find((item) => item.id === operation.id);
+    expect(settledOperation?.purchaseSettlementStatus).toBe("SETTLED");
+    expect(settledOperation?.accountPayableId).toBe(settled.payable.id);
+
+    const noteByNote = repo.listAccountPayableOperations(settled.payable.id);
+    expect(noteByNote).toHaveLength(1);
+    expect(noteByNote[0].fiscalDocumentNumberSnapshot).toBe("ENT-1");
+    expect(noteByNote[0].quantitySacksDecimalSnapshot).toBe("1000");
+    expect(noteByNote[0].purchaseAmountCentsSnapshot).toBe(500000);
+
+    expect(repo.listAccountsPayable({ organizationId: villaId }).some((item) => item.id === settled.payable.id && item.source === "IMPORT")).toBe(true);
+
+    // Cancelar um acerto errado precisa devolver as operacoes pra UNSETTLED
+    // -- senao elas ficam presas pra sempre presas a um accounts_payable
+    // cancelado, sem poder entrar em nenhum acerto novo.
+    const cancelled = repo.cancelAccountPayable(settled.payable.id, "Fornecedor errado, refazer acerto");
+    expect(cancelled.payable.status).toBe("CANCELLED");
+    const releasedOperation = repo.getFiscalDocument(doc.document.id).operations.find((item) => item.id === operation.id);
+    expect(releasedOperation?.purchaseSettlementStatus).toBe("UNSETTLED");
+    expect(releasedOperation?.accountPayableId).toBeNull();
+
+    const eligibleAgain = repo.findEligiblePurchaseOperations({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(eligibleAgain.map((item) => item.id)).toEqual([operation.id]);
+
+    const resettled = await repo.generatePurchaseSettlement({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, operationIds: [operation.id], categoryId: category.id, dueDate: "2026-09-25", notes: "Acerto refeito" });
+    expect(resettled.payable.finalAmountCents).toBe(500000);
     db.close();
   });
 });

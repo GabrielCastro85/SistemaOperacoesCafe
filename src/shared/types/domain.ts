@@ -442,7 +442,8 @@ export interface BusinessPartner {
 
 export interface BusinessPartnerLegalEntity {
   id: string;
-  businessPartnerId: string;
+  organizationId: string;
+  businessPartnerId: string | null;
   legalName: string;
   tradeName: string;
   cnpj: string | null;
@@ -543,8 +544,61 @@ export interface ServiceRateRule {
   priority: number;
   notes: string | null;
   isActive: boolean;
+  conflictWarning: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PurchaseRateRule {
+  id: string;
+  organizationId: string;
+  businessPartnerId: string;
+  ownLegalEntityId: string | null;
+  counterpartyPartnerLegalEntityId: string | null;
+  productId: string | null;
+  operationScope: OperationScope;
+  rateType: RateType;
+  rateValueCents: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  priority: number;
+  notes: string | null;
+  isActive: boolean;
+  conflictWarning: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountPayableOperation {
+  id: string;
+  accountPayableId: string;
+  operationId: string;
+  ownLegalEntityIdSnapshot: string | null;
+  ownLegalEntityNameSnapshot: string | null;
+  supplierPartnerIdSnapshot: string | null;
+  operationDateSnapshot: string;
+  fiscalDocumentNumberSnapshot: string | null;
+  fiscalDocumentSeriesSnapshot: string | null;
+  productNameSnapshot: string | null;
+  operationScopeSnapshot: Exclude<OperationScope, "ALL">;
+  quantitySacksDecimalSnapshot: string;
+  purchaseRateCentsSnapshot: number;
+  purchaseAmountCentsSnapshot: number;
+  releasedAt: string | null;
+  createdAt: string;
+}
+
+export interface OperationRateHistoryEntry {
+  id: string;
+  operationId: string;
+  previousServiceRateRuleId: string | null;
+  previousRateValueCents: number | null;
+  previousServiceAmountCents: number | null;
+  newServiceRateRuleId: string | null;
+  newRateValueCents: number | null;
+  newServiceAmountCents: number | null;
+  reason: string | null;
+  changedAt: string;
 }
 
 export interface ResolveRateResult {
@@ -561,6 +615,7 @@ export type OperationType = "PURCHASE" | "SALE";
 export type ImportSource = "MANUAL" | "SPREADSHEET" | "XML";
 export type FiscalDocumentDirection = "INBOUND" | "OUTBOUND" | "UNKNOWN";
 export type OperationBillingStatus = "UNBILLED" | "RESERVED" | "BILLED";
+export type PurchaseSettlementStatus = "UNSETTLED" | "RESERVED" | "SETTLED";
 
 export interface FiscalDocument {
   id: string;
@@ -568,6 +623,8 @@ export interface FiscalDocument {
   ownLegalEntityId: string;
   responsiblePartnerId: string;
   partnerLegalEntityId: string | null;
+  secondaryResponsiblePartnerId: string | null;
+  secondaryOperationType: OperationType | null;
   documentType: FiscalDocumentType;
   accessKey: string | null;
   documentNumber: string;
@@ -641,6 +698,9 @@ export interface Operation {
   classificationRuleId: string | null;
   billingStatus: OperationBillingStatus;
   clientChargeId: string | null;
+  purchaseSettlementStatus: PurchaseSettlementStatus;
+  accountPayableId: string | null;
+  purchaseRateRuleId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -651,6 +711,7 @@ export interface FiscalDocumentDetail {
   operations: Operation[];
   events?: FiscalDocumentEvent[];
   mergeHistory?: FiscalDocumentMergeHistory[];
+  rateHistory?: OperationRateHistoryEntry[];
 }
 
 export type SpreadsheetImportType = "GENERAL_SALES" | "CLIENT_INDIVIDUAL" | "CUSTOM";
@@ -775,6 +836,7 @@ export interface XmlImportJob {
   importedNotes: number;
   importedEvents: number;
   createdOperations: number;
+  itemsWithoutOperation: number;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;

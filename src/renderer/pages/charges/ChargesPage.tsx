@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, ClientCharge, ClientChargeDetail, FiscalDocument, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
+import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, ClientCharge, ClientChargeDetail, FiscalDocument, LegalEntity, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatCurrencyInput, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { DateInput, EmptyState, PageHeader, Tabs } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
@@ -9,6 +9,7 @@ import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { formatOperationScope } from "../../../shared/utils/operationLabels";
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
+import { sumDecimalTexts } from "../../../shared/utils/decimal";
 
 function decimalTextBr(value: string | null | undefined): string {
   return value ? value.replace(".", ",") : "0";
@@ -53,6 +54,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const includeAllCompanies = INCLUDE_ALL_COMPANIES_IN_CHARGES;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
+  const [legalEntities, setLegalEntities] = useState<LegalEntity[]>(data.legalEntities);
   const [charges, setCharges] = useState<ClientCharge[]>([]);
   const [eligible, setEligible] = useState<Operation[]>([]);
   const [clientPeriodOperations, setClientPeriodOperations] = useState<Operation[]>([]);
@@ -81,6 +83,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clients);
     setPartnerLegalEntities((await Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setClientId((current) => current || clients[0]?.id || "");
     setCharges(await window.operationsCafe.listClientCharges({ status: "all" }));
     setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies }));
@@ -111,6 +114,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     const found = await window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: clientId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, includeAllCompanies });
     const related = await window.operationsCafe.listOperations({ responsiblePartnerId: clientId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, status: "all", billingStatus: "all" });
     await loadOperationDocuments([...found, ...related]);
+    setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setEligible(found);
     setClientPeriodOperations(related);
     setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies }));
@@ -147,8 +151,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   function legalEntityLabel(id: string): string {
-    const entity = data.legalEntities.find((item) => item.id === id);
-    return entity ? `${entity.tradeName}${entity.cnpj ? ` - ${entity.cnpj}` : ""}` : id;
+    const entity = legalEntities.find((item) => item.id === id) ?? data.legalEntities.find((item) => item.id === id);
+    return entity?.tradeName ?? id;
   }
 
   function chargeCompanyClass(value: string | null | undefined): string {
@@ -162,7 +166,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     if (operation.status !== "CONFIRMED") return "Nota ainda nao confirmada";
     if (isOperationInOpenCharge(operation)) return "Ja esta em cobranca aberta";
     if (operation.billingStatus !== "UNBILLED") return operation.billingStatus === "RESERVED" ? "Ja reservada em rascunho" : "Ja cobrada";
-    if (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0) return "Regra por saca zerada ou ausente";
+    if (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0) return `Falta regra por saca para ${formatOperationScope(operation.operationScope)}`;
     return "Elegivel";
   }
 
@@ -203,11 +207,17 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const discountCents = parseCurrencyToCents(discountInput);
   const surchargeCents = parseCurrencyToCents(surchargeInput);
   const eligibleSubtotalCents = eligible.reduce((total, operation) => total + operation.serviceAmountCents, 0);
+  const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
+  const eligibleSacks = eligible.length ? sumDecimalTexts(eligible.map((operation) => operation.quantitySacks)) : "0";
+  const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + openBilledChargesCents;
   const previewFinalCents = Math.max(0, chargeBaseCents + surchargeCents - advanceCents - discountCents);
   const visibleFinalCents = detail ? detail.charge.finalAmountCents : previewFinalCents;
   const draftDisabledReason = draftGenerationBlockedReason();
   const receivedOrClosedOperations = diagnosticOperations.filter((operation) => !isOperationInOpenCharge(operation) && operation.billingStatus !== "UNBILLED");
+  const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
+  const missingRateScopes = Array.from(new Set(missingRateOperations.map((operation) => formatOperationScope(operation.operationScope))));
+  const detailSacks = detail?.operations.length ? sumDecimalTexts(detail.operations.map((operation) => operation.quantitySacksDecimalSnapshot)) : "0";
 
   function draftGenerationBlockedReason(): string | null {
     if (detail) return null;
@@ -447,14 +457,19 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             </div>
             <div className="charge-review-cards">
               <article>
+                <span>Sacas no periodo</span>
+                <strong>{decimalTextBr(clientPeriodSacks)}</strong>
+                <small>Todas as operacoes encontradas</small>
+              </article>
+              <article>
                 <span>Notas novas para cobrar</span>
                 <strong>{eligible.length}</strong>
-                <small>{formatCurrencyFromCents(eligibleSubtotalCents)}</small>
+                <small>{decimalTextBr(eligibleSacks)} sacas · {formatCurrencyFromCents(eligibleSubtotalCents)}</small>
               </article>
               <article>
                 <span>Ja em cobranca aberta</span>
                 <strong>{openBilledOperations.length}</strong>
-                <small>{formatCurrencyFromCents(openBilledChargesCents)}</small>
+                <small>{decimalTextBr(openBilledSacks)} sacas · {formatCurrencyFromCents(openBilledChargesCents)}</small>
               </article>
               <article>
                 <span>Pagas/canceladas no periodo</span>
@@ -463,6 +478,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               </article>
             </div>
             {draftDisabledReason ? <p className="charge-blocked-note">{draftDisabledReason}</p> : null}
+            {missingRateOperations.length > 0 ? (
+              <p className="charge-rate-alert">
+                {missingRateOperations.length} nota(s) ficaram fora da cobranca porque falta regra por saca para {missingRateScopes.join(" e ")} desse cliente/corretor. Cadastre a regra e clique em "Buscar operacoes" novamente.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -505,7 +525,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                         <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
                         <span>{companyLabel}</span>
                         <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
-                        <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{isOperationInOpenCharge(op) ? openChargeLabel(op) : operationValueByNote(op)}</small></span>
+                        <span>
+                          <strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong>
+                          <small>{op.serviceAmountCents <= 0 ? "Nao entra no total ate ter regra" : isOperationInOpenCharge(op) ? openChargeLabel(op) : operationValueByNote(op)}</small>
+                        </span>
                         <span>{formatCombinedStatusLabel(op.status, op.billingStatus)}</span>
                         <span>{operationBillingReason(op)}</span>
                       </div>
@@ -582,6 +605,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           <article><span>Subtotal</span><strong>{formatCurrencyFromCents(detail.charge.subtotalServicesCents)}</strong></article>
           <article><span>Ajustes +</span><strong>{formatCurrencyFromCents(detail.charge.additionsCents)}</strong></article>
           <article><span>Ajustes -</span><strong>{formatCurrencyFromCents(detail.charge.deductionsCents)}</strong></article>
+          <article><span>Sacas cobradas</span><strong>{decimalTextBr(detailSacks)}</strong></article>
           <article><span>Total</span><strong>{formatCurrencyFromCents(detail.charge.finalAmountCents)}</strong></article>
           <article><span>Aberto</span><strong>{formatCurrencyFromCents(detail.charge.openAmountCents)}</strong></article>
         </div>

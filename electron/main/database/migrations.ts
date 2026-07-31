@@ -2495,5 +2495,397 @@ export const migrations: Migration[] = [
       }
       db.exec("CREATE INDEX IF NOT EXISTS idx_client_charge_operations_own_legal_entity_snapshot ON client_charge_operations(own_legal_entity_id_snapshot)");
     }
+  },
+  {
+    name: "023_xml_import_job_items_without_operation",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(xml_import_jobs)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("items_without_operation")) {
+        db.exec("ALTER TABLE xml_import_jobs ADD COLUMN items_without_operation INTEGER NOT NULL DEFAULT 0");
+      }
+    }
+  },
+  {
+    name: "024_operation_rate_history",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS operation_rate_history (
+          id TEXT PRIMARY KEY,
+          operation_id TEXT NOT NULL,
+          previous_service_rate_rule_id TEXT,
+          previous_rate_value_cents INTEGER,
+          previous_service_amount_cents INTEGER,
+          new_service_rate_rule_id TEXT,
+          new_rate_value_cents INTEGER,
+          new_service_amount_cents INTEGER,
+          reason TEXT,
+          changed_at TEXT NOT NULL,
+          FOREIGN KEY (operation_id) REFERENCES operations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_operation_rate_history_operation_id ON operation_rate_history(operation_id);
+      `);
+    }
+  },
+  {
+    name: "025_service_rate_rule_conflict_warning",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(service_rate_rules)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("conflict_warning")) {
+        db.exec("ALTER TABLE service_rate_rules ADD COLUMN conflict_warning TEXT");
+      }
+    }
+  },
+  {
+    // Espelha a migration 0008 do Supabase: sem updated_at, o sync poll-based
+    // (SharedRepository.pullChangesSince) so' enxergaria um job de importacao
+    // de XML no momento da criacao, nunca as atualizacoes de status/progresso
+    // que vem depois (processando -> concluido).
+    name: "026_xml_import_job_updated_at",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(xml_import_jobs)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes("updated_at")) {
+        db.exec("ALTER TABLE xml_import_jobs ADD COLUMN updated_at TEXT");
+        db.exec("UPDATE xml_import_jobs SET updated_at = created_at WHERE updated_at IS NULL");
+      }
+    }
+  },
+  {
+    // Notas de entrada (compras) por saca: espelha service_rate_rules (preco
+    // que COBRAMOS do cliente) com uma tabela irma' pro preco que PAGAMOS ao
+    // fornecedor, e um ciclo de vida de "acerto" em operations/accounts_payable
+    // espelhando billing_status/client_charge_id do lado de cobranca.
+    name: "027_purchase_rate_rules_payables",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS purchase_rate_rules (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          business_partner_id TEXT NOT NULL,
+          own_legal_entity_id TEXT,
+          counterparty_partner_legal_entity_id TEXT,
+          product_id TEXT,
+          operation_scope TEXT NOT NULL CHECK (operation_scope IN ('INTERNAL','EXTERNAL','ALL')),
+          rate_type TEXT NOT NULL CHECK (rate_type IN ('PER_SACK')),
+          rate_value_cents INTEGER NOT NULL,
+          effective_from TEXT NOT NULL,
+          effective_to TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          notes TEXT,
+          conflict_warning TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+          FOREIGN KEY (counterparty_partner_legal_entity_id) REFERENCES partner_legal_entities(id),
+          FOREIGN KEY (product_id) REFERENCES products(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_business_partner_id ON purchase_rate_rules(business_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_organization_id ON purchase_rate_rules(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_own_legal_entity_id ON purchase_rate_rules(own_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_counterparty_partner_legal_entity_id ON purchase_rate_rules(counterparty_partner_legal_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_product_id ON purchase_rate_rules(product_id);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_effective_from ON purchase_rate_rules(effective_from);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_effective_to ON purchase_rate_rules(effective_to);
+        CREATE INDEX IF NOT EXISTS idx_purchase_rate_rules_is_active ON purchase_rate_rules(is_active);
+
+        CREATE TABLE IF NOT EXISTS account_payable_operations (
+          id TEXT PRIMARY KEY,
+          account_payable_id TEXT NOT NULL,
+          operation_id TEXT NOT NULL,
+          own_legal_entity_id_snapshot TEXT,
+          own_legal_entity_name_snapshot TEXT,
+          supplier_partner_id_snapshot TEXT,
+          operation_date_snapshot TEXT NOT NULL,
+          fiscal_document_number_snapshot TEXT,
+          fiscal_document_series_snapshot TEXT,
+          product_name_snapshot TEXT,
+          operation_scope_snapshot TEXT NOT NULL CHECK (operation_scope_snapshot IN ('INTERNAL','EXTERNAL')),
+          quantity_sacks_decimal_snapshot TEXT NOT NULL,
+          purchase_rate_cents_snapshot INTEGER NOT NULL,
+          purchase_amount_cents_snapshot INTEGER NOT NULL,
+          released_at TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (account_payable_id) REFERENCES accounts_payable(id),
+          FOREIGN KEY (operation_id) REFERENCES operations(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_payable_operations_payable_id ON account_payable_operations(account_payable_id);
+        CREATE INDEX IF NOT EXISTS idx_account_payable_operations_operation_id ON account_payable_operations(operation_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_account_payable_operations_active_unique ON account_payable_operations(operation_id) WHERE released_at IS NULL;
+      `);
+      const operationColumns = (db.prepare("PRAGMA table_info(operations)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!operationColumns.includes("purchase_settlement_status")) {
+        db.exec("ALTER TABLE operations ADD COLUMN purchase_settlement_status TEXT NOT NULL DEFAULT 'UNSETTLED' CHECK (purchase_settlement_status IN ('UNSETTLED','RESERVED','SETTLED'))");
+      }
+      if (!operationColumns.includes("account_payable_id")) {
+        db.exec("ALTER TABLE operations ADD COLUMN account_payable_id TEXT");
+      }
+      // Coluna propria (nao reaproveita service_rate_rule_id): essa tem FK de
+      // verdade pra service_rate_rules, gravar o id de uma purchase_rate_rule
+      // la' violaria a constraint. applied_rate_value_cents/service_amount_cents
+      // continuam genericos (sem FK), servem pros dois sentidos sem problema.
+      if (!operationColumns.includes("purchase_rate_rule_id")) {
+        db.exec("ALTER TABLE operations ADD COLUMN purchase_rate_rule_id TEXT");
+      }
+      db.exec("CREATE INDEX IF NOT EXISTS idx_operations_purchase_settlement_status ON operations(purchase_settlement_status)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_operations_account_payable_id ON operations(account_payable_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_operations_purchase_rate_rule_id ON operations(purchase_rate_rule_id)");
+    }
+  },
+  {
+    // Registro auditavel de fusoes de cadastros de parceiro duplicados (mesmo
+    // CNPJ, ids diferentes -- sobra de quando cada PC gerava seu proprio id
+    // aleatorio antes da sincronizacao entre PCs existir). Sincroniza como
+    // qualquer outra tabela: quando um PC baixa uma linha nova aqui, aplica a
+    // mesma fusao localmente (ver applyBusinessPartnerMerge), o que faz os
+    // outros PCs se autocorrigirem sozinhos na proxima sincronizacao, sem
+    // precisar rodar nada manual em cada um.
+    name: "029_business_partner_merges",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS business_partner_merges (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          duplicate_partner_id TEXT NOT NULL,
+          canonical_partner_id TEXT NOT NULL,
+          matched_cnpj TEXT,
+          reason TEXT,
+          applied_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_business_partner_merges_duplicate_unique ON business_partner_merges(duplicate_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_business_partner_merges_canonical_id ON business_partner_merges(canonical_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_business_partner_merges_organization_id ON business_partner_merges(organization_id);
+      `);
+    }
+  },
+  {
+    // Reset pedido pelo dono pra testar o sistema do zero: mantem so' cadastro
+    // das empresas proprias (organizations/legal_entities/locations), usuarios
+    // e permissoes (senao ninguem conseguiria logar depois), catalogo de
+    // produtos e categorias/centros de custo/contas financeiras (config
+    // reutilizavel, nao especifica de cliente/nota). Zera clientes, fornecedores
+    // e tudo que foi lancado em cima deles (notas, operacoes, cobrancas, contas
+    // a pagar, confirmacoes de negocio, importacoes). Roda uma unica vez (como
+    // toda migration): PCs que ja atualizaram nao repetem o reset ao sincronizar
+    // de novo depois. Ordem das DELETEs respeita as FKs (filho antes do pai);
+    // se algo estiver fora de ordem a transacao da migration inteira desfaz
+    // sozinha (ver runMigrations em database.ts), sem deixar o banco pela metade.
+    name: "030_reset_partners_and_documents",
+    up: (db) => {
+      db.exec(`
+        DELETE FROM business_partner_merges;
+        DELETE FROM financial_report_generations;
+
+        DELETE FROM charge_status_history;
+        DELETE FROM charge_document_versions;
+        DELETE FROM client_payment_allocations;
+        DELETE FROM client_credit_allocations;
+        DELETE FROM client_charge_adjustments;
+        DELETE FROM client_charge_operations;
+
+        DELETE FROM payable_document_attachments;
+        DELETE FROM payable_status_history;
+        DELETE FROM payable_payment_allocations;
+        DELETE FROM account_payable_operations;
+        DELETE FROM account_payable_allocations;
+
+        DELETE FROM deal_confirmation_document_versions;
+        DELETE FROM deal_confirmation_status_history;
+        DELETE FROM deal_payment_terms;
+        DELETE FROM deal_confirmation_signers;
+        DELETE FROM deal_confirmation_fiscal_documents;
+        DELETE FROM deal_confirmation_operations;
+        DELETE FROM deal_confirmation_clauses;
+        DELETE FROM deal_confirmation_items;
+        DELETE FROM deal_confirmation_parties;
+
+        DELETE FROM operation_rate_history;
+        DELETE FROM operation_classification_rules;
+        DELETE FROM fiscal_document_merge_history;
+        DELETE FROM fiscal_document_events;
+
+        DELETE FROM xml_import_files;
+        DELETE FROM spreadsheet_import_rows;
+
+        DELETE FROM operations;
+        DELETE FROM fiscal_document_items;
+        DELETE FROM client_payments;
+        DELETE FROM client_ledger_entries;
+        DELETE FROM client_charges;
+        DELETE FROM payable_payments;
+        DELETE FROM payable_recurring_templates;
+        DELETE FROM payable_installment_groups;
+        DELETE FROM accounts_payable;
+        DELETE FROM deal_confirmations;
+        DELETE FROM fiscal_documents;
+        DELETE FROM xml_import_jobs;
+        DELETE FROM spreadsheet_import_jobs;
+
+        DELETE FROM product_aliases;
+        DELETE FROM partner_aliases;
+        DELETE FROM client_billing_profiles;
+        DELETE FROM service_rate_rules;
+        DELETE FROM purchase_rate_rules;
+        DELETE FROM partner_contacts;
+        DELETE FROM partner_legal_entities;
+        DELETE FROM business_partner_roles;
+
+        DELETE FROM business_partners;
+
+        UPDATE document_sequences SET current_number = 0;
+      `);
+    }
+  },
+  {
+    // Empresa/CNPJ (partner_legal_entities) deixa de exigir um cliente/corretor
+    // dono desde a criacao -- agora e' possivel cadastrar so' a empresa (ex:
+    // via "Buscar CNPJ") e vincular a um cliente/corretor depois, quando a
+    // relacao comercial de fato comecar (ver linkPartnerLegalEntityToPartner).
+    // organization_id precisa existir na propria linha porque antes ela so'
+    // sabia sua organizacao atraves do cliente/corretor dono -- sem dono, nao
+    // ha' mais como derivar isso. SQLite nao suporta "ALTER COLUMN ... DROP NOT
+    // NULL" nem adicionar coluna NOT NULL sem default numa tabela com linhas,
+    // entao reconstroi a tabela inteira (mesmo padrao da migration 007).
+    name: "031_partner_legal_entities_standalone",
+    up: (db) => {
+      db.exec(`
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE partner_legal_entities_031 (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          business_partner_id TEXT,
+          legal_name TEXT NOT NULL,
+          trade_name TEXT NOT NULL,
+          cnpj TEXT,
+          state_registration TEXT,
+          municipal_registration TEXT,
+          email TEXT,
+          phone TEXT,
+          address_line TEXT,
+          address_number TEXT,
+          address_complement TEXT,
+          district TEXT,
+          city TEXT,
+          state TEXT,
+          postal_code TEXT,
+          is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (business_partner_id) REFERENCES business_partners(id)
+        );
+        INSERT INTO partner_legal_entities_031 (
+          id, organization_id, business_partner_id, legal_name, trade_name, cnpj, state_registration, municipal_registration,
+          email, phone, address_line, address_number, address_complement, district, city, state, postal_code,
+          is_primary, is_active, is_draft, created_at, updated_at
+        )
+        SELECT ple.id, bp.organization_id, ple.business_partner_id, ple.legal_name, ple.trade_name, ple.cnpj, ple.state_registration,
+          ple.municipal_registration, ple.email, ple.phone, ple.address_line, ple.address_number, ple.address_complement,
+          ple.district, ple.city, ple.state, ple.postal_code, ple.is_primary, ple.is_active, ple.is_draft, ple.created_at, ple.updated_at
+        FROM partner_legal_entities ple
+        JOIN business_partners bp ON bp.id = ple.business_partner_id;
+        DROP TABLE partner_legal_entities;
+        ALTER TABLE partner_legal_entities_031 RENAME TO partner_legal_entities;
+        CREATE INDEX IF NOT EXISTS idx_partner_legal_entities_business_partner_id ON partner_legal_entities(business_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_partner_legal_entities_organization_id ON partner_legal_entities(organization_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_legal_entities_cnpj_unique ON partner_legal_entities(cnpj) WHERE cnpj IS NOT NULL;
+        PRAGMA foreign_keys = ON;
+      `);
+    }
+  },
+  {
+    // Limpeza pontual: a importacao de 490 cadastros do sistema legado
+    // (Villa MG + Villa ES) criou um cliente/corretor descartavel pra cada
+    // empresa, so' pra poder anexar o CNPJ (antes da migration 031, toda
+    // empresa precisava de um dono). Depois da 031 esses CNPJs viraram
+    // empresas soltas de verdade (ver script de conversao rodado manualmente
+    // num PC), mas os 490 clientes-descarte ainda existiam em PCs que ja
+    // tinham sincronizado antes da limpeza. Roda uma vez por PC (como toda
+    // migration): so' apaga quem nao tem NENHUM registro vinculado (nota,
+    // operacao, cobranca, conta a pagar) -- se por acaso algum desses
+    // cadastros passou a ser usado de verdade em algum PC, ele fica intacto.
+    name: "032_delete_legacy_import_client_shells",
+    up: (db) => {
+      const candidates = db.prepare(
+        "SELECT id FROM business_partners WHERE notes LIKE 'Importado do sistema legado%'"
+      ).all() as Array<{ id: string }>;
+      const hasLink = db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM fiscal_documents WHERE responsible_partner_id = ?) +
+          (SELECT COUNT(*) FROM operations WHERE responsible_partner_id = ?) +
+          (SELECT COUNT(*) FROM client_charges WHERE client_partner_id = ?) +
+          (SELECT COUNT(*) FROM accounts_payable WHERE supplier_partner_id = ?) AS c
+      `);
+      const unlinkEntities = db.prepare("UPDATE partner_legal_entities SET business_partner_id = NULL, is_primary = 0, updated_at = ? WHERE business_partner_id = ?");
+      const deleteRoles = db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?");
+      const deletePartner = db.prepare("DELETE FROM business_partners WHERE id = ?");
+      const now = new Date().toISOString();
+      for (const { id } of candidates) {
+        const linked = hasLink.get(id, id, id, id) as { c: number };
+        if (linked.c > 0) continue;
+        unlinkEntities.run(now, id);
+        deleteRoles.run(id);
+        deletePartner.run(id);
+      }
+    }
+  },
+  {
+    // Nota triangulada: uma nota de XML onde nem o emitente nem o
+    // destinatario e' CNPJ proprio pode representar uma compra de um
+    // fornecedor revendida a um corretor/cliente na mesma remessa (ex: Leo
+    // ES emite direto pro CNPJ da Primavera, e a Grao & Grao e' o
+    // intermediario). Essas duas colunas guardam o SEGUNDO parceiro/tipo de
+    // operacao da nota -- o primeiro continua em responsible_partner_id/
+    // (operation_type e' por operacao, nao por documento). Quando
+    // preenchidas, o import de XML gera uma segunda operacao (tipo oposto)
+    // pro mesmo item, alem da operacao "principal" que ja era criada hoje.
+    name: "033_fiscal_document_secondary_partner",
+    up: (db) => {
+      const fiscalColumns = (db.prepare("PRAGMA table_info(fiscal_documents)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!fiscalColumns.includes("secondary_responsible_partner_id")) db.exec("ALTER TABLE fiscal_documents ADD COLUMN secondary_responsible_partner_id TEXT REFERENCES business_partners(id)");
+      if (!fiscalColumns.includes("secondary_operation_type")) db.exec("ALTER TABLE fiscal_documents ADD COLUMN secondary_operation_type TEXT CHECK (secondary_operation_type IN ('PURCHASE','SALE'))");
+    }
+  },
+  {
+    // Repete a limpeza da migration 032: um seed estatico legado
+    // (electron/main/services/clientSeed.ts, desativado nesta mesma versao)
+    // recriava um cliente/corretor fantasma pra cada empresa importada toda
+    // vez que rodava numa instalacao nova -- e' o mesmo padrao de "casca sem
+    // uso real" que a 032 ja cobria (notes LIKE 'Importado do sistema
+    // legado%'), so' que a 032 e' uma migration one-shot: ja rodou nesse PC
+    // antes do seed recriar mais fantasmas depois, entao nao roda de novo
+    // sozinha. Push e' upsert-only (nunca propaga delete), entao mesmo depois
+    // de limpar o Supabase diretamente, qualquer PC que ja tinha baixado
+    // esses fantasmas antes da limpeza continua com eles localmente ate rodar
+    // essa migration.
+    name: "034_delete_legacy_import_client_shells_again",
+    up: (db) => {
+      const candidates = db.prepare(
+        "SELECT id FROM business_partners WHERE notes LIKE 'Importado do sistema legado%'"
+      ).all() as Array<{ id: string }>;
+      const hasLink = db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM fiscal_documents WHERE responsible_partner_id = ?) +
+          (SELECT COUNT(*) FROM operations WHERE responsible_partner_id = ?) +
+          (SELECT COUNT(*) FROM client_charges WHERE client_partner_id = ?) +
+          (SELECT COUNT(*) FROM accounts_payable WHERE supplier_partner_id = ?) AS c
+      `);
+      const unlinkEntities = db.prepare("UPDATE partner_legal_entities SET business_partner_id = NULL, is_primary = 0, updated_at = ? WHERE business_partner_id = ?");
+      const deleteRoles = db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?");
+      const deletePartner = db.prepare("DELETE FROM business_partners WHERE id = ?");
+      const now = new Date().toISOString();
+      for (const { id } of candidates) {
+        const linked = hasLink.get(id, id, id, id) as { c: number };
+        if (linked.c > 0) continue;
+        unlinkEntities.run(now, id);
+        deleteRoles.run(id);
+        deletePartner.run(id);
+      }
+    }
   }
 ];

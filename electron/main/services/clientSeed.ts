@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { clientMasterData } from "../../../src/shared/seed/clientMasterData.js";
 import type { ClientMasterDataEntry } from "../../../src/shared/seed/clientMasterData.js";
+import { deterministicUuid } from "./deterministicId.js";
 
 interface DbRecord {
   [key: string]: unknown;
@@ -27,7 +27,7 @@ export function seedClientMasterDataIfNeeded(db: Database.Database): number {
         insertRoleIfMissing(db, partnerId, role, now);
       }
       for (const legalEntity of entry.legalEntities) {
-        upsertLegalEntity(db, partnerId, legalEntity, now);
+        upsertLegalEntity(db, organization.id, partnerId, legalEntity, now);
       }
       for (const contact of entry.contacts) {
         upsertContact(db, partnerId, contact, now);
@@ -56,13 +56,20 @@ function upsertPartner(db: Database.Database, organizationId: string, entry: Cli
     return existing.id;
   }
 
-  const id = randomUUID();
+  // Determinístico (nao randomUUID): esse mesmo seed roda de forma
+  // independente em cada PC na primeira instalacao, antes de qualquer PC se
+  // conectar ao Supabase. Com id aleatorio, dois PCs criariam o "mesmo"
+  // cliente da lista estatica com ids diferentes -- e a primeira
+  // sincronizacao colidiria nas constraints UNIQUE (cnpj, etc). Derivar o id
+  // do CNPJ (ou do nome, na ausencia de CNPJ) garante que todo PC gera
+  // exatamente o mesmo id pro mesmo cliente da lista.
+  const id = deterministicUuid("businessPartner", cnpj ?? normalizedKey(entry.displayName));
   db.prepare("INSERT INTO business_partners (id, organization_id, display_name, notes, is_active, credit_limit_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(id, organizationId, entry.displayName, nullable(entry.notes), entry.isActive ? 1 : 0, entry.creditLimitCents, now, now);
   return id;
 }
 
-function upsertLegalEntity(db: Database.Database, partnerId: string, legalEntity: ClientMasterDataEntry["legalEntities"][number], now: string): void {
+function upsertLegalEntity(db: Database.Database, organizationId: string, partnerId: string, legalEntity: ClientMasterDataEntry["legalEntities"][number], now: string): void {
   const cnpj = normalizeCnpj(legalEntity.cnpj);
   const existing = cnpj
     ? db.prepare("SELECT * FROM partner_legal_entities WHERE cnpj = ? LIMIT 1").get(cnpj) as DbRecord | undefined
@@ -71,11 +78,14 @@ function upsertLegalEntity(db: Database.Database, partnerId: string, legalEntity
   if (legalEntity.isPrimary) clearPrimaryLegalEntities(db, partnerId, existing?.id as string | undefined);
   const values = legalEntityValues(partnerId, legalEntity, now);
   if (!existing) {
+    const id = deterministicUuid("legalEntity", partnerId, cnpj ?? normalizedKey(legalEntity.legalName));
+    // organization_id e' NOT NULL desde a migration 031 (empresa pode existir
+    // sem dono, mas nao sem organizacao) -- precisa vir explicito no insert.
     db.prepare(`INSERT INTO partner_legal_entities (
-      id, business_partner_id, legal_name, trade_name, cnpj, state_registration, municipal_registration, email, phone,
+      id, organization_id, business_partner_id, legal_name, trade_name, cnpj, state_registration, municipal_registration, email, phone,
       address_line, address_number, address_complement, district, city, state, postal_code, is_primary, is_active, is_draft, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(randomUUID(), ...values, now);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, organizationId, ...values, now);
     return;
   }
 
@@ -106,8 +116,9 @@ function upsertContact(db: Database.Database, partnerId: string, contact: Client
     contact.isActive ? 1 : 0
   ];
   if (!existing) {
+    const id = deterministicUuid("contact", partnerId, normalizedKey(contact.name));
     db.prepare("INSERT INTO partner_contacts (id, business_partner_id, partner_legal_entity_id, name, department, email, phone, mobile, preferred_contact_method, is_primary, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), ...values, now, now);
+      .run(id, ...values, now, now);
     return;
   }
   db.prepare("UPDATE partner_contacts SET business_partner_id = ?, partner_legal_entity_id = ?, name = ?, department = COALESCE(?, department), email = COALESCE(?, email), phone = COALESCE(?, phone), mobile = COALESCE(?, mobile), preferred_contact_method = ?, is_primary = ?, notes = COALESCE(?, notes), is_active = ?, updated_at = ? WHERE id = ?")
@@ -140,7 +151,10 @@ function legalEntityValues(partnerId: string, legalEntity: ClientMasterDataEntry
 
 function insertRoleIfMissing(db: Database.Database, partnerId: string, role: string, now: string): void {
   const existing = db.prepare("SELECT id FROM business_partner_roles WHERE business_partner_id = ? AND role = ?").get(partnerId, role);
-  if (!existing) db.prepare("INSERT INTO business_partner_roles (id, business_partner_id, role, created_at) VALUES (?, ?, ?, ?)").run(randomUUID(), partnerId, role, now);
+  if (!existing) {
+    const id = deterministicUuid("role", partnerId, role);
+    db.prepare("INSERT INTO business_partner_roles (id, business_partner_id, role, created_at) VALUES (?, ?, ?, ?)").run(id, partnerId, role, now);
+  }
 }
 
 function clearPrimaryLegalEntities(db: Database.Database, partnerId: string, exceptId?: string): void {
@@ -167,6 +181,10 @@ function normalizeCnpj(value: string | null): string | null {
 function nullable(value: string | null): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizedKey(value: string): string {
+  return value.trim().toUpperCase();
 }
 
 function tableExists(db: Database.Database, table: string): boolean {

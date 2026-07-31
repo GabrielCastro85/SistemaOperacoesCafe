@@ -1,17 +1,22 @@
 import type Database from "better-sqlite3";
+import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
+import { deterministicUuid } from "./deterministicId.js";
 import {
   legalEntityInputSchema,
   locationInputSchema,
   organizationInputSchema,
   businessPartnerInputSchema,
+  mergeBusinessPartnerDuplicateInputSchema,
   partnerLegalEntityInputSchema,
   partnerContactInputSchema,
   productInputSchema,
   billingProfileInputSchema,
   serviceRateRuleInputSchema,
   resolveRateInputSchema,
+  purchaseRateRuleInputSchema,
+  resolvePurchaseRateInputSchema,
   fiscalDocumentInputSchema,
   fiscalDocumentItemInputSchema,
   operationInputSchema,
@@ -38,6 +43,9 @@ import {
   financialAccountInputSchema,
   accountPayableInputSchema,
   accountPayableAllocationInputSchema,
+  eligiblePurchaseOperationsInputSchema,
+  supplierPurchaseSummaryInputSchema,
+  generatePurchaseSettlementInputSchema,
   payableRecurringTemplateInputSchema,
   payableInstallmentGroupInputSchema,
   payablePaymentInputSchema,
@@ -77,6 +85,9 @@ import type {
   Product,
   ResolveRateResult,
   ServiceRateRule,
+  PurchaseRateRule,
+  AccountPayableOperation,
+  OperationScope,
   FiscalDocument,
   FiscalDocumentDetail,
   FiscalDocumentStatus,
@@ -143,6 +154,9 @@ import {
   mapPartnerContact,
   mapProduct,
   mapServiceRateRule,
+  mapPurchaseRateRule,
+  mapAccountPayableOperation,
+  mapOperationRateHistory,
   mapFiscalDocument,
   mapFiscalDocumentItem,
   mapOperation,
@@ -191,13 +205,484 @@ import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, multipl
 import { generateChargeDocuments } from "./chargeDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
+import type { SharedRepository } from "./sharedRepository.js";
 import type { AppDirectories } from "../../../src/shared/types/domain.js";
 
 type DbRecord = Record<string, unknown>;
 type DealItemInput = ReturnType<typeof dealConfirmationItemInputSchema.parse> & { totalAmountCents?: number | null };
 
+// Tabelas compartilhadas que precisam de visibilidade entre os 4 PCs --
+// sync poll-based (nao realtime) por simplicidade, ver
+// SharedRepository.pullChangesSince. Cobre tanto cadastro de referencia
+// (organizations..service_rate_rules -- essas tambem sao empurradas na hora
+// em que este PC as cria/edita, ver createOrganization etc., mas ainda
+// precisam ser PUXADAS aqui pra este PC ficar sabendo do que outro PC
+// cadastrou) quanto dado operacional "quente" (fiscal_documents em diante).
+// Ordem importa: pais antes de filhos (FK local e' ON), pra minimizar o caso
+// de um filho chegar antes do pai numa mesma rodada de sync.
+const HOT_SYNC_TABLES: Array<{ table: string; timestampColumn: string }> = [
+  { table: "organizations", timestampColumn: "updated_at" },
+  { table: "legal_entities", timestampColumn: "updated_at" },
+  { table: "locations", timestampColumn: "updated_at" },
+  { table: "business_partners", timestampColumn: "updated_at" },
+  { table: "business_partner_roles", timestampColumn: "created_at" },
+  { table: "partner_legal_entities", timestampColumn: "updated_at" },
+  { table: "partner_contacts", timestampColumn: "updated_at" },
+  { table: "products", timestampColumn: "updated_at" },
+  { table: "client_billing_profiles", timestampColumn: "updated_at" },
+  { table: "service_rate_rules", timestampColumn: "updated_at" },
+  { table: "purchase_rate_rules", timestampColumn: "updated_at" },
+  { table: "fiscal_documents", timestampColumn: "updated_at" },
+  { table: "fiscal_document_items", timestampColumn: "updated_at" },
+  { table: "operations", timestampColumn: "updated_at" },
+  { table: "fiscal_document_events", timestampColumn: "created_at" },
+  { table: "fiscal_document_merge_history", timestampColumn: "created_at" },
+  { table: "xml_import_jobs", timestampColumn: "updated_at" },
+  { table: "xml_import_files", timestampColumn: "updated_at" },
+  { table: "document_sequences", timestampColumn: "updated_at" },
+  { table: "client_charges", timestampColumn: "updated_at" },
+  { table: "client_charge_operations", timestampColumn: "created_at" },
+  { table: "client_charge_adjustments", timestampColumn: "updated_at" },
+  { table: "client_ledger_entries", timestampColumn: "updated_at" },
+  { table: "client_credit_allocations", timestampColumn: "allocated_at" },
+  { table: "client_payments", timestampColumn: "updated_at" },
+  { table: "client_payment_allocations", timestampColumn: "allocated_at" },
+  { table: "charge_document_versions", timestampColumn: "created_at" },
+  { table: "charge_status_history", timestampColumn: "created_at" },
+  // Modulo financeiro (Contas a Pagar) -- ate' aqui era so' local por PC;
+  // passa a compartilhar pra o PC fiscal (que lanca a nota de entrada) e o
+  // financeiro (que fecha o acerto) verem os mesmos dados. cost_centers,
+  // financial_accounts, payable_recurring_templates, payable_installment_groups
+  // e account_payable_allocations ficam de fora por enquanto (fora do escopo
+  // desta leva, ver plano).
+  { table: "expense_categories", timestampColumn: "updated_at" },
+  { table: "accounts_payable", timestampColumn: "updated_at" },
+  { table: "account_payable_operations", timestampColumn: "created_at" },
+  { table: "payable_payments", timestampColumn: "updated_at" },
+  { table: "payable_payment_allocations", timestampColumn: "allocated_at" },
+  { table: "payable_status_history", timestampColumn: "changed_at" },
+  { table: "payable_document_attachments", timestampColumn: "updated_at" },
+  // Fusao de cadastros de parceiro duplicados (ver mergeBusinessPartnerDuplicate) --
+  // ao baixar uma linha nova aqui, syncTableDown aplica a mesma fusao localmente,
+  // autocorrigindo PCs que ainda nao rodaram a limpeza.
+  { table: "business_partner_merges", timestampColumn: "created_at" }
+];
+
+// Colunas boolean no Postgres (as mesmas colunas sao INTEGER 0/1 no SQLite
+// local) -- ao empurrar uma linha lida direto do SQLite pro Supabase, essas
+// colunas precisam virar true/false de verdade, senao o Postgres rejeita
+// (0/1 nao converte implicitamente pra boolean via PostgREST).
+const BOOLEAN_COLUMNS_BY_TABLE: Record<string, string[]> = {
+  fiscal_documents: ["has_pending_issues"],
+  operations: ["rate_was_manually_overridden"],
+  xml_import_jobs: ["include_subfolders"],
+  document_sequences: ["is_active"]
+};
+
+function toSharedRow(row: DbRecord, table: string): DbRecord {
+  const booleanColumns = BOOLEAN_COLUMNS_BY_TABLE[table];
+  if (!booleanColumns) return row;
+  const converted: DbRecord = { ...row };
+  for (const column of booleanColumns) {
+    if (column in converted) converted[column] = Boolean(Number(converted[column]));
+  }
+  return converted;
+}
+
 export class AppRepository {
-  constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories) {}
+  constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories, private readonly sharedRepository?: SharedRepository) {}
+
+  /**
+   * Puxa do Supabase pro cache local tudo que mudou desde a ultima vez, pras
+   * tabelas "quentes" (ver HOT_SYNC_TABLES) -- e' assim que um PC fica
+   * sabendo do que outro PC lancou. Chamado periodicamente (ver main/index.ts)
+   * e sob demanda (ex: ao abrir a tela de Notas Fiscais). Sem sessao
+   * autenticada, e' um no-op silencioso (RLS bloquearia a leitura mesmo).
+   */
+  async syncSharedDataDown(): Promise<Array<{ table: string; pulled: number }>> {
+    if (!this.sharedRepository) return [];
+    const results: Array<{ table: string; pulled: number }> = [];
+    for (const { table, timestampColumn } of HOT_SYNC_TABLES) {
+      try {
+        results.push(await this.syncTableDown(table, timestampColumn));
+      } catch (error) {
+        // Uma tabela com erro (ex: rede caiu no meio) nunca pode travar as
+        // demais -- cada tabela e' independente, senao um problema so' numa
+        // delas (a mais "no fim da fila") deixaria o resto pra sempre parado.
+        log.warn(`Falha ao sincronizar tabela ${table} (pulando pra proxima)`, { error: error instanceof Error ? error.message : String(error) });
+        results.push({ table, pulled: 0 });
+      }
+    }
+    return results;
+  }
+
+  private async syncTableDown(table: string, timestampColumn: string): Promise<{ table: string; pulled: number }> {
+    if (!this.sharedRepository) return { table, pulled: 0 };
+    const cursorKey = `sync_cursor_${table}`;
+    const cursorRow = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(cursorKey) as { value: string } | undefined;
+    const since = cursorRow?.value ?? "1970-01-01T00:00:00.000Z";
+    const rows = await this.sharedRepository.pullChangesSince(table, timestampColumn, since);
+    if (rows.length === 0) return { table, pulled: 0 };
+
+    // Cada linha aplica numa transacao PROPRIA (nao uma so' pro lote inteiro)
+    // -- assim uma linha com conflito real (ex: UNIQUE duplicado por dado
+    // gerado localmente em dois PCs antes de conectar) so' fica de fora dela
+    // mesma, sem derrubar as outras dezenas/centenas de linhas validas do
+    // mesmo lote. pullChangesSince ja devolve as linhas em ordem crescente de
+    // timestamp -- o cursor so' pode avancar atraves da primeira sequencia
+    // CONTINUA de sucessos a partir do inicio do lote. Se avancasse ate' a
+    // MAIOR linha aplicada mesmo quando uma linha ANTERIOR (timestamp menor)
+    // falhou no meio do caminho, a proxima sincronizacao nunca mais tentaria
+    // de novo essa linha que falhou (WHERE updated_at > cursor a excluiria
+    // pra sempre) -- foi exatamente isso que fez ~385 empresas desvinculadas
+    // sumirem de um PC sem nenhum erro visivel: uma linha no meio do lote deu
+    // erro, uma linha mais recente no mesmo lote teve sucesso, o cursor pulou
+    // pra frente da que falhou.
+    let applied = 0;
+    let latestApplied = since;
+    let sawFailure = false;
+    for (const row of rows) {
+      try {
+        this.db.transaction(() => this.upsertLocalRow(table, row))();
+        applied += 1;
+        if (table === "business_partner_merges") {
+          // Fusao decidida por OUTRO PC -- aplica localmente aqui tambem (sem
+          // reempurrar pro Supabase, ja veio de la'), autocorrigindo este PC.
+          try {
+            const canonical = this.getBusinessPartner(String(row.canonical_partner_id));
+            const duplicate = this.getBusinessPartner(String(row.duplicate_partner_id));
+            await this.applyBusinessPartnerMerge(canonical, duplicate, row.matched_cnpj ? String(row.matched_cnpj) : null, String(row.applied_at ?? row.created_at), false);
+          } catch (mergeError) {
+            log.warn("Falha ao aplicar fusao de parceiros sincronizada", { id: row.id, error: mergeError instanceof Error ? mergeError.message : String(mergeError) });
+          }
+        }
+        if (!sawFailure) {
+          const value = String(row[timestampColumn]);
+          if (value > latestApplied) latestApplied = value;
+        }
+      } catch (error) {
+        sawFailure = true;
+        log.warn(`Falha ao aplicar linha sincronizada (${table})`, { id: row.id, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    const now = new Date().toISOString();
+    this.db.prepare(
+      `INSERT INTO app_settings (id, key, value, value_type, created_at, updated_at) VALUES (@id, @key, @value, 'string', @now, @now)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run({ id: randomUUID(), key: cursorKey, value: latestApplied, now });
+    return { table, pulled: applied };
+  }
+
+  /**
+   * Empurra pro Supabase o estado atual (linha inteira, via upsert) de uma
+   * nota fiscal + itens + operacoes + eventos ja gravados localmente --
+   * chamado DEPOIS que a escrita local sincrona ja comitou (nunca durante,
+   * ja que o fluxo local roda dentro de this.db.transaction, que nao aceita
+   * await). E' assim que outro PC fica sabendo de uma nota criada/editada
+   * neste PC, seja lancamento manual ou importacao de XML.
+   */
+  async pushFiscalDocumentToShared(fiscalDocumentId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const doc = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as DbRecord | undefined;
+    if (!doc) return;
+    await this.sharedRepository.upsertRow("fiscal_documents", toSharedRow(doc, "fiscal_documents"));
+    const items = this.db.prepare("SELECT * FROM fiscal_document_items WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+    for (const item of items) await this.sharedRepository.upsertRow("fiscal_document_items", toSharedRow(item, "fiscal_document_items"));
+    const operations = this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+    for (const operation of operations) await this.sharedRepository.upsertRow("operations", toSharedRow(operation, "operations"));
+    const events = this.db.prepare("SELECT * FROM fiscal_document_events WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+    for (const event of events) await this.sharedRepository.upsertRow("fiscal_document_events", toSharedRow(event, "fiscal_document_events"));
+    const mergeHistory = this.db.prepare("SELECT * FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+    for (const entry of mergeHistory) await this.sharedRepository.upsertRow("fiscal_document_merge_history", toSharedRow(entry, "fiscal_document_merge_history"));
+  }
+
+  /** Mesma ideia de pushFiscalDocumentToShared, pro job de importacao de XML e seus arquivos. */
+  async pushXmlImportJobToShared(jobId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const job = this.db.prepare("SELECT * FROM xml_import_jobs WHERE id = ?").get(jobId) as DbRecord | undefined;
+    if (!job) return;
+    await this.sharedRepository.upsertRow("xml_import_jobs", toSharedRow(job, "xml_import_jobs"));
+    const files = this.db.prepare("SELECT * FROM xml_import_files WHERE import_job_id = ?").all(jobId) as DbRecord[];
+    for (const file of files) await this.sharedRepository.upsertRow("xml_import_files", toSharedRow(file, "xml_import_files"));
+  }
+
+  /**
+   * Empurra pro Supabase o estado atual de uma cobranca + operacoes
+   * vinculadas + ajustes + alocacoes de pagamento + versoes de documento +
+   * historico de status -- mesma logica de pushFiscalDocumentToShared,
+   * chamado DEPOIS que a escrita local ja comitou.
+   */
+  async pushClientChargeToShared(clientChargeId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const charge = this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(clientChargeId) as DbRecord | undefined;
+    if (!charge) return;
+    await this.sharedRepository.upsertRow("client_charges", toSharedRow(charge, "client_charges"));
+    const operations = this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of operations) await this.sharedRepository.upsertRow("client_charge_operations", toSharedRow(row, "client_charge_operations"));
+    const adjustments = this.db.prepare("SELECT * FROM client_charge_adjustments WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of adjustments) await this.sharedRepository.upsertRow("client_charge_adjustments", toSharedRow(row, "client_charge_adjustments"));
+    const paymentAllocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of paymentAllocations) await this.sharedRepository.upsertRow("client_payment_allocations", toSharedRow(row, "client_payment_allocations"));
+    const creditAllocations = this.db.prepare("SELECT * FROM client_credit_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of creditAllocations) await this.sharedRepository.upsertRow("client_credit_allocations", toSharedRow(row, "client_credit_allocations"));
+    const documentVersions = this.db.prepare("SELECT * FROM charge_document_versions WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of documentVersions) await this.sharedRepository.upsertRow("charge_document_versions", toSharedRow(row, "charge_document_versions"));
+    const statusHistory = this.db.prepare("SELECT * FROM charge_status_history WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of statusHistory) await this.sharedRepository.upsertRow("charge_status_history", toSharedRow(row, "charge_status_history"));
+    const ledgerEntries = this.db.prepare("SELECT * FROM client_ledger_entries WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+    for (const row of ledgerEntries) await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(row, "client_ledger_entries"));
+  }
+
+  /**
+   * Empurra pro Supabase o estado atual de uma conta a pagar + operacoes de
+   * compra vinculadas + historico de status + anexos -- mesma logica de
+   * pushClientChargeToShared, agora que Contas a Pagar deixou de ser so'
+   * local (fiscal lanca a nota, financeiro precisa ver e pagar de outro PC).
+   */
+  async pushAccountPayableToShared(accountPayableId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const payable = this.db.prepare("SELECT * FROM accounts_payable WHERE id = ?").get(accountPayableId) as DbRecord | undefined;
+    if (!payable) return;
+    await this.sharedRepository.upsertRow("accounts_payable", toSharedRow(payable, "accounts_payable"));
+    const operations = this.db.prepare("SELECT * FROM account_payable_operations WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
+    for (const row of operations) await this.sharedRepository.upsertRow("account_payable_operations", toSharedRow(row, "account_payable_operations"));
+    const statusHistory = this.db.prepare("SELECT * FROM payable_status_history WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
+    for (const row of statusHistory) await this.sharedRepository.upsertRow("payable_status_history", toSharedRow(row, "payable_status_history"));
+    const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
+    for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
+  }
+
+  /** Empurra um pagamento de conta a pagar + suas alocacoes. Ver pushAccountPayableToShared. */
+  async pushPayablePaymentToShared(payablePaymentId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const payment = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(payablePaymentId) as DbRecord | undefined;
+    if (!payment) return;
+    await this.sharedRepository.upsertRow("payable_payments", toSharedRow(payment, "payable_payments"));
+    const allocations = this.db.prepare("SELECT * FROM payable_payment_allocations WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
+    for (const row of allocations) await this.sharedRepository.upsertRow("payable_payment_allocations", toSharedRow(row, "payable_payment_allocations"));
+    const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
+    for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
+  }
+
+  /** Empurra um pagamento avulso (nao vinculado a nenhuma cobranca especifica ainda). */
+  async pushClientPaymentToShared(clientPaymentId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const payment = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(clientPaymentId) as DbRecord | undefined;
+    if (!payment) return;
+    await this.sharedRepository.upsertRow("client_payments", toSharedRow(payment, "client_payments"));
+  }
+
+  /** Empurra um lancamento avulso de conta-corrente (adiantamento/credito sem cobranca vinculada ainda). */
+  async pushClientLedgerEntryToShared(ledgerEntryId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const entry = this.db.prepare("SELECT * FROM client_ledger_entries WHERE id = ?").get(ledgerEntryId) as DbRecord | undefined;
+    if (!entry) return;
+    await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(entry, "client_ledger_entries"));
+  }
+
+  /**
+   * Antes de empurrar legal_entities, corrige o caso de um CNPJ terceirizado
+   * (TERC-XML, ver getOrCreateThirdPartyLegalEntityFromXml) ter sido criado
+   * de forma independente em dois PCs diferentes antes de sincronizar entre
+   * si -- cada um com um id aleatorio proprio (bug ja corrigido na criacao,
+   * mas registros antigos criados antes da correcao ainda existem). Se o
+   * Supabase ja tem uma linha com o MESMO cnpj sob OUTRO id, adota o id do
+   * Supabase localmente (redireciona toda referencia local e remove o
+   * duplicado) em vez de tentar empurrar um id que colide no indice unico de
+   * cnpj -- e' esse conflito que gerava "Ja existe um registro com esses
+   * dados" e travava fiscal_documents/xml_import_files em cascata (FK pra' um
+   * own_legal_entity_id que nunca conseguia subir).
+   *
+   * O redirecionamento e' generico (descobre via PRAGMA foreign_key_list toda
+   * tabela/coluna que referencia legal_entities) em vez de uma lista
+   * hardcoded -- dezenas de tabelas tem own_legal_entity_id/legal_entity_id,
+   * e uma lista manual ficaria desatualizada a cada tabela nova.
+   */
+  private async reconcileThirdPartyLegalEntityIds(): Promise<void> {
+    if (!this.sharedRepository) return;
+    const localThirdParty = this.db.prepare(
+      "SELECT id, cnpj FROM legal_entities WHERE document_prefix = 'TERC-XML' AND cnpj IS NOT NULL"
+    ).all() as Array<{ id: string; cnpj: string }>;
+    if (localThirdParty.length === 0) return;
+    let sharedRows: Array<{ id: string; cnpj: string | null }>;
+    try {
+      sharedRows = (await this.withTimeout(this.sharedRepository.listAll("legal_entities", "cnpj"), 15_000, "Tempo esgotado ao consultar legal_entities.")) as Array<{ id: string; cnpj: string | null }>;
+    } catch {
+      return;
+    }
+    const sharedIdByCnpj = new Map(sharedRows.filter((row) => row.cnpj).map((row) => [row.cnpj as string, row.id]));
+    const toRedirect = localThirdParty.filter((local) => {
+      const sharedId = sharedIdByCnpj.get(local.cnpj);
+      return sharedId && sharedId !== local.id;
+    });
+    if (toRedirect.length === 0) return;
+    const referencingColumns = this.findColumnsReferencing("legal_entities");
+    const transaction = this.db.transaction(() => {
+      for (const local of toRedirect) {
+        const sharedId = sharedIdByCnpj.get(local.cnpj) as string;
+        // O id do Supabase ainda nao existe localmente -- cria a linha aqui
+        // primeiro (copiando os dados do registro local, so' trocando o id),
+        // senao o redirecionamento abaixo violaria a FK (apontar pra' um id
+        // que a tabela legal_entities local nao conhece). Precisa liberar o
+        // cnpj do registro antigo ANTES de inserir o novo, senao o indice
+        // unico de cnpj rejeita (as duas linhas coexistiriam brevemente).
+        const localRow = this.db.prepare("SELECT * FROM legal_entities WHERE id = ?").get(local.id) as DbRecord;
+        this.db.prepare("UPDATE legal_entities SET cnpj = NULL WHERE id = ?").run(local.id);
+        const columns = Object.keys(localRow).filter((column) => column !== "id");
+        this.db.prepare(
+          `INSERT OR IGNORE INTO legal_entities (id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})`
+        ).run(sharedId, ...columns.map((column) => localRow[column]));
+        for (const { table, column } of referencingColumns) {
+          this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`).run(sharedId, local.id);
+        }
+        this.db.prepare("DELETE FROM legal_entities WHERE id = ?").run(local.id);
+      }
+    });
+    transaction();
+  }
+
+  /** Descobre, via PRAGMA foreign_key_list, toda tabela/coluna que referencia `referencedTable(id)` (inclui auto-referencia, ex: expense_categories.parent_category_id). */
+  private findColumnsReferencing(referencedTable: string): Array<{ table: string; column: string }> {
+    const tables = (this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name);
+    const result: Array<{ table: string; column: string }> = [];
+    for (const table of tables) {
+      const foreignKeys = this.db.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{ table: string; from: string }>;
+      for (const fk of foreignKeys) {
+        if (fk.table === referencedTable) result.push({ table, column: fk.from });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Mesmo problema/correcao de reconcileThirdPartyLegalEntityIds, agora pra
+   * expense_categories: categorias-padrao criadas ANTES da correcao de id
+   * deterministico (ensureDefaultExpenseCategories) ainda existem localmente
+   * com id aleatorio antigo -- se o Supabase ja tem a MESMA categoria
+   * (organization_id, code) sob OUTRO id (de outro PC que sincronizou depois
+   * da correcao), o push colide no indice unico em vez de simplesmente
+   * atualizar. Adota o id do Supabase localmente antes de empurrar.
+   */
+  private async reconcileDuplicateExpenseCategories(): Promise<void> {
+    if (!this.sharedRepository) return;
+    const localRows = this.db.prepare("SELECT * FROM expense_categories WHERE code IS NOT NULL").all() as DbRecord[];
+    if (localRows.length === 0) return;
+    let sharedRows: Array<{ id: string; organization_id: string; code: string | null }>;
+    try {
+      sharedRows = (await this.withTimeout(this.sharedRepository.listAll("expense_categories", "code"), 15_000, "Tempo esgotado ao consultar expense_categories.")) as Array<{ id: string; organization_id: string; code: string | null }>;
+    } catch {
+      return;
+    }
+    const keyOf = (organizationId: unknown, code: unknown): string => `${organizationId}::${code}`;
+    const sharedIdByKey = new Map(sharedRows.filter((row) => row.code).map((row) => [keyOf(row.organization_id, row.code), row.id]));
+    const toRedirect = localRows.filter((local) => {
+      const sharedId = sharedIdByKey.get(keyOf(local.organization_id, local.code));
+      return sharedId && sharedId !== local.id;
+    });
+    if (toRedirect.length === 0) return;
+    const referencingColumns = this.findColumnsReferencing("expense_categories");
+    const transaction = this.db.transaction(() => {
+      for (const local of toRedirect) {
+        const sharedId = sharedIdByKey.get(keyOf(local.organization_id, local.code)) as string;
+        // Libera o slot do indice unico (organization_id, code) antes de
+        // inserir a linha nova sob o id do Supabase.
+        this.db.prepare("UPDATE expense_categories SET code = NULL WHERE id = ?").run(local.id);
+        const columns = Object.keys(local).filter((column) => column !== "id");
+        this.db.prepare(
+          `INSERT OR IGNORE INTO expense_categories (id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})`
+        ).run(sharedId, ...columns.map((column) => local[column]));
+        for (const { table, column } of referencingColumns) {
+          this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`).run(sharedId, local.id);
+        }
+        this.db.prepare("DELETE FROM expense_categories WHERE id = ?").run(local.id);
+      }
+    });
+    transaction();
+  }
+
+  /**
+   * Empurra pro Supabase TUDO que existe localmente nas tabelas
+   * compartilhadas (mesma lista e' ordem de HOT_SYNC_TABLES, que ja' respeita
+   * FK), um lote por tabela. Resolve tanto o caso de um PC que ja tinha
+   * cadastro ANTES desta migracao quanto o de um push individual que falhou
+   * silenciosamente na hora da criacao (ex: rede instavel no meio de um lote
+   * grande de import de XML). Chamado automaticamente ao conectar (ver
+   * sharedAuthSignIn) e exposto como acao manual ("Sincronizar agora") --
+   * seguro rodar de novo a qualquer momento (upsert).
+   *
+   * Cada tabela e' UM lote (upsertRows manda todas as linhas numa unica
+   * chamada), nao uma chamada por linha -- com centenas de notas, uma chamada
+   * por linha levava minutos e travava a tela "carregando" se uma unica
+   * requisicao no meio do caminho engasgasse na rede. Cada tabela tambem tem
+   * um limite de tempo (30s): se uma travar, ela falha e a proxima tabela
+   * continua, em vez de travar "Sincronizar agora" pra sempre.
+   */
+  async pushAllLocalReferenceDataToShared(): Promise<Array<{ table: string; pushed: number; error: string | null }>> {
+    if (!this.sharedRepository) return [];
+    await this.reconcileThirdPartyLegalEntityIds();
+    await this.reconcileDuplicateExpenseCategories();
+    const results: Array<{ table: string; pushed: number; error: string | null }> = [];
+    for (const { table } of HOT_SYNC_TABLES) {
+      // document_sequences so' pode ser escrita via a RPC reserve_document_number
+      // (SECURITY DEFINER, migration 0006) -- de proposito nao tem policy de
+      // insert/update no Supabase, pra evitar dois PCs reservando o mesmo
+      // numero ao mesmo tempo. Entra em HOT_SYNC_TABLES so' pro lado de
+      // PUXAR (syncSharedDataDown); tentar empurrar sempre falha por RLS.
+      if (table === "document_sequences") {
+        results.push({ table, pushed: 0, error: null });
+        continue;
+      }
+      const rows = this.db.prepare(`SELECT * FROM ${table}`).all() as DbRecord[];
+      if (rows.length === 0) {
+        results.push({ table, pushed: 0, error: null });
+        continue;
+      }
+      const sharedRows = rows.map((row) => toSharedRow(row, table));
+      // business_partner_roles e' a unica tabela onde o Postgres gera seu
+      // proprio id (ver create_business_partner/addBusinessPartnerRole, que
+      // nunca enviam o id local) -- reenviar o id local aqui criaria uma
+      // linha nova a cada reconciliacao em vez de atualizar a existente,
+      // violando o indice unico (business_partner_id, role). Upsert mira a
+      // chave natural em vez do id nesse caso especifico.
+      const onConflict = table === "business_partner_roles" ? "business_partner_id,role" : undefined;
+      if (onConflict) for (const row of sharedRows) delete row.id;
+      // Envia em pedacos de ate' 100 linhas em vez de um unico lote com a
+      // tabela inteira -- xml_import_files, por exemplo, guarda o XML
+      // extraido inteiro por arquivo (extracted_data_json), e uma tabela com
+      // centenas de linhas grandes numa unica requisicao arrisca estourar
+      // tempo/tamanho e falhar tudo de uma vez ("Sem conexao com o
+      // servidor"). Em pedacos menores, um problema pontual so' derruba
+      // aquele pedaco -- o resto continua e fica so' pra proxima rodada.
+      let pushed = 0;
+      let lastError: string | null = null;
+      for (let offset = 0; offset < sharedRows.length; offset += 100) {
+        const chunk = sharedRows.slice(offset, offset + 100);
+        try {
+          await this.withTimeout(
+            this.sharedRepository.upsertRows(table, chunk, onConflict),
+            30_000,
+            `Tempo esgotado ao enviar ${table}.`
+          );
+          pushed += chunk.length;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "Falha desconhecida.";
+        }
+      }
+      results.push({ table, pushed, error: lastError });
+    }
+    return results;
+  }
+
+  private withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); }
+      );
+    });
+  }
 
   getBootstrapData(version: string): BootstrapData {
     return {
@@ -242,68 +727,59 @@ export class AppRepository {
     return organization;
   }
 
-  createOrganization(input: unknown): Organization {
+  async createOrganization(input: unknown): Promise<Organization> {
     const data = organizationInputSchema.parse(input);
     this.assertUniqueSlug(data.slug);
     const now = new Date().toISOString();
     const id = randomUUID();
-    this.db
-      .prepare(
-        `INSERT INTO organizations (
-          id, name, slug, display_name, app_display_name, description, logo_path, compact_logo_path, icon_path,
-          primary_color, secondary_color, accent_color, theme_mode, is_active, created_at, updated_at
-        ) VALUES (@id, @name, @slug, @displayName, @appDisplayName, @description, @logoPath, @compactLogoPath, @iconPath,
-          @primaryColor, @secondaryColor, @accentColor, @themeMode, @isActive, @createdAt, @updatedAt)`
-      )
-      .run({ id, ...data, description: data.description ?? null, logoPath: data.logoPath ?? null, compactLogoPath: data.compactLogoPath ?? null, iconPath: data.iconPath ?? null, isActive: data.isActive ? 1 : 0, createdAt: now, updatedAt: now });
+    const row: DbRecord = {
+      id, name: data.name, slug: data.slug, display_name: data.displayName, app_display_name: data.appDisplayName,
+      description: data.description ?? null, logo_path: data.logoPath ?? null, compact_logo_path: data.compactLogoPath ?? null,
+      icon_path: data.iconPath ?? null, primary_color: data.primaryColor, secondary_color: data.secondaryColor,
+      accent_color: data.accentColor, theme_mode: data.themeMode, is_active: data.isActive, created_at: now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("organizations", row));
+    this.upsertLocalRow("organizations", row);
     return this.getOrganization(id);
   }
 
-  updateOrganization(id: string, input: unknown): Organization {
+  async updateOrganization(id: string, input: unknown): Promise<Organization> {
     this.getOrganization(id);
     const data = organizationInputSchema.parse(input);
     this.assertUniqueSlug(data.slug, id);
-    this.db
-      .prepare(
-        `UPDATE organizations SET
-          name = @name, slug = @slug, display_name = @displayName, app_display_name = @appDisplayName, description = @description,
-          logo_path = @logoPath, compact_logo_path = @compactLogoPath, icon_path = @iconPath,
-          primary_color = @primaryColor, secondary_color = @secondaryColor, accent_color = @accentColor,
-          theme_mode = @themeMode, is_active = @isActive, updated_at = @updatedAt
-         WHERE id = @id`
-      )
-      .run({ id, ...data, description: data.description ?? null, logoPath: data.logoPath ?? null, compactLogoPath: data.compactLogoPath ?? null, iconPath: data.iconPath ?? null, isActive: data.isActive ? 1 : 0, updatedAt: new Date().toISOString() });
+    const row: DbRecord = {
+      id, name: data.name, slug: data.slug, display_name: data.displayName, app_display_name: data.appDisplayName,
+      description: data.description ?? null, logo_path: data.logoPath ?? null, compact_logo_path: data.compactLogoPath ?? null,
+      icon_path: data.iconPath ?? null, primary_color: data.primaryColor, secondary_color: data.secondaryColor,
+      accent_color: data.accentColor, theme_mode: data.themeMode, is_active: data.isActive, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, row));
+    this.patchLocalRow("organizations", id, row);
     return this.getOrganization(id);
   }
 
-  updateOrganizationBranding(id: string, paths: Partial<Pick<Organization, "logoPath" | "compactLogoPath" | "iconPath">>): Organization {
+  async updateOrganizationBranding(id: string, paths: Partial<Pick<Organization, "logoPath" | "compactLogoPath" | "iconPath">>): Promise<Organization> {
     const organization = this.getOrganization(id);
-    this.db
-      .prepare(
-        `UPDATE organizations SET
-          logo_path = @logoPath,
-          compact_logo_path = @compactLogoPath,
-          icon_path = @iconPath,
-          updated_at = @updatedAt
-         WHERE id = @id`
-      )
-      .run({
-        id,
-        logoPath: paths.logoPath ?? organization.logoPath,
-        compactLogoPath: paths.compactLogoPath ?? organization.compactLogoPath,
-        iconPath: paths.iconPath ?? organization.iconPath,
-        updatedAt: new Date().toISOString()
-      });
+    const patch: DbRecord = {
+      logo_path: paths.logoPath ?? organization.logoPath,
+      compact_logo_path: paths.compactLogoPath ?? organization.compactLogoPath,
+      icon_path: paths.iconPath ?? organization.iconPath,
+      updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
+    this.patchLocalRow("organizations", id, patch);
     return this.getOrganization(id);
   }
 
-  activateOrganization(id: string): Organization {
+  async activateOrganization(id: string): Promise<Organization> {
     this.getOrganization(id);
-    this.db.prepare("UPDATE organizations SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
+    this.patchLocalRow("organizations", id, patch);
     return this.getOrganization(id);
   }
 
-  deactivateOrganization(id: string, replacementOrganizationId?: string): Organization {
+  async deactivateOrganization(id: string, replacementOrganizationId?: string): Promise<Organization> {
     const profile = this.getInstallationProfile();
     const organization = this.getOrganization(id);
     const activeAllowed = this.listOrganizations({ status: "active" }).filter((item) => item.id !== id);
@@ -321,8 +797,108 @@ export class AppRepository {
         confirmVariantChange: false
       });
     }
-    this.db.prepare("UPDATE organizations SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), organization.id);
+    const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", organization.id, patch));
+    this.patchLocalRow("organizations", organization.id, patch);
     return this.getOrganization(id);
+  }
+
+  /**
+   * Exclusao DE VERDADE (nao arquivamento) -- diferente de deleteBusinessPartner
+   * (que arquiva por decisao consciente, ver comentario la'), esta existe
+   * especificamente pra remover cadastro de teste/erro que nunca teve
+   * nenhuma nota, operacao ou cobranca de verdade vinculada. So' funciona
+   * quando a organizacao esta 100% vazia (sem nenhum CNPJ, local, parceiro ou
+   * produto) -- qualquer coisa vinculada bloqueia a exclusao com erro claro,
+   * pra nunca arriscar apagar dado real por engano.
+   */
+  async deleteOrganization(id: string): Promise<void> {
+    this.getOrganization(id);
+    const profile = this.getInstallationProfile();
+    if (profile?.defaultOrganizationId === id) {
+      throw new Error("Esta organizacao esta ativa nesta instalacao. Troque para outra organizacao antes de excluir.");
+    }
+    this.assertEmptyFor([
+      ["legal_entities", "organization_id"],
+      ["locations", "organization_id"],
+      ["business_partners", "organization_id"],
+      ["products", "organization_id"],
+      ["xml_import_jobs", "organization_id"],
+      ["service_rate_rules", "organization_id"],
+      ["fiscal_documents", "organization_id"],
+      ["operations", "organization_id"],
+      ["client_charges", "organization_id"],
+      ["deal_confirmations", "organization_id"]
+    ], id, "esta organizacao");
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("organizations", { id }));
+    this.db.prepare("DELETE FROM organizations WHERE id = ?").run(id);
+  }
+
+  /**
+   * Lanca erro se QUALQUER uma das tabelas/colunas informadas tiver ao menos
+   * uma linha apontando pro id -- guarda comum das exclusoes reais (ver
+   * deleteOrganization/deleteLegalEntity/permanentlyDeleteBusinessPartner).
+   */
+  private assertEmptyFor(checks: Array<[string, string]>, id: string, subject: string): void {
+    for (const [table, column] of checks) {
+      const row = this.db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE ${column} = ?`).get(id) as { c: number };
+      if (row.c > 0) {
+        throw new Error(`Nao e possivel excluir ${subject}: ainda existem registros em "${table}" vinculados. Remova ou desative-os primeiro.`);
+      }
+    }
+  }
+
+  /**
+   * Grava uma linha COMPLETA na copia local (SQLite) de uma tabela de
+   * referencia compartilhada -- upsert de verdade (insere se novo, ex: sync
+   * puxando uma linha criada em outro PC; substitui se ja existe). So' aceita
+   * linha completa porque o INSERT do upsert precisa satisfazer as colunas
+   * NOT NULL da tabela mesmo quando cai no ramo de UPDATE.
+   */
+  private upsertLocalRow(table: string, row: DbRecord): void {
+    const normalized: DbRecord = {};
+    for (const [key, value] of Object.entries(row)) {
+      normalized[key] = typeof value === "boolean" ? (value ? 1 : 0) : value;
+    }
+    const columns = Object.keys(normalized);
+    const placeholders = columns.map((c) => `@${c}`).join(", ");
+    const updates = columns.filter((c) => c !== "id").map((c) => `${c} = excluded.${c}`).join(", ");
+    this.db.prepare(`INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${updates}`).run(normalized);
+  }
+
+  /**
+   * Atualiza so' os campos informados numa linha que ja sabemos existir
+   * localmente (ex: activate/deactivate, branding) -- UPDATE simples, sem as
+   * exigencias de NOT NULL de um INSERT.
+   */
+  private patchLocalRow(table: string, id: string, patch: DbRecord): void {
+    const normalized: DbRecord = {};
+    for (const [key, value] of Object.entries(patch)) {
+      normalized[key] = typeof value === "boolean" ? (value ? 1 : 0) : value;
+    }
+    const columns = Object.keys(normalized);
+    const assignments = columns.map((c) => `${c} = @${c}`).join(", ");
+    this.db.prepare(`UPDATE ${table} SET ${assignments} WHERE id = @id`).run({ ...normalized, id });
+  }
+
+  /**
+   * Envolve QUALQUER push de cadastro de referencia pro Supabase -- nunca
+   * deixa a gravacao local depender da rede/RLS/estado remoto. Falha aqui so'
+   * loga (electron-log), nunca bloqueia a escrita local que vem depois. Bug
+   * real que motivou isso: um registro que so' existia no cache local (nunca
+   * chegou no Supabase, ou foi removido de la' por fora do app) fazia o
+   * UPDATE remoto falhar com "no rows returned" -- e como esse push era
+   * `await`ado sem tratamento, a excecao subia e a gravacao LOCAL (que viria
+   * logo depois) nunca chegava a rodar. Usuario clicava "Desativar" e nada
+   * acontecia, sem nenhum aviso.
+   */
+  private async trySharedReferenceWrite(action: () => Promise<unknown>): Promise<void> {
+    if (!this.sharedRepository) return;
+    try {
+      await action();
+    } catch (error) {
+      log.warn("Falha ao sincronizar cadastro com o Supabase (gravacao local prossegue mesmo assim)", error instanceof Error ? error.message : error);
+    }
   }
 
   listLegalEntities(filters: { search?: string; organizationId?: string; state?: string; status?: "active" | "inactive" | "all" } = {}): LegalEntity[] {
@@ -347,59 +923,78 @@ export class AppRepository {
     return entity;
   }
 
-  createLegalEntity(input: unknown): LegalEntity {
+  async createLegalEntity(input: unknown): Promise<LegalEntity> {
     const data = legalEntityInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     this.assertValidLegalEntity(data);
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO legal_entities (
-          id, organization_id, legal_name, trade_name, cnpj, state_registration, municipal_registration,
-          email, phone, address_line, address_number, address_complement, district, city, state,
-          postal_code, document_prefix, default_bank_name, default_bank_code, default_bank_agency,
-          default_bank_account, default_pix_key, is_draft, is_active, created_at, updated_at
-        ) VALUES (@id, @organizationId, @legalName, @tradeName, @cnpj, @stateRegistration, @municipalRegistration,
-          @email, @phone, @addressLine, @addressNumber, @addressComplement, @district, @city, @state,
-          @postalCode, @documentPrefix, @defaultBankName, @defaultBankCode, @defaultBankAgency,
-          @defaultBankAccount, @defaultPixKey, @isDraft, @isActive, @createdAt, @updatedAt)`
-      )
-      .run({ id, ...data, isDraft: data.isDraft ? 1 : 0, isActive: data.isActive ? 1 : 0, createdAt: now, updatedAt: now });
-    return this.getLegalEntity(id);
+    const row = this.buildLegalEntityRow(data);
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("legal_entities", row));
+    this.upsertLocalRow("legal_entities", row);
+    return this.getLegalEntity(String(row.id));
   }
 
-  updateLegalEntity(id: string, input: unknown): LegalEntity {
+  private buildLegalEntityRow(data: ReturnType<typeof legalEntityInputSchema.parse>, id: string = randomUUID()): DbRecord {
+    const now = new Date().toISOString();
+    return {
+      id, organization_id: data.organizationId, legal_name: data.legalName, trade_name: data.tradeName, cnpj: data.cnpj,
+      state_registration: data.stateRegistration, municipal_registration: data.municipalRegistration, email: data.email,
+      phone: data.phone, address_line: data.addressLine, address_number: data.addressNumber, address_complement: data.addressComplement,
+      district: data.district, city: data.city, state: data.state, postal_code: data.postalCode, document_prefix: data.documentPrefix,
+      default_bank_name: data.defaultBankName, default_bank_code: data.defaultBankCode, default_bank_agency: data.defaultBankAgency,
+      default_bank_account: data.defaultBankAccount, default_pix_key: data.defaultPixKey,
+      is_draft: data.isDraft, is_active: data.isActive, created_at: now, updated_at: now
+    };
+  }
+
+  /**
+   * Cria um CNPJ so' localmente, sem empurrar pro Supabase -- usado apenas
+   * pela criacao automatica de CNPJ "terceirizado" durante importacao de XML
+   * (getOrCreateThirdPartyLegalEntityFromXml), que roda dentro de uma
+   * transacao SQLite sincrona (this.db.transaction) e por isso nao pode
+   * conter nenhum await. Fica local ate' a importacao de XML virar RPC do
+   * Postgres (nesse ponto o insert de CNPJ terceirizado passa a ser so' mais
+   * uma linha de SQL dentro da propria RPC, sem essa tensao sync/async).
+   */
+  private createLegalEntityLocalOnly(input: unknown, id?: string): LegalEntity {
+    const data = legalEntityInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    this.assertValidLegalEntity(data);
+    const row = id ? this.buildLegalEntityRow(data, id) : this.buildLegalEntityRow(data);
+    this.upsertLocalRow("legal_entities", row);
+    return this.getLegalEntity(String(row.id));
+  }
+
+  async updateLegalEntity(id: string, input: unknown): Promise<LegalEntity> {
     this.getLegalEntity(id);
     const data = legalEntityInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     this.assertValidLegalEntity(data, id);
-    this.db
-      .prepare(
-        `UPDATE legal_entities SET
-          organization_id = @organizationId, legal_name = @legalName, trade_name = @tradeName, cnpj = @cnpj,
-          state_registration = @stateRegistration, municipal_registration = @municipalRegistration, email = @email,
-          phone = @phone, address_line = @addressLine, address_number = @addressNumber, address_complement = @addressComplement,
-          district = @district, city = @city, state = @state, postal_code = @postalCode, document_prefix = @documentPrefix,
-          default_bank_name = @defaultBankName, default_bank_code = @defaultBankCode, default_bank_agency = @defaultBankAgency,
-          default_bank_account = @defaultBankAccount, default_pix_key = @defaultPixKey,
-          is_draft = @isDraft, is_active = @isActive, updated_at = @updatedAt
-         WHERE id = @id`
-      )
-      .run({ id, ...data, isDraft: data.isDraft ? 1 : 0, isActive: data.isActive ? 1 : 0, updatedAt: new Date().toISOString() });
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, legal_name: data.legalName, trade_name: data.tradeName, cnpj: data.cnpj,
+      state_registration: data.stateRegistration, municipal_registration: data.municipalRegistration, email: data.email,
+      phone: data.phone, address_line: data.addressLine, address_number: data.addressNumber, address_complement: data.addressComplement,
+      district: data.district, city: data.city, state: data.state, postal_code: data.postalCode, document_prefix: data.documentPrefix,
+      default_bank_name: data.defaultBankName, default_bank_code: data.defaultBankCode, default_bank_agency: data.defaultBankAgency,
+      default_bank_account: data.defaultBankAccount, default_pix_key: data.defaultPixKey,
+      is_draft: data.isDraft, is_active: data.isActive, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, row));
+    this.patchLocalRow("legal_entities", id, row);
     return this.getLegalEntity(id);
   }
 
-  activateLegalEntity(id: string): LegalEntity {
+  async activateLegalEntity(id: string): Promise<LegalEntity> {
     const entity = this.getLegalEntity(id);
     if (!entity.cnpj || !isValidCnpj(entity.cnpj)) {
       throw new Error("CNPJ valido e obrigatorio para ativar o cadastro.");
     }
-    this.db.prepare("UPDATE legal_entities SET is_active = 1, is_draft = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: true, is_draft: false, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, patch));
+    this.patchLocalRow("legal_entities", id, patch);
     return this.getLegalEntity(id);
   }
 
-  deactivateLegalEntity(id: string, replacementLegalEntityId?: string): LegalEntity {
+  async deactivateLegalEntity(id: string, replacementLegalEntityId?: string): Promise<LegalEntity> {
     const entity = this.getLegalEntity(id);
     const profile = this.getInstallationProfile();
     if (profile?.defaultLegalEntityId === id) {
@@ -412,8 +1007,32 @@ export class AppRepository {
       }
       this.updateInstallationProfile({ ...profile, defaultLegalEntityId: replacementLegalEntityId });
     }
-    this.db.prepare("UPDATE legal_entities SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, patch));
+    this.patchLocalRow("legal_entities", id, patch);
     return this.getLegalEntity(id);
+  }
+
+  /** Exclusao de verdade -- mesma logica/motivo de deleteOrganization, ver comentario la'. */
+  async deleteLegalEntity(id: string): Promise<void> {
+    this.getLegalEntity(id);
+    const profile = this.getInstallationProfile();
+    if (profile?.defaultLegalEntityId === id) {
+      throw new Error("Este CNPJ esta ativo nesta instalacao. Troque para outro CNPJ antes de excluir.");
+    }
+    this.assertEmptyFor([
+      ["fiscal_documents", "own_legal_entity_id"],
+      ["fiscal_documents", "partner_legal_entity_id"],
+      ["operations", "own_legal_entity_id"],
+      ["client_charges", "own_legal_entity_id"],
+      ["document_sequences", "own_legal_entity_id"],
+      ["service_rate_rules", "own_legal_entity_id"],
+      ["service_rate_rules", "counterparty_partner_legal_entity_id"],
+      ["deal_confirmations", "own_legal_entity_id"],
+      ["deal_confirmation_parties", "own_legal_entity_id"]
+    ], id, "este CNPJ");
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("legal_entities", { id }));
+    this.db.prepare("DELETE FROM legal_entities WHERE id = ?").run(id);
   }
 
   listLocations(filters: { search?: string; organizationId?: string; legalEntityId?: string; type?: string; status?: "active" | "inactive" | "all" } = {}): Location[] {
@@ -439,49 +1058,50 @@ export class AppRepository {
     return location;
   }
 
-  createLocation(input: unknown): Location {
+  async createLocation(input: unknown): Promise<Location> {
     const data = locationInputSchema.parse(input);
     this.assertValidLocation(data);
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO locations (
-          id, organization_id, legal_entity_id, name, type, description, address_line, address_number,
-          address_complement, district, city, state, postal_code, is_active, created_at, updated_at
-        ) VALUES (@id, @organizationId, @legalEntityId, @name, @type, @description, @addressLine, @addressNumber,
-          @addressComplement, @district, @city, @state, @postalCode, @isActive, @createdAt, @updatedAt)`
-      )
-      .run({ id, ...data, isActive: data.isActive ? 1 : 0, createdAt: now, updatedAt: now });
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, legal_entity_id: data.legalEntityId, name: data.name, type: data.type,
+      description: data.description, address_line: data.addressLine, address_number: data.addressNumber,
+      address_complement: data.addressComplement, district: data.district, city: data.city, state: data.state,
+      postal_code: data.postalCode, is_active: data.isActive, created_at: now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("locations", row));
+    this.upsertLocalRow("locations", row);
     return this.getLocation(id);
   }
 
-  updateLocation(id: string, input: unknown): Location {
+  async updateLocation(id: string, input: unknown): Promise<Location> {
     this.getLocation(id);
     const data = locationInputSchema.parse(input);
     this.assertValidLocation(data);
-    this.db
-      .prepare(
-        `UPDATE locations SET
-          organization_id = @organizationId, legal_entity_id = @legalEntityId, name = @name, type = @type,
-          description = @description, address_line = @addressLine, address_number = @addressNumber,
-          address_complement = @addressComplement, district = @district, city = @city, state = @state,
-          postal_code = @postalCode, is_active = @isActive, updated_at = @updatedAt
-         WHERE id = @id`
-      )
-      .run({ id, ...data, isActive: data.isActive ? 1 : 0, updatedAt: new Date().toISOString() });
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, legal_entity_id: data.legalEntityId, name: data.name, type: data.type,
+      description: data.description, address_line: data.addressLine, address_number: data.addressNumber,
+      address_complement: data.addressComplement, district: data.district, city: data.city, state: data.state,
+      postal_code: data.postalCode, is_active: data.isActive, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("locations", id, row));
+    this.patchLocalRow("locations", id, row);
     return this.getLocation(id);
   }
 
-  activateLocation(id: string): Location {
+  async activateLocation(id: string): Promise<Location> {
     this.getLocation(id);
-    this.db.prepare("UPDATE locations SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("locations", id, patch));
+    this.patchLocalRow("locations", id, patch);
     return this.getLocation(id);
   }
 
-  deactivateLocation(id: string): Location {
+  async deactivateLocation(id: string): Promise<Location> {
     this.getLocation(id);
-    this.db.prepare("UPDATE locations SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("locations", id, patch));
+    this.patchLocalRow("locations", id, patch);
     return this.getLocation(id);
   }
 
@@ -502,161 +1122,372 @@ export class AppRepository {
     return partner;
   }
 
-  createBusinessPartner(input: unknown): BusinessPartner {
+  async createBusinessPartner(input: unknown): Promise<BusinessPartner> {
     const data = businessPartnerInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     const id = randomUUID();
     const now = new Date().toISOString();
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, display_name: data.displayName, notes: data.notes, is_active: data.isActive,
+      credit_limit_cents: data.creditLimitCents ?? null, document_number: data.documentNumber ?? null, email: data.email ?? null,
+      phone: data.phone ?? null, mobile: data.mobile ?? null, postal_code: data.postalCode ?? null, address_line: data.addressLine,
+      address_number: data.addressNumber, address_complement: data.addressComplement, district: data.district, city: data.city,
+      state: data.state, created_at: now, updated_at: now
+    };
+    // business_partners + business_partner_roles precisam ser gravados
+    // atomicamente -- o REST do Supabase nao abrange 2 tabelas numa
+    // transacao do lado do client, por isso vira RPC (migration 0007).
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.rpc("create_business_partner", { p_row: row, p_roles: data.roles }));
     const transaction = this.db.transaction(() => {
-      this.db.prepare(`INSERT INTO business_partners (
-        id, organization_id, display_name, notes, is_active, credit_limit_cents, document_number, email, phone, mobile,
-        postal_code, address_line, address_number, address_complement, district, city, state, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(
-          id,
-          data.organizationId,
-          data.displayName,
-          data.notes,
-          data.isActive ? 1 : 0,
-          data.creditLimitCents ?? null,
-          data.documentNumber ?? null,
-          data.email ?? null,
-          data.phone ?? null,
-          data.mobile ?? null,
-          data.postalCode ?? null,
-          data.addressLine,
-          data.addressNumber,
-          data.addressComplement,
-          data.district,
-          data.city,
-          data.state,
-          now,
-          now
-        );
-      data.roles.forEach((role) => this.addBusinessPartnerRole(id, role, now));
+      this.upsertLocalRow("business_partners", row);
+      data.roles.forEach((role) => this.addBusinessPartnerRoleLocal(id, role, now));
     });
     transaction();
     return this.getBusinessPartner(id);
   }
 
-  updateBusinessPartner(id: string, input: unknown): BusinessPartner {
+  async updateBusinessPartner(id: string, input: unknown): Promise<BusinessPartner> {
     this.getBusinessPartner(id);
     const data = businessPartnerInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     if (data.roles.length === 0) throw new Error("Parceiro deve possuir pelo menos um papel.");
-    const now = new Date().toISOString();
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, display_name: data.displayName, notes: data.notes, is_active: data.isActive,
+      credit_limit_cents: data.creditLimitCents ?? null, document_number: data.documentNumber ?? null, email: data.email ?? null,
+      phone: data.phone ?? null, mobile: data.mobile ?? null, postal_code: data.postalCode ?? null, address_line: data.addressLine,
+      address_number: data.addressNumber, address_complement: data.addressComplement, district: data.district, city: data.city,
+      state: data.state, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.rpc("update_business_partner", { p_id: id, p_row: row, p_roles: data.roles }));
     const transaction = this.db.transaction(() => {
-      this.db.prepare(`UPDATE business_partners SET
-        organization_id = ?, display_name = ?, notes = ?, is_active = ?, credit_limit_cents = ?, document_number = ?, email = ?,
-        phone = ?, mobile = ?, postal_code = ?, address_line = ?, address_number = ?, address_complement = ?, district = ?,
-        city = ?, state = ?, updated_at = ? WHERE id = ?`)
-        .run(
-          data.organizationId,
-          data.displayName,
-          data.notes,
-          data.isActive ? 1 : 0,
-          data.creditLimitCents ?? null,
-          data.documentNumber ?? null,
-          data.email ?? null,
-          data.phone ?? null,
-          data.mobile ?? null,
-          data.postalCode ?? null,
-          data.addressLine,
-          data.addressNumber,
-          data.addressComplement,
-          data.district,
-          data.city,
-          data.state,
-          now,
-          id
-        );
+      this.patchLocalRow("business_partners", id, row);
       this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
-      data.roles.forEach((role) => this.addBusinessPartnerRole(id, role, now));
+      data.roles.forEach((role) => this.addBusinessPartnerRoleLocal(id, role, row.updated_at as string));
     });
     transaction();
     return this.getBusinessPartner(id);
   }
 
-  addBusinessPartnerRole(id: string, role: BusinessPartnerRole, createdAt = new Date().toISOString()): BusinessPartner {
+  async addBusinessPartnerRole(id: string, role: BusinessPartnerRole, createdAt = new Date().toISOString()): Promise<BusinessPartner> {
     if (this.getPartnerRoles(id).includes(role)) throw new Error("Papel ja cadastrado para este parceiro.");
-    this.db.prepare("INSERT INTO business_partner_roles (id, business_partner_id, role, created_at) VALUES (?, ?, ?, ?)")
-      .run(randomUUID(), id, role, createdAt);
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("business_partner_roles", { business_partner_id: id, role, created_at: createdAt }));
+    this.addBusinessPartnerRoleLocal(id, role, createdAt);
     return this.getBusinessPartner(id);
   }
 
-  removeBusinessPartnerRole(id: string, role: BusinessPartnerRole): BusinessPartner {
+  private addBusinessPartnerRoleLocal(id: string, role: BusinessPartnerRole, createdAt: string): void {
+    this.db.prepare("INSERT INTO business_partner_roles (id, business_partner_id, role, created_at) VALUES (?, ?, ?, ?)")
+      .run(randomUUID(), id, role, createdAt);
+  }
+
+  async removeBusinessPartnerRole(id: string, role: BusinessPartnerRole): Promise<BusinessPartner> {
     const roles = this.getPartnerRoles(id);
     if (roles.length <= 1 && roles.includes(role)) throw new Error("Parceiro deve possuir pelo menos um papel.");
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("business_partner_roles", { business_partner_id: id, role }));
     this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ? AND role = ?").run(id, role);
     return this.getBusinessPartner(id);
   }
 
-  activateBusinessPartner(id: string): BusinessPartner {
+  async activateBusinessPartner(id: string): Promise<BusinessPartner> {
     this.getBusinessPartner(id);
-    this.db.prepare("UPDATE business_partners SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("business_partners", id, patch));
+    this.patchLocalRow("business_partners", id, patch);
     return this.getBusinessPartner(id);
   }
 
-  deactivateBusinessPartner(id: string): BusinessPartner {
+  async deactivateBusinessPartner(id: string): Promise<BusinessPartner> {
     this.getBusinessPartner(id);
-    this.db.prepare("UPDATE business_partners SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("business_partners", id, patch));
+    this.patchLocalRow("business_partners", id, patch);
     return this.getBusinessPartner(id);
   }
 
-  deleteBusinessPartner(id: string): void {
+  /**
+   * Arquiva o parceiro em vez de apagar em cascata (decisao consciente, ver
+   * plano de migracao Supabase) -- um hard-delete cascateando por ~34
+   * tabelas nao pode mais ser atomico quando parte fica em SQLite local e
+   * parte no Postgres compartilhado (sem transacao unica cobrindo os dois
+   * bancos). Arquivar em vez de apagar tambem tem o efeito colateral bom de
+   * preservar o historico de notas/cobrancas/pagamentos do parceiro, que o
+   * hard-delete antigo destruia por completo.
+   */
+  async deleteBusinessPartner(id: string): Promise<void> {
     this.getBusinessPartner(id);
-    const transaction = this.db.transaction(() => {
-      const partnerLegalEntitySubquery = "SELECT id FROM partner_legal_entities WHERE business_partner_id = ?";
-      const fiscalDocumentSubquery = `SELECT id FROM fiscal_documents WHERE responsible_partner_id = ? OR partner_legal_entity_id IN (${partnerLegalEntitySubquery})`;
-      const operationSubquery = `SELECT id FROM operations WHERE responsible_partner_id = ? OR fiscal_document_id IN (${fiscalDocumentSubquery})`;
-      const clientChargeSubquery = "SELECT id FROM client_charges WHERE client_partner_id = ?";
-      const clientLedgerSubquery = `SELECT id FROM client_ledger_entries WHERE client_partner_id = ? OR client_charge_id IN (${clientChargeSubquery})`;
-      const clientPaymentSubquery = "SELECT id FROM client_payments WHERE client_partner_id = ?";
-      const accountPayableSubquery = `SELECT id FROM accounts_payable WHERE supplier_partner_id = ? OR supplier_legal_entity_id IN (${partnerLegalEntitySubquery})`;
+    const now = new Date().toISOString();
 
-      this.db.prepare(`DELETE FROM spreadsheet_import_rows WHERE operation_id IN (${operationSubquery}) OR fiscal_document_id IN (${fiscalDocumentSubquery})`)
-        .run(id, id, id, id, id);
-      this.db.prepare(`DELETE FROM xml_import_files WHERE fiscal_document_id IN (${fiscalDocumentSubquery}) OR fiscal_document_event_id IN (SELECT id FROM fiscal_document_events WHERE fiscal_document_id IN (${fiscalDocumentSubquery}))`).run(id, id, id, id);
-      this.db.prepare(`DELETE FROM deal_confirmation_operations WHERE operation_id IN (${operationSubquery})`).run(id, id, id);
-      this.db.prepare(`DELETE FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM client_charge_operations WHERE operation_id IN (${operationSubquery}) OR client_charge_id IN (${clientChargeSubquery})`).run(id, id, id, id);
+    const partnerPatch: DbRecord = { is_active: false, updated_at: now };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("business_partners", id, partnerPatch));
+    this.patchLocalRow("business_partners", id, partnerPatch);
 
-      this.db.prepare(`DELETE FROM client_credit_allocations WHERE ledger_entry_id IN (${clientLedgerSubquery}) OR client_charge_id IN (${clientChargeSubquery})`).run(id, id, id);
-      this.db.prepare(`DELETE FROM client_payment_allocations WHERE client_payment_id IN (${clientPaymentSubquery}) OR client_charge_id IN (${clientChargeSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM client_charge_adjustments WHERE client_charge_id IN (${clientChargeSubquery}) OR ledger_entry_id IN (${clientLedgerSubquery})`).run(id, id, id);
-      this.db.prepare(`DELETE FROM charge_document_versions WHERE client_charge_id IN (${clientChargeSubquery})`).run(id);
-      this.db.prepare(`DELETE FROM charge_status_history WHERE client_charge_id IN (${clientChargeSubquery})`).run(id);
-      this.db.prepare(`UPDATE operations SET client_charge_id = NULL, billing_status = 'UNBILLED' WHERE client_charge_id IN (${clientChargeSubquery})`).run(id);
-      this.db.prepare(`DELETE FROM client_ledger_entries WHERE id IN (${clientLedgerSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM client_payments WHERE id IN (${clientPaymentSubquery})`).run(id);
-      this.db.prepare(`DELETE FROM client_charges WHERE id IN (${clientChargeSubquery})`).run(id);
+    for (const entity of this.listPartnerLegalEntities(id)) {
+      if (!entity.isActive) continue;
+      const patch: DbRecord = { is_active: false, updated_at: now };
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", entity.id, patch));
+      this.patchLocalRow("partner_legal_entities", entity.id, patch);
+    }
 
-      this.db.prepare(`DELETE FROM payable_payment_allocations WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM account_payable_allocations WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM payable_status_history WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM payable_document_attachments WHERE account_payable_id IN (${accountPayableSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM accounts_payable WHERE id IN (${accountPayableSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM payable_recurring_templates WHERE supplier_partner_id = ? OR supplier_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id);
-      this.db.prepare("DELETE FROM payable_installment_groups WHERE supplier_partner_id = ?").run(id);
+    for (const contact of this.listPartnerContacts(id)) {
+      if (!contact.isActive) continue;
+      const patch: DbRecord = { is_active: false, updated_at: now };
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_contacts", contact.id, patch));
+      this.patchLocalRow("partner_contacts", contact.id, patch);
+    }
 
-      this.db.prepare(`DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM fiscal_document_events WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM operations WHERE id IN (${operationSubquery})`).run(id, id, id);
-      this.db.prepare(`DELETE FROM fiscal_document_items WHERE fiscal_document_id IN (${fiscalDocumentSubquery})`).run(id, id);
-      this.db.prepare(`DELETE FROM fiscal_documents WHERE id IN (${fiscalDocumentSubquery})`).run(id, id);
+    for (const rule of this.listServiceRateRules({ businessPartnerId: id, status: "active" })) {
+      const patch: DbRecord = { is_active: false, updated_at: now };
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", rule.id, patch));
+      this.patchLocalRow("service_rate_rules", rule.id, patch);
+    }
 
-      this.db.prepare(`DELETE FROM product_aliases WHERE issuer_partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id);
-      this.db.prepare(`DELETE FROM operation_classification_rules WHERE client_partner_id = ? OR destination_partner_id = ? OR issuer_partner_legal_entity_id IN (${partnerLegalEntitySubquery}) OR recipient_partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id, id, id);
-      this.db.prepare(`DELETE FROM deal_confirmation_parties WHERE business_partner_id = ? OR partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id);
-      this.db.prepare("DELETE FROM service_rate_rules WHERE business_partner_id = ?").run(id);
-      this.db.prepare("DELETE FROM client_billing_profiles WHERE business_partner_id = ?").run(id);
-      this.db.prepare(`DELETE FROM partner_aliases WHERE business_partner_id = ? OR partner_legal_entity_id IN (${partnerLegalEntitySubquery})`).run(id, id);
-      this.db.prepare("DELETE FROM partner_contacts WHERE business_partner_id = ?").run(id);
-      this.db.prepare("DELETE FROM partner_legal_entities WHERE business_partner_id = ?").run(id);
-      this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
-      this.db.prepare("DELETE FROM business_partners WHERE id = ?").run(id);
-    });
-    transaction();
+    const billingProfile = this.getBillingProfile(id);
+    if (billingProfile?.isActive) {
+      const patch: DbRecord = { is_active: false, updated_at: now };
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("client_billing_profiles", billingProfile.id, patch));
+      this.patchLocalRow("client_billing_profiles", billingProfile.id, patch);
+    }
+  }
+
+  /**
+   * Exclusao de verdade -- mesma logica/motivo de deleteOrganization, ver
+   * comentario la'. So' remove o parceiro quando ele nunca teve nenhuma nota,
+   * operacao ou cobranca de verdade; caso contrario use deleteBusinessPartner
+   * (arquivar), que preserva o historico.
+   */
+  async permanentlyDeleteBusinessPartner(id: string): Promise<void> {
+    this.getBusinessPartner(id);
+    this.assertEmptyFor([
+      ["fiscal_documents", "responsible_partner_id"],
+      ["operations", "responsible_partner_id"],
+      ["client_charges", "client_partner_id"],
+      ["service_rate_rules", "business_partner_id"],
+      ["deal_confirmation_parties", "business_partner_id"]
+    ], id, "este parceiro");
+
+    for (const entity of this.listPartnerLegalEntities(id)) {
+      this.assertEmptyFor([
+        ["fiscal_documents", "partner_legal_entity_id"],
+        ["service_rate_rules", "counterparty_partner_legal_entity_id"],
+        ["deal_confirmation_parties", "partner_legal_entity_id"]
+      ], entity.id, "um CNPJ deste parceiro");
+    }
+
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("partner_contacts", { business_partner_id: id }));
+    this.db.prepare("DELETE FROM partner_contacts WHERE business_partner_id = ?").run(id);
+
+    for (const entity of this.listPartnerLegalEntities(id)) {
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("partner_legal_entities", { id: entity.id }));
+      this.db.prepare("DELETE FROM partner_legal_entities WHERE id = ?").run(entity.id);
+    }
+
+    const billingProfile = this.getBillingProfile(id);
+    if (billingProfile) {
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("client_billing_profiles", { id: billingProfile.id }));
+      this.db.prepare("DELETE FROM client_billing_profiles WHERE id = ?").run(billingProfile.id);
+    }
+
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("business_partner_roles", { business_partner_id: id }));
+    this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
+
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("business_partners", { id }));
+    this.db.prepare("DELETE FROM business_partners WHERE id = ?").run(id);
+  }
+
+  /**
+   * Sobra de quando cada PC gerava seu proprio id ao cadastrar o mesmo
+   * parceiro antes da sincronizacao entre PCs existir de verdade -- todas as
+   * copias acabaram indo pro Supabase e voltando pra todo mundo. Agrupa por
+   * nome (normalizado) porque, na pratica, so' UMA copia por CNPJ real
+   * consegue existir localmente (o indice UNIQUE de partner_legal_entities.cnpj
+   * bloqueia as outras de sincronizar) -- as demais copias do mesmo nome ficam
+   * sem nenhum CNPJ vinculado ("cascas vazias"). Cada grupo so' entra no
+   * relatorio como fundivel quando o padrao e' inequivoco:
+   *   - no maximo 1 membro tem CNPJ de verdade (os outros sao cascas vazias
+   *     do mesmo nome) -- canonico = quem tem o CNPJ (ou, se ninguem tiver,
+   *     quem tem mais notas/operacoes/cobrancas vinculadas); OU
+   * Grupos com 2+ CNPJs DIFERENTES sob o mesmo nome (matriz/filial -- comum
+   * em empresas de cafe com mais de um endereco) NAO entram: sao entidades
+   * legais realmente distintas, fundir errado arriscaria atribuir uma nota
+   * fiscal ao CNPJ errado. Esses ficam de fora do relatorio, pra revisao manual.
+   */
+  getBusinessPartnerDuplicateReport(organizationId?: string): Array<{
+    displayNameKey: string;
+    organizationId: string;
+    suggestedCanonicalPartnerId: string;
+    matchedCnpj: string | null;
+    partners: Array<{ id: string; displayName: string; cnpj: string | null; linkedRecords: number; createdAt: string }>;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT bp.id AS partner_id, bp.organization_id AS organization_id, bp.display_name AS display_name, bp.created_at AS created_at,
+        (SELECT ple.cnpj FROM partner_legal_entities ple WHERE ple.business_partner_id = bp.id AND ple.cnpj IS NOT NULL LIMIT 1) AS cnpj
+      FROM business_partners bp
+      WHERE bp.is_active = 1
+    `).all() as Array<{ partner_id: string; organization_id: string; display_name: string; created_at: string; cnpj: string | null }>;
+    const byName = new Map<string, { organizationId: string; partners: Array<{ id: string; displayName: string; createdAt: string; cnpj: string | null }> }>();
+    for (const row of rows) {
+      if (organizationId && row.organization_id !== organizationId) continue;
+      if (!this.isOrganizationAllowed(row.organization_id)) continue;
+      const key = `${row.organization_id}::${row.display_name.trim().toLowerCase()}`;
+      const entry = byName.get(key) ?? { organizationId: row.organization_id, partners: [] };
+      entry.partners.push({ id: row.partner_id, displayName: row.display_name, createdAt: row.created_at, cnpj: row.cnpj });
+      byName.set(key, entry);
+    }
+    const report: Array<{
+      displayNameKey: string;
+      organizationId: string;
+      suggestedCanonicalPartnerId: string;
+      matchedCnpj: string | null;
+      partners: Array<{ id: string; displayName: string; cnpj: string | null; linkedRecords: number; createdAt: string }>;
+    }> = [];
+    for (const [key, entry] of byName) {
+      if (entry.partners.length < 2) continue;
+      const distinctCnpjs = new Set(entry.partners.map((partner) => partner.cnpj).filter((cnpj): cnpj is string => cnpj !== null));
+      if (distinctCnpjs.size > 1) continue; // matriz/filial (ou qualquer coisa com 2+ CNPJs reais) -- nao mexe.
+      const partners = entry.partners
+        .map((partner) => ({ ...partner, linkedRecords: this.countLinkedBusinessPartnerRecords(partner.id) }))
+        .sort((a, b) => (b.cnpj !== null ? 1 : 0) - (a.cnpj !== null ? 1 : 0) || b.linkedRecords - a.linkedRecords || a.createdAt.localeCompare(b.createdAt));
+      report.push({ displayNameKey: key, organizationId: entry.organizationId, suggestedCanonicalPartnerId: partners[0].id, matchedCnpj: partners[0].cnpj, partners });
+    }
+    return report;
+  }
+
+  private countLinkedBusinessPartnerRecords(partnerId: string): number {
+    const count = (table: string, column: string): number =>
+      (this.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE ${column} = ?`).get(partnerId) as { c: number }).c;
+    return (
+      count("fiscal_documents", "responsible_partner_id") +
+      count("operations", "responsible_partner_id") +
+      count("client_charges", "client_partner_id") +
+      count("accounts_payable", "supplier_partner_id")
+    );
+  }
+
+  /**
+   * Funde um cadastro de parceiro duplicado (mesmo CNPJ, id diferente) num
+   * canonico. Segue o MESMO principio de deleteBusinessPartner (arquivar,
+   * nao apagar): o duplicado e' desativado e o nome marcado como mesclado,
+   * preservando o historico, em vez de apagado -- apagar arriscaria
+   * orfanizar qualquer tabela que referencie o id dele. So' os campos que
+   * representam trabalho operacional/futuro (notas, cobrancas, regras de
+   * preco, contas a pagar) sao redirecionados pro canonico, e os papeis
+   * (Cliente/Fornecedor/etc) do duplicado migram pro canonico (uniao dos
+   * dois, senao a fusao perderia uma capacidade); contatos e o proprio
+   * cadastro de CNPJ ficam no duplicado arquivado, como historico. Idempotente:
+   * rodar de novo pro mesmo par nao faz nada (as linhas ja foram movidas).
+   */
+  async mergeBusinessPartnerDuplicate(input: unknown): Promise<void> {
+    const data = mergeBusinessPartnerDuplicateInputSchema.parse(input);
+    const canonical = this.getBusinessPartner(data.canonicalPartnerId);
+    const duplicate = this.getBusinessPartner(data.duplicatePartnerId);
+    if (canonical.id === duplicate.id) throw new Error("Nao e possivel mesclar um cadastro com ele mesmo.");
+    if (canonical.organizationId !== duplicate.organizationId) throw new Error("Nao e possivel mesclar cadastros de organizacoes diferentes.");
+    const now = new Date().toISOString();
+
+    await this.applyBusinessPartnerMerge(canonical, duplicate, data.matchedCnpj, now, true);
+
+    // Registra a fusao -- sincroniza como qualquer outra tabela, entao autocorrige os outros PCs
+    // sozinha quando eles baixarem esta linha (ver syncTableDown, que chama applyBusinessPartnerMerge
+    // de novo do lado deles, sem reempurrar pro Supabase).
+    const mergeRow: DbRecord = {
+      id: deterministicUuid("businessPartnerMerge", duplicate.id),
+      organization_id: canonical.organizationId,
+      duplicate_partner_id: duplicate.id,
+      canonical_partner_id: canonical.id,
+      matched_cnpj: data.matchedCnpj,
+      reason: data.reason,
+      applied_at: now,
+      created_at: now
+    };
+    this.db.prepare(`
+      INSERT OR REPLACE INTO business_partner_merges (id, organization_id, duplicate_partner_id, canonical_partner_id, matched_cnpj, reason, applied_at, created_at)
+      VALUES (@id, @organization_id, @duplicate_partner_id, @canonical_partner_id, @matched_cnpj, @reason, @applied_at, @created_at)
+    `).run(mergeRow);
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.upsertRow("business_partner_merges", toSharedRow(mergeRow, "business_partner_merges")));
+  }
+
+  /**
+   * Nucleo da fusao, compartilhado entre a chamada direta (pushToShared=true,
+   * quando ESTE PC decide a fusao) e a aplicacao automatica de uma fusao que
+   * chegou de outro PC via sync-down (pushToShared=false, so' aplica local,
+   * sem reempurrar o que acabou de vir do Supabase).
+   */
+  private async applyBusinessPartnerMerge(canonical: BusinessPartner, duplicate: BusinessPartner, matchedCnpj: string | null, now: string, pushToShared: boolean): Promise<void> {
+    const push = (table: string, id: string, patch: DbRecord): Promise<void> =>
+      pushToShared ? this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow(table, id, patch)) : Promise.resolve();
+
+    const unconditionalRedirects: Array<[string, string]> = [
+      ["fiscal_documents", "responsible_partner_id"],
+      ["operations", "responsible_partner_id"],
+      ["client_charges", "client_partner_id"],
+      ["client_ledger_entries", "client_partner_id"],
+      ["client_payments", "client_partner_id"],
+      ["accounts_payable", "supplier_partner_id"],
+      ["payable_installment_groups", "supplier_partner_id"],
+      ["payable_recurring_templates", "supplier_partner_id"],
+      ["deal_confirmation_parties", "business_partner_id"],
+      ["operation_classification_rules", "client_partner_id"],
+      ["operation_classification_rules", "destination_partner_id"],
+      ["service_rate_rules", "business_partner_id"],
+      ["purchase_rate_rules", "business_partner_id"]
+    ];
+    for (const [table, column] of unconditionalRedirects) {
+      const rows = this.db.prepare(`SELECT id FROM ${table} WHERE ${column} = ?`).all(duplicate.id) as Array<{ id: string }>;
+      for (const row of rows) {
+        const patch: DbRecord = { [column]: canonical.id, updated_at: now };
+        await push(table, row.id, patch);
+        this.patchLocalRow(table, row.id, patch);
+      }
+    }
+
+    // Papeis (Cliente/Fornecedor/etc): uniao dos dois -- um papel que so' o duplicado tinha migra pro
+    // canonico, senao o cadastro final perderia uma capacidade que o duplicado tinha (ex: duplicado
+    // criado so' como Fornecedor, canonico so' como Cliente -- depois da fusao precisa continuar
+    // podendo ser usado como fornecedor).
+    const canonicalRoles = new Set(this.getPartnerRoles(canonical.id));
+    for (const role of this.getPartnerRoles(duplicate.id)) {
+      if (canonicalRoles.has(role)) continue;
+      this.addBusinessPartnerRoleLocal(canonical.id, role, now);
+      if (pushToShared) await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("business_partner_roles", { business_partner_id: canonical.id, role, created_at: now }));
+    }
+
+    // client_billing_profiles e' 1:1 por parceiro (UNIQUE) -- so' redireciona se o canonico ainda nao tiver.
+    const duplicateBilling = this.getBillingProfile(duplicate.id);
+    if (duplicateBilling && !this.getBillingProfile(canonical.id)) {
+      const patch: DbRecord = { business_partner_id: canonical.id, updated_at: now };
+      await push("client_billing_profiles", duplicateBilling.id, patch);
+      this.patchLocalRow("client_billing_profiles", duplicateBilling.id, patch);
+    }
+
+    // partner_aliases mantem unicidade (organization_id, normalized_alias) enquanto ativo -- redireciona
+    // o que nao colide; o que colide e' desativado (nao apagado), pra um import futuro nunca resolver
+    // pro id arquivado.
+    {
+      const rows = this.db.prepare(`SELECT id, normalized_alias FROM partner_aliases WHERE business_partner_id = ? AND is_active = 1`).all(duplicate.id) as Array<{ id: string; normalized_alias: string }>;
+      for (const row of rows) {
+        const conflict = this.db.prepare(`SELECT id FROM partner_aliases WHERE organization_id = ? AND normalized_alias = ? AND is_active = 1 AND id != ?`).get(canonical.organizationId, row.normalized_alias, row.id);
+        const patch: DbRecord = conflict ? { is_active: false, updated_at: now } : { business_partner_id: canonical.id, updated_at: now };
+        await push("partner_aliases", row.id, patch);
+        this.patchLocalRow("partner_aliases", row.id, patch);
+      }
+    }
+
+    // O CNPJ compartilhado (motivo da fusao) precisa ficar unico -- zera o cnpj do lado duplicado
+    // (preserva a linha e o id, so' libera a constraint pro canonico manter o dele).
+    if (matchedCnpj) {
+      const conflicting = this.db.prepare(`SELECT id FROM partner_legal_entities WHERE business_partner_id = ? AND cnpj = ?`).all(duplicate.id, matchedCnpj) as Array<{ id: string }>;
+      for (const row of conflicting) {
+        const patch: DbRecord = { cnpj: null, updated_at: now };
+        await push("partner_legal_entities", row.id, patch);
+        this.patchLocalRow("partner_legal_entities", row.id, patch);
+      }
+    }
+
+    // Arquiva o cadastro duplicado (mesmo padrao de deleteBusinessPartner) -- preserva papeis/contatos
+    // como historico, so' marca como inativo e mescla o nome.
+    const archivedPatch: DbRecord = { is_active: false, display_name: `[Mesclado em ${canonical.displayName}] ${duplicate.displayName}`, updated_at: now };
+    await push("business_partners", duplicate.id, archivedPatch);
+    this.patchLocalRow("business_partners", duplicate.id, archivedPatch);
   }
 
   listPartnerLegalEntities(businessPartnerId: string): BusinessPartnerLegalEntity[] {
@@ -664,32 +1495,85 @@ export class AppRepository {
     return (this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id = ? ORDER BY trade_name").all(partner.id) as DbRecord[]).map(mapBusinessPartnerLegalEntity);
   }
 
-  createPartnerLegalEntity(input: unknown): BusinessPartnerLegalEntity {
+  /** Empresas/CNPJs cadastradas mas ainda sem cliente/corretor dono -- lista pra tela de "vincular empresa existente". */
+  listUnlinkedPartnerLegalEntities(organizationId: string, search?: string): BusinessPartnerLegalEntity[] {
+    this.assertOrganizationWritable(organizationId);
+    const term = search?.trim();
+    const rows = (
+      term
+        ? this.db.prepare("SELECT * FROM partner_legal_entities WHERE organization_id = ? AND business_partner_id IS NULL AND (trade_name LIKE ? OR legal_name LIKE ? OR cnpj LIKE ?) ORDER BY trade_name")
+            .all(organizationId, `%${term}%`, `%${term}%`, `%${term}%`)
+        : this.db.prepare("SELECT * FROM partner_legal_entities WHERE organization_id = ? AND business_partner_id IS NULL ORDER BY trade_name").all(organizationId)
+    ) as DbRecord[];
+    return rows.map(mapBusinessPartnerLegalEntity);
+  }
+
+  async createPartnerLegalEntity(input: unknown): Promise<BusinessPartnerLegalEntity> {
     const data = partnerLegalEntityInputSchema.parse(input);
     this.assertPartnerLegalEntity(data);
     const id = randomUUID();
     const now = new Date().toISOString();
-    if (data.isPrimary) this.clearPrimaryPartnerLegalEntity(data.businessPartnerId);
-    this.db.prepare(`INSERT INTO partner_legal_entities (
-      id, business_partner_id, legal_name, trade_name, cnpj, state_registration, municipal_registration, email, phone,
-      address_line, address_number, address_complement, district, city, state, postal_code, is_primary, is_active, is_draft, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, data.businessPartnerId, data.legalName, data.tradeName, data.cnpj, data.stateRegistration, data.municipalRegistration, data.email, data.phone, data.addressLine, data.addressNumber, data.addressComplement, data.district, data.city, data.state, data.postalCode, data.isPrimary ? 1 : 0, data.isActive ? 1 : 0, data.isDraft ? 1 : 0, now, now);
+    if (data.isPrimary && data.businessPartnerId) this.clearPrimaryPartnerLegalEntity(data.businessPartnerId);
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, legal_name: data.legalName, trade_name: data.tradeName,
+      cnpj: data.cnpj, state_registration: data.stateRegistration, municipal_registration: data.municipalRegistration, email: data.email, phone: data.phone,
+      address_line: data.addressLine, address_number: data.addressNumber, address_complement: data.addressComplement, district: data.district,
+      city: data.city, state: data.state, postal_code: data.postalCode, is_primary: data.isPrimary, is_active: data.isActive, is_draft: data.isDraft,
+      created_at: now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("partner_legal_entities", row));
+    this.upsertLocalRow("partner_legal_entities", row);
     return this.getPartnerLegalEntity(id);
   }
 
-  updatePartnerLegalEntity(id: string, input: unknown): BusinessPartnerLegalEntity {
+  async updatePartnerLegalEntity(id: string, input: unknown): Promise<BusinessPartnerLegalEntity> {
     this.getPartnerLegalEntity(id);
     const data = partnerLegalEntityInputSchema.parse(input);
     this.assertPartnerLegalEntity(data, id);
-    if (data.isPrimary) this.clearPrimaryPartnerLegalEntity(data.businessPartnerId, id);
-    this.db.prepare(`UPDATE partner_legal_entities SET business_partner_id = ?, legal_name = ?, trade_name = ?, cnpj = ?, state_registration = ?, municipal_registration = ?, email = ?, phone = ?, address_line = ?, address_number = ?, address_complement = ?, district = ?, city = ?, state = ?, postal_code = ?, is_primary = ?, is_active = ?, is_draft = ?, updated_at = ? WHERE id = ?`)
-      .run(data.businessPartnerId, data.legalName, data.tradeName, data.cnpj, data.stateRegistration, data.municipalRegistration, data.email, data.phone, data.addressLine, data.addressNumber, data.addressComplement, data.district, data.city, data.state, data.postalCode, data.isPrimary ? 1 : 0, data.isActive ? 1 : 0, data.isDraft ? 1 : 0, new Date().toISOString(), id);
+    if (data.isPrimary && data.businessPartnerId) this.clearPrimaryPartnerLegalEntity(data.businessPartnerId, id);
+    const patch: DbRecord = {
+      organization_id: data.organizationId, business_partner_id: data.businessPartnerId, legal_name: data.legalName, trade_name: data.tradeName,
+      cnpj: data.cnpj, state_registration: data.stateRegistration, municipal_registration: data.municipalRegistration, email: data.email, phone: data.phone,
+      address_line: data.addressLine, address_number: data.addressNumber, address_complement: data.addressComplement, district: data.district,
+      city: data.city, state: data.state, postal_code: data.postalCode, is_primary: data.isPrimary, is_active: data.isActive, is_draft: data.isDraft,
+      updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", id, patch));
+    this.patchLocalRow("partner_legal_entities", id, patch);
     return this.getPartnerLegalEntity(id);
   }
 
-  activatePartnerLegalEntity(id: string): BusinessPartnerLegalEntity { return this.setPartnerLegalEntityActive(id, true); }
-  deactivatePartnerLegalEntity(id: string): BusinessPartnerLegalEntity { return this.setPartnerLegalEntityActive(id, false); }
+  /**
+   * Vincula uma empresa/CNPJ ja' cadastrada (solta ou de outro parceiro) a um
+   * cliente/corretor -- fluxo pedido pelo dono: cadastra a empresa primeiro
+   * (ex: via "Buscar CNPJ"), so' vincula ao corretor quando a relacao comercial
+   * comeca de fato. Se a empresa vinha de outro parceiro (ex: corrigindo um
+   * vinculo errado), so' redireciona -- nao mexe no cadastro antigo.
+   */
+  async linkPartnerLegalEntityToPartner(legalEntityId: string, businessPartnerId: string): Promise<BusinessPartnerLegalEntity> {
+    const entity = this.getPartnerLegalEntity(legalEntityId);
+    const partner = this.getBusinessPartner(businessPartnerId);
+    if (entity.organizationId !== partner.organizationId) throw new Error("Empresa e cliente/corretor precisam ser da mesma organizacao.");
+    const now = new Date().toISOString();
+    const makesPrimary = !this.db.prepare("SELECT 1 FROM partner_legal_entities WHERE business_partner_id = ? AND is_primary = 1 LIMIT 1").get(businessPartnerId);
+    const patch: DbRecord = { business_partner_id: businessPartnerId, is_primary: makesPrimary, updated_at: now };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", legalEntityId, patch));
+    this.patchLocalRow("partner_legal_entities", legalEntityId, patch);
+    return this.getPartnerLegalEntity(legalEntityId);
+  }
+
+  /** Desfaz o vinculo, devolvendo a empresa pro estado solto (sem cliente/corretor dono). */
+  async unlinkPartnerLegalEntityFromPartner(legalEntityId: string): Promise<BusinessPartnerLegalEntity> {
+    this.getPartnerLegalEntity(legalEntityId);
+    const now = new Date().toISOString();
+    const patch: DbRecord = { business_partner_id: null, is_primary: false, updated_at: now };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", legalEntityId, patch));
+    this.patchLocalRow("partner_legal_entities", legalEntityId, patch);
+    return this.getPartnerLegalEntity(legalEntityId);
+  }
+
+  async activatePartnerLegalEntity(id: string): Promise<BusinessPartnerLegalEntity> { return this.setPartnerLegalEntityActive(id, true); }
+  async deactivatePartnerLegalEntity(id: string): Promise<BusinessPartnerLegalEntity> { return this.setPartnerLegalEntityActive(id, false); }
 
   listPartnerContacts(businessPartnerId: string): PartnerContact[] {
     const partner = this.getBusinessPartner(businessPartnerId);
@@ -737,28 +1621,38 @@ export class AppRepository {
     return product;
   }
 
-  createProduct(input: unknown): Product {
+  async createProduct(input: unknown): Promise<Product> {
     const data = productInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     this.assertUniqueProductCode(data.organizationId, data.code);
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO products (id, organization_id, name, code, category, default_unit, default_sack_weight_kg, description, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(id, data.organizationId, data.name, data.code, data.category, data.defaultUnit, data.defaultSackWeightKg, data.description, data.isActive ? 1 : 0, now, now);
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, name: data.name, code: data.code, category: data.category,
+      default_unit: data.defaultUnit, default_sack_weight_kg: data.defaultSackWeightKg, description: data.description,
+      is_active: data.isActive, created_at: now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("products", row));
+    this.upsertLocalRow("products", row);
     return this.getProduct(id);
   }
 
-  updateProduct(id: string, input: unknown): Product {
+  async updateProduct(id: string, input: unknown): Promise<Product> {
     this.getProduct(id);
     const data = productInputSchema.parse(input);
     this.assertUniqueProductCode(data.organizationId, data.code, id);
-    this.db.prepare("UPDATE products SET organization_id = ?, name = ?, code = ?, category = ?, default_unit = ?, default_sack_weight_kg = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?")
-      .run(data.organizationId, data.name, data.code, data.category, data.defaultUnit, data.defaultSackWeightKg, data.description, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, name: data.name, code: data.code, category: data.category,
+      default_unit: data.defaultUnit, default_sack_weight_kg: data.defaultSackWeightKg, description: data.description,
+      is_active: data.isActive, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("products", id, row));
+    this.patchLocalRow("products", id, row);
     return this.getProduct(id);
   }
 
-  activateProduct(id: string): Product { return this.setProductActive(id, true); }
-  deactivateProduct(id: string): Product { return this.setProductActive(id, false); }
+  activateProduct(id: string): Promise<Product> { return this.setProductActive(id, true); }
+  deactivateProduct(id: string): Promise<Product> { return this.setProductActive(id, false); }
 
   getBillingProfile(businessPartnerId: string): ClientBillingProfile | null {
     const partner = this.getBusinessPartner(businessPartnerId);
@@ -766,7 +1660,7 @@ export class AppRepository {
     return row ? mapClientBillingProfile(row) : null;
   }
 
-  upsertBillingProfile(input: unknown): ClientBillingProfile {
+  async upsertBillingProfile(input: unknown): Promise<ClientBillingProfile> {
     const data = billingProfileInputSchema.parse(input);
     this.assertClientPartner(data.businessPartnerId, data.organizationId);
     if (data.ownLegalEntityId) {
@@ -776,20 +1670,21 @@ export class AppRepository {
     const existing = this.getBillingProfile(data.businessPartnerId);
     const id = existing?.id ?? randomUUID();
     const now = new Date().toISOString();
-    if (existing) {
-      this.db.prepare("UPDATE client_billing_profiles SET organization_id = ?, own_legal_entity_id = ?, periodicity = ?, closing_weekday = ?, closing_day_of_month = ?, due_days_after_closing = ?, auto_include_unbilled_operations = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?")
-        .run(data.organizationId, data.ownLegalEntityId, data.periodicity, data.closingWeekday, data.closingDayOfMonth, data.dueDaysAfterClosing, data.autoIncludeUnbilledOperations ? 1 : 0, data.notes, data.isActive ? 1 : 0, now, id);
-    } else {
-      this.db.prepare("INSERT INTO client_billing_profiles (id, organization_id, business_partner_id, own_legal_entity_id, periodicity, closing_weekday, closing_day_of_month, due_days_after_closing, auto_include_unbilled_operations, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.periodicity, data.closingWeekday, data.closingDayOfMonth, data.dueDaysAfterClosing, data.autoIncludeUnbilledOperations ? 1 : 0, data.notes, data.isActive ? 1 : 0, now, now);
-    }
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
+      periodicity: data.periodicity, closing_weekday: data.closingWeekday, closing_day_of_month: data.closingDayOfMonth,
+      due_days_after_closing: data.dueDaysAfterClosing, auto_include_unbilled_operations: data.autoIncludeUnbilledOperations,
+      notes: data.notes, is_active: data.isActive, created_at: existing?.createdAt ?? now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => existing ? this.sharedRepository!.updateRow("client_billing_profiles", id, row) : this.sharedRepository!.insertRow("client_billing_profiles", row));
+    this.upsertLocalRow("client_billing_profiles", row);
     const saved = this.getBillingProfile(data.businessPartnerId);
     if (!saved) throw new Error("Falha ao salvar perfil de cobranca.");
     return saved;
   }
 
-  activateBillingProfile(id: string): ClientBillingProfile { return this.setBillingProfileActive(id, true); }
-  deactivateBillingProfile(id: string): ClientBillingProfile { return this.setBillingProfileActive(id, false); }
+  activateBillingProfile(id: string): Promise<ClientBillingProfile> { return this.setBillingProfileActive(id, true); }
+  deactivateBillingProfile(id: string): Promise<ClientBillingProfile> { return this.setBillingProfileActive(id, false); }
 
   listServiceRateRules(filters: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; counterpartyPartnerLegalEntityId?: string; status?: "active" | "inactive" | "all" } = {}): ServiceRateRule[] {
     return (this.db.prepare("SELECT * FROM service_rate_rules ORDER BY effective_from DESC, priority DESC").all() as DbRecord[]).map(mapServiceRateRule)
@@ -810,35 +1705,122 @@ export class AppRepository {
     return rule;
   }
 
-  createServiceRateRule(input: unknown): ServiceRateRule {
+  async createServiceRateRule(input: unknown): Promise<ServiceRateRule> {
     const data = serviceRateRuleInputSchema.parse(input);
     this.assertServiceRateRule(data);
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO service_rate_rules (id, organization_id, business_partner_id, own_legal_entity_id, counterparty_partner_legal_entity_id, product_id, operation_scope, rate_type, rate_value_cents, effective_from, effective_to, priority, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(id, data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.counterpartyPartnerLegalEntityId, data.productId, data.operationScope, data.rateType, data.rateValueCents, data.effectiveFrom, data.effectiveTo, data.priority, data.notes, data.isActive ? 1 : 0, now, now);
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
+      counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("service_rate_rules", row));
+    this.upsertLocalRow("service_rate_rules", row);
+    await this.recomputeServiceRateRuleConflictWarnings(data.businessPartnerId);
     return this.getServiceRateRule(id);
   }
 
-  updateServiceRateRule(id: string, input: unknown): ServiceRateRule {
+  async updateServiceRateRule(id: string, input: unknown): Promise<ServiceRateRule> {
     this.getServiceRateRule(id);
     const data = serviceRateRuleInputSchema.parse(input);
     this.assertServiceRateRule(data, id);
-    this.db.prepare("UPDATE service_rate_rules SET organization_id = ?, business_partner_id = ?, own_legal_entity_id = ?, counterparty_partner_legal_entity_id = ?, product_id = ?, operation_scope = ?, rate_type = ?, rate_value_cents = ?, effective_from = ?, effective_to = ?, priority = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?")
-      .run(data.organizationId, data.businessPartnerId, data.ownLegalEntityId, data.counterpartyPartnerLegalEntityId, data.productId, data.operationScope, data.rateType, data.rateValueCents, data.effectiveFrom, data.effectiveTo, data.priority, data.notes, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
+      counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", id, row));
+    this.patchLocalRow("service_rate_rules", id, row);
+    await this.recomputeServiceRateRuleConflictWarnings(data.businessPartnerId);
     return this.getServiceRateRule(id);
   }
 
-  activateServiceRateRule(id: string): ServiceRateRule { return this.setServiceRateRuleActive(id, true); }
-  deactivateServiceRateRule(id: string): ServiceRateRule { return this.setServiceRateRuleActive(id, false); }
+  activateServiceRateRule(id: string): Promise<ServiceRateRule> { return this.setServiceRateRuleActive(id, true); }
+  deactivateServiceRateRule(id: string): Promise<ServiceRateRule> { return this.setServiceRateRuleActive(id, false); }
 
-  deleteServiceRateRule(id: string): void {
-    this.getServiceRateRule(id);
+  // TODO(supabase): so' apaga localmente por enquanto -- deletar em
+  // service_rate_rules (compartilhada) exige uma RPC (ver plano, "RPCs
+  // criticas") ja' que tambem zera service_rate_rule_id em operations na
+  // mesma transacao. Sera' resolvido junto com a camada transacional de
+  // fiscal_documents/operations, ainda pendente.
+  async deleteServiceRateRule(id: string): Promise<void> {
+    const rule = this.getServiceRateRule(id);
     const transaction = this.db.transaction(() => {
       this.db.prepare("UPDATE operations SET service_rate_rule_id = NULL WHERE service_rate_rule_id = ?").run(id);
       this.db.prepare("DELETE FROM service_rate_rules WHERE id = ?").run(id);
     });
     transaction();
+    await this.recomputeServiceRateRuleConflictWarnings(rule.businessPartnerId);
+  }
+
+  // Duas regras "conflitam" quando podem empatar em especificidade para a mesma operacao: mesma
+  // combinacao de campos especificos preenchidos (CNPJ proprio/empresa da nota/produto), valores
+  // compativeis entre si (iguais ou um deles em branco = coringa) e vigencia sobreposta. Isso e mais
+  // amplo que a checagem de "mesmo escopo exato" ja feita em assertServiceRateRule -- pega tambem
+  // pares de regras estruturalmente diferentes que ainda assim empatariam na hora de cobrar.
+  private findServiceRateRuleConflicts(
+    data: {
+      businessPartnerId: string;
+      ownLegalEntityId: string | null;
+      counterpartyPartnerLegalEntityId: string | null;
+      productId: string | null;
+      operationScope: OperationScope;
+      priority: number;
+      effectiveFrom: string;
+      effectiveTo: string | null;
+    },
+    exceptId?: string
+  ): ServiceRateRule[] {
+    const signature = (rule: { ownLegalEntityId: string | null; counterpartyPartnerLegalEntityId: string | null; productId: string | null }) =>
+      `${rule.ownLegalEntityId ? "1" : "0"}${rule.counterpartyPartnerLegalEntityId ? "1" : "0"}${rule.productId ? "1" : "0"}`;
+    const compatible = (a: string | null, b: string | null) => !a || !b || a === b;
+    const targetSignature = signature(data);
+    return this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, status: "active" }).filter((rule) => {
+      if (rule.id === exceptId) return false;
+      // Prioridades diferentes ja desempatam de verdade em resolveServiceRateRule (o score soma
+      // priority/1000), entao so e' conflito real quando a prioridade tambem empata.
+      if (rule.priority !== data.priority) return false;
+      if (signature(rule) !== targetSignature) return false;
+      if (!compatible(rule.ownLegalEntityId, data.ownLegalEntityId)) return false;
+      if (!compatible(rule.counterpartyPartnerLegalEntityId, data.counterpartyPartnerLegalEntityId)) return false;
+      if (!compatible(rule.productId, data.productId)) return false;
+      // Escopo so empata de verdade quando e' EXATAMENTE igual (os dois "ALL", ou os dois na mesma UF
+      // especifica) -- uma regra de UF especifica sempre pontua 1 ponto a mais que uma regra "ALL" para
+      // a mesma operacao, entao ALL vs especifica nunca empata.
+      if (rule.operationScope !== data.operationScope) return false;
+      const aEnd = data.effectiveTo ?? "9999-12-31";
+      const bEnd = rule.effectiveTo ?? "9999-12-31";
+      return data.effectiveFrom <= bEnd && rule.effectiveFrom <= aEnd;
+    });
+  }
+
+  private describeRuleForConflict(rule: ServiceRateRule): string {
+    const parts: string[] = [];
+    if (rule.counterpartyPartnerLegalEntityId) parts.push("empresa da nota especifica");
+    if (rule.ownLegalEntityId) parts.push("CNPJ proprio especifico");
+    if (rule.productId) parts.push("produto especifico");
+    return `${parts.length ? parts.join(" + ") : "regra geral"} (prioridade ${rule.priority})`;
+  }
+
+  // Recalcula o aviso de conflito de TODAS as regras ativas do cliente (nao so a que acabou de ser
+  // salva), porque criar/editar/excluir uma regra pode resolver ou criar conflito para outras regras
+  // ja existentes. O aviso nao bloqueia nada -- so fica visivel na lista de regras.
+  private async recomputeServiceRateRuleConflictWarnings(businessPartnerId: string): Promise<void> {
+    const rules = this.listServiceRateRules({ businessPartnerId, status: "active" });
+    for (const rule of rules) {
+      const conflicts = this.findServiceRateRuleConflicts(rule, rule.id);
+      const warning = conflicts.length
+        ? `Pode empatar em especificidade com ${conflicts.length} outra${conflicts.length > 1 ? "s" : ""} regra${conflicts.length > 1 ? "s" : ""} ativa${conflicts.length > 1 ? "s" : ""} (${conflicts.map((item) => this.describeRuleForConflict(item)).join("; ")}) -- nesse caso a tarifa aplicada fica zerada ate ajustar prioridade, vigencia ou escopo.`
+        : null;
+      if (rule.conflictWarning !== warning) {
+        const patch: DbRecord = { conflict_warning: warning };
+        await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", rule.id, patch));
+        this.patchLocalRow("service_rate_rules", rule.id, patch);
+      }
+    }
   }
 
   resolveServiceRateRule(input: unknown): ResolveRateResult {
@@ -885,6 +1867,180 @@ export class AppRepository {
     return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: "backfill", message: "Regra ativa aplicada a operacao em aberto anterior a vigencia." };
   }
 
+  // Espelha o bloco service_rate_rules acima -- mesma logica de resolucao por
+  // especificidade, mas pro preco por saca que PAGAMOS ao fornecedor numa
+  // nota de ENTRADA, nao o que cobramos do cliente. Ver purchaseRateRuleInputSchema.
+  listPurchaseRateRules(filters: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; counterpartyPartnerLegalEntityId?: string; status?: "active" | "inactive" | "all" } = {}): PurchaseRateRule[] {
+    return (this.db.prepare("SELECT * FROM purchase_rate_rules ORDER BY effective_from DESC, priority DESC").all() as DbRecord[]).map(mapPurchaseRateRule)
+      .filter((item) => this.isOrganizationAllowed(item.organizationId))
+      .filter((item) => !filters.businessPartnerId || item.businessPartnerId === filters.businessPartnerId)
+      .filter((item) => !filters.operationScope || item.operationScope === filters.operationScope)
+      .filter((item) => !filters.productId || item.productId === filters.productId)
+      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
+      .filter((item) => !filters.counterpartyPartnerLegalEntityId || item.counterpartyPartnerLegalEntityId === filters.counterpartyPartnerLegalEntityId)
+      .filter((item) => this.matchesStatus(item.isActive, filters.status));
+  }
+
+  getPurchaseRateRule(id: string): PurchaseRateRule {
+    const row = this.db.prepare("SELECT * FROM purchase_rate_rules WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Regra nao encontrada.");
+    const rule = mapPurchaseRateRule(row);
+    if (!this.isOrganizationAllowed(rule.organizationId)) throw new Error("Regra nao autorizada.");
+    return rule;
+  }
+
+  async createPurchaseRateRule(input: unknown): Promise<PurchaseRateRule> {
+    const data = purchaseRateRuleInputSchema.parse(input);
+    this.assertPurchaseRateRule(data);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
+      counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("purchase_rate_rules", row));
+    this.upsertLocalRow("purchase_rate_rules", row);
+    await this.recomputePurchaseRateRuleConflictWarnings(data.businessPartnerId);
+    return this.getPurchaseRateRule(id);
+  }
+
+  async updatePurchaseRateRule(id: string, input: unknown): Promise<PurchaseRateRule> {
+    this.getPurchaseRateRule(id);
+    const data = purchaseRateRuleInputSchema.parse(input);
+    this.assertPurchaseRateRule(data, id);
+    const row: DbRecord = {
+      id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
+      counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("purchase_rate_rules", id, row));
+    this.patchLocalRow("purchase_rate_rules", id, row);
+    await this.recomputePurchaseRateRuleConflictWarnings(data.businessPartnerId);
+    return this.getPurchaseRateRule(id);
+  }
+
+  activatePurchaseRateRule(id: string): Promise<PurchaseRateRule> { return this.setPurchaseRateRuleActive(id, true); }
+  deactivatePurchaseRateRule(id: string): Promise<PurchaseRateRule> { return this.setPurchaseRateRuleActive(id, false); }
+
+  async deletePurchaseRateRule(id: string): Promise<void> {
+    const rule = this.getPurchaseRateRule(id);
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("UPDATE operations SET purchase_rate_rule_id = NULL WHERE purchase_rate_rule_id = ?").run(id);
+      this.db.prepare("DELETE FROM purchase_rate_rules WHERE id = ?").run(id);
+    });
+    transaction();
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("purchase_rate_rules", { id }));
+    await this.recomputePurchaseRateRuleConflictWarnings(rule.businessPartnerId);
+  }
+
+  private findPurchaseRateRuleConflicts(
+    data: {
+      businessPartnerId: string;
+      ownLegalEntityId: string | null;
+      counterpartyPartnerLegalEntityId: string | null;
+      productId: string | null;
+      operationScope: OperationScope;
+      priority: number;
+      effectiveFrom: string;
+      effectiveTo: string | null;
+    },
+    exceptId?: string
+  ): PurchaseRateRule[] {
+    const signature = (rule: { ownLegalEntityId: string | null; counterpartyPartnerLegalEntityId: string | null; productId: string | null }) =>
+      `${rule.ownLegalEntityId ? "1" : "0"}${rule.counterpartyPartnerLegalEntityId ? "1" : "0"}${rule.productId ? "1" : "0"}`;
+    const compatible = (a: string | null, b: string | null) => !a || !b || a === b;
+    const targetSignature = signature(data);
+    return this.listPurchaseRateRules({ businessPartnerId: data.businessPartnerId, status: "active" }).filter((rule) => {
+      if (rule.id === exceptId) return false;
+      if (rule.priority !== data.priority) return false;
+      if (signature(rule) !== targetSignature) return false;
+      if (!compatible(rule.ownLegalEntityId, data.ownLegalEntityId)) return false;
+      if (!compatible(rule.counterpartyPartnerLegalEntityId, data.counterpartyPartnerLegalEntityId)) return false;
+      if (!compatible(rule.productId, data.productId)) return false;
+      if (rule.operationScope !== data.operationScope) return false;
+      const aEnd = data.effectiveTo ?? "9999-12-31";
+      const bEnd = rule.effectiveTo ?? "9999-12-31";
+      return data.effectiveFrom <= bEnd && rule.effectiveFrom <= aEnd;
+    });
+  }
+
+  private describeRuleForPurchaseConflict(rule: PurchaseRateRule): string {
+    const parts: string[] = [];
+    if (rule.counterpartyPartnerLegalEntityId) parts.push("empresa da nota especifica");
+    if (rule.ownLegalEntityId) parts.push("CNPJ proprio especifico");
+    if (rule.productId) parts.push("produto especifico");
+    return `${parts.length ? parts.join(" + ") : "regra geral"} (prioridade ${rule.priority})`;
+  }
+
+  private async recomputePurchaseRateRuleConflictWarnings(businessPartnerId: string): Promise<void> {
+    const rules = this.listPurchaseRateRules({ businessPartnerId, status: "active" });
+    for (const rule of rules) {
+      const conflicts = this.findPurchaseRateRuleConflicts(rule, rule.id);
+      const warning = conflicts.length
+        ? `Pode empatar em especificidade com ${conflicts.length} outra${conflicts.length > 1 ? "s" : ""} regra${conflicts.length > 1 ? "s" : ""} ativa${conflicts.length > 1 ? "s" : ""} (${conflicts.map((item) => this.describeRuleForPurchaseConflict(item)).join("; ")}) -- nesse caso o preco aplicado fica zerado ate ajustar prioridade, vigencia ou escopo.`
+        : null;
+      if (rule.conflictWarning !== warning) {
+        const patch: DbRecord = { conflict_warning: warning };
+        await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("purchase_rate_rules", rule.id, patch));
+        this.patchLocalRow("purchase_rate_rules", rule.id, patch);
+      }
+    }
+  }
+
+  resolvePurchaseRateRule(input: unknown): ResolveRateResult {
+    const data = resolvePurchaseRateInputSchema.parse(input);
+    this.assertSupplierPartner(data.businessPartnerId, data.organizationId);
+    const activeRules = this.listPurchaseRateRules({ businessPartnerId: data.businessPartnerId, status: "active" })
+      .filter((rule) => rule.effectiveFrom <= data.operationDate && (!rule.effectiveTo || rule.effectiveTo >= data.operationDate))
+      .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
+      .filter((rule) => !rule.counterpartyPartnerLegalEntityId || rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId)
+      .filter((rule) => !rule.productId || rule.productId === data.productId);
+    const candidates = activeRules
+      .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
+      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000 }));
+    if (candidates.length === 0) {
+      return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra de preco de compra aplicavel encontrada." };
+    }
+    const max = Math.max(...candidates.map((item) => item.score));
+    const best = candidates.filter((item) => item.score === max);
+    if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
+    const rule = best[0].rule;
+    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
+  }
+
+  private assertPurchaseRateRule(data: ReturnType<typeof purchaseRateRuleInputSchema.parse>, exceptId?: string): void {
+    this.assertSupplierPartner(data.businessPartnerId, data.organizationId);
+    if (data.ownLegalEntityId) this.getLegalEntity(data.ownLegalEntityId);
+    if (data.productId) this.getProduct(data.productId);
+    if (data.counterpartyPartnerLegalEntityId) this.getPartnerLegalEntity(data.counterpartyPartnerLegalEntityId);
+    const overlaps = this.listPurchaseRateRules({ businessPartnerId: data.businessPartnerId, status: "active" }).filter((rule) => {
+      if (rule.id === exceptId) return false;
+      const sameScope =
+        rule.ownLegalEntityId === data.ownLegalEntityId &&
+        rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId &&
+        rule.productId === data.productId &&
+        rule.operationScope === data.operationScope &&
+        rule.rateType === data.rateType;
+      if (!sameScope) return false;
+      const aEnd = data.effectiveTo ?? "9999-12-31";
+      const bEnd = rule.effectiveTo ?? "9999-12-31";
+      return data.effectiveFrom <= bEnd && rule.effectiveFrom <= aEnd;
+    });
+    if (overlaps.length > 0) throw new Error("Ja existe regra ativa conflitante para o mesmo escopo e vigencia.");
+  }
+
+  private async setPurchaseRateRuleActive(id: string, active: boolean): Promise<PurchaseRateRule> {
+    const rule = this.getPurchaseRateRule(id);
+    const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("purchase_rate_rules", id, patch));
+    this.patchLocalRow("purchase_rate_rules", id, patch);
+    await this.recomputePurchaseRateRuleConflictWarnings(rule.businessPartnerId);
+    return this.getPurchaseRateRule(id);
+  }
+
   listFiscalDocuments(filters: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" } = {}): FiscalDocument[] {
     return (this.db.prepare("SELECT * FROM fiscal_documents ORDER BY issue_date DESC, updated_at DESC").all() as DbRecord[])
       .map(mapFiscalDocument)
@@ -905,7 +2061,23 @@ export class AppRepository {
     const hasEvents = this.tableExists("fiscal_document_events");
     const events = hasEvents ? (this.db.prepare("SELECT * FROM fiscal_document_events WHERE fiscal_document_id = ? ORDER BY created_at").all(id) as DbRecord[]).map(mapFiscalDocumentEvent) : [];
     const mergeHistory = this.tableExists("fiscal_document_merge_history") ? (this.db.prepare("SELECT * FROM fiscal_document_merge_history WHERE fiscal_document_id = ? ORDER BY created_at").all(id) as DbRecord[]).map(mapFiscalDocumentMergeHistory) : [];
-    return { document, items, operations, events, mergeHistory };
+    const rateHistory = this.tableExists("operation_rate_history")
+      ? (this.db.prepare("SELECT * FROM operation_rate_history WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) ORDER BY changed_at").all(id) as DbRecord[]).map(mapOperationRateHistory)
+      : [];
+    return { document, items, operations, events, mergeHistory, rateHistory };
+  }
+
+  // Nota triangulada: quando a nota representa uma compra de um fornecedor
+  // revendida a outro corretor/cliente na mesma remessa, o segundo parceiro
+  // precisa ter o papel oposto ao do parceiro principal (ver migration
+  // 033_fiscal_document_secondary_partner).
+  private assertSecondaryPartner(data: { organizationId: string; responsiblePartnerId: string; operationType: "PURCHASE" | "SALE"; secondaryResponsiblePartnerId?: string | null; secondaryOperationType?: "PURCHASE" | "SALE" | null }): void {
+    if (!data.secondaryResponsiblePartnerId) return;
+    if (data.secondaryResponsiblePartnerId === data.responsiblePartnerId) throw new Error("O parceiro secundario da nota triangulada precisa ser diferente do parceiro principal.");
+    const secondaryType = data.secondaryOperationType ?? (data.operationType === "PURCHASE" ? "SALE" : "PURCHASE");
+    if (secondaryType === data.operationType) throw new Error("O tipo de operacao secundario precisa ser o oposto do principal numa nota triangulada.");
+    if (secondaryType === "PURCHASE") this.assertSupplierPartner(data.secondaryResponsiblePartnerId, data.organizationId);
+    else this.assertClientPartner(data.secondaryResponsiblePartnerId, data.organizationId);
   }
 
   createFiscalDocument(input: unknown): FiscalDocumentDetail {
@@ -913,7 +2085,9 @@ export class AppRepository {
     this.assertOrganizationWritable(data.organizationId);
     const own = this.getLegalEntity(data.ownLegalEntityId);
     if (own.organizationId !== data.organizationId && !this.isThirdPartyLegalEntity(own)) throw new Error("CNPJ proprio pertence a outra organizacao.");
-    this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
+    if (data.operationType === "PURCHASE") this.assertSupplierPartner(data.responsiblePartnerId, data.organizationId);
+    else this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
+    this.assertSecondaryPartner(data);
     if (data.accessKey) {
       const duplicate = this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ?").get(data.accessKey);
       if (duplicate) throw new Error("Chave de acesso ja cadastrada.");
@@ -922,22 +2096,28 @@ export class AppRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     const status = data.hasPendingIssues ? "PENDING" : "DRAFT";
+    const direction = data.operationType === "PURCHASE" ? "INBOUND" : "OUTBOUND";
+    const secondaryOperationType = data.secondaryResponsiblePartnerId ? (data.secondaryOperationType ?? (data.operationType === "PURCHASE" ? "SALE" : "PURCHASE")) : null;
     this.db.prepare(`INSERT INTO fiscal_documents (
-      id, organization_id, own_legal_entity_id, responsible_partner_id, partner_legal_entity_id, document_type, access_key,
+      id, organization_id, own_legal_entity_id, responsible_partner_id, partner_legal_entity_id, secondary_responsible_partner_id, secondary_operation_type, document_type, access_key,
       document_number, series, issue_date, total_amount_cents, status, has_pending_issues, pending_notes, duplicate_warning,
-      notes, confirmed_at, canceled_at, cancel_reason, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'MANUAL_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`)
-      .run(id, data.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, status, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, now, now);
+      notes, confirmed_at, canceled_at, cancel_reason, created_at, updated_at, direction
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
+      .run(id, data.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, status, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, now, now, direction);
     return this.getFiscalDocument(id);
   }
 
   updateFiscalDocument(id: string, input: unknown): FiscalDocumentDetail {
     this.getFiscalDocument(id);
     const data = fiscalDocumentInputSchema.parse(input);
-    this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
+    if (data.operationType === "PURCHASE") this.assertSupplierPartner(data.responsiblePartnerId, data.organizationId);
+    else this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
+    this.assertSecondaryPartner(data);
     const duplicateWarning = this.detectPossibleDuplicate(data, id);
-    this.db.prepare(`UPDATE fiscal_documents SET own_legal_entity_id = ?, responsible_partner_id = ?, partner_legal_entity_id = ?, access_key = ?, document_number = ?, series = ?, issue_date = ?, total_amount_cents = ?, has_pending_issues = ?, pending_notes = ?, duplicate_warning = ?, notes = ?, updated_at = ? WHERE id = ?`)
-      .run(data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, new Date().toISOString(), id);
+    const direction = data.operationType === "PURCHASE" ? "INBOUND" : "OUTBOUND";
+    const secondaryOperationType = data.secondaryResponsiblePartnerId ? (data.secondaryOperationType ?? (data.operationType === "PURCHASE" ? "SALE" : "PURCHASE")) : null;
+    this.db.prepare(`UPDATE fiscal_documents SET own_legal_entity_id = ?, responsible_partner_id = ?, partner_legal_entity_id = ?, secondary_responsible_partner_id = ?, secondary_operation_type = ?, access_key = ?, document_number = ?, series = ?, issue_date = ?, total_amount_cents = ?, has_pending_issues = ?, pending_notes = ?, duplicate_warning = ?, notes = ?, updated_at = ?, direction = ? WHERE id = ?`)
+      .run(data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, new Date().toISOString(), direction, id);
     return this.getFiscalDocument(id);
   }
 
@@ -1000,16 +2180,31 @@ export class AppRepository {
     const data = operationInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);
     if (detail.document.status === "CONFIRMED" || detail.document.status === "CANCELED") throw new Error("Nota confirmada ou cancelada nao pode receber operacoes.");
-    const resolved = this.resolveServiceRateRule({
-      organizationId: detail.document.organizationId,
-      businessPartnerId: data.responsiblePartnerId,
-      ownLegalEntityId: data.ownLegalEntityId,
-      counterpartyPartnerLegalEntityId: detail.document.partnerLegalEntityId,
-      productId: data.productId,
-      operationScope: data.operationScope,
-      operationDate: data.operationDate
-    });
-    if (resolved.status === "conflict") throw new Error("Conflito ao resolver regra por saca.");
+    const isPurchase = data.operationType === "PURCHASE";
+    // Nota de entrada (compra): resolve o preco por saca que PAGAMOS ao
+    // fornecedor (purchase_rate_rules), nao a comissao que cobramos de
+    // cliente -- sao conceitos diferentes, cada um com sua propria tabela de
+    // regras (ver bloco purchase_rate_rules acima).
+    const resolved = isPurchase
+      ? this.resolvePurchaseRateRule({
+          organizationId: detail.document.organizationId,
+          businessPartnerId: data.responsiblePartnerId,
+          ownLegalEntityId: data.ownLegalEntityId,
+          counterpartyPartnerLegalEntityId: detail.document.partnerLegalEntityId,
+          productId: data.productId,
+          operationScope: data.operationScope,
+          operationDate: data.operationDate
+        })
+      : this.resolveServiceRateRule({
+          organizationId: detail.document.organizationId,
+          businessPartnerId: data.responsiblePartnerId,
+          ownLegalEntityId: data.ownLegalEntityId,
+          counterpartyPartnerLegalEntityId: detail.document.partnerLegalEntityId,
+          productId: data.productId,
+          operationScope: data.operationScope,
+          operationDate: data.operationDate
+        });
+    if (resolved.status === "conflict") throw new Error(isPurchase ? "Conflito ao resolver preco de compra por saca." : "Conflito ao resolver regra por saca.");
     const manual = data.manualRateValueCents !== null;
     if (manual && !data.manualOverrideReason) throw new Error("Informe o motivo para alterar manualmente o valor por saca.");
     const rate = data.manualRateValueCents ?? resolved.rateValueCents ?? 0;
@@ -1018,10 +2213,10 @@ export class AppRepository {
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO operations (
       id, fiscal_document_id, fiscal_document_item_id, organization_id, own_legal_entity_id, responsible_partner_id, product_id,
-      operation_type, operation_scope, operation_date, quantity_sacks_decimal, service_rate_rule_id, applied_rate_value_cents,
+      operation_type, operation_scope, operation_date, quantity_sacks_decimal, service_rate_rule_id, purchase_rate_rule_id, applied_rate_value_cents,
       service_amount_cents, rate_was_manually_overridden, manual_rate_value_cents, manual_override_reason, notes, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, data.fiscalDocumentId, data.fiscalDocumentItemId, detail.document.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.productId, data.operationType, data.operationScope, data.operationDate, normalizeDecimalText(data.quantitySacks), resolved.rule?.id ?? null, rate, amount, manual ? 1 : 0, data.manualRateValueCents, data.manualOverrideReason, data.notes, detail.document.hasPendingIssues || resolved.status === "missing" ? "PENDING" : "DRAFT", now, now);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.fiscalDocumentId, data.fiscalDocumentItemId, detail.document.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.productId, data.operationType, data.operationScope, data.operationDate, normalizeDecimalText(data.quantitySacks), isPurchase ? null : (resolved.rule?.id ?? null), isPurchase ? (resolved.rule?.id ?? null) : null, rate, amount, manual ? 1 : 0, data.manualRateValueCents, data.manualOverrideReason, data.notes, detail.document.hasPendingIssues || resolved.status === "missing" ? "PENDING" : "DRAFT", now, now);
     return this.getFiscalDocument(data.fiscalDocumentId).operations.find((item) => item.id === id) as Operation;
   }
 
@@ -1053,13 +2248,17 @@ export class AppRepository {
     return this.getFiscalDocument(id);
   }
 
-  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } {
+  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } {
     const organizationId = typeof input === "string" ? input : input.organizationId;
     const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
+    const periodStart = typeof input === "string" ? null : input.periodStart ?? null;
+    const periodEnd = typeof input === "string" ? null : input.periodEnd ?? null;
     this.assertOrganizationWritable(organizationId);
-    this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
-    const docs = this.listFiscalDocuments({ organizationId, ownLegalEntityId });
-    const operations = this.listOperations({ organizationId, ownLegalEntityId });
+    this.refreshOperationServiceRates({ organizationId, ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined });
+    let docs = this.listFiscalDocuments({ organizationId, ownLegalEntityId });
+    if (periodStart) docs = docs.filter((doc) => doc.issueDate >= periodStart);
+    if (periodEnd) docs = docs.filter((doc) => doc.issueDate <= periodEnd);
+    const operations = this.listOperations({ organizationId, ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined });
     const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
     const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
     return {
@@ -1069,7 +2268,30 @@ export class AppRepository {
       operations: operations.length,
       sacksDecimal: activeOperations.length ? sumDecimalTexts(activeOperations.map((operation) => operation.quantitySacks)) : "0",
       fiscalAmountCents: activeDocs.reduce((sum, doc) => sum + doc.totalAmountCents, 0),
-      serviceAmountCents: activeOperations.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+      // So' soma o lado de venda -- serviceAmountCents de uma operacao de
+      // COMPRA guarda o que devemos ao fornecedor, nao receita de comissao;
+      // somar os dois juntos misturaria a pagar com a receber.
+      serviceAmountCents: activeOperations.filter((operation) => operation.operationType !== "PURCHASE").reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+    };
+  }
+
+  getPartnerPeriodSackSummary(input: { organizationId: string; ownLegalEntityId?: string | null; businessPartnerId: string; periodStart?: string | null; periodEnd?: string | null }): { sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number } {
+    const { organizationId, businessPartnerId } = input;
+    const ownLegalEntityId = input.ownLegalEntityId ?? undefined;
+    const periodStart = input.periodStart ?? undefined;
+    const periodEnd = input.periodEnd ?? undefined;
+    this.assertOrganizationWritable(organizationId);
+    this.getBusinessPartner(businessPartnerId);
+    const operations = this.listOperations({ organizationId, ownLegalEntityId, responsiblePartnerId: businessPartnerId, periodStart, periodEnd })
+      .filter((operation) => operation.status !== "CANCELED");
+    return {
+      sacksDecimal: operations.length ? sumDecimalTexts(operations.map((operation) => operation.quantitySacks)) : "0",
+      operationCount: operations.length,
+      // Notas fiscais distintas -- uma nota pode ter mais de um item/operacao,
+      // entao isso nao e' o mesmo numero que operationCount.
+      documentCount: new Set(operations.map((operation) => operation.fiscalDocumentId)).size,
+      // Mesmo criterio do indicador geral: lado de compra nao entra na receita de servico.
+      serviceAmountCents: operations.filter((operation) => operation.operationType !== "PURCHASE").reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
@@ -1077,6 +2299,7 @@ export class AppRepository {
     this.assertOrganizationWritable(organizationId);
     this.refreshOperationServiceRates({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` });
     const rows = this.listOperations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, status: "CONFIRMED", periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` })
+      .filter((operation) => operation.operationType !== "PURCHASE")
       .map((operation) => ({ operationDate: operation.operationDate, sacks: operation.quantitySacks, amountCents: operation.serviceAmountCents }));
     const byMonth = new Map<number, { sacks: string[]; amountCents: number; count: number }>();
     for (const row of rows) {
@@ -1213,6 +2436,7 @@ export class AppRepository {
               ownLegalEntityId,
               responsiblePartnerId: partnerId,
               partnerLegalEntityId: null,
+              operationType,
               accessKey: normalized.accessKey || null,
               documentNumber: normalized.documentNumber,
               series: normalized.series || null,
@@ -1389,31 +2613,44 @@ export class AppRepository {
     return this.getXmlImportJob(jobId);
   }
 
-  executeXmlImportJob(id: string): { job: XmlImportJob; files: XmlImportFile[] } {
+  async executeXmlImportJob(id: string): Promise<{ job: XmlImportJob; files: XmlImportFile[] }> {
     const current = this.getXmlImportJob(id);
     const settings = JSON.parse(current.job.settingsJson) as Record<string, unknown>;
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE xml_import_jobs SET status = 'PROCESSING', started_at = ? WHERE id = ?").run(now, id);
-    current.files.forEach((file) => {
-      if (!["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(file.status)) return;
+    this.db.prepare("UPDATE xml_import_jobs SET status = 'PROCESSING', started_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
+    for (const file of current.files) {
+      if (!["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(file.status)) continue;
       const fileResolution = file.resolutionDataJson ? JSON.parse(file.resolutionDataJson) as Record<string, unknown> : {};
       const resolution = { ...settings, ...fileResolution };
       if (resolution.ignore === true) {
         this.db.prepare("UPDATE xml_import_files SET status = 'SKIPPED', updated_at = ? WHERE id = ?").run(new Date().toISOString(), file.id);
-        return;
+        continue;
       }
+      // processXmlImportFile roda dentro de uma transacao SQLite sincrona
+      // (nao aceita await) -- por isso o push pro Supabase acontece DEPOIS,
+      // fora da transacao, so' com o que realmente comitou local.
       const trx = this.db.transaction(() => this.processXmlImportFile(current.job, file, resolution, fileResolution));
       try {
         trx();
       } catch (error) {
         this.db.prepare("UPDATE xml_import_files SET status = 'ERROR', error_code = 'IMPORT_FAILED', error_message = ?, updated_at = ? WHERE id = ?").run(error instanceof Error ? error.message : "Falha ao importar XML.", new Date().toISOString(), file.id);
       }
-    });
+      const updatedFile = this.db.prepare("SELECT fiscal_document_id FROM xml_import_files WHERE id = ?").get(file.id) as { fiscal_document_id: string | null } | undefined;
+      if (updatedFile?.fiscal_document_id) {
+        // Falha de rede aqui nao aborta o job -- a nota ja esta segura local,
+        // e o sync poll (ou o proximo push) fecha a diferenca depois. So' nao
+        // pode ficar muda: e' exatamente esse tipo de falha silenciosa que
+        // deixou cadastro/nota "presos" so' localmente sem ninguem perceber.
+        await this.pushFiscalDocumentToShared(updatedFile.fiscal_document_id).catch((error) => log.warn("Falha ao sincronizar nota fiscal com o Supabase", error instanceof Error ? error.message : error));
+      }
+    }
     this.recountXmlImportJob(id);
     const after = this.getXmlImportJob(id);
     const hasErrors = after.files.some((file) => file.status === "ERROR");
-    this.db.prepare("UPDATE xml_import_jobs SET status = ?, completed_at = ? WHERE id = ?").run(hasErrors ? "COMPLETED_WITH_ERRORS" : "COMPLETED", new Date().toISOString(), id);
+    const completedAt = new Date().toISOString();
+    this.db.prepare("UPDATE xml_import_jobs SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(hasErrors ? "COMPLETED_WITH_ERRORS" : "COMPLETED", completedAt, completedAt, id);
     this.recountXmlImportJob(id);
+    await this.pushXmlImportJobToShared(id).catch((error) => log.warn("Falha ao sincronizar job de importacao de XML com o Supabase", error instanceof Error ? error.message : error));
     return this.getXmlImportJob(id);
   }
 
@@ -1637,8 +2874,11 @@ export class AppRepository {
         ${ownLegalEntityClause}
         AND responsible_partner_id = ?
         AND operation_date BETWEEN ? AND ?
+        AND operation_type = 'SALE'
         AND status = 'CONFIRMED'
         AND billing_status = 'UNBILLED'
+        AND applied_rate_value_cents > 0
+        AND service_amount_cents > 0
       ORDER BY operation_date, created_at
     `).all(...params) as DbRecord[]).map(mapOperation);
   }
@@ -1718,7 +2958,10 @@ export class AppRepository {
       periodEnd: filters.periodEnd,
       status: "all",
       billingStatus: "UNBILLED"
-    }).filter((operation) => !operation.rateWasManuallyOverridden && operation.status !== "CANCELED");
+    // "PURCHASE" nunca passa por aqui -- isso e' backfill de COMISSAO
+    // (service_rate_rules), nao faz sentido pra operacao de compra, e
+    // resolveServiceRateRule exige papel CLIENT (fornecedor pode nao ter).
+    }).filter((operation) => !operation.rateWasManuallyOverridden && operation.status !== "CANCELED" && operation.operationType !== "PURCHASE");
     const now = new Date().toISOString();
     for (const operation of operations) {
       const resolved = this.resolveServiceRateRule({
@@ -1745,6 +2988,19 @@ export class AppRepository {
       const resolvedRule = backfilled.rule;
       const serviceAmountCents = multiplyDecimalByCents(operation.quantitySacks, backfilled.rateValueCents);
       if (operation.serviceRateRuleId === resolvedRule?.id && operation.appliedRateValueCents === backfilled.rateValueCents && operation.serviceAmountCents === serviceAmountCents) continue;
+      // So registra historico quando a operacao JA tinha uma regra aplicada antes (mudanca de verdade,
+      // ex: regra nova retroativa "vazando" para tras). A primeira resolucao de uma operacao recem
+      // criada (regra anterior nula) nao e' historico, e' so o calculo inicial.
+      if (operation.serviceRateRuleId !== null) {
+        this.db.prepare(`INSERT INTO operation_rate_history (
+          id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents,
+          new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(randomUUID(), operation.id, operation.serviceRateRuleId, operation.appliedRateValueCents, operation.serviceAmountCents,
+            resolvedRule?.id ?? null, backfilled.rateValueCents, serviceAmountCents,
+            backfilled.origin === "backfill" ? "Regra com vigencia mais recente aplicada retroativamente a operacao ainda nao cobrada." : "Regra aplicavel recalculada.",
+            now);
+      }
       this.db.prepare("UPDATE operations SET service_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, updated_at = ? WHERE id = ?")
         .run(resolvedRule?.id ?? null, backfilled.rateValueCents, serviceAmountCents, now, operation.id);
     }
@@ -2033,7 +3289,7 @@ export class AppRepository {
     const creditWhere = includeAllCompanies ? "status = 'CONFIRMED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status = 'CONFIRMED'`;
     const creditParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
     const credits = this.db.prepare(`SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE ${creditWhere}`).get(...creditParams) as { total: number };
-    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, status: "CONFIRMED", billingStatus: "UNBILLED" });
+    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, status: "CONFIRMED", billingStatus: "UNBILLED" }).filter((item) => item.operationType !== "PURCHASE");
     const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
@@ -2211,7 +3467,7 @@ export class AppRepository {
     if (!organization.isActive) {
       throw new Error("Organizacao inativa nao pode ser selecionada.");
     }
-    const firstEntity = this.listLegalEntities({ organizationId, status: "active" })[0];
+    const firstEntity = this.listLegalEntities({ organizationId, status: "active" }).find((entity) => !this.isThirdPartyLegalEntity(entity));
     return this.updateInstallationProfile({
       ...existing,
       defaultOrganizationId: organizationId,
@@ -2269,8 +3525,10 @@ export class AppRepository {
     }
     const own = this.resolveOwnLegalEntityForXml(job.organizationId, extracted, resolution);
     if (!own.ownLegalEntityId) throw new Error(own.errorMessage ?? "CNPJ proprio nao identificado.");
+    const ownEntity = this.getLegalEntity(own.ownLegalEntityId);
+    const documentOrganizationId = this.isThirdPartyLegalEntity(ownEntity) ? job.organizationId : ownEntity.organizationId;
     const explicitClientPartnerId = typeof resolution.clientPartnerId === "string" ? resolution.clientPartnerId : null;
-    const autoMatchedPartnerId = explicitClientPartnerId ? null : this.resolveCounterpartyPartnerForXml(job.organizationId, extracted, own.ownLegalEntityId, own.direction);
+    const autoMatchedPartnerId = explicitClientPartnerId ? null : this.resolveCounterpartyPartnerForXml(documentOrganizationId, extracted, own.ownLegalEntityId, own.direction);
     const responsiblePartnerId = explicitClientPartnerId ?? autoMatchedPartnerId;
     if (!responsiblePartnerId) {
       this.db.prepare("UPDATE xml_import_files SET status = 'PENDING_REVIEW', error_code = NULL, error_message = ?, updated_at = ? WHERE id = ?")
@@ -2283,15 +3541,27 @@ export class AppRepository {
     const operationScope = explicitFileScope ?? inferredOperationScope ?? defaultScope;
     const createOperations = resolution.createOperations !== false;
     const operationType = resolution.operationType === "PURCHASE" || resolution.operationType === "SALE" ? resolution.operationType : own.operationType;
+    // Nota triangulada: nem emitente nem destinatario e' CNPJ proprio, e os
+    // dois lados resolvem pra parceiros com papeis opostos (ex: fornecedor +
+    // corretor do comprador final) -- ver resolveTriangulatedSecondaryPartner.
+    // Se o revisor manual ja indicou o parceiro secundario (resolution.secondaryPartnerId),
+    // usa esse em vez de tentar detectar de novo.
+    const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
+    const autoSecondary = explicitSecondaryPartnerId ? null : this.resolveTriangulatedSecondaryPartner(documentOrganizationId, extracted, responsiblePartnerId, operationType);
+    const secondaryResponsiblePartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
+    const secondaryOperationType: "PURCHASE" | "SALE" | null = secondaryResponsiblePartnerId ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null;
     const pending: string[] = [];
     if (!operationScope) pending.push("UF da venda nao definida.");
     const counterpartyLegalEntityId = this.resolveCounterpartyLegalEntityForXml(extracted, own.ownLegalEntityId, own.direction);
     const totals = extracted.totals as Record<string, unknown> | undefined;
     const doc = this.createFiscalDocument({
-      organizationId: job.organizationId,
+      organizationId: documentOrganizationId,
       ownLegalEntityId: own.ownLegalEntityId,
       responsiblePartnerId,
       partnerLegalEntityId: counterpartyLegalEntityId,
+      secondaryResponsiblePartnerId,
+      secondaryOperationType,
+      operationType,
       accessKey: file.accessKey,
       documentNumber: String(extracted.number ?? ""),
       series: extracted.series ? String(extracted.series) : null,
@@ -2299,15 +3569,16 @@ export class AppRepository {
       totalAmountCents: Number(totals?.invoiceAmountCents ?? 0),
       hasPendingIssues: pending.length > 0,
       pendingNotes: pending.length ? pending.join(" ") : null,
-      notes: [String(extracted.nature ?? ""), own.isThirdParty ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : ""].filter(Boolean).join(" | ")
+      notes: [String(extracted.nature ?? ""), own.isThirdParty ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
     this.db.prepare(`UPDATE fiscal_documents SET source = 'XML', xml_file_path = ?, xml_file_hash = ?, protocol_number = ?, protocol_date = ?, authorization_status_code = ?, authorization_status_message = ?, xml_import_job_id = ?, direction = ?, fiscal_snapshot_json = ?, updated_at = ? WHERE id = ?`)
       .run(file.storedFilePath, file.fileHash, protocol?.number ?? null, protocol?.receivedAt ?? null, protocol?.statusCode ?? null, protocol?.statusMessage ?? null, job.id, own.direction, file.extractedDataJson, new Date().toISOString(), doc.document.id);
     let createdOperations = 0;
+    const itemWarnings: string[] = [];
     const items = Array.isArray(extracted.items) ? extracted.items as Array<Record<string, unknown>> : [];
     items.forEach((xmlItem) => {
-      const productAlias = this.resolveProductAlias(job.organizationId, {
+      const productAlias = this.resolveProductAlias(documentOrganizationId, {
         sourceProductCode: this.stringOrNull(xmlItem.productCode),
         sourceDescription: String(xmlItem.description ?? ""),
         ncm: this.stringOrNull(xmlItem.ncm)
@@ -2342,15 +3613,43 @@ export class AppRepository {
         });
         this.db.prepare("UPDATE operations SET source = 'XML', xml_import_job_id = ?, classification_rule_id = ? WHERE id = ?").run(job.id, resolution.classificationRuleId ?? null, operation.id);
         createdOperations += 1;
+        if (secondaryResponsiblePartnerId && secondaryOperationType) {
+          const secondaryOperation = this.addOperation({
+            fiscalDocumentId: doc.document.id,
+            fiscalDocumentItemId: item.id,
+            ownLegalEntityId: own.ownLegalEntityId as string,
+            responsiblePartnerId: secondaryResponsiblePartnerId,
+            productId,
+            operationType: secondaryOperationType,
+            operationScope,
+            operationDate: doc.document.issueDate,
+            quantitySacks: sacks,
+            manualRateValueCents: null,
+            manualOverrideReason: null,
+            notes: "Segunda perna (nota triangulada) criada a partir de XML"
+          });
+          this.db.prepare("UPDATE operations SET source = 'XML', xml_import_job_id = ?, classification_rule_id = ? WHERE id = ?").run(job.id, resolution.classificationRuleId ?? null, secondaryOperation.id);
+          createdOperations += 1;
+        }
+      } else if (createOperations && operationScope) {
+        const label = String(xmlItem.description ?? "Item XML");
+        if (!productId) itemWarnings.push(`"${label}": produto nao identificado, operacao nao criada.`);
+        else if (!sacks) itemWarnings.push(`"${label}": unidade "${String(xmlItem.commercialUnit ?? "")}" nao reconhecida (nao e saca/kg/ton/big bag), operacao nao criada.`);
       }
     });
     this.linkPendingFiscalDocumentEvents(file.accessKey ?? "");
     this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(doc.document.id, new Date().toISOString(), file.id);
-    this.db.prepare("UPDATE xml_import_jobs SET imported_notes = imported_notes + 1, created_operations = created_operations + ? WHERE id = ?").run(createdOperations, job.id);
-    // Nota sem pendencias e com pelo menos uma operacao ja entra confirmada, pronta para cobranca,
-    // sem exigir um segundo clique manual em "Confirmar" na tela de Notas fiscais.
+    this.db.prepare("UPDATE xml_import_jobs SET imported_notes = imported_notes + 1, created_operations = created_operations + ?, items_without_operation = items_without_operation + ? WHERE id = ?").run(createdOperations, itemWarnings.length, job.id);
+    // Nota sem pendencias de escopo e com pelo menos uma operacao ja entra confirmada, pronta para cobranca,
+    // sem exigir um segundo clique manual em "Confirmar" na tela de Notas fiscais. confirmFiscalDocument()
+    // rejeita notas com has_pending_issues=1, entao o aviso de item sem operacao (abaixo) so e' gravado
+    // DEPOIS de confirmar -- ele nao bloqueia a auto-confirmacao, so sinaliza a nota para revisao manual.
     if (!pending.length && createdOperations > 0) {
       this.confirmFiscalDocument(doc.document.id);
+    }
+    if (itemWarnings.length) {
+      this.db.prepare(`UPDATE fiscal_documents SET has_pending_issues = 1, pending_notes = CASE WHEN pending_notes IS NULL OR pending_notes = '' THEN ? ELSE pending_notes || ' ' || ? END, updated_at = ? WHERE id = ?`)
+        .run(itemWarnings.join(" "), itemWarnings.join(" "), new Date().toISOString(), doc.document.id);
     }
   }
 
@@ -2385,16 +3684,15 @@ export class AppRepository {
     const allEntities = this.listLegalEntities({ status: "all" });
     if (typeof resolution.ownLegalEntityId === "string") {
       const selectedOwn = allEntities.find((entity) => entity.id === resolution.ownLegalEntityId);
-      if (!selectedOwn || selectedOwn.organizationId !== organizationId) throw new Error("CNPJ proprio selecionado nao pertence a organizacao atual.");
+      if (!selectedOwn || !this.isOrganizationAllowed(selectedOwn.organizationId)) throw new Error("CNPJ proprio selecionado nao autorizado.");
       if (!selectedOwn.isActive) throw new Error("CNPJ proprio selecionado esta inativo.");
       if (selectedOwn.cnpj && selectedOwn.cnpj !== issuerDoc && selectedOwn.cnpj !== recipientDoc) {
         const ownIssuerMatch = allEntities.find((entity) => entity.cnpj === issuerDoc && !this.isThirdPartyLegalEntity(entity));
         const ownRecipientMatch = allEntities.find((entity) => entity.cnpj === recipientDoc && !this.isThirdPartyLegalEntity(entity));
-        if (ownIssuerMatch) {
-          throw new Error(`XML pertence a ${ownIssuerMatch.tradeName}. Troque a empresa ativa antes de importar.`);
-        }
-        if (!issuerDoc && ownRecipientMatch) {
-          throw new Error(`XML pertence a ${ownRecipientMatch.tradeName}. Troque a empresa ativa antes de importar.`);
+        if (ownIssuerMatch) return { ownLegalEntityId: ownIssuerMatch.id, direction: "OUTBOUND", operationType: "SALE" };
+        if (ownRecipientMatch) return { ownLegalEntityId: ownRecipientMatch.id, direction: "INBOUND", operationType: "PURCHASE" };
+        if (this.findSupplierPartnerIdByCnpj(organizationId, issuerDoc)) {
+          return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
         }
         const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
         return { ownLegalEntityId: thirdParty.id, direction: "OUTBOUND", operationType: "SALE", isThirdParty: true };
@@ -2403,12 +3701,8 @@ export class AppRepository {
       if (selectedOwn.cnpj && selectedOwn.cnpj === recipientDoc) return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
       return { ownLegalEntityId: selectedOwn.id, direction: "UNKNOWN", operationType: "SALE" };
     }
-    const issuerOwn = allEntities.find((entity) => entity.organizationId === organizationId && entity.cnpj === issuerDoc);
-    const recipientOwn = allEntities.find((entity) => entity.organizationId === organizationId && entity.cnpj === recipientDoc);
-    const otherOrgIssuer = allEntities.find((entity) => entity.organizationId !== organizationId && entity.cnpj === issuerDoc);
-    const otherOrgRecipient = allEntities.find((entity) => entity.organizationId !== organizationId && entity.cnpj === recipientDoc);
-    if (otherOrgIssuer && !this.isThirdPartyLegalEntity(otherOrgIssuer)) throw new Error(`XML pertence a ${otherOrgIssuer.tradeName}. Troque a empresa ativa antes de importar.`);
-    if (!issuerDoc && otherOrgRecipient && !this.isThirdPartyLegalEntity(otherOrgRecipient)) throw new Error(`XML pertence a ${otherOrgRecipient.tradeName}. Troque a empresa ativa antes de importar.`);
+    const issuerOwn = allEntities.find((entity) => entity.cnpj === issuerDoc && !this.isThirdPartyLegalEntity(entity));
+    const recipientOwn = allEntities.find((entity) => entity.cnpj === recipientDoc && !this.isThirdPartyLegalEntity(entity));
     if (issuerOwn && !issuerOwn.isActive) throw new Error("CNPJ proprio emitente esta inativo.");
     if (recipientOwn && !recipientOwn.isActive) throw new Error("CNPJ proprio destinatario esta inativo.");
     if (issuerOwn) return { ownLegalEntityId: issuerOwn.id, direction: "OUTBOUND", operationType: "SALE" };
@@ -2427,8 +3721,80 @@ export class AppRepository {
         errorMessage: `CNPJ proprio nao identificado. Cadastre o CNPJ proprio da empresa ou selecione a empresa/CNPJ correto. Emitente: ${issuerLabel || "-"}; Destinatario: ${recipientLabel || "-"}.`
       };
     }
+    if (this.findSupplierPartnerIdByCnpj(organizationId, issuerDoc)) {
+      return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
+    }
     const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
     return { ownLegalEntityId: thirdParty.id, direction: "OUTBOUND", operationType: "SALE", isThirdParty: true };
+  }
+
+  /**
+   * Nota "triangulada": o emitente e' um fornecedor nosso (ex: Leo ES), mas a
+   * nota em si foi emitida da empresa dele pra' OUTRA empresa (nem Villa nem
+   * Grao & Grao aparecem no XML) -- comum quando o fornecedor entrega direto
+   * pro comprador final. Sem essa checagem, cairia no fallback generico de
+   * "nota terceirizada" (criaria uma empresa-placeholder e trataria como
+   * venda) em vez de reconhecer como uma compra nossa do Leo, que e' o que
+   * realmente aconteceu comercialmente.
+   */
+  private findSupplierPartnerIdByCnpj(organizationId: string, cnpj: string): string | null {
+    if (!cnpj || cnpj.length !== 14) return null;
+    const row = this.db.prepare(`
+      SELECT bp.id AS id
+      FROM partner_legal_entities ple
+      JOIN business_partners bp ON bp.id = ple.business_partner_id
+      JOIN business_partner_roles bpr ON bpr.business_partner_id = bp.id AND bpr.role = 'SUPPLIER'
+      WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      LIMIT 1
+    `).get(cnpj, organizationId) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  private findLinkedPartnerRolesByCnpj(organizationId: string, cnpj: string): { businessPartnerId: string; roles: string[] } | null {
+    if (!cnpj || cnpj.length !== 14) return null;
+    const row = this.db.prepare(`
+      SELECT bp.id AS id
+      FROM partner_legal_entities ple
+      JOIN business_partners bp ON bp.id = ple.business_partner_id
+      WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      LIMIT 1
+    `).get(cnpj, organizationId) as { id: string } | undefined;
+    if (!row) return null;
+    const roles = (this.db.prepare("SELECT role FROM business_partner_roles WHERE business_partner_id = ?").all(row.id) as Array<{ role: string }>).map((item) => item.role);
+    return { businessPartnerId: row.id, roles };
+  }
+
+  /**
+   * Nota triangulada de verdade: nem emitente nem destinatario e' CNPJ
+   * proprio, e os dois lados resolvem pra empresas vinculadas a parceiros com
+   * papeis OPOSTOS (ex: emitente = empresa do fornecedor Leo ES, destinatario
+   * = empresa Primavera vinculada ao corretor Valani). Diferente do caso
+   * `findSupplierPartnerIdByCnpj` acima (so' um lado resolve, vira uma
+   * operacao so'), aqui os DOIS lados resolvem -- entao a nota deve gerar
+   * duas operacoes independentes: uma de compra com o fornecedor, uma de
+   * venda com o corretor/cliente, ambas sobre a mesma remessa.
+   */
+  private resolveTriangulatedSecondaryPartner(
+    organizationId: string,
+    extracted: Record<string, unknown>,
+    primaryPartnerId: string,
+    primaryOperationType: "PURCHASE" | "SALE"
+  ): { partnerId: string; operationType: "PURCHASE" | "SALE" } | null {
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const accessKeyIssuerDoc = this.issuerCnpjFromAccessKey(this.stringOrNull(extracted.accessKey));
+    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? "")) || accessKeyIssuerDoc || "";
+    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    const ownCnpjs = new Set(this.listLegalEntities({ status: "all" }).filter((entity) => !this.isThirdPartyLegalEntity(entity)).map((entity) => entity.cnpj).filter((cnpj): cnpj is string => Boolean(cnpj)));
+    if ((issuerDoc && ownCnpjs.has(issuerDoc)) || (recipientDoc && ownCnpjs.has(recipientDoc))) return null;
+
+    const secondaryOperationType: "PURCHASE" | "SALE" = primaryOperationType === "PURCHASE" ? "SALE" : "PURCHASE";
+    const secondaryRole = secondaryOperationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
+    const candidates = [this.findLinkedPartnerRolesByCnpj(organizationId, issuerDoc), this.findLinkedPartnerRolesByCnpj(organizationId, recipientDoc)]
+      .filter((item): item is { businessPartnerId: string; roles: string[] } => item !== null);
+    const secondaryCandidate = candidates.find((item) => item.businessPartnerId !== primaryPartnerId && item.roles.includes(secondaryRole));
+    if (!secondaryCandidate) return null;
+    return { partnerId: secondaryCandidate.businessPartnerId, operationType: secondaryOperationType };
   }
 
   private isThirdPartyLegalEntity(entity: Pick<LegalEntity, "documentPrefix" | "tradeName" | "legalName">): boolean {
@@ -2444,7 +3810,13 @@ export class AppRepository {
     const tradeName = this.stringOrNull(party?.tradeName) ?? legalName;
     const partyState = this.stringOrNull(party?.state)?.toUpperCase() ?? "";
     const partyPostalCode = this.onlyDigits(String(party?.postalCode ?? ""));
-    return this.createLegalEntity({
+    // Id deterministico (nao aleatorio) por CNPJ: se dois PCs importarem uma nota
+    // do mesmo terceiro antes de sincronizar entre si, cada um cria essa
+    // "empresa" terceirizada localmente -- com id aleatorio, os dois pushes
+    // pra o Supabase colidiriam no indice unico de CNPJ (ids diferentes, mesmo
+    // CNPJ). Com id deterministico os dois PCs geram o MESMO id, e o segundo
+    // push vira um upsert inofensivo em vez de um conflito.
+    return this.createLegalEntityLocalOnly({
       organizationId,
       legalName,
       tradeName,
@@ -2468,7 +3840,7 @@ export class AppRepository {
       defaultPixKey: null,
       isDraft: true,
       isActive: true
-    });
+    }, deterministicUuid("thirdPartyLegalEntity", cnpj));
   }
 
   private resolveCounterpartyPartnerForXml(organizationId: string, extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
@@ -2608,14 +3980,15 @@ export class AppRepository {
     const importedNotes = (this.db.prepare("SELECT COUNT(*) AS total FROM xml_import_files WHERE import_job_id = ? AND fiscal_document_id IS NOT NULL AND status = 'IMPORTED'").get(id) as { total: number }).total;
     const importedEvents = (this.db.prepare("SELECT COUNT(*) AS total FROM xml_import_files WHERE import_job_id = ? AND fiscal_document_event_id IS NOT NULL AND status = 'IMPORTED'").get(id) as { total: number }).total;
     const createdOperations = (this.db.prepare("SELECT COUNT(*) AS total FROM operations WHERE xml_import_job_id = ?").get(id) as { total: number }).total;
-    this.db.prepare("UPDATE xml_import_jobs SET total_files = ?, valid_files = ?, warning_files = ?, duplicate_files = ?, error_files = ?, imported_notes = ?, imported_events = ?, created_operations = ? WHERE id = ?")
-      .run(rows.length, count("VALID"), count("WARNING") + count("PENDING_REVIEW"), count("DUPLICATE"), count("ERROR"), importedNotes, importedEvents, createdOperations, id);
+    this.db.prepare("UPDATE xml_import_jobs SET total_files = ?, valid_files = ?, warning_files = ?, duplicate_files = ?, error_files = ?, imported_notes = ?, imported_events = ?, created_operations = ?, updated_at = ? WHERE id = ?")
+      .run(rows.length, count("VALID"), count("WARNING") + count("PENDING_REVIEW"), count("DUPLICATE"), count("ERROR"), importedNotes, importedEvents, createdOperations, new Date().toISOString(), id);
   }
 
   private reconcileXmlImportJobStatus(id: string): void {
     const rows = (this.db.prepare("SELECT status FROM xml_import_files WHERE import_job_id = ?").all(id) as Array<{ status: string }>).map((row) => row.status);
     if (rows.length > 0 && rows.every((status) => status === "REVERTED")) {
-      this.db.prepare("UPDATE xml_import_jobs SET status = 'REVERTED', reverted_at = COALESCE(reverted_at, ?) WHERE id = ?").run(new Date().toISOString(), id);
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE xml_import_jobs SET status = 'REVERTED', reverted_at = COALESCE(reverted_at, ?), updated_at = ? WHERE id = ?").run(now, now, id);
     }
   }
 
@@ -2745,23 +4118,24 @@ export class AppRepository {
     if (charge.organizationId !== payment.organizationId || charge.ownLegalEntityId !== payment.ownLegalEntityId || charge.clientPartnerId !== payment.clientPartnerId) throw new Error("Pagamento fora do escopo da cobranca.");
   }
 
-  listExpenseCategories(organizationId: string): ExpenseCategory[] {
-    this.ensureDefaultExpenseCategories(organizationId);
+  async listExpenseCategories(organizationId: string): Promise<ExpenseCategory[]> {
+    await this.ensureDefaultExpenseCategories(organizationId);
     return (this.db.prepare("SELECT * FROM expense_categories WHERE organization_id = ? ORDER BY is_active DESC, name").all(organizationId) as DbRecord[]).map(mapExpenseCategory);
   }
 
-  createExpenseCategory(input: unknown): ExpenseCategory {
+  async createExpenseCategory(input: unknown): Promise<ExpenseCategory> {
     const data = expenseCategoryInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     if (data.parentCategoryId) this.assertExpenseCategoryScope(data.parentCategoryId, data.organizationId);
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO expense_categories (id, organization_id, parent_category_id, name, code, expense_nature, description, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(id, data.organizationId, data.parentCategoryId, data.name, data.code, data.expenseNature, data.description, data.isActive ? 1 : 0, now, now);
+    const row: DbRecord = { id, organization_id: data.organizationId, parent_category_id: data.parentCategoryId, name: data.name, code: data.code, expense_nature: data.expenseNature, description: data.description, is_active: data.isActive, created_at: now, updated_at: now };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("expense_categories", row));
+    this.upsertLocalRow("expense_categories", row);
     return this.getExpenseCategory(id);
   }
 
-  updateExpenseCategory(id: string, input: unknown): ExpenseCategory {
+  async updateExpenseCategory(id: string, input: unknown): Promise<ExpenseCategory> {
     const current = this.getExpenseCategory(id);
     const data = expenseCategoryInputSchema.parse(input);
     if (current.organizationId !== data.organizationId) throw new Error("Categoria fora da organizacao.");
@@ -2770,18 +4144,23 @@ export class AppRepository {
       this.assertExpenseCategoryScope(data.parentCategoryId, data.organizationId);
       this.assertNoExpenseCategoryCycle(id, data.parentCategoryId);
     }
-    this.db.prepare("UPDATE expense_categories SET parent_category_id = ?, name = ?, code = ?, expense_nature = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?")
-      .run(data.parentCategoryId, data.name, data.code, data.expenseNature, data.description, data.isActive ? 1 : 0, new Date().toISOString(), id);
+    const patch: DbRecord = { parent_category_id: data.parentCategoryId, name: data.name, code: data.code, expense_nature: data.expenseNature, description: data.description, is_active: data.isActive, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("expense_categories", id, patch));
+    this.patchLocalRow("expense_categories", id, patch);
     return this.getExpenseCategory(id);
   }
 
-  activateExpenseCategory(id: string): ExpenseCategory {
-    this.db.prepare("UPDATE expense_categories SET is_active = 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+  async activateExpenseCategory(id: string): Promise<ExpenseCategory> {
+    const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("expense_categories", id, patch));
+    this.patchLocalRow("expense_categories", id, patch);
     return this.getExpenseCategory(id);
   }
 
-  deactivateExpenseCategory(id: string): ExpenseCategory {
-    this.db.prepare("UPDATE expense_categories SET is_active = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+  async deactivateExpenseCategory(id: string): Promise<ExpenseCategory> {
+    const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("expense_categories", id, patch));
+    this.patchLocalRow("expense_categories", id, patch);
     return this.getExpenseCategory(id);
   }
 
@@ -2924,6 +4303,17 @@ export class AppRepository {
     };
   }
 
+  /**
+   * Nota a nota que compoe um acerto de compras (gerado por
+   * generatePurchaseSettlement) -- e' esse detalhamento que serve de prova em
+   * caso de cobranca indevida do fornecedor, entao precisa continuar
+   * consultavel depois do acerto confirmado, nao so' no momento da geracao.
+   */
+  listAccountPayableOperations(accountPayableId: string): AccountPayableOperation[] {
+    this.getPayable(accountPayableId);
+    return (this.db.prepare("SELECT * FROM account_payable_operations WHERE account_payable_id = ? ORDER BY operation_date_snapshot, created_at").all(accountPayableId) as DbRecord[]).map(mapAccountPayableOperation);
+  }
+
   createAccountPayableDraft(input: unknown): AccountPayableDetail {
     const data = accountPayableInputSchema.parse(input);
     this.assertPayableInputScope(data);
@@ -2969,6 +4359,155 @@ export class AppRepository {
     });
     run();
     return this.getAccountPayable(id);
+  }
+
+  // Espelha createClientChargeDraft + reserveOperationsForCharge + issueClientCharge,
+  // mas do lado de compra: junta operacoes de compra CONFIRMADAS e ainda nao
+  // acertadas de um fornecedor numa unica conta a pagar, com o detalhamento
+  // nota a nota preservado em account_payable_operations (e' esse
+  // detalhamento que serve de prova em caso de cobranca indevida do
+  // fornecedor). Diferente do lado de cobranca, o valor aqui e' sempre
+  // CONFIRMED (ja veio de preco por saca previamente cadastrado, nunca
+  // estimado) -- por isso confirma na hora, sem passar por rascunho manual.
+  async generatePurchaseSettlement(input: unknown): Promise<AccountPayableDetail> {
+    const data = generatePurchaseSettlementInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    const supplier = this.assertSupplierPartner(data.supplierPartnerId, data.organizationId);
+    const ownLegalEntity = this.getLegalEntity(data.ownLegalEntityId);
+    const operations = data.operationIds.map((operationId) => {
+      const operation = this.getOperation(operationId);
+      if (operation.responsiblePartnerId !== data.supplierPartnerId) throw new Error("Operacao fora do escopo do acerto.");
+      if (operation.operationType !== "PURCHASE") throw new Error("Somente operacoes de compra entram num acerto de fornecedor.");
+      if (operation.status !== "CONFIRMED") throw new Error("Somente operacoes confirmadas entram no acerto.");
+      if (operation.purchaseSettlementStatus !== "UNSETTLED") throw new Error("Operacao ja reservada ou acertada.");
+      return operation;
+    });
+    const primaryLegalEntity = this.listPartnerLegalEntities(supplier.id).find((entity) => entity.isPrimary && entity.isActive) ?? this.listPartnerLegalEntities(supplier.id).find((entity) => entity.isActive) ?? null;
+    const originalAmountCents = operations.reduce((sum, operation) => sum + operation.serviceAmountCents, 0);
+    const now = new Date().toISOString();
+    const payableId = randomUUID();
+    const trx = this.db.transaction(() => {
+      this.db.prepare(`INSERT INTO accounts_payable (
+        id, organization_id, own_legal_entity_id, supplier_partner_id, supplier_legal_entity_id, payee_name_snapshot, payee_tax_id_snapshot,
+        category_id, default_cost_center_id, default_location_id, source, description, document_type, document_number,
+        competence_date, issue_date, due_date, original_amount_cents, discount_cents, interest_cents, penalty_cents, other_additions_cents,
+        final_amount_cents, paid_amount_cents, open_amount_cents, amount_status, status, notes, internal_notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'IMPORT', ?, NULL, NULL, ?, ?, ?, ?, 0, 0, 0, 0, ?, 0, ?, 'CONFIRMED', 'DRAFT', ?, NULL, ?, ?)`)
+        .run(payableId, data.organizationId, data.ownLegalEntityId, supplier.id, primaryLegalEntity?.id ?? null, supplier.displayName, this.cleanOptionalTaxId(primaryLegalEntity?.cnpj ?? null), data.categoryId, `Acerto de compras - ${supplier.displayName}`, now.slice(0, 10), now.slice(0, 10), data.dueDate, originalAmountCents, originalAmountCents, originalAmountCents, data.notes, now, now);
+      this.recordPayableStatus(payableId, null, "DRAFT", "Rascunho criado a partir de acerto de compras");
+      for (const operation of operations) {
+        const doc = this.getFiscalDocument(operation.fiscalDocumentId).document;
+        const product = operation.productId ? this.getProduct(operation.productId) : null;
+        this.db.prepare(`INSERT INTO account_payable_operations (
+          id, account_payable_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, supplier_partner_id_snapshot,
+          operation_date_snapshot, fiscal_document_number_snapshot, fiscal_document_series_snapshot, product_name_snapshot, operation_scope_snapshot,
+          quantity_sacks_decimal_snapshot, purchase_rate_cents_snapshot, purchase_amount_cents_snapshot, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(randomUUID(), payableId, operation.id, operation.ownLegalEntityId, ownLegalEntity.tradeName, supplier.id, operation.operationDate, doc.documentNumber, doc.series, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
+        this.db.prepare("UPDATE operations SET purchase_settlement_status = 'RESERVED', account_payable_id = ?, updated_at = ? WHERE id = ?").run(payableId, now, operation.id);
+      }
+      const payable = this.getPayable(payableId);
+      const next = payable.openAmountCents === 0 ? "PAID" : "OPEN";
+      this.db.prepare("UPDATE accounts_payable SET status = ?, confirmed_at = ?, updated_at = ? WHERE id = ?").run(next, now, now, payableId);
+      this.recordPayableStatus(payableId, "DRAFT", next, "Acerto de compras confirmado");
+      this.db.prepare("UPDATE operations SET purchase_settlement_status = 'SETTLED', updated_at = ? WHERE account_payable_id = ?").run(now, payableId);
+    });
+    trx();
+    await this.pushAccountPayableToShared(payableId).catch((error) => log.warn("Falha ao sincronizar acerto de compras com o Supabase", error instanceof Error ? error.message : error));
+    return this.getAccountPayable(payableId);
+  }
+
+  /**
+   * Libera de volta pra UNSETTLED as operacoes de compra reservadas num
+   * acerto -- chamada de dentro de cancelAccountPayable quando o acerto e'
+   * de origem IMPORT (generatePurchaseSettlement confirma o pagamento na
+   * mesma transacao que cria o registro, entao nunca existe uma janela
+   * externa de "rascunho" pra desfazer antes de confirmar; cancelar o
+   * pagamento e' o unico jeito de desfazer um acerto, e por isso precisa
+   * necessariamente devolver as operacoes, senao elas ficam presas pra
+   * sempre com purchase_settlement_status = 'SETTLED' apontando pra um
+   * accounts_payable cancelado, sem poder entrar em nenhum acerto novo).
+   */
+  private releaseLinkedPurchaseOperations(accountPayableId: string, now: string): void {
+    this.db.prepare("UPDATE account_payable_operations SET released_at = ? WHERE account_payable_id = ? AND released_at IS NULL").run(now, accountPayableId);
+    this.db.prepare("UPDATE operations SET purchase_settlement_status = 'UNSETTLED', account_payable_id = NULL, updated_at = ? WHERE account_payable_id = ?").run(now, accountPayableId);
+  }
+
+  findEligiblePurchaseOperations(input: unknown): Operation[] {
+    const data = eligiblePurchaseOperationsInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
+    const ownLegalEntityClause = data.includeAllCompanies || !data.ownLegalEntityId ? "" : "AND operations.own_legal_entity_id = ?";
+    const params: unknown[] = [];
+    if (!data.includeAllCompanies) params.push(data.organizationId);
+    if (!data.includeAllCompanies && data.ownLegalEntityId) params.push(data.ownLegalEntityId);
+    params.push(data.supplierPartnerId, data.periodStart, data.periodEnd);
+    return (this.db.prepare(`
+      SELECT * FROM operations
+      WHERE 1 = 1
+        ${organizationClause}
+        ${ownLegalEntityClause}
+        AND responsible_partner_id = ?
+        AND operation_date BETWEEN ? AND ?
+        AND operation_type = 'PURCHASE'
+        AND status = 'CONFIRMED'
+        AND purchase_settlement_status = 'UNSETTLED'
+      ORDER BY operation_date, created_at
+    `).all(...params) as DbRecord[]).map(mapOperation);
+  }
+
+  getSupplierPurchaseSummary(input: unknown): PartnerRateSummaryRow[] {
+    const data = supplierPurchaseSummaryInputSchema.parse(input);
+    this.assertOrganizationWritable(data.organizationId);
+    const settlementClause = data.includeAlreadySettled ? "" : "AND operations.purchase_settlement_status = 'UNSETTLED'";
+    const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
+    const ownLegalEntityClause = data.includeAllCompanies || !data.ownLegalEntityId ? "" : "AND operations.own_legal_entity_id = ?";
+    const params: unknown[] = [];
+    if (!data.includeAllCompanies) params.push(data.organizationId);
+    if (!data.includeAllCompanies && data.ownLegalEntityId) params.push(data.ownLegalEntityId);
+    params.push(data.periodStart, data.periodEnd);
+    const rows = this.db.prepare(`
+      SELECT operations.responsible_partner_id AS partnerId, operations.operation_scope AS scope, operations.quantity_sacks_decimal AS sacks, operations.service_amount_cents AS amountCents
+      FROM operations
+      WHERE 1 = 1
+        ${organizationClause}
+        ${ownLegalEntityClause}
+        AND operations.operation_date BETWEEN ? AND ?
+        AND operations.operation_type = 'PURCHASE'
+        AND operations.status = 'CONFIRMED'
+        ${settlementClause}
+    `).all(...params) as Array<{ partnerId: string; scope: "INTERNAL" | "EXTERNAL"; sacks: string; amountCents: number }>;
+
+    const byPartner = new Map<string, { internalSacks: string[]; externalSacks: string[]; internalAmountCents: number; externalAmountCents: number; operationCount: number }>();
+    for (const row of rows) {
+      const bucket = byPartner.get(row.partnerId) ?? { internalSacks: [], externalSacks: [], internalAmountCents: 0, externalAmountCents: 0, operationCount: 0 };
+      if (row.scope === "INTERNAL") {
+        bucket.internalSacks.push(row.sacks);
+        bucket.internalAmountCents += row.amountCents;
+      } else {
+        bucket.externalSacks.push(row.sacks);
+        bucket.externalAmountCents += row.amountCents;
+      }
+      bucket.operationCount += 1;
+      byPartner.set(row.partnerId, bucket);
+    }
+
+    const suppliers = this.listBusinessPartners({ role: "SUPPLIER", status: "active" });
+    return suppliers
+      .map((partner): PartnerRateSummaryRow => {
+        const bucket = byPartner.get(partner.id);
+        return {
+          partnerId: partner.id,
+          partnerDisplayName: partner.displayName,
+          internalSacks: bucket?.internalSacks.length ? sumDecimalTexts(bucket.internalSacks) : "0",
+          externalSacks: bucket?.externalSacks.length ? sumDecimalTexts(bucket.externalSacks) : "0",
+          internalAmountCents: bucket?.internalAmountCents ?? 0,
+          externalAmountCents: bucket?.externalAmountCents ?? 0,
+          totalAmountCents: (bucket?.internalAmountCents ?? 0) + (bucket?.externalAmountCents ?? 0),
+          operationCount: bucket?.operationCount ?? 0
+        };
+      })
+      .sort((a, b) => b.totalAmountCents - a.totalAmountCents);
   }
 
   duplicateAccountPayable(id: string): AccountPayableDetail {
@@ -3049,6 +4588,7 @@ export class AppRepository {
       const now = new Date().toISOString();
       this.db.prepare("UPDATE accounts_payable SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
       this.recordPayableStatus(id, payable.status, "CANCELLED", reason);
+      if (payable.source === "IMPORT") this.releaseLinkedPurchaseOperations(id, now);
     });
     run();
     return this.getAccountPayable(id);
@@ -3233,6 +4773,11 @@ export class AppRepository {
     return this.getPayablePayment(id);
   }
 
+  /** IDs de accounts_payable afetadas por um pagamento -- usado so' pelo handler IPC pra saber o que reempurrar pro Supabase depois de cancelar. */
+  getPayablePaymentAllocatedPayableIds(payablePaymentId: string): string[] {
+    return (this.db.prepare("SELECT DISTINCT account_payable_id FROM payable_payment_allocations WHERE payable_payment_id = ?").all(payablePaymentId) as Array<{ account_payable_id: string }>).map((row) => row.account_payable_id);
+  }
+
   getPayablePayment(id: string): PayablePayment {
     const row = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(id) as DbRecord | undefined;
     if (!row) throw new Error("Pagamento de conta nao encontrado.");
@@ -3342,7 +4887,7 @@ export class AppRepository {
       preview,
       payables,
       payments,
-      categories: this.listExpenseCategories(organization.id),
+      categories: await this.listExpenseCategories(organization.id),
       locations: this.listLocations({ organizationId: organization.id, status: "all" }),
       costCenters: this.listCostCenters({ organizationId: organization.id, status: "all" }),
       partners: this.listBusinessPartners({ organizationId: organization.id, status: "all" }),
@@ -3399,7 +4944,7 @@ export class AppRepository {
     return this.refreshPayableComputedStatus(mapAccountPayable(row));
   }
 
-  private ensureDefaultExpenseCategories(organizationId: string): void {
+  private async ensureDefaultExpenseCategories(organizationId: string): Promise<void> {
     this.assertOrganizationWritable(organizationId);
     const now = new Date().toISOString();
     const defaults: Array<{ code: string; name: string; nature: string }> = [
@@ -3415,13 +4960,20 @@ export class AppRepository {
       { code: "BANK_FEES", name: "Despesas bancarias", nature: "FINANCIAL" },
       { code: "OTHER_EXPENSES", name: "Outras despesas", nature: "OTHER" }
     ];
-    defaults.forEach((item) => {
+    for (const item of defaults) {
       const exists = this.db.prepare("SELECT id FROM expense_categories WHERE organization_id = ? AND code = ?").get(organizationId, item.code);
-      if (!exists) {
-        this.db.prepare("INSERT INTO expense_categories (id, organization_id, parent_category_id, name, code, expense_nature, description, is_active, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, NULL, 1, ?, ?)")
-          .run(randomUUID(), organizationId, item.name, item.code, item.nature, now, now);
-      }
-    });
+      if (exists) continue;
+      // Id determinístico (nao randomUUID): categorias-padrao sao criadas de
+      // forma preguicosa (na primeira leitura) em qualquer PC -- com id
+      // aleatorio, dois PCs criariam "a mesma" categoria com ids diferentes
+      // antes de sincronizar, colidindo no unique (organization_id, code)
+      // assim que expense_categories entrar na sincronizacao. Mesmo problema
+      // (e mesma correcao) do seed de clientes, ver deterministicId.ts.
+      const id = deterministicUuid("expenseCategory", organizationId, item.code);
+      const row: DbRecord = { id, organization_id: organizationId, parent_category_id: null, name: item.name, code: item.code, expense_nature: item.nature, description: null, is_active: true, created_at: now, updated_at: now };
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("expense_categories", row));
+      this.upsertLocalRow("expense_categories", row);
+    }
   }
 
   private assertExpenseCategoryScope(id: string, organizationId: string): ExpenseCategory {
@@ -4024,6 +5576,10 @@ export class AppRepository {
     const signer = this.getDealSigner(id);
     this.assertDealEditable(signer.dealConfirmationId);
     this.db.prepare("DELETE FROM deal_confirmation_signers WHERE id = ?").run(id);
+    // addDealSignerInternal e updateDealSigner recalculam o status agregado de assinatura apos mexer
+    // na lista de signatarios; remover um signatario tambem pode mudar o resultado (ex: era o unico
+    // pendente) e por isso precisa do mesmo recalculo -- antes esse caminho ficava sem chamar.
+    this.refreshDealSignatureStatus(signer.dealConfirmationId);
     return this.getDealConfirmation(signer.dealConfirmationId);
   }
 
@@ -4794,7 +6350,8 @@ export class AppRepository {
     const row = this.db.prepare("SELECT * FROM partner_legal_entities WHERE id = ?").get(id) as DbRecord | undefined;
     if (!row) throw new Error("Estabelecimento do parceiro nao encontrado.");
     const entity = mapBusinessPartnerLegalEntity(row);
-    this.getBusinessPartner(entity.businessPartnerId);
+    if (entity.businessPartnerId) this.getBusinessPartner(entity.businessPartnerId);
+    else if (!this.isOrganizationAllowed(entity.organizationId)) throw new Error("Empresa nao autorizada para esta instalacao.");
     return entity;
   }
 
@@ -4807,18 +6364,22 @@ export class AppRepository {
   }
 
   private assertPartnerLegalEntity(data: ReturnType<typeof partnerLegalEntityInputSchema.parse>, exceptId?: string): void {
-    this.getBusinessPartner(data.businessPartnerId);
+    this.assertOrganizationWritable(data.organizationId);
+    if (data.businessPartnerId) {
+      const partner = this.getBusinessPartner(data.businessPartnerId);
+      if (partner.organizationId !== data.organizationId) throw new Error("Cliente/corretor vinculado e' de outra organizacao.");
+    }
     if (!data.isDraft && (!data.cnpj || !isValidCnpj(data.cnpj))) throw new Error("CNPJ invalido.");
     if (data.cnpj) {
       const row = this.db
         .prepare(
           `SELECT ple.id, bp.display_name AS partnerName
            FROM partner_legal_entities ple
-           JOIN business_partners bp ON bp.id = ple.business_partner_id
+           LEFT JOIN business_partners bp ON bp.id = ple.business_partner_id
            WHERE ple.cnpj = ?`
         )
-        .get(data.cnpj) as { id: string; partnerName: string } | undefined;
-      if (row && row.id !== exceptId) throw new Error(`CNPJ ja cadastrado no parceiro ${row.partnerName}.`);
+        .get(data.cnpj) as { id: string; partnerName: string | null } | undefined;
+      if (row && row.id !== exceptId) throw new Error(row.partnerName ? `CNPJ ja cadastrado no parceiro ${row.partnerName}.` : "CNPJ ja cadastrado (empresa ainda sem cliente/corretor vinculado).");
     }
   }
 
@@ -4826,9 +6387,11 @@ export class AppRepository {
     this.db.prepare("UPDATE partner_legal_entities SET is_primary = 0 WHERE business_partner_id = ? AND id <> ?").run(businessPartnerId, exceptId ?? "");
   }
 
-  private setPartnerLegalEntityActive(id: string, active: boolean): BusinessPartnerLegalEntity {
+  private async setPartnerLegalEntityActive(id: string, active: boolean): Promise<BusinessPartnerLegalEntity> {
     this.getPartnerLegalEntity(id);
-    this.db.prepare("UPDATE partner_legal_entities SET is_active = ?, updated_at = ? WHERE id = ?").run(active ? 1 : 0, new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", id, patch));
+    this.patchLocalRow("partner_legal_entities", id, patch);
     return this.getPartnerLegalEntity(id);
   }
 
@@ -4856,9 +6419,11 @@ export class AppRepository {
     if (row && row.id !== exceptId) throw new Error("Codigo de produto ja cadastrado nesta organizacao.");
   }
 
-  private setProductActive(id: string, active: boolean): Product {
+  private async setProductActive(id: string, active: boolean): Promise<Product> {
     this.getProduct(id);
-    this.db.prepare("UPDATE products SET is_active = ?, updated_at = ? WHERE id = ?").run(active ? 1 : 0, new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("products", id, patch));
+    this.patchLocalRow("products", id, patch);
     return this.getProduct(id);
   }
 
@@ -4869,10 +6434,19 @@ export class AppRepository {
     return partner;
   }
 
-  private setBillingProfileActive(id: string, active: boolean): ClientBillingProfile {
+  private assertSupplierPartner(businessPartnerId: string, organizationId: string): BusinessPartner {
+    void organizationId;
+    const partner = this.getBusinessPartner(businessPartnerId);
+    if (!partner.roles.includes("SUPPLIER")) throw new Error("Somente cadastros com papel Fornecedor podem usar esta configuracao.");
+    return partner;
+  }
+
+  private async setBillingProfileActive(id: string, active: boolean): Promise<ClientBillingProfile> {
     const row = this.db.prepare("SELECT business_partner_id AS businessPartnerId FROM client_billing_profiles WHERE id = ?").get(id) as { businessPartnerId: string } | undefined;
     if (!row) throw new Error("Perfil de cobranca nao encontrado.");
-    this.db.prepare("UPDATE client_billing_profiles SET is_active = ?, updated_at = ? WHERE id = ?").run(active ? 1 : 0, new Date().toISOString(), id);
+    const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("client_billing_profiles", id, patch));
+    this.patchLocalRow("client_billing_profiles", id, patch);
     const profile = this.getBillingProfile(row.businessPartnerId);
     if (!profile) throw new Error("Perfil de cobranca nao encontrado.");
     return profile;
@@ -4881,12 +6455,10 @@ export class AppRepository {
   private assertServiceRateRule(data: ReturnType<typeof serviceRateRuleInputSchema.parse>, exceptId?: string): void {
     this.assertClientPartner(data.businessPartnerId, data.organizationId);
     if (data.ownLegalEntityId) {
-      const own = this.getLegalEntity(data.ownLegalEntityId);
-      if (own.organizationId !== data.organizationId) throw new Error("CNPJ proprio pertence a outra organizacao.");
+      this.getLegalEntity(data.ownLegalEntityId);
     }
     if (data.productId) {
-      const product = this.getProduct(data.productId);
-      if (product.organizationId !== data.organizationId) throw new Error("Produto pertence a outra organizacao.");
+      this.getProduct(data.productId);
     }
     if (data.counterpartyPartnerLegalEntityId) {
       this.getPartnerLegalEntity(data.counterpartyPartnerLegalEntityId);
@@ -4907,9 +6479,12 @@ export class AppRepository {
     if (overlaps.length > 0) throw new Error("Ja existe regra ativa conflitante para o mesmo escopo e vigencia.");
   }
 
-  private setServiceRateRuleActive(id: string, active: boolean): ServiceRateRule {
-    this.getServiceRateRule(id);
-    this.db.prepare("UPDATE service_rate_rules SET is_active = ?, updated_at = ? WHERE id = ?").run(active ? 1 : 0, new Date().toISOString(), id);
+  private async setServiceRateRuleActive(id: string, active: boolean): Promise<ServiceRateRule> {
+    const rule = this.getServiceRateRule(id);
+    const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", id, patch));
+    this.patchLocalRow("service_rate_rules", id, patch);
+    await this.recomputeServiceRateRuleConflictWarnings(rule.businessPartnerId);
     return this.getServiceRateRule(id);
   }
 

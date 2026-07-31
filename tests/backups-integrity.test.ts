@@ -8,6 +8,7 @@ import { initializeDatabase } from "../electron/main/database/database";
 import { BackupService } from "../electron/main/services/backupService";
 import { AuthService } from "../electron/main/services/security";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
+import { SharedRepository } from "../electron/main/services/sharedRepository";
 import type { AppContext } from "../electron/main/services/context";
 
 const tempDirs: string[] = [];
@@ -24,7 +25,7 @@ async function createServices(): Promise<{ context: AppContext; auth: AuthServic
   writeFileSync(join(directories.settingsDir, "branding.txt"), "marca");
   const db = initializeDatabase(directories);
   databases.push(db);
-  const context = { version: "0.1.0", directories, db };
+  const context = { version: "0.1.0", directories, db, sharedRepository: new SharedRepository(directories) };
   const auth = new AuthService(db);
   await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
   return { context, auth, backups: new BackupService(context, auth), externalDir };
@@ -45,7 +46,7 @@ describe("backups, restore preparation and integrity", () => {
     expect(job.documentCount).toBeGreaterThan(0);
     const inspection = backups.verify({ path: job.storedFilePath });
     expect(inspection.valid).toBe(true);
-    expect(inspection.manifest?.databaseMigrationVersion).toBe("022_client_charge_operation_company_snapshot");
+    expect(inspection.manifest?.databaseMigrationVersion).toBe("034_delete_legacy_import_client_shells_again");
     expect(inspection.manifest?.totalFileCount).toBe(job.fileCount);
   });
 

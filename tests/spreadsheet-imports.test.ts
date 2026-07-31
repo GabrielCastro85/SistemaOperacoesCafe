@@ -12,7 +12,7 @@ const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 
-function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string } {
+async function setup(): Promise<{ repo: AppRepository; db: ReturnType<typeof initializeDatabase>; partnerId: string; productId: string }> {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-step5-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
@@ -28,9 +28,9 @@ function setup(): { repo: AppRepository; db: ReturnType<typeof initializeDatabas
     allowLegalEntitySwitch: true,
     completedSetup: true
   });
-  const partner = repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Importado", notes: null, roles: ["CLIENT"], isActive: true });
+  const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Importado", notes: null, roles: ["CLIENT"], isActive: true });
   const product = repo.listProducts({ organizationId: villaId })[0];
-  repo.createServiceRateRule({
+  await repo.createServiceRateRule({
     organizationId: villaId,
     businessPartnerId: partner.id,
     ownLegalEntityId: null,
@@ -74,8 +74,8 @@ describe("spreadsheet imports", () => {
     expect(rows.map((row) => row.rowNumber)).toEqual([2, 3]);
   });
 
-  it("creates aliases, imports grouped rows and reverts imported documents", () => {
-    const { repo, db, partnerId, productId } = setup();
+  it("creates aliases, imports grouped rows and reverts imported documents", async () => {
+    const { repo, db, partnerId, productId } = await setup();
     const alias = repo.createPartnerAlias({ organizationId: villaId, businessPartnerId: partnerId, partnerLegalEntityId: null, alias: "Cliente XYZ Ltda", source: "planilha", isActive: true });
     expect(repo.resolvePartnerAlias(villaId, "cliente xyz ltda")?.id).toBe(alias.id);
     expect(() => repo.createPartnerAlias({ organizationId: villaId, businessPartnerId: partnerId, partnerLegalEntityId: null, alias: "Cliente XYZ Ltda", source: "planilha", isActive: true })).toThrow(/Alias ativo/);
@@ -109,13 +109,13 @@ describe("spreadsheet imports", () => {
     db.close();
   });
 
-  it("imports a row with no notes column (empty string, not null) instead of failing validation", () => {
+  it("imports a row with no notes column (empty string, not null) instead of failing validation", async () => {
     // Real-world spreadsheets rarely have a "notes"/"observacoes" column; normalizeSpreadsheetRow
     // (electron/main/ipc/handlers.ts) always sets notes to pick("notes"), which is "" when absent -
     // not null/undefined. addOperation's notes field previously used `??`, which does not treat ""
     // as missing, so it hit nullableText's z.string().min(1) and every such row failed with
     // "String must contain at least 1 character(s)".
-    const { repo, db, partnerId, productId } = setup();
+    const { repo, db, partnerId, productId } = await setup();
     const job = repo.createSpreadsheetImportDraft({
       organizationId: villaId,
       ownLegalEntityId,

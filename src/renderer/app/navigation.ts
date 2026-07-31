@@ -36,6 +36,13 @@ export const navigationGroups: NavigationGroup[] = [
     ]
   },
   {
+    title: "Pagamentos",
+    items: [
+      { id: "purchaseSettlements", label: "Acertos de entrada", legacyMenu: "Acertos de entrada", path: "/finance/purchase-settlements", icon: "$" },
+      { id: "purchaseRates", label: "Regras de entrada", legacyMenu: "Regras de entrada", path: "/finance/purchase-rates", icon: "%" }
+    ]
+  },
+  {
     title: "Financeiro",
     items: [
       { id: "finance", label: "Visão financeira", legacyMenu: "Financeiro", path: "/finance", icon: "▣" },
@@ -73,6 +80,8 @@ export function legacyMenuFromPath(path: string): string {
   if (normalized.startsWith("/confirmations")) return "Confirmacoes";
   if (normalized.startsWith("/charges")) return "Cobrancas";
   if (normalized.startsWith("/client-ledger")) return "Conta-corrente";
+  if (normalized.startsWith("/finance/purchase-settlements")) return "Acertos de entrada";
+  if (normalized.startsWith("/finance/purchase-rates")) return "Regras de entrada";
   if (normalized.startsWith("/finance/reports")) return "Relatorios";
   if (normalized.startsWith("/finance")) return "Financeiro";
   if (normalized.startsWith("/settings/users")) return "Usuarios";

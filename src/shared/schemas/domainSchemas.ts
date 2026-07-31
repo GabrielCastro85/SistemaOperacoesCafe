@@ -191,7 +191,8 @@ export const businessPartnerInputSchema = z.object({
 
 export const partnerLegalEntityInputSchema = z
   .object({
-    businessPartnerId: z.string().uuid(),
+    organizationId: z.string().uuid(),
+    businessPartnerId: z.string().uuid().nullable(),
     legalName: z.string().trim().min(1),
     tradeName: z.string().trim().min(1),
     cnpj: z.string().transform(digits).pipe(z.string().length(14)).nullable(),
@@ -210,7 +211,15 @@ export const partnerLegalEntityInputSchema = z
     isActive: z.boolean(),
     isDraft: z.boolean()
   })
-  .refine((value) => value.isDraft || value.cnpj !== null, "CNPJ valido e obrigatorio para cadastro ativo.");
+  .refine((value) => value.isDraft || value.cnpj !== null, "CNPJ valido e obrigatorio para cadastro ativo.")
+  .refine((value) => !value.isPrimary || value.businessPartnerId !== null, "So' faz sentido marcar como principal depois de vincular a um cliente/corretor.");
+
+export const mergeBusinessPartnerDuplicateInputSchema = z.object({
+  canonicalPartnerId: z.string().uuid(),
+  duplicatePartnerId: z.string().uuid(),
+  matchedCnpj: z.string().nullable(),
+  reason: nullableText
+});
 
 export const partnerContactInputSchema = z.object({
   businessPartnerId: z.string().uuid(),
@@ -278,6 +287,36 @@ export const resolveRateInputSchema = z.object({
   operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
 
+// Mesma forma de service_rate_rules -- preco por saca que PAGAMOS ao
+// fornecedor numa nota de entrada, em vez do que cobramos do cliente.
+export const purchaseRateRuleInputSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    businessPartnerId: z.string().uuid(),
+    ownLegalEntityId: z.string().uuid().nullable(),
+    counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional().default(null),
+    productId: z.string().uuid().nullable(),
+    operationScope: operationScopeSchema,
+    rateType: rateTypeSchema,
+    rateValueCents: z.number().int().min(0),
+    effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+    priority: z.number().int().min(0),
+    notes: nullableText,
+    isActive: z.boolean()
+  })
+  .refine((value) => !value.effectiveTo || value.effectiveTo >= value.effectiveFrom, "Data final deve ser posterior ou igual ao inicio.");
+
+export const resolvePurchaseRateInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  businessPartnerId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable(),
+  counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional().default(null),
+  productId: z.string().uuid().nullable(),
+  operationScope: operationScopeSchema.exclude(["ALL"]),
+  operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+});
+
 const decimalTextSchema = z.string().trim().regex(/^\d+(\.\d{1,6})?$/);
 export const fiscalDocumentStatusSchema = z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED"]);
 export const operationTypeSchema = z.enum(["PURCHASE", "SALE"]);
@@ -287,6 +326,13 @@ export const fiscalDocumentInputSchema = z.object({
   ownLegalEntityId: z.string().uuid(),
   responsiblePartnerId: z.string().uuid(),
   partnerLegalEntityId: z.string().uuid().nullable(),
+  operationType: operationTypeSchema.default("SALE"),
+  // Nota triangulada: segundo parceiro/tipo de operacao quando a mesma nota
+  // representa uma compra de um fornecedor revendida a outro corretor/
+  // cliente na mesma remessa (nenhum dos dois e' CNPJ proprio). Ver migration
+  // 033_fiscal_document_secondary_partner.
+  secondaryResponsiblePartnerId: z.string().uuid().nullable().optional(),
+  secondaryOperationType: operationTypeSchema.nullable().optional(),
   accessKey: z.string().trim().regex(/^\d{44}$/).nullable(),
   documentNumber: z.string().trim().min(1),
   series: nullableText,
@@ -411,6 +457,9 @@ export const xmlImportResolutionSchema = z.object({
   manualSacks: decimalTextSchema.nullable().optional(),
   manualRateValueCents: z.number().int().min(0).nullable().optional(),
   manualOverrideReason: nullableText.optional(),
+  // Nota triangulada: segundo parceiro (papel oposto ao de clientPartnerId)
+  // pra revisao manual quando a nota nao foi reconhecida automaticamente.
+  secondaryPartnerId: z.string().uuid().nullable().optional(),
   ignore: z.boolean().optional()
 });
 
@@ -469,6 +518,34 @@ export const partnerRateSummaryInputSchema = z.object({
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   includeAlreadyBilled: z.boolean().optional(),
   includeAllCompanies: z.boolean().optional()
+});
+
+export const eligiblePurchaseOperationsInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
+  supplierPartnerId: z.string().uuid(),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  includeAllCompanies: z.boolean().optional()
+});
+
+export const supplierPurchaseSummaryInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid().nullable().optional(),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  includeAlreadySettled: z.boolean().optional(),
+  includeAllCompanies: z.boolean().optional()
+});
+
+export const generatePurchaseSettlementInputSchema = z.object({
+  organizationId: z.string().uuid(),
+  ownLegalEntityId: z.string().uuid(),
+  supplierPartnerId: z.string().uuid(),
+  operationIds: z.array(z.string().uuid()).min(1),
+  categoryId: z.string().uuid(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  notes: nullableText
 });
 
 export const clientChargeDraftInputSchema = z.object({

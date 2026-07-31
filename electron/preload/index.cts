@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type {
   ActiveContext,
   AppPermission,
@@ -26,6 +26,7 @@ import type {
   Product,
   ResolveRateResult,
   ServiceRateRule,
+  PurchaseRateRule,
   FiscalDocument,
   FiscalDocumentDetail,
   FiscalDocumentItem,
@@ -55,6 +56,7 @@ import type {
   FinancialAccount,
   AccountPayable,
   AccountPayableDetail,
+  AccountPayableOperation,
   PayableRecurringTemplate,
   PayableInstallmentGroup,
   PayablePayment,
@@ -77,6 +79,8 @@ import type {
   Organization,
   OrganizationListItem
 } from "../../src/shared/types/domain.js";
+import type { UpdateStatus } from "../../src/shared/types/updater.js";
+import type { SharedSyncStatus } from "../../src/shared/types/sync.js";
 import type { saveInstallationProfileSchema } from "../../src/shared/schemas/domainSchemas.js";
 import type { z } from "zod";
 
@@ -130,6 +134,14 @@ const IPC_CHANNELS = {
   updateInstallationProfile: "app:updateInstallationProfile",
   getActiveContext: "app:getActiveContext",
   getDiagnostics: "app:getDiagnostics",
+  syncSharedData: "app:syncSharedData",
+  sharedAuthStatus: "app:sharedAuthStatus",
+  sharedAuthSignIn: "app:sharedAuthSignIn",
+  sharedAuthSignOut: "app:sharedAuthSignOut",
+  getSharedSyncStatus: "app:getSharedSyncStatus",
+  getUpdateStatus: "app:getUpdateStatus",
+  checkForUpdates: "app:checkForUpdates",
+  quitAndInstallUpdate: "app:quitAndInstallUpdate",
   setActiveLegalEntity: "app:setActiveLegalEntity",
   setActiveOrganization: "app:setActiveOrganization",
   listOrganizations: "organizations:list",
@@ -138,6 +150,7 @@ const IPC_CHANNELS = {
   updateOrganization: "organizations:update",
   activateOrganization: "organizations:activate",
   deactivateOrganization: "organizations:deactivate",
+  deleteOrganization: "organizations:delete",
   selectOrganizationBrandingAsset: "organizations:selectBrandingAsset",
   listLegalEntities: "legalEntities:list",
   getLegalEntity: "legalEntities:get",
@@ -145,6 +158,7 @@ const IPC_CHANNELS = {
   updateLegalEntity: "legalEntities:update",
   activateLegalEntity: "legalEntities:activate",
   deactivateLegalEntity: "legalEntities:deactivate",
+  deleteLegalEntity: "legalEntities:delete",
   listLocations: "locations:list",
   getLocation: "locations:get",
   createLocation: "locations:create",
@@ -156,13 +170,17 @@ const IPC_CHANNELS = {
   createBusinessPartner: "businessPartners:create",
   updateBusinessPartner: "businessPartners:update",
   deleteBusinessPartner: "businessPartners:delete",
+  permanentlyDeleteBusinessPartner: "businessPartners:permanentlyDelete",
   activateBusinessPartner: "businessPartners:activate",
   deactivateBusinessPartner: "businessPartners:deactivate",
   addBusinessPartnerRole: "businessPartners:addRole",
   removeBusinessPartnerRole: "businessPartners:removeRole",
   listPartnerLegalEntities: "partnerLegalEntities:list",
+  listUnlinkedPartnerLegalEntities: "partnerLegalEntities:listUnlinked",
   createPartnerLegalEntity: "partnerLegalEntities:create",
   updatePartnerLegalEntity: "partnerLegalEntities:update",
+  linkPartnerLegalEntity: "partnerLegalEntities:link",
+  unlinkPartnerLegalEntity: "partnerLegalEntities:unlink",
   activatePartnerLegalEntity: "partnerLegalEntities:activate",
   deactivatePartnerLegalEntity: "partnerLegalEntities:deactivate",
   lookupCnpj: "cnpj:lookup",
@@ -189,6 +207,14 @@ const IPC_CHANNELS = {
   activateServiceRateRule: "serviceRateRules:activate",
   deactivateServiceRateRule: "serviceRateRules:deactivate",
   resolveServiceRateRule: "serviceRateRules:resolve",
+  listPurchaseRateRules: "purchaseRateRules:list",
+  getPurchaseRateRule: "purchaseRateRules:get",
+  createPurchaseRateRule: "purchaseRateRules:create",
+  updatePurchaseRateRule: "purchaseRateRules:update",
+  deletePurchaseRateRule: "purchaseRateRules:delete",
+  activatePurchaseRateRule: "purchaseRateRules:activate",
+  deactivatePurchaseRateRule: "purchaseRateRules:deactivate",
+  resolvePurchaseRateRule: "purchaseRateRules:resolve",
   listFiscalDocuments: "fiscalDocuments:list",
   getFiscalDocument: "fiscalDocuments:get",
   createFiscalDocument: "fiscalDocuments:create",
@@ -202,6 +228,7 @@ const IPC_CHANNELS = {
   cancelFiscalDocument: "fiscalDocuments:cancel",
   getOperationalIndicators: "operations:indicators",
   getMonthlyOperationTotals: "operations:monthlyTotals",
+  getPartnerPeriodSackSummary: "operations:partnerPeriodSackSummary",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",
@@ -299,6 +326,7 @@ const IPC_CHANNELS = {
   deactivateFinancialAccount: "financialAccounts:deactivate",
   listAccountsPayable: "accountsPayable:list",
   getAccountPayable: "accountsPayable:get",
+  listAccountPayableOperations: "accountsPayable:listOperations",
   createAccountPayableDraft: "accountsPayable:createDraft",
   updateAccountPayable: "accountsPayable:update",
   confirmAccountPayable: "accountsPayable:confirm",
@@ -308,6 +336,9 @@ const IPC_CHANNELS = {
   removePayableAllocation: "accountsPayable:removeAllocation",
   contestAccountPayable: "accountsPayable:contest",
   cancelAccountPayable: "accountsPayable:cancel",
+  getSupplierPurchaseSummary: "accountsPayable:supplierPurchaseSummary",
+  findEligiblePurchaseOperations: "accountsPayable:findEligiblePurchaseOperations",
+  generatePurchaseSettlement: "accountsPayable:generatePurchaseSettlement",
   listPayableRecurringTemplates: "payableRecurring:listTemplates",
   createPayableRecurringTemplate: "payableRecurring:createTemplate",
   previewPayableRecurringGeneration: "payableRecurring:previewGeneration",
@@ -452,6 +483,16 @@ export interface OperationsCafeApi {
   updateInstallationProfile: (profile: SaveInstallationProfileInput & { confirmVariantChange?: boolean }) => Promise<InstallationProfile>;
   getActiveContext: () => Promise<ActiveContext>;
   getDiagnostics: () => Promise<Diagnostics>;
+  syncSharedData: () => Promise<{ pushed: Array<{ table: string; pushed: number; error: string | null }>; pulled: Array<{ table: string; pulled: number }> }>;
+  sharedAuthStatus: () => Promise<{ connected: boolean; email: string | null }>;
+  sharedAuthSignIn: (input: { email: string; password: string }) => Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>;
+  sharedAuthSignOut: () => Promise<{ connected: boolean; email: string | null }>;
+  getSharedSyncStatus: () => Promise<SharedSyncStatus>;
+  onSharedSyncStatusChanged: (listener: (status: SharedSyncStatus) => void) => () => void;
+  getUpdateStatus: () => Promise<UpdateStatus>;
+  checkForUpdates: () => Promise<UpdateStatus>;
+  quitAndInstallUpdate: () => Promise<null>;
+  onUpdateStatusChanged: (listener: (status: UpdateStatus) => void) => () => void;
   setActiveLegalEntity: (legalEntityId: string) => Promise<InstallationProfile>;
   setActiveOrganization: (organizationId: string) => Promise<InstallationProfile>;
   listOrganizations: (filters?: { search?: string; status?: "active" | "inactive" | "all" }) => Promise<OrganizationListItem[]>;
@@ -460,6 +501,7 @@ export interface OperationsCafeApi {
   updateOrganization: (id: string, input: unknown) => Promise<Organization>;
   activateOrganization: (id: string) => Promise<Organization>;
   deactivateOrganization: (id: string, replacementOrganizationId?: string) => Promise<Organization>;
+  deleteOrganization: (id: string) => Promise<null>;
   selectOrganizationBrandingAsset: (organizationId: string, kind: BrandingAssetKind) => Promise<Organization>;
   listLegalEntities: (filters?: { search?: string; organizationId?: string; state?: string; status?: "active" | "inactive" | "all" }) => Promise<LegalEntity[]>;
   getLegalEntity: (id: string) => Promise<LegalEntity>;
@@ -467,6 +509,7 @@ export interface OperationsCafeApi {
   updateLegalEntity: (id: string, input: unknown) => Promise<LegalEntity>;
   activateLegalEntity: (id: string) => Promise<LegalEntity>;
   deactivateLegalEntity: (id: string, replacementLegalEntityId?: string) => Promise<LegalEntity>;
+  deleteLegalEntity: (id: string) => Promise<null>;
   listLocations: (filters?: { search?: string; organizationId?: string; legalEntityId?: string; type?: string; status?: "active" | "inactive" | "all" }) => Promise<Location[]>;
   getLocation: (id: string) => Promise<Location>;
   createLocation: (input: unknown) => Promise<Location>;
@@ -478,13 +521,17 @@ export interface OperationsCafeApi {
   createBusinessPartner: (input: unknown) => Promise<BusinessPartner>;
   updateBusinessPartner: (id: string, input: unknown) => Promise<BusinessPartner>;
   deleteBusinessPartner: (id: string) => Promise<void>;
+  permanentlyDeleteBusinessPartner: (id: string) => Promise<null>;
   activateBusinessPartner: (id: string) => Promise<BusinessPartner>;
   deactivateBusinessPartner: (id: string) => Promise<BusinessPartner>;
   addBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
   removeBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
   listPartnerLegalEntities: (businessPartnerId: string) => Promise<BusinessPartnerLegalEntity[]>;
+  listUnlinkedPartnerLegalEntities: (organizationId: string, search?: string) => Promise<BusinessPartnerLegalEntity[]>;
   createPartnerLegalEntity: (input: unknown) => Promise<BusinessPartnerLegalEntity>;
   updatePartnerLegalEntity: (id: string, input: unknown) => Promise<BusinessPartnerLegalEntity>;
+  linkPartnerLegalEntity: (legalEntityId: string, businessPartnerId: string) => Promise<BusinessPartnerLegalEntity>;
+  unlinkPartnerLegalEntity: (legalEntityId: string) => Promise<BusinessPartnerLegalEntity>;
   activatePartnerLegalEntity: (id: string) => Promise<BusinessPartnerLegalEntity>;
   deactivatePartnerLegalEntity: (id: string) => Promise<BusinessPartnerLegalEntity>;
   lookupCnpj: (cnpj: string) => Promise<CnpjLookupResult>;
@@ -511,6 +558,14 @@ export interface OperationsCafeApi {
   activateServiceRateRule: (id: string) => Promise<ServiceRateRule>;
   deactivateServiceRateRule: (id: string) => Promise<ServiceRateRule>;
   resolveServiceRateRule: (input: unknown) => Promise<ResolveRateResult>;
+  listPurchaseRateRules: (filters?: { businessPartnerId?: string; organizationId?: string; operationScope?: string; productId?: string; ownLegalEntityId?: string; counterpartyPartnerLegalEntityId?: string; status?: "active" | "inactive" | "all" }) => Promise<PurchaseRateRule[]>;
+  getPurchaseRateRule: (id: string) => Promise<PurchaseRateRule>;
+  createPurchaseRateRule: (input: unknown) => Promise<PurchaseRateRule>;
+  updatePurchaseRateRule: (id: string, input: unknown) => Promise<PurchaseRateRule>;
+  deletePurchaseRateRule: (id: string) => Promise<void>;
+  activatePurchaseRateRule: (id: string) => Promise<PurchaseRateRule>;
+  deactivatePurchaseRateRule: (id: string) => Promise<PurchaseRateRule>;
+  resolvePurchaseRateRule: (input: unknown) => Promise<ResolveRateResult>;
   listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" }) => Promise<FiscalDocument[]>;
   getFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   createFiscalDocument: (input: unknown) => Promise<FiscalDocumentDetail>;
@@ -522,8 +577,9 @@ export interface OperationsCafeApi {
   updateOperationManualRate: (id: string, manualRateValueCents: number, reason: string) => Promise<Operation>;
   confirmFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   cancelFiscalDocument: (id: string, reason: string) => Promise<FiscalDocumentDetail>;
-  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number }>;
+  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number }>;
   getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
+  getPartnerPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; businessPartnerId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -622,6 +678,7 @@ export interface OperationsCafeApi {
   deactivateFinancialAccount: (id: string) => Promise<FinancialAccount>;
   listAccountsPayable: (filters: { organizationId: string; ownLegalEntityId?: string; status?: string; supplierPartnerId?: string }) => Promise<AccountPayable[]>;
   getAccountPayable: (id: string) => Promise<AccountPayableDetail>;
+  listAccountPayableOperations: (accountPayableId: string) => Promise<AccountPayableOperation[]>;
   createAccountPayableDraft: (input: unknown) => Promise<AccountPayableDetail>;
   updateAccountPayable: (id: string, input: unknown) => Promise<AccountPayableDetail>;
   confirmAccountPayable: (id: string) => Promise<AccountPayableDetail>;
@@ -631,6 +688,9 @@ export interface OperationsCafeApi {
   removePayableAllocation: (id: string) => Promise<AccountPayableDetail>;
   contestAccountPayable: (id: string, reason: string) => Promise<AccountPayableDetail>;
   cancelAccountPayable: (id: string, reason: string) => Promise<AccountPayableDetail>;
+  getSupplierPurchaseSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
+  findEligiblePurchaseOperations: (input: unknown) => Promise<Operation[]>;
+  generatePurchaseSettlement: (input: unknown) => Promise<AccountPayableDetail>;
   listPayableRecurringTemplates: (organizationId: string) => Promise<PayableRecurringTemplate[]>;
   createPayableRecurringTemplate: (input: unknown) => Promise<PayableRecurringTemplate>;
   previewPayableRecurringGeneration: (templateId: string, monthsAhead?: number) => Promise<Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: string }>>;
@@ -774,6 +834,26 @@ const api: OperationsCafeApi = {
     ipcRenderer.invoke(IPC_CHANNELS.updateInstallationProfile, profile) as Promise<InstallationProfile>,
   getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.getActiveContext) as Promise<ActiveContext>,
   getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.getDiagnostics) as Promise<Diagnostics>,
+  syncSharedData: () => ipcRenderer.invoke(IPC_CHANNELS.syncSharedData) as Promise<{ pushed: Array<{ table: string; pushed: number; error: string | null }>; pulled: Array<{ table: string; pulled: number }> }>,
+  sharedAuthStatus: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthStatus) as Promise<{ connected: boolean; email: string | null }>,
+  sharedAuthSignIn: (input) => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignIn, input) as Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>,
+  sharedAuthSignOut: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignOut) as Promise<{ connected: boolean; email: string | null }>,
+  getSharedSyncStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getSharedSyncStatus) as Promise<SharedSyncStatus>,
+  onSharedSyncStatusChanged: (listener) => {
+    const channel = "app:sharedSyncStatusChanged";
+    const handler = (_event: IpcRendererEvent, status: SharedSyncStatus): void => listener(status);
+    ipcRenderer.on(channel, handler);
+    return () => ipcRenderer.removeListener(channel, handler);
+  },
+  getUpdateStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getUpdateStatus) as Promise<UpdateStatus>,
+  checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.checkForUpdates) as Promise<UpdateStatus>,
+  quitAndInstallUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.quitAndInstallUpdate) as Promise<null>,
+  onUpdateStatusChanged: (listener) => {
+    const channel = "app:updateStatusChanged";
+    const handler = (_event: IpcRendererEvent, status: UpdateStatus): void => listener(status);
+    ipcRenderer.on(channel, handler);
+    return () => ipcRenderer.removeListener(channel, handler);
+  },
   setActiveLegalEntity: (legalEntityId) =>
     ipcRenderer.invoke(IPC_CHANNELS.setActiveLegalEntity, legalEntityId) as Promise<InstallationProfile>,
   setActiveOrganization: (organizationId) =>
@@ -785,6 +865,7 @@ const api: OperationsCafeApi = {
   activateOrganization: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateOrganization, id) as Promise<Organization>,
   deactivateOrganization: (id, replacementOrganizationId) =>
     ipcRenderer.invoke(IPC_CHANNELS.deactivateOrganization, { id, replacementOrganizationId }) as Promise<Organization>,
+  deleteOrganization: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteOrganization, id) as Promise<null>,
   selectOrganizationBrandingAsset: (organizationId, kind) =>
     ipcRenderer.invoke(IPC_CHANNELS.selectOrganizationBrandingAsset, { organizationId, kind }) as Promise<Organization>,
   listLegalEntities: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLegalEntities, filters) as Promise<LegalEntity[]>,
@@ -794,6 +875,7 @@ const api: OperationsCafeApi = {
   activateLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateLegalEntity, id) as Promise<LegalEntity>,
   deactivateLegalEntity: (id, replacementLegalEntityId) =>
     ipcRenderer.invoke(IPC_CHANNELS.deactivateLegalEntity, { id, replacementLegalEntityId }) as Promise<LegalEntity>,
+  deleteLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteLegalEntity, id) as Promise<null>,
   listLocations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLocations, filters) as Promise<Location[]>,
   getLocation: (id) => ipcRenderer.invoke(IPC_CHANNELS.getLocation, id) as Promise<Location>,
   createLocation: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLocation, input) as Promise<Location>,
@@ -805,13 +887,17 @@ const api: OperationsCafeApi = {
   createBusinessPartner: (input) => ipcRenderer.invoke(IPC_CHANNELS.createBusinessPartner, input) as Promise<BusinessPartner>,
   updateBusinessPartner: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateBusinessPartner, { id, input }) as Promise<BusinessPartner>,
   deleteBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteBusinessPartner, id) as Promise<void>,
+  permanentlyDeleteBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.permanentlyDeleteBusinessPartner, id) as Promise<null>,
   activateBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateBusinessPartner, id) as Promise<BusinessPartner>,
   deactivateBusinessPartner: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivateBusinessPartner, id) as Promise<BusinessPartner>,
   addBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.addBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
   removeBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.removeBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
   listPartnerLegalEntities: (businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerLegalEntities, businessPartnerId) as Promise<BusinessPartnerLegalEntity[]>,
+  listUnlinkedPartnerLegalEntities: (organizationId, search) => ipcRenderer.invoke(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, { organizationId, search }) as Promise<BusinessPartnerLegalEntity[]>,
   createPartnerLegalEntity: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPartnerLegalEntity, input) as Promise<BusinessPartnerLegalEntity>,
   updatePartnerLegalEntity: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updatePartnerLegalEntity, { id, input }) as Promise<BusinessPartnerLegalEntity>,
+  linkPartnerLegalEntity: (legalEntityId, businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.linkPartnerLegalEntity, { legalEntityId, businessPartnerId }) as Promise<BusinessPartnerLegalEntity>,
+  unlinkPartnerLegalEntity: (legalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.unlinkPartnerLegalEntity, legalEntityId) as Promise<BusinessPartnerLegalEntity>,
   activatePartnerLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.activatePartnerLegalEntity, id) as Promise<BusinessPartnerLegalEntity>,
   deactivatePartnerLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivatePartnerLegalEntity, id) as Promise<BusinessPartnerLegalEntity>,
   lookupCnpj: (cnpj) => ipcRenderer.invoke(IPC_CHANNELS.lookupCnpj, cnpj) as Promise<CnpjLookupResult>,
@@ -838,6 +924,14 @@ const api: OperationsCafeApi = {
   activateServiceRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateServiceRateRule, id) as Promise<ServiceRateRule>,
   deactivateServiceRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivateServiceRateRule, id) as Promise<ServiceRateRule>,
   resolveServiceRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.resolveServiceRateRule, input) as Promise<ResolveRateResult>,
+  listPurchaseRateRules: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listPurchaseRateRules, filters) as Promise<PurchaseRateRule[]>,
+  getPurchaseRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.getPurchaseRateRule, id) as Promise<PurchaseRateRule>,
+  createPurchaseRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPurchaseRateRule, input) as Promise<PurchaseRateRule>,
+  updatePurchaseRateRule: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updatePurchaseRateRule, { id, input }) as Promise<PurchaseRateRule>,
+  deletePurchaseRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.deletePurchaseRateRule, id) as Promise<void>,
+  activatePurchaseRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.activatePurchaseRateRule, id) as Promise<PurchaseRateRule>,
+  deactivatePurchaseRateRule: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivatePurchaseRateRule, id) as Promise<PurchaseRateRule>,
+  resolvePurchaseRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.resolvePurchaseRateRule, input) as Promise<ResolveRateResult>,
   listFiscalDocuments: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listFiscalDocuments, filters) as Promise<FiscalDocument[]>,
   getFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalDocument, id) as Promise<FiscalDocumentDetail>,
   createFiscalDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFiscalDocument, input) as Promise<FiscalDocumentDetail>,
@@ -861,6 +955,7 @@ const api: OperationsCafeApi = {
       serviceAmountCents: number;
     }>,
   getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
+  getPartnerPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
   selectSpreadsheetFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectSpreadsheetFile) as Promise<WorkbookInspection | null>,
   inspectSpreadsheetWorkbook: (token) => ipcRenderer.invoke(IPC_CHANNELS.inspectSpreadsheetWorkbook, token) as Promise<WorkbookInspection>,
   previewSpreadsheetSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.previewSpreadsheetSheet, input) as Promise<SheetPreview>,
@@ -960,6 +1055,7 @@ const api: OperationsCafeApi = {
   deactivateFinancialAccount: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivateFinancialAccount, id) as Promise<FinancialAccount>,
   listAccountsPayable: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listAccountsPayable, filters) as Promise<AccountPayable[]>,
   getAccountPayable: (id) => ipcRenderer.invoke(IPC_CHANNELS.getAccountPayable, id) as Promise<AccountPayableDetail>,
+  listAccountPayableOperations: (accountPayableId) => ipcRenderer.invoke(IPC_CHANNELS.listAccountPayableOperations, accountPayableId) as Promise<AccountPayableOperation[]>,
   createAccountPayableDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createAccountPayableDraft, input) as Promise<AccountPayableDetail>,
   updateAccountPayable: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateAccountPayable, { id, input }) as Promise<AccountPayableDetail>,
   confirmAccountPayable: (id) => ipcRenderer.invoke(IPC_CHANNELS.confirmAccountPayable, id) as Promise<AccountPayableDetail>,
@@ -969,6 +1065,9 @@ const api: OperationsCafeApi = {
   removePayableAllocation: (id) => ipcRenderer.invoke(IPC_CHANNELS.removePayableAllocation, id) as Promise<AccountPayableDetail>,
   contestAccountPayable: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.contestAccountPayable, { id, reason }) as Promise<AccountPayableDetail>,
   cancelAccountPayable: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelAccountPayable, { id, reason }) as Promise<AccountPayableDetail>,
+  getSupplierPurchaseSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getSupplierPurchaseSummary, input) as Promise<PartnerRateSummaryRow[]>,
+  findEligiblePurchaseOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligiblePurchaseOperations, input) as Promise<Operation[]>,
+  generatePurchaseSettlement: (input) => ipcRenderer.invoke(IPC_CHANNELS.generatePurchaseSettlement, input) as Promise<AccountPayableDetail>,
   listPayableRecurringTemplates: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listPayableRecurringTemplates, organizationId) as Promise<PayableRecurringTemplate[]>,
   createPayableRecurringTemplate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPayableRecurringTemplate, input) as Promise<PayableRecurringTemplate>,
   previewPayableRecurringGeneration: (templateId, monthsAhead) => ipcRenderer.invoke(IPC_CHANNELS.previewPayableRecurringGeneration, { templateId, monthsAhead }) as Promise<Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: string }>>,

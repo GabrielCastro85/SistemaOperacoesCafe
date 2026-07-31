@@ -8,6 +8,9 @@ import type {
   PartnerContact,
   Product,
   ServiceRateRule,
+  PurchaseRateRule,
+  AccountPayableOperation,
+  OperationRateHistoryEntry,
   FiscalDocument,
   FiscalDocumentItem,
   Operation,
@@ -176,7 +179,8 @@ export function mapBusinessPartner(row: DbRecord, roles: BusinessPartner["roles"
 export function mapBusinessPartnerLegalEntity(row: DbRecord): BusinessPartnerLegalEntity {
   return {
     id: String(row.id),
-    businessPartnerId: String(row.business_partner_id),
+    organizationId: String(row.organization_id),
+    businessPartnerId: row.business_partner_id === null || row.business_partner_id === undefined ? null : String(row.business_partner_id),
     legalName: String(row.legal_name),
     tradeName: String(row.trade_name),
     cnpj: textOrNull(row.cnpj),
@@ -268,8 +272,67 @@ export function mapServiceRateRule(row: DbRecord): ServiceRateRule {
     priority: Number(row.priority),
     notes: textOrNull(row.notes),
     isActive: bool(row.is_active),
+    conflictWarning: textOrNull(row.conflict_warning),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapPurchaseRateRule(row: DbRecord): PurchaseRateRule {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    businessPartnerId: String(row.business_partner_id),
+    ownLegalEntityId: textOrNull(row.own_legal_entity_id),
+    counterpartyPartnerLegalEntityId: textOrNull(row.counterparty_partner_legal_entity_id),
+    productId: textOrNull(row.product_id),
+    operationScope: String(row.operation_scope) as PurchaseRateRule["operationScope"],
+    rateType: String(row.rate_type) as PurchaseRateRule["rateType"],
+    rateValueCents: Number(row.rate_value_cents),
+    effectiveFrom: String(row.effective_from),
+    effectiveTo: textOrNull(row.effective_to),
+    priority: Number(row.priority),
+    notes: textOrNull(row.notes),
+    isActive: bool(row.is_active),
+    conflictWarning: textOrNull(row.conflict_warning),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapAccountPayableOperation(row: DbRecord): AccountPayableOperation {
+  return {
+    id: String(row.id),
+    accountPayableId: String(row.account_payable_id),
+    operationId: String(row.operation_id),
+    ownLegalEntityIdSnapshot: textOrNull(row.own_legal_entity_id_snapshot),
+    ownLegalEntityNameSnapshot: textOrNull(row.own_legal_entity_name_snapshot),
+    supplierPartnerIdSnapshot: textOrNull(row.supplier_partner_id_snapshot),
+    operationDateSnapshot: String(row.operation_date_snapshot),
+    fiscalDocumentNumberSnapshot: textOrNull(row.fiscal_document_number_snapshot),
+    fiscalDocumentSeriesSnapshot: textOrNull(row.fiscal_document_series_snapshot),
+    productNameSnapshot: textOrNull(row.product_name_snapshot),
+    operationScopeSnapshot: String(row.operation_scope_snapshot) as AccountPayableOperation["operationScopeSnapshot"],
+    quantitySacksDecimalSnapshot: String(row.quantity_sacks_decimal_snapshot),
+    purchaseRateCentsSnapshot: Number(row.purchase_rate_cents_snapshot),
+    purchaseAmountCentsSnapshot: Number(row.purchase_amount_cents_snapshot),
+    releasedAt: textOrNull(row.released_at),
+    createdAt: String(row.created_at)
+  };
+}
+
+export function mapOperationRateHistory(row: DbRecord): OperationRateHistoryEntry {
+  return {
+    id: String(row.id),
+    operationId: String(row.operation_id),
+    previousServiceRateRuleId: textOrNull(row.previous_service_rate_rule_id),
+    previousRateValueCents: row.previous_rate_value_cents === null || row.previous_rate_value_cents === undefined ? null : Number(row.previous_rate_value_cents),
+    previousServiceAmountCents: row.previous_service_amount_cents === null || row.previous_service_amount_cents === undefined ? null : Number(row.previous_service_amount_cents),
+    newServiceRateRuleId: textOrNull(row.new_service_rate_rule_id),
+    newRateValueCents: row.new_rate_value_cents === null || row.new_rate_value_cents === undefined ? null : Number(row.new_rate_value_cents),
+    newServiceAmountCents: row.new_service_amount_cents === null || row.new_service_amount_cents === undefined ? null : Number(row.new_service_amount_cents),
+    reason: textOrNull(row.reason),
+    changedAt: String(row.changed_at)
   };
 }
 
@@ -280,6 +343,8 @@ export function mapFiscalDocument(row: DbRecord): FiscalDocument {
     ownLegalEntityId: String(row.own_legal_entity_id),
     responsiblePartnerId: String(row.responsible_partner_id),
     partnerLegalEntityId: textOrNull(row.partner_legal_entity_id),
+    secondaryResponsiblePartnerId: textOrNull(row.secondary_responsible_partner_id),
+    secondaryOperationType: textOrNull(row.secondary_operation_type) as FiscalDocument["secondaryOperationType"],
     documentType: "MANUAL_INVOICE",
     accessKey: textOrNull(row.access_key),
     documentNumber: String(row.document_number),
@@ -357,6 +422,9 @@ export function mapOperation(row: DbRecord): Operation {
     classificationRuleId: textOrNull(row.classification_rule_id),
     billingStatus: (textOrNull(row.billing_status) ?? "UNBILLED") as Operation["billingStatus"],
     clientChargeId: textOrNull(row.client_charge_id),
+    purchaseSettlementStatus: (textOrNull(row.purchase_settlement_status) ?? "UNSETTLED") as Operation["purchaseSettlementStatus"],
+    accountPayableId: textOrNull(row.account_payable_id),
+    purchaseRateRuleId: textOrNull(row.purchase_rate_rule_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -456,6 +524,7 @@ export function mapXmlImportJob(row: DbRecord): XmlImportJob {
     importedNotes: Number(row.imported_notes),
     importedEvents: Number(row.imported_events),
     createdOperations: Number(row.created_operations),
+    itemsWithoutOperation: Number(row.items_without_operation ?? 0),
     createdAt: String(row.created_at),
     startedAt: textOrNull(row.started_at),
     completedAt: textOrNull(row.completed_at),

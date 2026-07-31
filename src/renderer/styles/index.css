@@ -191,7 +191,7 @@ button {
   cursor: pointer;
 }
 
-button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button) {
+button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):not(.xml-batch-row) {
   min-height: 38px;
   border: 1px solid color-mix(in srgb, var(--color-border) 84%, #11100d);
   border-radius: var(--radius-md);
@@ -206,14 +206,14 @@ button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice)
   text-overflow: ellipsis;
 }
 
-button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):hover:not(:disabled) {
+button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):not(.xml-batch-row):hover:not(:disabled) {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--color-accent) 52%, var(--color-border));
   background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--color-accent) 8%, var(--color-surface)));
   box-shadow: 0 8px 18px rgb(35 27 18 / 10%);
 }
 
-button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):active:not(:disabled) {
+button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):not(.xml-batch-row):active:not(:disabled) {
   transform: translateY(0);
   box-shadow: none;
 }
@@ -1001,18 +1001,23 @@ input[type="checkbox"] {
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(180px, 1fr));
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
 .dashboard-grid article,
 .dashboard-grid--hero .ui-card {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-height: 124px;
   padding: var(--space-5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+}
+
+.dashboard-grid article strong,
+.dashboard-grid--hero .ui-card strong {
+  margin-top: 2px;
 }
 
 .dashboard-grid article span,
@@ -1071,6 +1076,22 @@ input[type="checkbox"] {
   border: 1px solid #e0dbcf;
   border-radius: var(--radius-lg);
   background: #fff;
+}
+
+.rate-history-card {
+  grid-column: 1 / -1;
+}
+
+.rate-history-card strong {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.rate-history-entry {
+  color: var(--color-warning);
 }
 
 .cards article,
@@ -1331,6 +1352,18 @@ table tbody tr:hover {
   background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
+/* Coluna de acoes de tabelas via DataTable (celula <td> com varios <button>
+   soltos dentro de um <span>) nunca tinha gap nenhum -- os botoes ficavam
+   colados um no outro. As tabelas "legadas" (.table-row) ja tinham esse
+   tratamento via ".table-row > span:last-child"; isso cobre o equivalente
+   pra qualquer tabela renderizada pelo componente DataTable. */
+.ui-table td > span:has(button) {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .align-right {
   text-align: right !important;
 }
@@ -1532,8 +1565,14 @@ table tbody tr:hover {
   background: color-mix(in srgb, var(--success-soft) 72%, #fff);
 }
 
+.xml-batch-row {
+  white-space: normal;
+  overflow: visible;
+}
+
 .xml-batch-row strong,
-.xml-batch-row small {
+.xml-batch-row small,
+.xml-batch-row > span {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -1634,6 +1673,7 @@ table tbody tr:hover {
   align-items: end;
   justify-content: space-between;
   padding: 18px;
+  margin-bottom: var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
@@ -2028,6 +2068,15 @@ table tbody tr:hover {
   grid-template-columns: minmax(170px, 1.1fr) minmax(150px, 1fr) 90px minmax(130px, .9fr) 125px 160px 80px 130px;
 }
 
+.rate-grid--with-alert {
+  grid-template-columns: minmax(170px, 1.1fr) minmax(150px, 1fr) 90px minmax(130px, .9fr) 125px 160px 80px 150px 130px;
+}
+
+.rate-conflict-flag {
+  color: var(--color-warning);
+  font-weight: 700;
+}
+
 .invoice-grid {
   grid-template-columns: 105px 1.15fr 105px 95px 115px 165px 1.1fr 85px;
 }
@@ -2045,7 +2094,7 @@ table tbody tr:hover {
 }
 
 .xml-history-grid {
-  grid-template-columns: 130px 150px 90px 90px 90px 80px 180px;
+  grid-template-columns: 130px 140px 78px 78px 90px 110px 78px 70px 180px;
 }
 
 .xml-files-grid {
@@ -2057,7 +2106,7 @@ table tbody tr:hover {
 }
 
 .xml-resolution-grid {
-  grid-template-columns: 1.2fr 120px 1.3fr 1.3fr 1.4fr 220px;
+  grid-template-columns: 1.1fr 100px 1.1fr 1.1fr 1.2fr 1.2fr 220px;
 }
 
 .charge-operation-grid {
@@ -2070,6 +2119,20 @@ table tbody tr:hover {
 
 .charge-detail-operation-grid {
   grid-template-columns: 92px minmax(150px, 1fr) 82px minmax(150px, 0.95fr) 92px minmax(150px, 0.9fr) 112px;
+}
+
+.purchase-operation-grid {
+  grid-template-columns: minmax(92px, 0.7fr) minmax(160px, 1.1fr) minmax(150px, 0.9fr) minmax(150px, 0.9fr) 120px;
+}
+
+.purchase-settlement-history-grid {
+  grid-template-columns: 1.3fr 120px 130px 130px 220px;
+}
+
+.table-row.purchase-settlement-history-detail {
+  display: block;
+  background: var(--color-surface-muted, rgba(0, 0, 0, 0.03));
+  padding: var(--space-3);
 }
 
 .table-row.charge-row--grao {
@@ -2095,13 +2158,15 @@ table tbody tr:hover {
 
 .charge-operation-grid span,
 .charge-diagnostic-grid span,
-.charge-detail-operation-grid span {
+.charge-detail-operation-grid span,
+.purchase-operation-grid span {
   min-width: 0;
 }
 
 .charge-operation-grid strong,
 .charge-diagnostic-grid strong,
-.charge-detail-operation-grid strong {
+.charge-detail-operation-grid strong,
+.purchase-operation-grid strong {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2110,7 +2175,8 @@ table tbody tr:hover {
 
 .charge-operation-grid small,
 .charge-diagnostic-grid small,
-.charge-detail-operation-grid small {
+.charge-detail-operation-grid small,
+.purchase-operation-grid small {
   display: block;
   margin-top: 4px;
   color: var(--color-text-muted);
@@ -2161,7 +2227,7 @@ table tbody tr:hover {
 
 .charge-review-cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--space-3);
 }
 
@@ -2191,6 +2257,16 @@ table tbody tr:hover {
   border: 1px solid color-mix(in srgb, var(--color-warning) 34%, var(--color-border));
   border-radius: var(--radius-md);
   background: color-mix(in srgb, #fff0d6 68%, #fff);
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.charge-rate-alert {
+  margin: var(--space-3) 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, #fff3ee 76%, #fff);
   color: var(--color-text);
   font-weight: 700;
 }
@@ -3801,6 +3877,44 @@ table tbody tr:hover {
   content: "✓";
   color: var(--color-accent);
   margin-right: 6px;
+}
+
+.shared-sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.shared-sync-indicator span {
+  color: color-mix(in srgb, #fff7ea 74%, transparent);
+  white-space: nowrap;
+}
+
+.shared-sync-indicator--pending span {
+  color: #ffd9a8;
+  font-weight: 700;
+}
+
+.shared-sync-indicator--pending span::before {
+  content: "●";
+  color: var(--color-warning);
+  margin-right: 6px;
+}
+
+.shared-sync-indicator button {
+  min-height: 26px;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--brand-secondary) 40%, transparent);
+  background: color-mix(in srgb, var(--brand-secondary) 12%, #11100d);
+  padding: 4px 12px;
+  color: #fff7ea;
+  font-size: 11px;
+}
+
+.shared-sync-indicator button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 30%, #11100d);
 }
 
 .setup--branded,

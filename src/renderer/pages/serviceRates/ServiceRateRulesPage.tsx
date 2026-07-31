@@ -35,6 +35,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
+  const [counterpartyLegalEntities, setCounterpartyLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [rules, setRules] = useState<ServiceRateRule[]>([]);
   const [search, setSearch] = useState("");
@@ -48,10 +49,18 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
 
   const load = useCallback(async () => {
     const clientPartners = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
-    const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
+    const allPartners = await window.operationsCafe.listBusinessPartners({ status: "active" });
+    const activeProducts = await window.operationsCafe.listProducts({ status: "active" });
     const activeRules = await window.operationsCafe.listServiceRateRules({ organizationId, status: "active" });
+    const linkedLegalEntities = (await Promise.all(allPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat();
+    const unlinkedLegalEntities = await window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId);
+    const allCounterpartyLegalEntities = [...linkedLegalEntities, ...unlinkedLegalEntities]
+      .filter((item) => item.isActive)
+      .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
+      .sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR"));
     setPartners(clientPartners);
     setPartnerLegalEntities((await Promise.all(clientPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    setCounterpartyLegalEntities(allCounterpartyLegalEntities);
     setProducts(activeProducts);
     setRules(activeRules);
   }, [organizationId]);
@@ -75,7 +84,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
   }
 
   function counterpartyLabel(id: string | null): string {
-    return id ? partnerLegalEntities.find((entity) => entity.id === id)?.tradeName ?? id : "Todas";
+    return id ? counterpartyLegalEntities.find((entity) => entity.id === id)?.tradeName ?? partnerLegalEntities.find((entity) => entity.id === id)?.tradeName ?? id : "Todas";
   }
 
   function updateForm(field: keyof typeof emptyRuleForm, value: string): void {
@@ -152,13 +161,11 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       return;
     }
     try {
-      if (editingRule) {
-        await window.operationsCafe.updateServiceRateRule(editingRule.id, buildPayload());
-        setMessage("Regra por saca atualizada.");
-      } else {
-        await window.operationsCafe.createServiceRateRule(buildPayload());
-        setMessage("Regra por saca cadastrada.");
-      }
+      const saved = editingRule
+        ? await window.operationsCafe.updateServiceRateRule(editingRule.id, buildPayload())
+        : await window.operationsCafe.createServiceRateRule(buildPayload());
+      const baseMessage = editingRule ? "Regra por saca atualizada." : "Regra por saca cadastrada.";
+      setMessage(saved.conflictWarning ? `${baseMessage} Atencao: ${saved.conflictWarning}` : baseMessage);
       closeModal();
       await load();
       scrollTo(rulesListRef);
@@ -200,9 +207,9 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
           <button className="partner-action-button partner-action-button--primary" onClick={openCreateModal}>Cadastrar regra</button>
         </div>
         <div className="table">
-          <div className="table-head rate-grid"><span>Cliente/corretor</span><span>Empresa da nota</span><span>UF da venda</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span><span>Acoes</span></div>
+          <div className="table-head rate-grid rate-grid--with-alert"><span>Cliente/corretor</span><span>Empresa da nota</span><span>UF da venda</span><span>Produto</span><span>Valor</span><span>Vigencia</span><span>Status</span><span>Alerta</span><span>Acoes</span></div>
           {filteredRules.map((item) => (
-            <div key={item.id} className="table-row rate-grid">
+            <div key={item.id} className="table-row rate-grid rate-grid--with-alert">
               <span>{partnerLabel(item.businessPartnerId)}</span>
               <span>{counterpartyLabel(item.counterpartyPartnerLegalEntityId)}</span>
               <span>{scopeLabels[item.operationScope]}</span>
@@ -210,6 +217,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
               <span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span>
               <span>{validityLabel(item)}</span>
               <span>{item.isActive ? "Vigente" : "Inativa"}</span>
+              <span title={item.conflictWarning ?? undefined} className={item.conflictWarning ? "rate-conflict-flag" : undefined}>{item.conflictWarning ? "Conflito de regra" : "-"}</span>
               <span className="actions"><button onClick={() => openEditModal(item)}>Editar</button><button className="danger-action" onClick={() => void deleteRule(item)}>Excluir</button></span>
             </div>
           ))}
@@ -238,7 +246,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                 </div>
                 <FormGrid>
                   <PartnerQuickSearch label="Cliente/corretor" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} partners={partners} legalEntities={partnerLegalEntities} />
-                  <SelectField label="Empresa da nota especifica" value={form.counterpartyPartnerLegalEntityId} onChange={(value) => updateForm("counterpartyPartnerLegalEntityId", value)} options={[["", "Todas"], ...partnerLegalEntities.map((item) => [item.id, item.tradeName] as [string, string])]} />
+                  <SelectField label="Empresa da nota especifica" value={form.counterpartyPartnerLegalEntityId} onChange={(value) => updateForm("counterpartyPartnerLegalEntityId", value)} options={[["", "Todas"], ...counterpartyLegalEntities.map((item) => [item.id, item.tradeName] as [string, string])]} />
                   <SelectField label="UF da venda" value={form.scope} onChange={(value) => updateForm("scope", value)} options={SERVICE_RATE_SCOPE_OPTIONS} />
                   <SelectField label="Produto" value={form.productId} onChange={(value) => updateForm("productId", value)} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
                   <TextField label="Valor por saca" value={form.value} onChange={(value) => updateForm("value", value)} />

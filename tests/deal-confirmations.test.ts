@@ -13,7 +13,7 @@ const graoId = "22222222-2222-4222-8222-222222222222";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 const graoLegalEntityId = "44444444-4444-4444-8444-444444444441";
 
-function setup() {
+async function setup() {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-deals-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
@@ -21,9 +21,9 @@ function setup() {
   const db = initializeDatabase(dirs);
   const repo = new AppRepository(db, dirs);
   repo.saveInstallationProfile({ installationName: "Villa", appVariant: "multiempresa", defaultOrganizationId: villaId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
-  const seller = repo.createBusinessPartner({ organizationId: villaId, displayName: "Villa Coffee Vendedora", notes: null, roles: ["SELLER"], isActive: true });
-  const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "Empresa IF Compradora", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
-  const graoPartner = repo.createBusinessPartner({ organizationId: graoId, displayName: "Parceiro Grao", notes: null, roles: ["BUYER"], isActive: true });
+  const seller = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Villa Coffee Vendedora", notes: null, roles: ["SELLER"], isActive: true });
+  const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Empresa IF Compradora", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+  const graoPartner = await repo.createBusinessPartner({ organizationId: graoId, displayName: "Parceiro Grao", notes: null, roles: ["BUYER"], isActive: true });
   const product = repo.listProducts({ organizationId: villaId })[0];
   return { repo, db, dirs, seller, buyer, graoPartner, product };
 }
@@ -34,7 +34,7 @@ afterEach(() => {
 
 describe("deal confirmations", () => {
   it("creates manual confirmation with exact 685 + 426 sacks and issues immutable PDF", async () => {
-    const { repo, db, seller, buyer, product } = setup();
+    const { repo, db, seller, buyer, product } = await setup();
     const template = repo.createDealConfirmationTemplate(templateInput());
     const draft = repo.createDealConfirmationDraft({
       organizationId: villaId,
@@ -74,7 +74,7 @@ describe("deal confirmations", () => {
   });
 
   it("imports signed PDF externally, preserves original and does not claim crypto validation", async () => {
-    const { repo, db, dirs, seller, buyer, product } = setup();
+    const { repo, db, dirs, seller, buyer, product } = await setup();
     const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);
     repo.markDealConfirmationSentForSignature(issued.confirmation.id);
     const signedPath = join(dirs.userData, "assinado.pdf");
@@ -90,7 +90,7 @@ describe("deal confirmations", () => {
   });
 
   it("deletes a confirmation with linked data and stored documents", async () => {
-    const { repo, db, seller, buyer, product } = setup();
+    const { repo, db, seller, buyer, product } = await setup();
     const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);
     const storedPath = issued.documents.find((doc) => doc.documentType === "ISSUED_ORIGINAL")?.storedFilePath;
     expect(storedPath && existsSync(storedPath)).toBe(true);
@@ -104,7 +104,7 @@ describe("deal confirmations", () => {
   });
 
   it("reuses the number of a deleted confirmation", async () => {
-    const { repo, db, seller, buyer, product } = setup();
+    const { repo, db, seller, buyer, product } = await setup();
     const first = await issueMinimal(repo, seller.id, buyer.id, product.id);
     const deleted = await issueMinimal(repo, seller.id, buyer.id, product.id);
     expect(first.confirmation.confirmationNumber).toBe("VC 0001");
@@ -119,9 +119,9 @@ describe("deal confirmations", () => {
   });
 
   it("creates from operation and fiscal document without changing billing status", async () => {
-    const { repo, db, product } = setup();
-    const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
-    repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: buyer.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: buyer.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
     const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "NF-900", series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
     const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000.1234", totalAmountCents: 500062, sacksQuantity: "5" });
     const operation = repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: buyer.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-17", quantitySacks: "5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
@@ -134,8 +134,56 @@ describe("deal confirmations", () => {
     db.close();
   });
 
-  it("creates confirmation using the own legal entity from the selected fiscal document", () => {
-    const { repo, db, buyer, product } = setup();
+  it("reuses the active confirmation already linked to a fiscal document instead of creating a duplicate", async () => {
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Reaproveitamento Cafe", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "NF-950", series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
+    const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 500000, sacksQuantity: "5" });
+    repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: buyer.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-17", quantitySacks: "5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(doc.document.id);
+
+    const first = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    expect(first.items).toHaveLength(1);
+    // createDealConfirmationDraft ja semeia uma parte ISSUER por padrao -- simula o app completando
+    // com a parte/signatario do vendedor uma unica vez, como o formulario faz apos a primeira chamada.
+    repo.addDealConfirmationParty({ dealConfirmationId: first.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+    repo.addDealSigner({ dealConfirmationId: first.confirmation.id, partyRole: "SELLER", name: "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+    const partiesAfterFirstPopulation = repo.getDealConfirmation(first.confirmation.id).parties.length;
+    const signersAfterFirstPopulation = repo.getDealConfirmation(first.confirmation.id).signers.length;
+
+    // O usuario seleciona a mesma nota de novo e manda gerar confirmacao outra vez. Deve reaproveitar
+    // a confirmacao existente, sem duplicar itens, partes ou signatarios.
+    const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    expect(second.confirmation.id).toBe(first.confirmation.id);
+    expect(second.items).toHaveLength(1);
+    expect(second.parties).toHaveLength(partiesAfterFirstPopulation);
+    expect(second.signers).toHaveLength(signersAfterFirstPopulation);
+    expect(repo.listDealConfirmations({ organizationId: villaId })).toHaveLength(1);
+    db.close();
+  });
+
+  it("recomputes the aggregate signature status after a signer is removed", async () => {
+    const { repo, db, seller, buyer, product } = await setup();
+    const draft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-07-17", paymentTermsSnapshot: "A vista", deliveryLocationSnapshot: "Armazem", qualityTermsSnapshot: "Padrao", generalTermsSnapshot: "Revisado" });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: seller.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 1 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+    repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, "Cafe", "100", "1000", 0));
+    const signedSigner = repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "SIGNED_EXTERNALLY", signedAt: "2026-07-18T00:00:00.000Z", notes: null });
+    const pendingSigner = repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+    // Um signatario ja assinado + um pendente: o agregado fica PARTIALLY_SIGNED.
+    expect(repo.getDealConfirmation(draft.confirmation.id).confirmation.signatureStatus).toBe("PARTIALLY_SIGNED");
+
+    // O signatario pendente era so um representante interino que acabou nao sendo necessario; o
+    // vendedor remove esse signatario em vez de esperar ele assinar. Antes da correcao, removeDealSigner
+    // nao recalculava o status agregado e a confirmacao ficava presa em PARTIALLY_SIGNED para sempre.
+    repo.removeDealSigner(pendingSigner.id);
+    expect(repo.getDealConfirmation(draft.confirmation.id).confirmation.signatureStatus).toBe("SIGNED");
+    expect(repo.getDealConfirmation(draft.confirmation.id).signers.map((item) => item.id)).toEqual([signedSigner.id]);
+    db.close();
+  });
+
+  it("creates confirmation using the own legal entity from the selected fiscal document", async () => {
+    const { repo, db, buyer, product } = await setup();
     const otherVillaLegalEntity = repo.listLegalEntities({ organizationId: villaId }).find((entity) => entity.id !== ownLegalEntityId);
     expect(otherVillaLegalEntity).toBeDefined();
     const doc = repo.createFiscalDocument({
@@ -184,8 +232,8 @@ describe("deal confirmations", () => {
   });
 
   it("creates confirmation from a fiscal document linked to a shared client from another organization", async () => {
-    const { repo, db, seller, product } = setup();
-    const sharedBuyer = repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Compartilhado Grao", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const { repo, db, seller, product } = await setup();
+    const sharedBuyer = await repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Compartilhado Grao", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
     const doc = repo.createFiscalDocument({
       organizationId: villaId,
       ownLegalEntityId,
@@ -232,7 +280,7 @@ describe("deal confirmations", () => {
   });
 
   it("blocks another organization, duplicated links and handles cancel/replace/report/dashboard", async () => {
-    const { repo, db, seller, buyer, graoPartner, product } = setup();
+    const { repo, db, seller, buyer, graoPartner, product } = await setup();
     const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);
     expect(() => repo.addDealConfirmationParty({ dealConfirmationId: issued.confirmation.id, partyRole: "OTHER", businessPartnerId: graoPartner.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 5 })).toThrow(/editada|outra organizacao/);
     const cancelled = repo.cancelDealConfirmation(issued.confirmation.id, "Desistencia formal");
@@ -248,7 +296,7 @@ describe("deal confirmations", () => {
   });
 
   it("persists brokerage percentage, bank/PIX data and a delivery-recipient party through create, update and PDF generation", async () => {
-    const { repo, db, seller, buyer, product } = setup();
+    const { repo, db, seller, buyer, product } = await setup();
     const draft = repo.createDealConfirmationDraft({
       organizationId: villaId,
       ownLegalEntityId,
@@ -282,8 +330,8 @@ describe("deal confirmations", () => {
   });
 
   it("keeps the compact confirmation PDF in one A4 page with long names and four items", async () => {
-    const { repo, db, product } = setup();
-    const buyer = repo.createBusinessPartner({
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({
       organizationId: villaId,
       displayName: "COOPERATIVA REGIONAL DOS PRODUTORES EXPORTADORES DE CAFE ESPECIAL DO SUL DE MINAS E MATAS DE MINAS",
       notes: null,
@@ -324,7 +372,7 @@ describe("deal confirmations", () => {
   });
 
   it("rejects compact confirmation PDF with more than four items", async () => {
-    const { repo, db, buyer, product } = setup();
+    const { repo, db, buyer, product } = await setup();
     const draft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-07-17", paymentTermsSnapshot: "A vista" });
     repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
     repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
@@ -336,8 +384,8 @@ describe("deal confirmations", () => {
   });
 
   it("names issued PDF with seller, buyer and confirmation sequence", async () => {
-    const { repo, db, product } = setup();
-    const buyer = repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
     const draft = repo.createDealConfirmationDraft({
       organizationId: villaId,
       ownLegalEntityId,
@@ -356,8 +404,8 @@ describe("deal confirmations", () => {
     db.close();
   });
 
-  it("manages templates and clause library with defaults", () => {
-    const { repo, db } = setup();
+  it("manages templates and clause library with defaults", async () => {
+    const { repo, db } = await setup();
     const template = repo.createDealConfirmationTemplate(templateInput());
     const duplicated = repo.duplicateDealConfirmationTemplate(template.id);
     repo.setDefaultDealConfirmationTemplate(duplicated.id);

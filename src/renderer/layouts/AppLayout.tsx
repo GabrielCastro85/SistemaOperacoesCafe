@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
@@ -58,6 +58,10 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
       return <PackageIcon />;
     case "rates":
       return <RateIcon />;
+    case "purchaseRates":
+      return <RateIcon />;
+    case "purchaseSettlements":
+      return <WalletIcon />;
     case "confirmations":
       return <CheckCircleIcon />;
     case "charges":
@@ -83,6 +87,53 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
     default:
       return <DashboardIcon />;
   }
+}
+
+// Indicador de sincronizacao entre PCs, visivel em toda tela (rodape) -- nao
+// so' na tela de Configuracoes. Mostra "N atualizacoes pendentes" quando o
+// poll automatico de 20s (ver electron/main/index.ts) traz algo novo de
+// outro PC, com atalho pra sincronizar na hora. So' aparece se este PC
+// estiver conectado ao Supabase (senao nao ha nada pra sincronizar).
+function SharedSyncIndicator(): JSX.Element | null {
+  const [connected, setConnected] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.operationsCafe.sharedAuthStatus().then((status) => {
+      if (!cancelled) setConnected(status.connected);
+    });
+    void window.operationsCafe.getSharedSyncStatus().then((status) => {
+      if (!cancelled) setPendingCount(status.pendingCount);
+    });
+    const unsubscribe = window.operationsCafe.onSharedSyncStatusChanged((status) => {
+      setPendingCount(status.pendingCount);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  if (!connected) return null;
+
+  async function syncNow(): Promise<void> {
+    setSyncing(true);
+    try {
+      await window.operationsCafe.syncSharedData();
+      setPendingCount(0);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div className={`shared-sync-indicator${pendingCount > 0 ? " shared-sync-indicator--pending" : ""}`}>
+      <span>{pendingCount > 0 ? `${pendingCount} atualizacao${pendingCount > 1 ? "es" : ""} pendente${pendingCount > 1 ? "s" : ""}` : "Sincronizado com os outros PCs"}</span>
+      <button type="button" onClick={() => void syncNow()} disabled={syncing}>{syncing ? "Sincronizando..." : "Sincronizar agora"}</button>
+    </div>
+  );
 }
 
 function stateFlagClass(state: string | null | undefined): string {
@@ -217,6 +268,7 @@ export function AppLayout({
         {children}
         <footer className="app-statusbar">
           <span>Backup automático ativo</span>
+          <SharedSyncIndicator />
           <strong>{theme.appName} {version}</strong>
         </footer>
       </section>

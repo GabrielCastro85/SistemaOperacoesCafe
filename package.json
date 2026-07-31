@@ -1,6 +1,6 @@
 {
   "name": "sistema-operacoes-cafe",
-  "version": "1.0.0-beta.8",
+  "version": "1.0.0-beta.45",
   "private": true,
   "description": "Aplicativo desktop offline-first para gerenciamento de operacoes de empresas do ramo de cafe.",
   "author": "Sistema Operacoes Cafe",
@@ -41,15 +41,18 @@
     "pretest:run": "npm run rebuild:node"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.7.0",
     "electron-log": "^5.2.4",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.10.1",
     "nanoid": "^5.0.9",
     "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "ws": "^8.21.1",
     "zod": "^3.24.1"
   },
   "overrides": {
@@ -59,8 +62,10 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",
     "@vitejs/plugin-react": "^4.3.4",
@@ -69,6 +74,7 @@
     "electron-builder": "^25.1.8",
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
+    "pg": "^8.22.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.64.0",
     "vite": "^6.0.7",

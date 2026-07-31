@@ -53,6 +53,7 @@ export function PartnerQuickSearch({
   const primaryEntities = useMemo(() => {
     const map = new Map<string, BusinessPartnerLegalEntity>();
     legalEntities.forEach((entity) => {
+      if (!entity.businessPartnerId) return;
       const current = map.get(entity.businessPartnerId);
       if (!current || entity.isPrimary) map.set(entity.businessPartnerId, entity);
     });
