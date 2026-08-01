@@ -220,6 +220,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     await deleteDocument(detail.document);
   }
 
+  async function openXmlImportJob(jobId: string): Promise<void> {
+    try {
+      const openedJob = await window.operationsCafe.getXmlImportJob(jobId);
+      setXmlJob(openedJob);
+      setSelectedXmlToken(null);
+      setMessage(openedJob.files.length ? "Detalhes da importacao XML carregados." : "Importacao XML carregada, mas sem arquivos vinculados.");
+      scrollTo(xmlResultRef);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao detalhar importacao XML."}`);
+    }
+  }
+
   async function completeDetailTriangulation(): Promise<void> {
     if (!detail || !detailSecondaryPartnerId) return;
     try {
@@ -950,7 +962,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
       </AdminBlock>
       <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => window.operationsCafe.getXmlImportJob(job.id).then(setXmlJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter XML", label: "Motivo da reversão XML" }).then((reason) => { if (reason) void window.operationsCafe.revertXmlImportJob(job.id, reason).then(setXmlJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock></div>
       </>}
       <Feedback message={message} />
