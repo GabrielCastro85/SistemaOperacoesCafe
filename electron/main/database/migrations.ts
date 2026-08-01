@@ -2887,5 +2887,88 @@ export const migrations: Migration[] = [
         deletePartner.run(id);
       }
     }
+  },
+  {
+    // Role pra funcionario com acesso operacional completo (lanca notas,
+    // confirma negocio, cobranca e contas a pagar) mas SEM nada de
+    // administracao (usuarios, roles, configuracoes, auditoria) -- nenhum dos
+    // roles ja seedados cobre exatamente isso: OPERATIONS_MANAGER nao tem
+    // finance.manage (nao da pra criar/pagar/dar baixa em contas a pagar) e
+    // FINANCE_MANAGER nao tem operations.manage/imports.manage/
+    // confirmations.manage (nao da pra lancar nota nem confirmar negocio).
+    name: "035_employee_operational_role",
+    up: (db) => {
+      db.exec(`
+        INSERT OR IGNORE INTO roles (id, code, name, description, scope_type, is_system, is_active, created_at, updated_at) VALUES
+          ('role-employee-operacional', 'EMPLOYEE_OPERACIONAL', 'Funcionario operacional', 'Lanca notas, confirma negocios, gerencia cobrancas e contas a pagar. Sem acesso a usuarios, roles, configuracoes ou auditoria.', 'ORGANIZATION', 1, 1, datetime('now'), datetime('now'));
+
+        INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id, created_at)
+        SELECT 'rp-empop-' || permissions.id, 'role-employee-operacional', permissions.id, datetime('now') FROM permissions
+        WHERE code IN ('system.view','operations.view','operations.manage','imports.manage','commercial.view','commercial.manage','billing.manage','confirmations.manage','finance.view','finance.manage');
+      `);
+    }
+  },
+  {
+    // Release estavel 1.0: limpa tudo que foi lancado durante os testes beta
+    // sem apagar cadastros comerciais, empresas/CNPJs, fornecedores,
+    // produtos, regras por saca e usuarios. Tambem reseta numeradores para a
+    // operacao real comecar do zero.
+    name: "036_stable_release_operational_reset",
+    up: (db) => {
+      db.exec(`
+        UPDATE client_charges SET replaced_by_charge_id = NULL;
+        UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL;
+
+        DELETE FROM business_partner_merges;
+        DELETE FROM financial_report_generations;
+
+        DELETE FROM charge_status_history;
+        DELETE FROM charge_document_versions;
+        DELETE FROM client_payment_allocations;
+        DELETE FROM client_credit_allocations;
+        DELETE FROM client_charge_adjustments;
+        DELETE FROM client_charge_operations;
+
+        DELETE FROM payable_document_attachments;
+        DELETE FROM payable_status_history;
+        DELETE FROM payable_payment_allocations;
+        DELETE FROM account_payable_operations;
+        DELETE FROM account_payable_allocations;
+
+        DELETE FROM deal_confirmation_document_versions;
+        DELETE FROM deal_confirmation_status_history;
+        DELETE FROM deal_payment_terms;
+        DELETE FROM deal_confirmation_signers;
+        DELETE FROM deal_confirmation_fiscal_documents;
+        DELETE FROM deal_confirmation_operations;
+        DELETE FROM deal_confirmation_clauses;
+        DELETE FROM deal_confirmation_items;
+        DELETE FROM deal_confirmation_parties;
+
+        DELETE FROM operation_rate_history;
+        DELETE FROM fiscal_document_merge_history;
+        DELETE FROM fiscal_document_events;
+
+        DELETE FROM xml_import_files;
+        DELETE FROM spreadsheet_import_rows;
+
+        DELETE FROM operations;
+        DELETE FROM fiscal_document_items;
+        DELETE FROM client_payments;
+        DELETE FROM client_ledger_entries;
+        DELETE FROM client_charges;
+        DELETE FROM payable_payments;
+        DELETE FROM accounts_payable;
+        DELETE FROM payable_installment_groups;
+        DELETE FROM payable_recurring_templates;
+        DELETE FROM deal_confirmations;
+        DELETE FROM fiscal_documents;
+        DELETE FROM xml_import_jobs;
+        DELETE FROM spreadsheet_import_jobs;
+
+        UPDATE document_sequences SET current_number = 0, updated_at = datetime('now');
+        UPDATE app_settings SET value = '1970-01-01T00:00:00.000Z', updated_at = datetime('now') WHERE key LIKE 'sync_cursor_%';
+      `);
+    }
   }
 ];

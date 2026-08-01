@@ -99,11 +99,28 @@ describe("standalone empresas/CNPJs (sem cliente/corretor dono)", () => {
     db.close();
   });
 
-  it("bloqueia vincular uma empresa a um cliente/corretor de outra organizacao", async () => {
+  it("compartilha empresas soltas e permite vincular a cliente/corretor de outra organizacao", async () => {
     const { repo, db } = setup();
     const company = await repo.createPartnerLegalEntity(sampleCompany(villaId, cnpjA));
     const graoPartner = await repo.createBusinessPartner({ organizationId: graoId, displayName: "Fornecedor Grao", notes: null, roles: ["SUPPLIER"], isActive: true });
-    await expect(repo.linkPartnerLegalEntityToPartner(company.id, graoPartner.id)).rejects.toThrow(/mesma organizacao/);
+    expect(repo.listUnlinkedPartnerLegalEntities(graoId).map((item) => item.id)).toContain(company.id);
+
+    const linked = await repo.linkPartnerLegalEntityToPartner(company.id, graoPartner.id);
+    expect(linked.businessPartnerId).toBe(graoPartner.id);
+    expect(repo.listPartnerLegalEntities(graoPartner.id).map((item) => item.id)).toContain(company.id);
+    expect(repo.listUnlinkedPartnerLegalEntities(villaId).map((item) => item.id)).not.toContain(company.id);
+    db.close();
+  });
+
+  it("permite cadastrar uma empresa em uma organizacao vinculada a cliente/corretor de outra", async () => {
+    const { repo, db } = setup();
+    const villaPartner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Corretor Compartilhado", notes: null, roles: ["CLIENT"], isActive: true });
+
+    const company = await repo.createPartnerLegalEntity(sampleCompany(graoId, cnpjA, villaPartner.id));
+
+    expect(company.organizationId).toBe(graoId);
+    expect(company.businessPartnerId).toBe(villaPartner.id);
+    expect(repo.listPartnerLegalEntities(villaPartner.id).map((item) => item.id)).toContain(company.id);
     db.close();
   });
 

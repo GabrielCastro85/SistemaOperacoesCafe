@@ -1,8 +1,9 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
-import type { BillingSummary, BootstrapData, BusinessPartner, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
+import type { BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
+import type { UpdateStatus } from "../../../shared/types/updater";
 import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
-import { Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
+import { Alert, Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, Input, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 
 function isOperationalLegalEntity(entity: LegalEntity): boolean {
@@ -114,9 +115,25 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const [periodStart, setPeriodStart] = useState(() => currentMonthToDateRange().periodStart);
   const [periodEnd, setPeriodEnd] = useState(() => currentMonthToDateRange().periodEnd);
   const [businessPartners, setBusinessPartners] = useState<BusinessPartner[]>([]);
+  const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
+  const [partnerSearchMode, setPartnerSearchMode] = useState<"cliente" | "empresa">("cliente");
   const [partnerSearchId, setPartnerSearchId] = useState("");
+  const [companySearchTerm, setCompanySearchTerm] = useState("");
+  const [companySearchId, setCompanySearchId] = useState("");
   const [partnerSackSummary, setPartnerSackSummary] = useState<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number } | null>(null);
   const [partnerSummaryLoading, setPartnerSummaryLoading] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+
+  useEffect(() => {
+    void window.operationsCafe.getUpdateStatus().then(setUpdateStatus);
+    return window.operationsCafe.onUpdateStatusChanged(setUpdateStatus);
+  }, []);
+
+  async function installUpdateNow(): Promise<void> {
+    setInstallingUpdate(true);
+    await window.operationsCafe.quitAndInstallUpdate();
+  }
 
   useEffect(() => {
     if (!organizationId) return;
@@ -140,20 +157,37 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
 
   useEffect(() => {
     if (!organizationId) return;
-    void window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }).then(setBusinessPartners);
+    void window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }).then(async (partnerList) => {
+      setBusinessPartners(partnerList);
+      const [linkedGroups, unlinked] = await Promise.all([
+        Promise.all(partnerList.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+        window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId)
+      ]);
+      setPartnerLegalEntities([...linkedGroups.flat(), ...unlinked]);
+    });
   }, [organizationId]);
 
   useEffect(() => {
-    if (!organizationId || !partnerSearchId) {
+    if (!organizationId) {
       setPartnerSackSummary(null);
       return;
     }
-    setPartnerSummaryLoading(true);
-    void window.operationsCafe
-      .getPartnerPeriodSackSummary({ organizationId, ownLegalEntityId, businessPartnerId: partnerSearchId, periodStart: periodStart || null, periodEnd: periodEnd || null })
-      .then(setPartnerSackSummary)
-      .finally(() => setPartnerSummaryLoading(false));
-  }, [organizationId, ownLegalEntityId, partnerSearchId, periodStart, periodEnd]);
+    if (partnerSearchMode === "cliente") {
+      if (!partnerSearchId) { setPartnerSackSummary(null); return; }
+      setPartnerSummaryLoading(true);
+      void window.operationsCafe
+        .getPartnerPeriodSackSummary({ organizationId, ownLegalEntityId, businessPartnerId: partnerSearchId, periodStart: periodStart || null, periodEnd: periodEnd || null })
+        .then(setPartnerSackSummary)
+        .finally(() => setPartnerSummaryLoading(false));
+    } else {
+      if (!companySearchId) { setPartnerSackSummary(null); return; }
+      setPartnerSummaryLoading(true);
+      void window.operationsCafe
+        .getCompanyPeriodSackSummary({ organizationId, ownLegalEntityId, partnerLegalEntityId: companySearchId, periodStart: periodStart || null, periodEnd: periodEnd || null })
+        .then(setPartnerSackSummary)
+        .finally(() => setPartnerSummaryLoading(false));
+    }
+  }, [organizationId, ownLegalEntityId, partnerSearchMode, partnerSearchId, companySearchId, periodStart, periodEnd]);
 
   const totalReceivable = billingSummary?.openCents ?? 0;
   const totalCommercialAmount = operationalIndicators?.fiscalAmountCents ?? 0;
@@ -176,6 +210,21 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   return (
     <section className="content-section">
       <PageHeader eyebrow="Visao geral" title="Dashboard operacional" description="Indicadores locais para operacao, recebimentos, financeiro interno e confirmacoes de negocio." />
+      {updateStatus.state === "downloading" ? (
+        <div className="dashboard-update-banner">
+          <Alert tone="info">
+            Baixando atualizacao {updateStatus.version} ({updateStatus.percent}%)...
+          </Alert>
+        </div>
+      ) : null}
+      {updateStatus.state === "downloaded" ? (
+        <div className="dashboard-update-banner">
+          <Alert tone="success">Atualizacao {updateStatus.version} pronta para instalar. O programa vai fechar e reabrir na nova versao.</Alert>
+          <div className="actions">
+            <Button variant="primary" onClick={() => void installUpdateNow()} loading={installingUpdate}>Reiniciar e atualizar agora</Button>
+          </div>
+        </div>
+      ) : null}
       <FilterBar activeCount={[periodStart, periodEnd].filter(Boolean).length} onClear={() => { const defaults = currentMonthToDateRange(); setPeriodStart(defaults.periodStart); setPeriodEnd(defaults.periodEnd); }}>
         <DateInput label="Periodo - inicio" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
         <DateInput label="Periodo - fim" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
@@ -260,10 +309,32 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
                 <span><i className="chart-legend__dot chart-legend__dot--line" />Total sacas</span>
               </div>
               <div className="mini-chart" aria-label="Grafico mensal de operacoes: barras de valor em reais e linha de sacas">
-                {monthBars.map((height, index) => <span key={index} style={{ height: `${height}%` }} />)}
+                {monthBars.map((height, index) => (
+                  <div key={index} className="mini-chart__col">
+                    <span style={{ height: `${height}%` }} />
+                  </div>
+                ))}
                 <svg className="mini-chart__line" viewBox="0 0 100 100" preserveAspectRatio="none">
                   <polyline points={linePoints} />
                 </svg>
+                <div className="mini-chart__sacks-labels" aria-hidden="true">
+                  {monthLine.map((value, index) => {
+                    const sacksAmount = Number(monthlyTotals[index]?.sacksDecimal ?? 0);
+                    if (sacksAmount <= 0) return null;
+                    return (
+                      <small
+                        key={index}
+                        className="mini-chart__sacks-label"
+                        style={{
+                          left: `${(index / Math.max(1, monthLine.length - 1)) * 100}%`,
+                          bottom: `${value}%`
+                        }}
+                      >
+                        {sacksAmount.toLocaleString("pt-BR")}
+                      </small>
+                    );
+                  })}
+                </div>
               </div>
               <div className="chart-months"><span>Jan</span><span>Mar</span><span>Mai</span><span>Jul</span><span>Set</span><span>Nov</span></div>
             </>
@@ -314,12 +385,38 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
         <Card>
           <div className="ui-card__header">
             <div>
-              <span className="ui-eyebrow">Cliente/corretor</span>
+              <span className="ui-eyebrow">Cliente/corretor ou empresa</span>
               <h2>Sacas por período</h2>
             </div>
           </div>
-          <PartnerQuickSearch label="Buscar cliente/corretor" value={partnerSearchId} onChange={setPartnerSearchId} partners={businessPartners} placeholder="Digite o nome do cliente/corretor" />
-          {partnerSearchId ? (
+          <div className="inline-actions">
+            <button type="button" className={partnerSearchMode === "cliente" ? "active" : ""} onClick={() => { setPartnerSearchMode("cliente"); setCompanySearchId(""); setCompanySearchTerm(""); }}>Buscar por cliente/corretor</button>
+            <button type="button" className={partnerSearchMode === "empresa" ? "active" : ""} onClick={() => { setPartnerSearchMode("empresa"); setPartnerSearchId(""); }}>Buscar por empresa/CNPJ</button>
+          </div>
+          {partnerSearchMode === "cliente" ? (
+            <PartnerQuickSearch label="Buscar cliente/corretor" value={partnerSearchId} onChange={setPartnerSearchId} partners={businessPartners} placeholder="Digite o nome do cliente/corretor" />
+          ) : (
+            <>
+              <Input label="Buscar empresa por nome ou CNPJ" value={companySearchTerm} onChange={(event) => { setCompanySearchTerm(event.target.value); setCompanySearchId(""); }} placeholder="Digite o nome ou CNPJ da empresa" />
+              {companySearchTerm.trim() && !companySearchId ? (
+                <div className="table">
+                  {partnerLegalEntities
+                    .filter((entity) => {
+                      const term = companySearchTerm.trim().toUpperCase();
+                      const digits = term.replace(/\D/g, "");
+                      return entity.tradeName.toUpperCase().includes(term) || entity.legalName.toUpperCase().includes(term) || (digits && entity.cnpj?.includes(digits));
+                    })
+                    .slice(0, 20)
+                    .map((entity) => (
+                      <div key={entity.id} className="table-row">
+                        <button type="button" className="partner-action-button" onClick={() => { setCompanySearchId(entity.id); setCompanySearchTerm(entity.tradeName); }}>{entity.tradeName} {entity.cnpj ? `- ${formatCnpj(entity.cnpj)}` : ""}</button>
+                      </div>
+                    ))}
+                </div>
+              ) : null}
+            </>
+          )}
+          {(partnerSearchMode === "cliente" ? partnerSearchId : companySearchId) ? (
             partnerSummaryLoading ? (
               <p className="muted">Calculando...</p>
             ) : partnerSackSummary ? (
@@ -331,7 +428,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               </div>
             ) : null
           ) : (
-            <EmptyState title="Nenhum cliente selecionado" description="Busque um cliente/corretor para ver quantas sacas ele movimentou no período escolhido." />
+            <EmptyState title="Nenhum cliente ou empresa selecionado" description="Busque um cliente/corretor ou uma empresa/CNPJ para ver quantas sacas movimentou no período escolhido." />
           )}
         </Card>
       </div>

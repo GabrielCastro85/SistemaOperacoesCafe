@@ -124,4 +124,47 @@ describe("filtros de periodo e cliente do Dashboard", () => {
 
     db.close();
   });
+
+  it("getCompanyPeriodSackSummary isola sacas por empresa/CNPJ da nota, independente do corretor responsavel", async () => {
+    const { repo, db, productId, partnerAId, partnerBId } = await setup();
+
+    const companyX = await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: null, legalName: "Empresa X Ltda", tradeName: "Empresa X", cnpj: "11222333000181",
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: false, isActive: true, isDraft: false
+    });
+    const companyY = await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: null, legalName: "Empresa Y Ltda", tradeName: "Empresa Y", cnpj: "22333444000181",
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: false, isActive: true, isDraft: false
+    });
+
+    // Nota da Empresa X, responsavel = corretor A.
+    const docX = repo.createFiscalDocument({ ...sampleDocument(partnerAId, "700", "2026-07-15"), partnerLegalEntityId: companyX.id });
+    const itemX = repo.addFiscalDocumentItem({ fiscalDocumentId: docX.document.id, productId, description: "Cafe", quantity: "40", unit: "SACK", unitPriceDecimal: "100", totalAmountCents: 100000, sacksQuantity: "40" });
+    repo.addOperation({ fiscalDocumentId: docX.document.id, fiscalDocumentItemId: itemX.id, ownLegalEntityId, responsiblePartnerId: partnerAId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-15", quantitySacks: "40", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(docX.document.id);
+
+    // Outra nota da MESMA empresa X, mas responsavel = corretor B (troca de corretor nao deve afetar a busca por empresa).
+    const docX2 = repo.createFiscalDocument({ ...sampleDocument(partnerBId, "701", "2026-07-18"), partnerLegalEntityId: companyX.id });
+    const itemX2 = repo.addFiscalDocumentItem({ fiscalDocumentId: docX2.document.id, productId, description: "Cafe", quantity: "10", unit: "SACK", unitPriceDecimal: "100", totalAmountCents: 100000, sacksQuantity: "10" });
+    repo.addOperation({ fiscalDocumentId: docX2.document.id, fiscalDocumentItemId: itemX2.id, ownLegalEntityId, responsiblePartnerId: partnerBId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-18", quantitySacks: "10", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(docX2.document.id);
+
+    // Nota de outra empresa (Y), fora do periodo filtrado.
+    const docY = repo.createFiscalDocument({ ...sampleDocument(partnerAId, "702", "2026-07-20"), partnerLegalEntityId: companyY.id });
+    const itemY = repo.addFiscalDocumentItem({ fiscalDocumentId: docY.document.id, productId, description: "Cafe", quantity: "99", unit: "SACK", unitPriceDecimal: "100", totalAmountCents: 100000, sacksQuantity: "99" });
+    repo.addOperation({ fiscalDocumentId: docY.document.id, fiscalDocumentItemId: itemY.id, ownLegalEntityId, responsiblePartnerId: partnerAId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-20", quantitySacks: "99", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(docY.document.id);
+
+    const summaryX = repo.getCompanyPeriodSackSummary({ organizationId: villaId, ownLegalEntityId, partnerLegalEntityId: companyX.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(summaryX.sacksDecimal).toBe("50");
+    expect(summaryX.operationCount).toBe(2);
+    expect(summaryX.documentCount).toBe(2);
+
+    const summaryY = repo.getCompanyPeriodSackSummary({ organizationId: villaId, ownLegalEntityId, partnerLegalEntityId: companyY.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(summaryY.sacksDecimal).toBe("99");
+
+    db.close();
+  });
 });

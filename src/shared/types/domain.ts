@@ -993,6 +993,7 @@ export interface ClientChargeAdjustment {
   id: string;
   clientChargeId: string;
   ledgerEntryId: string | null;
+  ledgerEntryDate: string | null;
   adjustmentType: ChargeAdjustmentType;
   effect: LedgerEffect;
   description: string;

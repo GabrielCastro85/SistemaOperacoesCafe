@@ -7,10 +7,10 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   hint?: string;
 }
 
-export function Input({ label, error, hint, required, ...props }: InputProps): JSX.Element {
+export function Input({ label, error, hint, required, autoComplete = "off", ...props }: InputProps): JSX.Element {
   return (
     <FormField label={label} error={error} hint={hint} required={required}>
-      <input className="ui-input" required={required} {...props} />
+      <input className="ui-input" required={required} autoComplete={autoComplete} {...props} />
     </FormField>
   );
 }

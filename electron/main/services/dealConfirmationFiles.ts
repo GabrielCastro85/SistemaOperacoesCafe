@@ -238,7 +238,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   const buyer = detail.parties.find((party) => party.partyRole === "BUYER") ?? null;
   const delivery = detail.parties.find((party) => party.partyRole === "DELIVERY_RECIPIENT") ?? buyer;
   const ownSnapshot: Partial<DealPartySnapshot> = {
-    name: ownLegalEntity.tradeName,
+    name: ownLegalEntity.legalName || ownLegalEntity.tradeName,
     legalName: ownLegalEntity.legalName,
     taxId: ownLegalEntity.cnpj,
     stateRegistration: ownLegalEntity.stateRegistration,
@@ -266,7 +266,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
     page.drawImage(logoImage, { x: margin + 9, y: currentY - 50, width: logoWidth, height: logoHeight });
   }
   const headerX = logoImage ? margin + 66 : margin + 10;
-  drawTextBox(page, `${ownLegalEntity.tradeName}\n${ownLegalEntity.legalName}\nCNPJ: ${formatTaxId(ownLegalEntity.cnpj)}${ownLegalEntity.stateRegistration ? ` | IE: ${ownLegalEntity.stateRegistration}` : ""}`, headerX, currentY - 15, 270, 44, { font, bold, size: 9.2, minSize: 6.4, lineHeight: 1.16, maxLines: 3, color: headerText, important: true });
+  drawTextBox(page, `${ownLegalEntity.legalName || ownLegalEntity.tradeName}\n${ownLegalEntity.tradeName && ownLegalEntity.tradeName !== ownLegalEntity.legalName ? ownLegalEntity.tradeName : ""}\nCNPJ: ${formatTaxId(ownLegalEntity.cnpj)}${ownLegalEntity.stateRegistration ? ` | IE: ${ownLegalEntity.stateRegistration}` : ""}`, headerX, currentY - 15, 270, 44, { font, bold, size: 9.2, minSize: 6.4, lineHeight: 1.16, maxLines: 3, color: headerText, important: true });
   const title = draft ? "PREVIA - NAO ASSINAR" : "CONFIRMACAO DE NEGOCIO";
   const number = confirmation.confirmationNumber ?? confirmation.temporaryReference;
   page.drawRectangle({ x: pageWidth - margin - 158, y: currentY - 57, width: 148, height: 44, borderColor: gold, borderWidth: 0.75 });
@@ -1032,7 +1032,7 @@ function formatPostalCode(value: string | null | undefined): string {
 }
 
 function buildDealConfirmationFileName(input: Parameters<typeof generateDealConfirmationPdf>[0]): string {
-  const seller = findPartyFileLabel(input.detail, "SELLER") ?? compactCompanyName(input.ownLegalEntity.tradeName);
+  const seller = compactCompanyName(input.ownLegalEntity.tradeName);
   const buyer = findPartyFileLabel(input.detail, "BUYER") ?? "Comprador";
   const sequence = input.detail.confirmation.confirmationNumber
     ? extractConfirmationSequence(input.detail.confirmation.confirmationNumber)

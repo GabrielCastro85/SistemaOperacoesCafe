@@ -688,6 +688,7 @@ export function mapClientChargeAdjustment(row: DbRecord): ClientChargeAdjustment
     id: String(row.id),
     clientChargeId: String(row.client_charge_id),
     ledgerEntryId: textOrNull(row.ledger_entry_id),
+    ledgerEntryDate: textOrNull(row.ledger_entry_date),
     adjustmentType: String(row.adjustment_type) as ClientChargeAdjustment["adjustmentType"],
     effect: String(row.effect) as ClientChargeAdjustment["effect"],
     description: String(row.description),

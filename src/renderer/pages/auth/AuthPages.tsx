@@ -7,7 +7,7 @@ interface AuthPageProps {
   onSession: (session: AuthSession | null) => void;
 }
 
-function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: { label: string; value: string; onChange: (value: string) => void; autoFocus?: boolean; onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void }): JSX.Element {
+export function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: { label: string; value: string; onChange: (value: string) => void; autoFocus?: boolean; onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void }): JSX.Element {
   const [visible, setVisible] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
 
@@ -48,7 +48,7 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
   async function submit(): Promise<void> {
     try {
       setError(null);
-      onSession(await window.operationsCafe.authBootstrapAdmin({ displayName, username, email: email || null, password }));
+      onSession(await window.operationsCafe.authBootstrapAdmin({ displayName, username, email: email.trim() ? email.trim() : null, password }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nao foi possivel criar o administrador.");
     }
@@ -66,7 +66,7 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
         <p>Defina o usuario inicial desta instalacao. Nenhuma senha padrao sera criada.</p>
         <label>Nome<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
         <label>Usuario<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+        <label>Email (opcional)<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         <PasswordField label="Senha" value={password} onChange={setPassword} />
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Criar administrador</button>

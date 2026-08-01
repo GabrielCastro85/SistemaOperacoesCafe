@@ -366,7 +366,18 @@ export const operationInputSchema = z.object({
   quantitySacks: decimalTextSchema,
   manualRateValueCents: z.number().int().min(0).nullable(),
   manualOverrideReason: nullableText,
-  notes: nullableText
+  notes: nullableText,
+  // Por padrao a resolucao de preco usa a contraparte da propria nota fiscal
+  // (fiscal_documents.partner_legal_entity_id). Numa nota triangulada, a
+  // segunda perna (o outro lado da remessa) precisa resolver o preco contra
+  // a empresa do PARCEIRO SECUNDARIO, nao contra a contraparte original --
+  // por isso esse override existe, opcional pra nao afetar nenhuma chamada
+  // existente.
+  counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional()
+});
+
+export const fiscalDocumentTriangulationInputSchema = z.object({
+  secondaryResponsiblePartnerId: z.string().uuid()
 });
 
 export const spreadsheetImportTypeSchema = z.enum(["GENERAL_SALES", "CLIENT_INDIVIDUAL", "CUSTOM"]);
@@ -586,7 +597,12 @@ export const clientLedgerEntryInputSchema = z.object({
   referenceNumber: nullableText,
   notes: nullableText,
   attachmentPath: nullableText,
-  availableAmountCents: z.number().int().min(0).nullable()
+  availableAmountCents: z.number().int().min(0).nullable(),
+  // Por padrao um lancamento ja entra confirmado (conta no saldo na hora).
+  // Um adiantamento/emprestimo pode ser criado como DRAFT quando o dono
+  // desmarca "ja abater do saldo agora" -- fica registrado no historico mas
+  // so' passa a contar no saldo quando for confirmado depois.
+  status: z.enum(["DRAFT", "CONFIRMED"]).optional().default("CONFIRMED")
 });
 
 export const creditAllocationInputSchema = z.object({

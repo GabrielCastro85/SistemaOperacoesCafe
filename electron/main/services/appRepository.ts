@@ -18,6 +18,7 @@ import {
   purchaseRateRuleInputSchema,
   resolvePurchaseRateInputSchema,
   fiscalDocumentInputSchema,
+  fiscalDocumentTriangulationInputSchema,
   fiscalDocumentItemInputSchema,
   operationInputSchema,
   spreadsheetMappingTemplateInputSchema,
@@ -265,7 +266,33 @@ const HOT_SYNC_TABLES: Array<{ table: string; timestampColumn: string }> = [
   // Fusao de cadastros de parceiro duplicados (ver mergeBusinessPartnerDuplicate) --
   // ao baixar uma linha nova aqui, syncTableDown aplica a mesma fusao localmente,
   // autocorrigindo PCs que ainda nao rodaram a limpeza.
-  { table: "business_partner_merges", timestampColumn: "created_at" }
+  { table: "business_partner_merges", timestampColumn: "created_at" },
+  // Login de funcionario passa a sincronizar entre os 4 PCs -- antes so'
+  // existia no PC onde foi cadastrado. roles/permissions/role_permissions
+  // ficam FORA de propositos: sao seed estatico (so' mudam via migration/
+  // codigo, nunca por acao do usuario no app), ja' nascem identicos em cada
+  // instalacao e nao tem coluna de timestamp pra sincronizar de forma
+  // incremental. So' entram as 3 tabelas que realmente mudam em tempo de
+  // execucao (cadastrar funcionario, trocar senha, atribuir role).
+  { table: "app_users", timestampColumn: "updated_at" },
+  { table: "user_credentials", timestampColumn: "password_changed_at" },
+  { table: "user_role_assignments", timestampColumn: "assigned_at" },
+  // Confirmacoes de negocio nunca sincronizavam entre PCs -- o modulo inteiro
+  // era local (nenhuma tabela deal_confirmation* existia no Postgres ate'
+  // agora). document_sequences ja' sincroniza desde antes, nao precisa
+  // entrar de novo aqui.
+  { table: "deal_confirmation_templates", timestampColumn: "updated_at" },
+  { table: "deal_clause_templates", timestampColumn: "updated_at" },
+  { table: "deal_confirmations", timestampColumn: "updated_at" },
+  { table: "deal_confirmation_parties", timestampColumn: "updated_at" },
+  { table: "deal_confirmation_items", timestampColumn: "updated_at" },
+  { table: "deal_confirmation_operations", timestampColumn: "created_at" },
+  { table: "deal_confirmation_fiscal_documents", timestampColumn: "created_at" },
+  { table: "deal_confirmation_clauses", timestampColumn: "updated_at" },
+  { table: "deal_payment_terms", timestampColumn: "updated_at" },
+  { table: "deal_confirmation_signers", timestampColumn: "updated_at" },
+  { table: "deal_confirmation_document_versions", timestampColumn: "created_at" },
+  { table: "deal_confirmation_status_history", timestampColumn: "changed_at" }
 ];
 
 // Colunas boolean no Postgres (as mesmas colunas sao INTEGER 0/1 no SQLite
@@ -276,7 +303,14 @@ const BOOLEAN_COLUMNS_BY_TABLE: Record<string, string[]> = {
   fiscal_documents: ["has_pending_issues"],
   operations: ["rate_was_manually_overridden"],
   xml_import_jobs: ["include_subfolders"],
-  document_sequences: ["is_active"]
+  document_sequences: ["is_active"],
+  app_users: ["must_change_password"],
+  user_role_assignments: ["is_active"],
+  deal_confirmation_templates: ["show_broker", "show_commercial_values", "show_item_origins", "show_signature_blocks", "is_default", "is_active"],
+  deal_clause_templates: ["is_active"],
+  deal_confirmation_items: ["total_was_manually_overridden"],
+  deal_confirmation_clauses: ["is_visible"],
+  deal_confirmation_document_versions: ["generated_by_system", "is_current"]
 };
 
 function toSharedRow(row: DbRecord, table: string): DbRecord {
@@ -432,6 +466,51 @@ export class AppRepository {
     for (const row of statusHistory) await this.sharedRepository.upsertRow("charge_status_history", toSharedRow(row, "charge_status_history"));
     const ledgerEntries = this.db.prepare("SELECT * FROM client_ledger_entries WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
     for (const row of ledgerEntries) await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(row, "client_ledger_entries"));
+  }
+
+  /**
+   * Empurra pro Supabase o estado atual de uma confirmacao de negocio +
+   * partes + itens + operacoes/notas vinculadas + clausulas + condicoes de
+   * pagamento + assinantes + versoes de documento (so' path/hash, o PDF em
+   * si fica local, mesmo padrao de charge_document_versions) + historico de
+   * status -- mesma logica de pushClientChargeToShared, chamado DEPOIS que a
+   * escrita local ja comitou.
+   */
+  async pushDealConfirmationToShared(dealConfirmationId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
+    if (!confirmation) return;
+    await this.sharedRepository.upsertRow("deal_confirmations", toSharedRow(confirmation, "deal_confirmations"));
+    const parties = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of parties) await this.sharedRepository.upsertRow("deal_confirmation_parties", toSharedRow(row, "deal_confirmation_parties"));
+    const items = this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of items) await this.sharedRepository.upsertRow("deal_confirmation_items", toSharedRow(row, "deal_confirmation_items"));
+    const operations = this.db.prepare("SELECT * FROM deal_confirmation_operations WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of operations) await this.sharedRepository.upsertRow("deal_confirmation_operations", toSharedRow(row, "deal_confirmation_operations"));
+    const fiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of fiscalDocuments) await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", toSharedRow(row, "deal_confirmation_fiscal_documents"));
+    const clauses = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of clauses) await this.sharedRepository.upsertRow("deal_confirmation_clauses", toSharedRow(row, "deal_confirmation_clauses"));
+    const paymentTerms = this.db.prepare("SELECT * FROM deal_payment_terms WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of paymentTerms) await this.sharedRepository.upsertRow("deal_payment_terms", toSharedRow(row, "deal_payment_terms"));
+    const signers = this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of signers) await this.sharedRepository.upsertRow("deal_confirmation_signers", toSharedRow(row, "deal_confirmation_signers"));
+    const documentVersions = this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of documentVersions) await this.sharedRepository.upsertRow("deal_confirmation_document_versions", toSharedRow(row, "deal_confirmation_document_versions"));
+    const statusHistory = this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+    for (const row of statusHistory) await this.sharedRepository.upsertRow("deal_confirmation_status_history", toSharedRow(row, "deal_confirmation_status_history"));
+  }
+
+  async pushDealConfirmationTemplateToShared(id: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const row = this.db.prepare("SELECT * FROM deal_confirmation_templates WHERE id = ?").get(id) as DbRecord | undefined;
+    if (row) await this.sharedRepository.upsertRow("deal_confirmation_templates", toSharedRow(row, "deal_confirmation_templates"));
+  }
+
+  async pushDealClauseTemplateToShared(id: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    const row = this.db.prepare("SELECT * FROM deal_clause_templates WHERE id = ?").get(id) as DbRecord | undefined;
+    if (row) await this.sharedRepository.upsertRow("deal_clause_templates", toSharedRow(row, "deal_clause_templates"));
   }
 
   /**
@@ -1501,11 +1580,11 @@ export class AppRepository {
     const term = search?.trim();
     const rows = (
       term
-        ? this.db.prepare("SELECT * FROM partner_legal_entities WHERE organization_id = ? AND business_partner_id IS NULL AND (trade_name LIKE ? OR legal_name LIKE ? OR cnpj LIKE ?) ORDER BY trade_name")
-            .all(organizationId, `%${term}%`, `%${term}%`, `%${term}%`)
-        : this.db.prepare("SELECT * FROM partner_legal_entities WHERE organization_id = ? AND business_partner_id IS NULL ORDER BY trade_name").all(organizationId)
+        ? this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id IS NULL AND (trade_name LIKE ? OR legal_name LIKE ? OR cnpj LIKE ?) ORDER BY trade_name")
+            .all(`%${term}%`, `%${term}%`, `%${term}%`)
+        : this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id IS NULL ORDER BY trade_name").all()
     ) as DbRecord[];
-    return rows.map(mapBusinessPartnerLegalEntity);
+    return rows.map(mapBusinessPartnerLegalEntity).filter((item) => this.isOrganizationAllowed(item.organizationId));
   }
 
   async createPartnerLegalEntity(input: unknown): Promise<BusinessPartnerLegalEntity> {
@@ -1551,9 +1630,8 @@ export class AppRepository {
    * vinculo errado), so' redireciona -- nao mexe no cadastro antigo.
    */
   async linkPartnerLegalEntityToPartner(legalEntityId: string, businessPartnerId: string): Promise<BusinessPartnerLegalEntity> {
-    const entity = this.getPartnerLegalEntity(legalEntityId);
-    const partner = this.getBusinessPartner(businessPartnerId);
-    if (entity.organizationId !== partner.organizationId) throw new Error("Empresa e cliente/corretor precisam ser da mesma organizacao.");
+    this.getPartnerLegalEntity(legalEntityId);
+    this.getBusinessPartner(businessPartnerId);
     const now = new Date().toISOString();
     const makesPrimary = !this.db.prepare("SELECT 1 FROM partner_legal_entities WHERE business_partner_id = ? AND is_primary = 1 LIMIT 1").get(businessPartnerId);
     const patch: DbRecord = { business_partner_id: businessPartnerId, is_primary: makesPrimary, updated_at: now };
@@ -2180,7 +2258,35 @@ export class AppRepository {
     const data = operationInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);
     if (detail.document.status === "CONFIRMED" || detail.document.status === "CANCELED") throw new Error("Nota confirmada ou cancelada nao pode receber operacoes.");
+    return this.insertOperation(data, detail);
+  }
+
+  private insertOperation(data: {
+    fiscalDocumentId: string;
+    fiscalDocumentItemId: string | null;
+    ownLegalEntityId: string;
+    responsiblePartnerId: string;
+    productId: string | null;
+    operationType: "PURCHASE" | "SALE";
+    operationScope: "INTERNAL" | "EXTERNAL";
+    operationDate: string;
+    quantitySacks: string;
+    manualRateValueCents: number | null;
+    manualOverrideReason: string | null;
+    notes: string | null;
+    counterpartyPartnerLegalEntityId?: string | null;
+  }, detail: FiscalDocumentDetail): Operation {
     const isPurchase = data.operationType === "PURCHASE";
+    // A contraparte pra resolver o preco por saca normalmente e' a da propria
+    // nota fiscal -- mas numa nota triangulada a segunda perna precisa
+    // resolver contra a empresa do PARCEIRO SECUNDARIO (ver
+    // completeFiscalDocumentTriangulation/processXmlImportFile), nao contra a
+    // contraparte original, senao regras especificas por empresa (ex:
+    // "Primavera: R$4,00/saca") nunca batem e a operacao cai sempre na regra
+    // generica de escopo (UF).
+    const counterpartyPartnerLegalEntityId = data.counterpartyPartnerLegalEntityId !== undefined
+      ? data.counterpartyPartnerLegalEntityId
+      : detail.document.partnerLegalEntityId;
     // Nota de entrada (compra): resolve o preco por saca que PAGAMOS ao
     // fornecedor (purchase_rate_rules), nao a comissao que cobramos de
     // cliente -- sao conceitos diferentes, cada um com sua propria tabela de
@@ -2190,7 +2296,7 @@ export class AppRepository {
           organizationId: detail.document.organizationId,
           businessPartnerId: data.responsiblePartnerId,
           ownLegalEntityId: data.ownLegalEntityId,
-          counterpartyPartnerLegalEntityId: detail.document.partnerLegalEntityId,
+          counterpartyPartnerLegalEntityId,
           productId: data.productId,
           operationScope: data.operationScope,
           operationDate: data.operationDate
@@ -2199,7 +2305,7 @@ export class AppRepository {
           organizationId: detail.document.organizationId,
           businessPartnerId: data.responsiblePartnerId,
           ownLegalEntityId: data.ownLegalEntityId,
-          counterpartyPartnerLegalEntityId: detail.document.partnerLegalEntityId,
+          counterpartyPartnerLegalEntityId,
           productId: data.productId,
           operationScope: data.operationScope,
           operationDate: data.operationDate
@@ -2218,6 +2324,60 @@ export class AppRepository {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, data.fiscalDocumentId, data.fiscalDocumentItemId, detail.document.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.productId, data.operationType, data.operationScope, data.operationDate, normalizeDecimalText(data.quantitySacks), isPurchase ? null : (resolved.rule?.id ?? null), isPurchase ? (resolved.rule?.id ?? null) : null, rate, amount, manual ? 1 : 0, data.manualRateValueCents, data.manualOverrideReason, data.notes, detail.document.hasPendingIssues || resolved.status === "missing" ? "PENDING" : "DRAFT", now, now);
     return this.getFiscalDocument(data.fiscalDocumentId).operations.find((item) => item.id === id) as Operation;
+  }
+
+  completeFiscalDocumentTriangulation(id: string, input: unknown): FiscalDocumentDetail {
+    const data = fiscalDocumentTriangulationInputSchema.parse(input);
+    const trx = this.db.transaction(() => {
+      const detail = this.getFiscalDocument(id);
+      if (detail.document.status === "CANCELED") throw new Error("Nota cancelada nao pode ser completada como triangulada.");
+      if (detail.document.secondaryResponsiblePartnerId) throw new Error("Nota ja possui segundo parceiro informado.");
+      const sourceOperations = detail.operations.filter((operation) => operation.status !== "CANCELED");
+      if (!sourceOperations.length) throw new Error("Nota precisa ter uma operacao principal para completar a nota triangulada.");
+      const operationType = sourceOperations[0].operationType;
+      if (sourceOperations.some((operation) => operation.operationType !== operationType)) throw new Error("Nota ja possui operacoes de compra e venda.");
+      const secondaryOperationType: "PURCHASE" | "SALE" = operationType === "PURCHASE" ? "SALE" : "PURCHASE";
+      this.assertSecondaryPartner({
+        organizationId: detail.document.organizationId,
+        responsiblePartnerId: detail.document.responsiblePartnerId,
+        operationType,
+        secondaryResponsiblePartnerId: data.secondaryResponsiblePartnerId,
+        secondaryOperationType
+      });
+      const now = new Date().toISOString();
+      this.db.prepare("UPDATE fiscal_documents SET secondary_responsible_partner_id = ?, secondary_operation_type = ?, notes = CASE WHEN notes IS NULL OR notes = '' THEN ? WHEN notes NOT LIKE '%Nota triangulada%' THEN notes || ' | ' || ? ELSE notes END, updated_at = ? WHERE id = ?")
+        .run(data.secondaryResponsiblePartnerId, secondaryOperationType, "Nota triangulada: segunda perna adicionada apos o cadastro do parceiro.", "Nota triangulada: segunda perna adicionada apos o cadastro do parceiro.", now, id);
+      const secondaryPartnerLegalEntity = this.listPartnerLegalEntities(data.secondaryResponsiblePartnerId).find((entity) => entity.isPrimary && entity.isActive)
+        ?? this.listPartnerLegalEntities(data.secondaryResponsiblePartnerId).find((entity) => entity.isActive)
+        ?? null;
+      for (const operation of sourceOperations) {
+        const existingSecondary = detail.operations.find((candidate) =>
+          candidate.operationType === secondaryOperationType &&
+          candidate.responsiblePartnerId === data.secondaryResponsiblePartnerId &&
+          candidate.fiscalDocumentItemId === operation.fiscalDocumentItemId
+        );
+        if (existingSecondary) continue;
+        const secondary = this.insertOperation({
+          fiscalDocumentId: detail.document.id,
+          fiscalDocumentItemId: operation.fiscalDocumentItemId,
+          ownLegalEntityId: operation.ownLegalEntityId,
+          responsiblePartnerId: data.secondaryResponsiblePartnerId,
+          productId: operation.productId,
+          operationType: secondaryOperationType,
+          operationScope: operation.operationScope,
+          operationDate: operation.operationDate,
+          quantitySacks: operation.quantitySacks,
+          manualRateValueCents: null,
+          manualOverrideReason: null,
+          notes: "Segunda perna (nota triangulada) adicionada apos o cadastro do parceiro",
+          counterpartyPartnerLegalEntityId: secondaryPartnerLegalEntity?.id ?? null
+        }, detail);
+        this.db.prepare("UPDATE operations SET status = ?, source = ?, import_job_id = ?, import_row_id = ?, xml_import_job_id = ?, classification_rule_id = ?, updated_at = ? WHERE id = ?")
+          .run(operation.status, operation.source, operation.importJobId, operation.importRowId, operation.xmlImportJobId, operation.classificationRuleId, now, secondary.id);
+      }
+    });
+    trx();
+    return this.getFiscalDocument(id);
   }
 
   updateOperationManualRate(id: string, manualRateValueCents: number, reason: string): Operation {
@@ -2292,6 +2452,35 @@ export class AppRepository {
       documentCount: new Set(operations.map((operation) => operation.fiscalDocumentId)).size,
       // Mesmo criterio do indicador geral: lado de compra nao entra na receita de servico.
       serviceAmountCents: operations.filter((operation) => operation.operationType !== "PURCHASE").reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+    };
+  }
+
+  // Mesma ideia de getPartnerPeriodSackSummary, mas buscando por
+  // EMPRESA/CNPJ (partner_legal_entity_id da nota) em vez de cliente/corretor
+  // -- pedido do dono pra achar rapido o volume de uma empresa especifica no
+  // Dashboard, independente de qual corretor ficou responsavel pela nota.
+  getCompanyPeriodSackSummary(input: { organizationId: string; ownLegalEntityId?: string | null; partnerLegalEntityId: string; periodStart?: string | null; periodEnd?: string | null }): { sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number } {
+    const { organizationId, partnerLegalEntityId } = input;
+    const ownLegalEntityId = input.ownLegalEntityId ?? undefined;
+    const periodStart = input.periodStart ?? undefined;
+    const periodEnd = input.periodEnd ?? undefined;
+    this.assertOrganizationWritable(organizationId);
+    this.getPartnerLegalEntity(partnerLegalEntityId);
+    const clauses = ["operations.organization_id = ?", "fiscal_documents.partner_legal_entity_id = ?", "operations.status != 'CANCELED'"];
+    const params: unknown[] = [organizationId, partnerLegalEntityId];
+    if (ownLegalEntityId) { clauses.push("operations.own_legal_entity_id = ?"); params.push(ownLegalEntityId); }
+    if (periodStart) { clauses.push("operations.operation_date >= ?"); params.push(periodStart); }
+    if (periodEnd) { clauses.push("operations.operation_date <= ?"); params.push(periodEnd); }
+    const rows = (this.db.prepare(`
+      SELECT operations.* FROM operations
+      JOIN fiscal_documents ON fiscal_documents.id = operations.fiscal_document_id
+      WHERE ${clauses.join(" AND ")}
+    `).all(...params) as DbRecord[]).map(mapOperation);
+    return {
+      sacksDecimal: rows.length ? sumDecimalTexts(rows.map((operation) => operation.quantitySacks)) : "0",
+      operationCount: rows.length,
+      documentCount: new Set(rows.map((operation) => operation.fiscalDocumentId)).size,
+      serviceAmountCents: rows.filter((operation) => operation.operationType !== "PURCHASE").reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
@@ -2829,7 +3018,7 @@ export class AppRepository {
       .run(file.storedFilePath, file.fileHash, file.importJobId, doc.source, now, file.extractedDataJson, now, doc.id);
     this.db.prepare("INSERT INTO fiscal_document_merge_history (id, organization_id, fiscal_document_id, xml_import_job_id, previous_source, decision, differences_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(randomUUID(), doc.organizationId, doc.id, file.importJobId, doc.source, decision, JSON.stringify(differences), now);
-    this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(doc.id, now, file.id);
+    this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', error_code = NULL, error_message = NULL, fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(doc.id, now, file.id);
     return this.getFiscalDocument(doc.id);
   }
 
@@ -2968,7 +3157,7 @@ export class AppRepository {
         organizationId: operation.organizationId,
         businessPartnerId: operation.responsiblePartnerId,
         ownLegalEntityId: operation.ownLegalEntityId,
-        counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId),
+        counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId, operation.responsiblePartnerId),
         productId: operation.productId,
         operationScope: operation.operationScope,
         operationDate: operation.operationDate
@@ -2978,7 +3167,7 @@ export class AppRepository {
           organizationId: operation.organizationId,
           businessPartnerId: operation.responsiblePartnerId,
           ownLegalEntityId: operation.ownLegalEntityId,
-          counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId),
+          counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId, operation.responsiblePartnerId),
           productId: operation.productId,
           operationScope: operation.operationScope,
           operationDate: operation.operationDate
@@ -3091,8 +3280,8 @@ export class AppRepository {
     this.db.prepare(`INSERT INTO client_ledger_entries (
       id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents,
       entry_date, description, reference_number, notes, attachment_path, status, available_amount_cents, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?, ?)`)
-      .run(id, data.organizationId, data.ownLegalEntityId, data.clientPartnerId, data.clientChargeId, data.entryType, data.effect, data.amountCents, data.entryDate, data.description, data.referenceNumber, data.notes, data.attachmentPath, data.availableAmountCents, now, now);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.organizationId, data.ownLegalEntityId, data.clientPartnerId, data.clientChargeId, data.entryType, data.effect, data.amountCents, data.entryDate, data.description, data.referenceNumber, data.notes, data.attachmentPath, data.status, data.availableAmountCents, now, now);
     return this.getLedgerEntry(id);
   }
 
@@ -3111,18 +3300,26 @@ export class AppRepository {
     return (this.db.prepare("SELECT * FROM client_ledger_entries WHERE organization_id = ? AND own_legal_entity_id = ? AND client_partner_id = ? AND status = 'CONFIRMED' AND effect = 'REDUCE_RECEIVABLE' AND COALESCE(available_amount_cents, 0) > 0 ORDER BY entry_date").all(organizationId, ownLegalEntityId, clientPartnerId) as DbRecord[]).map(mapClientLedgerEntry);
   }
 
+  // Liga um lancamento da conta-corrente (adiantamento/credito OU acrescimo/
+  // emprestimo) a uma cobranca especifica, consumindo o saldo disponivel do
+  // lancamento. O tipo/efeito do ajuste gerado segue o efeito do proprio
+  // lancamento de origem -- REDUCE_RECEIVABLE abate a cobranca (credito),
+  // INCREASE_RECEIVABLE aumenta (acrescimo/emprestimo).
   applyCredit(input: unknown): ClientChargeDetail {
     const data = creditAllocationInputSchema.parse(input);
-    const credit = this.getLedgerEntry(data.ledgerEntryId);
+    const sourceEntry = this.getLedgerEntry(data.ledgerEntryId);
     const charge = this.getClientCharge(data.clientChargeId).charge;
-    this.assertSameChargeScope(charge, credit);
-    if ((credit.availableAmountCents ?? 0) < data.amountCents) throw new Error("Credito insuficiente.");
+    this.assertSameChargeScope(charge, sourceEntry);
+    if ((sourceEntry.availableAmountCents ?? 0) < data.amountCents) throw new Error("Saldo insuficiente no lancamento da conta-corrente.");
     const id = randomUUID();
     const now = new Date().toISOString();
+    const isCredit = sourceEntry.effect === "REDUCE_RECEIVABLE";
+    const adjustmentType = isCredit ? "CREDIT" : "SURCHARGE";
+    const descriptionPrefix = isCredit ? "Credito utilizado" : "Lancamento aplicado";
     const trx = this.db.transaction(() => {
       this.db.prepare("INSERT INTO client_credit_allocations (id, ledger_entry_id, client_charge_id, amount_cents, allocated_at) VALUES (?, ?, ?, ?, ?)").run(id, data.ledgerEntryId, data.clientChargeId, data.amountCents, now);
       this.db.prepare("UPDATE client_ledger_entries SET available_amount_cents = available_amount_cents - ?, updated_at = ? WHERE id = ?").run(data.amountCents, now, data.ledgerEntryId);
-      this.db.prepare("INSERT INTO client_charge_adjustments (id, client_charge_id, ledger_entry_id, adjustment_type, effect, description, amount_cents, sort_order, created_at, updated_at) VALUES (?, ?, ?, 'CREDIT', 'REDUCE_RECEIVABLE', ?, ?, 100, ?, ?)").run(randomUUID(), data.clientChargeId, data.ledgerEntryId, `Credito utilizado ${credit.description}`, data.amountCents, now, now);
+      this.db.prepare("INSERT INTO client_charge_adjustments (id, client_charge_id, ledger_entry_id, adjustment_type, effect, description, amount_cents, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 100, ?, ?)").run(randomUUID(), data.clientChargeId, data.ledgerEntryId, adjustmentType, sourceEntry.effect, `${descriptionPrefix}: ${sourceEntry.description}`, data.amountCents, now, now);
       this.recalculateClientCharge(data.clientChargeId);
     });
     trx();
@@ -3257,22 +3454,46 @@ export class AppRepository {
     if (!row) throw new Error("Cobranca nao encontrada.");
     const charge = this.refreshChargeComputedStatus(mapClientCharge(row));
     this.assertOrganizationWritable(charge.organizationId);
+    const operations = (this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ? AND released_at IS NULL ORDER BY operation_date_snapshot").all(id) as DbRecord[]).map((operationRow) => {
+      const operation = mapClientChargeOperation(operationRow);
+      if (operation.destinationNameSnapshot && operation.destinationNameSnapshot !== operation.ownLegalEntityNameSnapshot) return operation;
+      try {
+        const sourceOperation = this.getOperation(operation.operationId);
+        const document = this.getFiscalDocument(sourceOperation.fiscalDocumentId).document;
+        const ownLegalEntity = this.getLegalEntity(sourceOperation.ownLegalEntityId);
+        const companyName = this.fiscalDocumentCompanyName(document, ownLegalEntity);
+        if (companyName) operation.destinationNameSnapshot = companyName;
+        const issuerName = this.fiscalSnapshotPartyName(document, "issuer");
+        if (issuerName) operation.issuerNameSnapshot = issuerName;
+      } catch {
+        // Keep the persisted snapshot when the source note is no longer available.
+      }
+      return operation;
+    });
     return {
       charge,
-      operations: (this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ? AND released_at IS NULL ORDER BY operation_date_snapshot").all(id) as DbRecord[]).map(mapClientChargeOperation),
-      adjustments: (this.db.prepare("SELECT * FROM client_charge_adjustments WHERE client_charge_id = ? ORDER BY sort_order, created_at").all(id) as DbRecord[]).map(mapClientChargeAdjustment),
+      operations,
+      adjustments: (this.db.prepare(`
+        SELECT a.*, l.entry_date AS ledger_entry_date
+        FROM client_charge_adjustments a
+        LEFT JOIN client_ledger_entries l ON l.id = a.ledger_entry_id
+        WHERE a.client_charge_id = ?
+        ORDER BY a.sort_order, a.created_at
+      `).all(id) as DbRecord[]).map(mapClientChargeAdjustment),
       creditAllocations: (this.db.prepare("SELECT * FROM client_credit_allocations WHERE client_charge_id = ? AND cancelled_at IS NULL").all(id) as DbRecord[]).map(mapClientCreditAllocation),
       payments: (this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ? AND cancelled_at IS NULL").all(id) as DbRecord[]).map(mapClientPaymentAllocation),
       documents: (this.db.prepare("SELECT * FROM charge_document_versions WHERE client_charge_id = ? ORDER BY version").all(id) as DbRecord[]).map(mapChargeDocumentVersion)
     };
   }
 
-  listLedgerEntries(filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string }): ClientLedgerEntry[] {
+  listLedgerEntries(filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string; periodStart?: string | null; periodEnd?: string | null }): ClientLedgerEntry[] {
     this.assertOrganizationWritable(filters.organizationId);
     const clauses = ["organization_id = ?"];
     const params: unknown[] = [filters.organizationId];
     if (filters.ownLegalEntityId) { clauses.push("own_legal_entity_id = ?"); params.push(filters.ownLegalEntityId); }
     if (filters.clientPartnerId) { clauses.push("client_partner_id = ?"); params.push(filters.clientPartnerId); }
+    if (filters.periodStart) { clauses.push("entry_date >= ?"); params.push(filters.periodStart); }
+    if (filters.periodEnd) { clauses.push("entry_date <= ?"); params.push(filters.periodEnd); }
     return (this.db.prepare(`SELECT * FROM client_ledger_entries WHERE ${clauses.join(" AND ")} ORDER BY entry_date DESC, created_at DESC`).all(...params) as DbRecord[]).map(mapClientLedgerEntry);
   }
 
@@ -3519,6 +3740,16 @@ export class AppRepository {
     if (file.accessKey) {
       const existing = this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ?").get(file.accessKey) as { id: string } | undefined;
       if (existing) {
+        const existingDetail = this.getFiscalDocument(existing.id);
+        const primaryOperation = existingDetail.operations.find((operation) => operation.status !== "CANCELED");
+        const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
+        const autoSecondary = explicitSecondaryPartnerId || !primaryOperation || existingDetail.document.secondaryResponsiblePartnerId
+          ? null
+          : this.resolveTriangulatedSecondaryPartner(existingDetail.document.organizationId, extracted, existingDetail.document.responsiblePartnerId, primaryOperation.operationType);
+        const secondaryPartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
+        if (secondaryPartnerId && !existingDetail.document.secondaryResponsiblePartnerId) {
+          this.completeFiscalDocumentTriangulation(existing.id, { secondaryResponsiblePartnerId: secondaryPartnerId });
+        }
         this.mergeXmlIntoExisting(file.id, "Preencher XML em nota existente sem sobrescrever campos internos.");
         return;
       }
@@ -3614,6 +3845,9 @@ export class AppRepository {
         this.db.prepare("UPDATE operations SET source = 'XML', xml_import_job_id = ?, classification_rule_id = ? WHERE id = ?").run(job.id, resolution.classificationRuleId ?? null, operation.id);
         createdOperations += 1;
         if (secondaryResponsiblePartnerId && secondaryOperationType) {
+          const secondaryPartnerLegalEntity = this.listPartnerLegalEntities(secondaryResponsiblePartnerId).find((entity) => entity.isPrimary && entity.isActive)
+            ?? this.listPartnerLegalEntities(secondaryResponsiblePartnerId).find((entity) => entity.isActive)
+            ?? null;
           const secondaryOperation = this.addOperation({
             fiscalDocumentId: doc.document.id,
             fiscalDocumentItemId: item.id,
@@ -3626,7 +3860,8 @@ export class AppRepository {
             quantitySacks: sacks,
             manualRateValueCents: null,
             manualOverrideReason: null,
-            notes: "Segunda perna (nota triangulada) criada a partir de XML"
+            notes: "Segunda perna (nota triangulada) criada a partir de XML",
+            counterpartyPartnerLegalEntityId: secondaryPartnerLegalEntity?.id ?? null
           });
           this.db.prepare("UPDATE operations SET source = 'XML', xml_import_job_id = ?, classification_rule_id = ? WHERE id = ?").run(job.id, resolution.classificationRuleId ?? null, secondaryOperation.id);
           createdOperations += 1;
@@ -3996,12 +4231,51 @@ export class AppRepository {
     return Boolean(this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
   }
 
-  private onlyDigits(value: string): string {
-    return value.replace(/\D/g, "");
+  private onlyDigits(value: string | null | undefined): string {
+    return value?.replace(/\D/g, "") ?? "";
   }
 
   private stringOrNull(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  private fiscalSnapshotParty(document: FiscalDocument, partyKey: "issuer" | "recipient"): Record<string, unknown> | null {
+    if (!document.fiscalSnapshotJson) return null;
+    try {
+      const snapshot = JSON.parse(document.fiscalSnapshotJson) as Record<string, unknown>;
+      const party = snapshot[partyKey];
+      return party && typeof party === "object" ? party as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private fiscalSnapshotPartyName(document: FiscalDocument, partyKey: "issuer" | "recipient"): string | null {
+    const party = this.fiscalSnapshotParty(document, partyKey);
+    return this.stringOrNull(party?.tradeName) ?? this.stringOrNull(party?.legalName);
+  }
+
+  private fiscalSnapshotPartyDocument(document: FiscalDocument, partyKey: "issuer" | "recipient"): string | null {
+    const party = this.fiscalSnapshotParty(document, partyKey);
+    const value = this.stringOrNull(party?.cnpjCpf);
+    return value ? this.onlyDigits(value) : null;
+  }
+
+  private fiscalDocumentCompanyName(document: FiscalDocument, ownLegalEntity: LegalEntity): string | null {
+    const linkedEntity = document.partnerLegalEntityId ? this.getPartnerLegalEntity(document.partnerLegalEntityId) : null;
+    if (linkedEntity) return linkedEntity.legalName || linkedEntity.tradeName;
+
+    const issuerName = this.fiscalSnapshotPartyName(document, "issuer");
+    const recipientName = this.fiscalSnapshotPartyName(document, "recipient");
+    const issuerDocument = this.fiscalSnapshotPartyDocument(document, "issuer") ?? (document.accessKey ? document.accessKey.slice(6, 20) : null);
+    const recipientDocument = this.fiscalSnapshotPartyDocument(document, "recipient");
+    const ownDocument = this.onlyDigits(ownLegalEntity.cnpj);
+
+    if (ownDocument && issuerDocument === ownDocument) return recipientName ?? issuerName;
+    if (ownDocument && recipientDocument === ownDocument) return issuerName ?? recipientName;
+    if (document.direction === "INBOUND") return issuerName ?? recipientName;
+    if (document.direction === "OUTBOUND") return recipientName ?? issuerName;
+    return issuerName ?? recipientName;
   }
 
   private reserveOperationsForCharge(clientChargeId: string, operationIds: string[]): void {
@@ -4015,13 +4289,14 @@ export class AppRepository {
       const doc = this.getFiscalDocument(operation.fiscalDocumentId).document;
       const product = operation.productId ? this.getProduct(operation.productId) : null;
       const ownLegalEntity = this.getLegalEntity(operation.ownLegalEntityId);
-      const counterpartyName = doc.partnerLegalEntityId ? this.getPartnerLegalEntity(doc.partnerLegalEntityId).tradeName : null;
+      const issuerName = this.fiscalSnapshotPartyName(doc, "issuer") ?? ownLegalEntity.tradeName;
+      const companyName = this.fiscalDocumentCompanyName(doc, ownLegalEntity) ?? issuerName;
       this.db.prepare(`INSERT INTO client_charge_operations (
         id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot, fiscal_document_number_snapshot,
         fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
         service_rate_cents_snapshot, service_amount_cents_snapshot, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, ownLegalEntity.tradeName, counterpartyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
+        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
     });
   }
@@ -5989,13 +6264,13 @@ export class AppRepository {
     if (data.ownLegalEntityId) {
       const own = this.getLegalEntity(data.ownLegalEntityId);
       if (own.organizationId !== organizationId || data.ownLegalEntityId !== ownLegalEntityId) throw new Error("CNPJ proprio incompativel com a confirmacao.");
-      return { name: own.tradeName, legalName: own.legalName, taxId: own.cnpj, stateRegistration: own.stateRegistration, addressLine: own.addressLine, addressNumber: own.addressNumber, addressComplement: own.addressComplement, district: own.district, city: own.city, state: own.state, postalCode: own.postalCode, phone: own.phone, email: own.email, representativeName: data.representativeName ?? null, role: data.partyRole };
+      return { name: own.legalName || own.tradeName, legalName: own.legalName, taxId: own.cnpj, stateRegistration: own.stateRegistration, addressLine: own.addressLine, addressNumber: own.addressNumber, addressComplement: own.addressComplement, district: own.district, city: own.city, state: own.state, postalCode: own.postalCode, phone: own.phone, email: own.email, representativeName: data.representativeName ?? null, role: data.partyRole };
     }
     if (data.businessPartnerId) {
       const partner = this.getBusinessPartner(data.businessPartnerId);
       const entity = data.partnerLegalEntityId ? this.getPartnerLegalEntity(data.partnerLegalEntityId) : this.listPartnerLegalEntities(partner.id).find((item) => item.isPrimary) ?? null;
       if (entity && entity.businessPartnerId !== partner.id) throw new Error("Estabelecimento pertence a outro parceiro.");
-      return { name: entity?.tradeName ?? partner.displayName, legalName: entity?.legalName ?? null, taxId: entity?.cnpj ?? null, stateRegistration: entity?.stateRegistration ?? null, addressLine: entity?.addressLine ?? null, addressNumber: entity?.addressNumber ?? null, addressComplement: entity?.addressComplement ?? null, district: entity?.district ?? null, city: entity?.city ?? null, state: entity?.state ?? null, postalCode: entity?.postalCode ?? null, phone: entity?.phone ?? null, email: entity?.email ?? null, representativeName: data.representativeName ?? null, role: data.partyRole };
+      return { name: entity ? entity.legalName || entity.tradeName : partner.displayName, legalName: entity?.legalName ?? null, taxId: entity?.cnpj ?? null, stateRegistration: entity?.stateRegistration ?? null, addressLine: entity?.addressLine ?? null, addressNumber: entity?.addressNumber ?? null, addressComplement: entity?.addressComplement ?? null, district: entity?.district ?? null, city: entity?.city ?? null, state: entity?.state ?? null, postalCode: entity?.postalCode ?? null, phone: entity?.phone ?? null, email: entity?.email ?? null, representativeName: data.representativeName ?? null, role: data.partyRole };
     }
     if (!data.manualName) throw new Error("Participante manual exige nome.");
     return { name: data.manualName, legalName: null, taxId: null, stateRegistration: null, addressLine: null, addressNumber: null, addressComplement: null, district: null, city: null, state: null, postalCode: null, phone: null, email: null, representativeName: data.representativeName ?? null, role: data.partyRole };
@@ -6366,8 +6641,7 @@ export class AppRepository {
   private assertPartnerLegalEntity(data: ReturnType<typeof partnerLegalEntityInputSchema.parse>, exceptId?: string): void {
     this.assertOrganizationWritable(data.organizationId);
     if (data.businessPartnerId) {
-      const partner = this.getBusinessPartner(data.businessPartnerId);
-      if (partner.organizationId !== data.organizationId) throw new Error("Cliente/corretor vinculado e' de outra organizacao.");
+      this.getBusinessPartner(data.businessPartnerId);
     }
     if (!data.isDraft && (!data.cnpj || !isValidCnpj(data.cnpj))) throw new Error("CNPJ invalido.");
     if (data.cnpj) {
@@ -6496,9 +6770,22 @@ export class AppRepository {
     return operation;
   }
 
-  private getOperationCounterpartyPartnerLegalEntityId(fiscalDocumentId: string): string | null {
-    const row = this.db.prepare("SELECT partner_legal_entity_id FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as { partner_legal_entity_id: string | null } | undefined;
-    return row?.partner_legal_entity_id ?? null;
+  private getOperationCounterpartyPartnerLegalEntityId(fiscalDocumentId: string, responsiblePartnerId: string): string | null {
+    const row = this.db.prepare("SELECT partner_legal_entity_id, responsible_partner_id, secondary_responsible_partner_id FROM fiscal_documents WHERE id = ?")
+      .get(fiscalDocumentId) as { partner_legal_entity_id: string | null; responsible_partner_id: string; secondary_responsible_partner_id: string | null } | undefined;
+    if (!row) return null;
+    // Nota triangulada: a operacao da perna SECUNDARIA precisa resolver
+    // contra a empresa do parceiro secundario, nao contra
+    // partner_legal_entity_id (que e' sempre a contraparte original da
+    // nota/perna principal) -- mesmo raciocinio de
+    // completeFiscalDocumentTriangulation/processXmlImportFile.
+    if (row.secondary_responsible_partner_id && responsiblePartnerId === row.secondary_responsible_partner_id && responsiblePartnerId !== row.responsible_partner_id) {
+      const secondaryEntity = this.listPartnerLegalEntities(row.secondary_responsible_partner_id).find((entity) => entity.isPrimary && entity.isActive)
+        ?? this.listPartnerLegalEntities(row.secondary_responsible_partner_id).find((entity) => entity.isActive)
+        ?? null;
+      return secondaryEntity?.id ?? null;
+    }
+    return row.partner_legal_entity_id ?? null;
   }
 
   private getSpreadsheetMappingTemplate(id: string): SpreadsheetMappingTemplate {

@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DealClauseTemplate, DealConfirmation, DealConfirmationDetail, DealConfirmationSummary, DealConfirmationTemplate, FiscalDocument, Product } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, formatDateBr } from "../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
-import { EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
+import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
+import { DateInput, EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
+import { LegalEntityQuickSearch } from "../../components/forms/LegalEntityQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { Feedback } from "../../components/feedback/Feedback";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
@@ -17,10 +19,58 @@ interface SourceDocumentRow {
   sacks: string;
 }
 
+function todayDate(): string {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function firstDayOfCurrentMonth(): string {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}-01`;
+}
+
+function normalizeSearchText(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
 interface DealPartyTarget {
-  businessPartnerId: string;
+  businessPartnerId: string | null;
   partnerLegalEntityId: string | null;
+  manualName: string | null;
   displayName: string;
+}
+
+function legalEntityDisplayName(entity: BusinessPartnerLegalEntity): string {
+  return entity.legalName || entity.tradeName || "Empresa da NF";
+}
+
+function legalEntitySearchLabel(entity: BusinessPartnerLegalEntity): string {
+  const mainName = legalEntityDisplayName(entity);
+  const fantasyName = entity.tradeName && entity.tradeName !== mainName ? ` (${entity.tradeName})` : "";
+  return `${mainName}${fantasyName} - ${entity.cnpj ?? "CNPJ nao informado"}`;
+}
+
+function fiscalDocumentHasCompanyCnpj(document: FiscalDocument, cnpj: string | null | undefined): boolean {
+  const selectedCnpj = onlyDigits(cnpj ?? "");
+  if (!selectedCnpj) return false;
+  try {
+    const snapshot = document.fiscalSnapshotJson ? JSON.parse(document.fiscalSnapshotJson) as Record<string, unknown> : null;
+    const issuer = snapshot?.issuer && typeof snapshot.issuer === "object" ? snapshot.issuer as Record<string, unknown> : null;
+    const recipient = snapshot?.recipient && typeof snapshot.recipient === "object" ? snapshot.recipient as Record<string, unknown> : null;
+    const issuerCnpj = onlyDigits(String(issuer?.cnpjCpf ?? ""));
+    const recipientCnpj = onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    return issuerCnpj === selectedCnpj || recipientCnpj === selectedCnpj;
+  } catch {
+    return false;
+  }
 }
 
 export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Element {
@@ -42,9 +92,13 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [quantity, setQuantity] = useState("685");
   const [price, setPrice] = useState("1000.0000");
   const [sourceClientId, setSourceClientId] = useState("");
-  const [sourceSearchMode, setSourceSearchMode] = useState<"corretor" | "empresa">("corretor");
+  const [sourceSearchMode, setSourceSearchMode] = useState<"corretor" | "empresa" | "numero">("empresa");
   const [sourceLegalEntityId, setSourceLegalEntityId] = useState("");
   const [companySearchTerm, setCompanySearchTerm] = useState("");
+  const [showCompanyResults, setShowCompanyResults] = useState(false);
+  const [sourceDateStart, setSourceDateStart] = useState(() => firstDayOfCurrentMonth());
+  const [sourceDateEnd, setSourceDateEnd] = useState(() => todayDate());
+  const [sourceDocumentNumberFilter, setSourceDocumentNumberFilter] = useState("");
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocumentRow[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<Record<string, boolean>>({});
   const [brokerageInput, setBrokerageInput] = useState("");
@@ -77,7 +131,14 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     ]);
     setConfirmations(dealList.filter((confirmation) => !ownLegalEntityId || confirmation.ownLegalEntityId === ownLegalEntityId));
     setPartners(partnerList);
-    setPartnerLegalEntities((await Promise.all(partnerList.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    // Empresas vinculadas a um corretor + empresas ainda soltas (sem dono) --
+    // a busca por empresa/CNPJ precisa achar as duas, ja que uma nota pode
+    // chegar de uma empresa que ainda nao tem corretor vinculado.
+    const [linkedEntityGroups, unlinkedEntities] = await Promise.all([
+      Promise.all(partnerList.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId)
+    ]);
+    setPartnerLegalEntities([...linkedEntityGroups.flat(), ...unlinkedEntities]);
     setProducts(productList);
     setTemplates(templateList);
     setClauses(clauseList);
@@ -99,17 +160,37 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     // esse cliente/corretor, sem olhar qual empresa emitiu). Busca por
     // empresa/CNPJ: pedido do dono -- pesquisa a empresa e traz TODAS as
     // notas emitidas por aquele CNPJ, independente de qual corretor ficou
-    // responsavel, pra escolher quais entram na confirmacao.
+    // responsavel. Busca por numero: independente de empresa/cliente -- digita
+    // um pedaco do numero (ex: "79" acha 790/791/792/793) e ve' a lista com o
+    // destinatario de cada uma, pra selecionar so' as que forem do mesmo
+    // negocio sem precisar saber de qual empresa/cliente sao antes.
+    const numberFilter = sourceDocumentNumberFilter.trim();
     if (sourceSearchMode === "corretor") {
       if (!sourceClientId) { setSourceDocuments([]); return; }
-    } else if (!sourceLegalEntityId) {
+    } else if (sourceSearchMode === "empresa") {
+      if (!sourceLegalEntityId) { setSourceDocuments([]); return; }
+    } else if (!numberFilter) {
       setSourceDocuments([]);
       return;
     }
-    const allDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "CONFIRMED" });
-    const documents = sourceSearchMode === "corretor"
+    const selectedCompany = sourceLegalEntityId ? partnerLegalEntities.find((entity) => entity.id === sourceLegalEntityId) : null;
+    const allDocuments = await window.operationsCafe.listFiscalDocuments({
+      organizationId,
+      ownLegalEntityId: sourceSearchMode === "corretor" ? ownLegalEntityId : undefined,
+      status: "CONFIRMED"
+    });
+    const documents = (sourceSearchMode === "corretor"
       ? allDocuments.filter((item) => item.responsiblePartnerId === sourceClientId)
-      : allDocuments.filter((item) => item.partnerLegalEntityId === sourceLegalEntityId);
+      : sourceSearchMode === "empresa"
+        ? allDocuments
+          .filter((item) => item.partnerLegalEntityId === sourceLegalEntityId || fiscalDocumentHasCompanyCnpj(item, selectedCompany?.cnpj))
+          // So' pra nao vir a pilha inteira de notas antigas da empresa: por
+          // padrao mostra so' o periodo escolhido no filtro (hoje ate' hoje por
+          // padrao), o dono alarga a data quando quiser incluir uma nota de
+          // outro dia na mesma confirmacao.
+          .filter((item) => (!sourceDateStart || item.issueDate >= sourceDateStart) && (!sourceDateEnd || item.issueDate <= sourceDateEnd))
+        : allDocuments
+    ).filter((item) => !numberFilter || item.documentNumber.toUpperCase().includes(numberFilter.toUpperCase()));
     const rows = await Promise.all(documents.map(async (document): Promise<SourceDocumentRow> => {
       const detailDoc = await window.operationsCafe.getFiscalDocument(document.id);
       const sacks = detailDoc.items.map((item) => item.sacksQuantity).filter((value): value is string => Boolean(value));
@@ -117,7 +198,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }));
     setSourceDocuments(rows);
     setSelectedDocumentIds({});
-  }, [organizationId, ownLegalEntityId, sourceClientId, sourceSearchMode, sourceLegalEntityId]);
+  }, [organizationId, ownLegalEntityId, partnerLegalEntities, sourceClientId, sourceSearchMode, sourceLegalEntityId, sourceDateStart, sourceDateEnd, sourceDocumentNumberFilter]);
 
   useEffect(() => { void loadSourceDocuments(); }, [loadSourceDocuments]);
 
@@ -184,8 +265,8 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     confirmationDeliveryRecipient: DealPartyTarget | null = confirmationBuyer
   ): Promise<void> {
     if (confirmationOwnLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
-    if (confirmationBuyer) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: confirmationBuyer.businessPartnerId, partnerLegalEntityId: confirmationBuyer.partnerLegalEntityId, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
-    if (confirmationDeliveryRecipient) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipient.businessPartnerId, partnerLegalEntityId: confirmationDeliveryRecipient.partnerLegalEntityId, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 });
+    if (confirmationBuyer) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: confirmationBuyer.businessPartnerId, partnerLegalEntityId: confirmationBuyer.partnerLegalEntityId, ownLegalEntityId: null, manualName: confirmationBuyer.manualName, representativeName: null, sortOrder: 2 });
+    if (confirmationDeliveryRecipient) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipient.businessPartnerId, partnerLegalEntityId: confirmationDeliveryRecipient.partnerLegalEntityId, ownLegalEntityId: null, manualName: confirmationDeliveryRecipient.manualName, representativeName: null, sortOrder: 3 });
     if (!skipItem && productId) await window.operationsCafe.addDealConfirmationItem({
       dealConfirmationId: confirmationId,
       sortOrder: 0,
@@ -207,22 +288,28 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       deliveryLocationSnapshot: "Local de entrega a confirmar",
       notes: null
     });
-    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.tradeName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.legalName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
     await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: confirmationBuyer?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
   }
 
   const clientPartners = partners.filter((item) => item.roles.includes("CLIENT"));
   const companySearchResults = (() => {
-    const term = companySearchTerm.trim().toUpperCase();
-    if (!term) return [];
-    const digitsTerm = term.replace(/\D/g, "");
-    return partnerLegalEntities.filter((entity) =>
-      entity.tradeName.toUpperCase().includes(term) ||
-      entity.legalName.toUpperCase().includes(term) ||
-      (digitsTerm && entity.cnpj?.includes(digitsTerm))
+    const term = normalizeSearchText(companySearchTerm.trim());
+    const digitsTerm = onlyDigits(companySearchTerm) ?? "";
+    const orderedEntities = [...partnerLegalEntities].sort((first, second) =>
+      legalEntityDisplayName(first).localeCompare(legalEntityDisplayName(second), "pt-BR")
     );
+    const results = term || digitsTerm
+      ? orderedEntities.filter((entity) =>
+        normalizeSearchText(entity.tradeName).includes(term) ||
+        normalizeSearchText(entity.legalName).includes(term) ||
+        (digitsTerm ? (onlyDigits(entity.cnpj ?? "") ?? "").includes(digitsTerm) : false)
+      )
+      : orderedEntities;
+    return results.slice(0, 50);
   })();
-  const ownEntityName = data.legalEntities.find((item) => item.id === ownLegalEntityId)?.tradeName ?? "Empresa propria";
+  const selectedSourceCompany = sourceLegalEntityId ? partnerLegalEntities.find((entity) => entity.id === sourceLegalEntityId) : null;
+  const ownEntityName = data.legalEntities.find((item) => item.id === ownLegalEntityId)?.legalName ?? "Empresa propria";
   const selectedCount = Object.values(selectedDocumentIds).filter(Boolean).length;
   const selectedRows = sourceDocuments.filter((row) => selectedDocumentIds[row.document.id]);
   const selectedTotalSacks = selectedRows.length ? sumDecimalTexts(selectedRows.map((row) => row.sacks)) : "0";
@@ -233,17 +320,19 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     const fiscalDocumentIds = selectedRows.map((row) => row.document.id);
     if (fiscalDocumentIds.length === 0) return;
     const selectedBuyerIds = [...new Set(selectedRows.map((row) => row.document.responsiblePartnerId))];
-    if (selectedBuyerIds.length > 1) {
+    if (sourceSearchMode === "corretor" && selectedBuyerIds.length > 1) {
       setMessage("Erro: selecione notas do mesmo cliente para gerar uma confirmacao.");
       return;
     }
     const selectedBuyerId = selectedBuyerIds[0] ?? buyerId;
-    const nfCompanyEntityIds = [...new Set(selectedRows.map((row) => row.document.partnerLegalEntityId).filter((id): id is string => Boolean(id)))];
+    const nfCompanyEntityIds = sourceSearchMode === "empresa" && sourceLegalEntityId
+      ? [sourceLegalEntityId]
+      : [...new Set(selectedRows.map((row) => row.document.partnerLegalEntityId).filter((id): id is string => Boolean(id)))];
     if (nfCompanyEntityIds.length === 0) {
       setMessage("Erro: a nota selecionada nao tem empresa da NF vinculada. Abra a nota, vincule a empresa e tente novamente.");
       return;
     }
-    if (nfCompanyEntityIds.length > 1) {
+    if (sourceSearchMode !== "empresa" && nfCompanyEntityIds.length > 1) {
       setMessage("Erro: selecione notas da mesma empresa da NF para gerar uma unica confirmacao.");
       return;
     }
@@ -255,18 +344,22 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
       // As notas selecionadas podem ja estar vinculadas a uma confirmacao ativa -- nesse caso o backend
-      // devolve essa confirmacao existente em vez de criar outra (evita duplicar o negocio). Quando isso
-      // acontece ela ja vem com partes/itens/signatarios preenchidos, entao NAO chame addPartiesItemsAndSigners
-      // de novo aqui, ou cada re-clique duplica vendedor/comprador/destinatario e os dois signatarios.
-      const wasReused = created.parties.length > 0 || created.signers.length > 0;
+      // devolve essa confirmacao existente em vez de criar outra (evita duplicar o negocio). Toda confirmacao
+      // (nova ou reaproveitada) ja vem com a parte ISSUER auto-criada pelo backend, entao NAO da pra usar
+      // "tem alguma parte" para decidir se ja foi preenchida -- precisa checar especificamente o comprador.
+      const wasReused = created.parties.some((party) => party.partyRole === "BUYER") || created.signers.some((signer) => signer.partyRole === "BUYER");
       if (!wasReused) {
         await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
       }
-      if (selectedBuyerId) {
+      if (sourceSearchMode === "corretor" && selectedBuyerId) {
         setSourceClientId(selectedBuyerId);
       }
-      setBuyerId(nfCompanyTarget.businessPartnerId);
-      setDeliveryRecipientId(nfCompanyTarget.businessPartnerId);
+      if (nfCompanyTarget.businessPartnerId) {
+        setBuyerId(nfCompanyTarget.businessPartnerId);
+      }
+      if (nfCompanyTarget.partnerLegalEntityId) {
+        setDeliveryRecipientId(nfCompanyTarget.partnerLegalEntityId);
+      }
       const refreshed = await window.operationsCafe.getDealConfirmation(created.confirmation.id);
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
@@ -291,19 +384,20 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     return {
       businessPartnerId: partner.id,
       partnerLegalEntityId: primaryEntity?.id ?? null,
-      displayName: primaryEntity?.tradeName ?? primaryEntity?.legalName ?? partner.displayName
+      manualName: null,
+      displayName: primaryEntity ? legalEntityDisplayName(primaryEntity) : partner.displayName
     };
   }
 
   function partnerTargetFromLegalEntityId(legalEntityId: string): DealPartyTarget | null {
     const entity = partnerLegalEntities.find((item) => item.id === legalEntityId);
     if (!entity) return null;
-    const partner = partners.find((item) => item.id === entity.businessPartnerId);
-    if (!partner) return null;
+    const partner = entity.businessPartnerId ? partners.find((item) => item.id === entity.businessPartnerId) ?? null : null;
     return {
-      businessPartnerId: partner.id,
+      businessPartnerId: partner?.id ?? null,
       partnerLegalEntityId: entity.id,
-      displayName: entity.tradeName ?? entity.legalName ?? partner.displayName
+      manualName: partner ? null : legalEntityDisplayName(entity),
+      displayName: legalEntityDisplayName(entity) || partner?.displayName || "Empresa da NF"
     };
   }
 
@@ -374,9 +468,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   async function setDeliveryRecipient(): Promise<void> {
     if (!detail || !deliveryRecipientId) return;
+    const target = partnerTargetFromLegalEntityId(deliveryRecipientId);
+    if (!target) return;
     const existing = detail.parties.filter((party) => party.partyRole === "DELIVERY_RECIPIENT");
     await Promise.all(existing.map((party) => window.operationsCafe.removeDealConfirmationParty(party.id)));
-    const updated = await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: detail.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: deliveryRecipientId, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 3 }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
+    const updated = await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: detail.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: target.businessPartnerId, partnerLegalEntityId: target.partnerLegalEntityId, ownLegalEntityId: null, manualName: target.manualName, representativeName: null, sortOrder: 3 }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
     setDetail(updated);
     setMessage("Local de descarga definido.");
   }
@@ -513,53 +609,89 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           </div>
           {creationMode === "notes" && (
             <AdminBlock title="Criar a partir de notas fiscais">
-              <p className="muted">Fluxo recomendado: busque por cliente/corretor ou por empresa/CNPJ e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
+              <p className="muted">Fluxo recomendado: busque por cliente/corretor, por empresa/CNPJ ou direto pelo número da nota e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
               <div className="settings-tabs">
-                <button className={sourceSearchMode === "corretor" ? "active" : ""} onClick={() => { setSourceSearchMode("corretor"); setSourceLegalEntityId(""); setCompanySearchTerm(""); }}>Buscar por cliente/corretor</button>
-                <button className={sourceSearchMode === "empresa" ? "active" : ""} onClick={() => { setSourceSearchMode("empresa"); setSourceClientId(""); }}>Buscar por empresa/CNPJ</button>
+                <button className={sourceSearchMode === "corretor" ? "active" : ""} onClick={() => { setSourceSearchMode("corretor"); setSourceLegalEntityId(""); setCompanySearchTerm(""); setSourceDocumentNumberFilter(""); }}>Buscar por cliente/corretor</button>
+                <button className={sourceSearchMode === "empresa" ? "active" : ""} onClick={() => { setSourceSearchMode("empresa"); setSourceClientId(""); setShowCompanyResults(false); setSourceDocumentNumberFilter(""); }}>Buscar por empresa/CNPJ</button>
+                <button className={sourceSearchMode === "numero" ? "active" : ""} onClick={() => { setSourceSearchMode("numero"); setSourceClientId(""); setSourceLegalEntityId(""); setCompanySearchTerm(""); setShowCompanyResults(false); }}>Buscar por numero da nota</button>
               </div>
               {sourceSearchMode === "corretor" ? (
                 <FormGrid>
                   <PartnerQuickSearch label="Cliente (comprador)" value={sourceClientId} onChange={setSourceClientId} partners={clientPartners} legalEntities={partnerLegalEntities} />
                 </FormGrid>
+              ) : sourceSearchMode === "numero" ? (
+                <FormGrid>
+                  <TextField label="Numero da nota (parte do numero ja filtra, ex: 79 acha 790, 791...)" value={sourceDocumentNumberFilter} onChange={setSourceDocumentNumberFilter} />
+                  <DateInput label="Notas emitidas de (opcional)" value={sourceDateStart} onChange={(event) => setSourceDateStart(event.target.value)} />
+                  <DateInput label="ate (opcional)" value={sourceDateEnd} onChange={(event) => setSourceDateEnd(event.target.value)} />
+                  {sourceDateStart !== firstDayOfCurrentMonth() || sourceDateEnd !== todayDate() ? (
+                    <button type="button" onClick={() => { setSourceDateStart(firstDayOfCurrentMonth()); setSourceDateEnd(todayDate()); }}>Mes atual</button>
+                  ) : null}
+                </FormGrid>
               ) : (
                 <FormGrid>
-                  <TextField label="Buscar empresa por nome ou CNPJ" value={companySearchTerm} onChange={(value) => { setCompanySearchTerm(value); setSourceLegalEntityId(""); }} />
-                  {companySearchTerm.trim() ? (
-                    <div className="table">
+                  <TextField label="Buscar empresa por nome ou CNPJ" value={companySearchTerm} onChange={(value) => { setCompanySearchTerm(value); setSourceLegalEntityId(""); setShowCompanyResults(true); }} />
+                  <TextField label="Numero da nota" value={sourceDocumentNumberFilter} onChange={setSourceDocumentNumberFilter} />
+                  <DateInput label="Notas emitidas de" value={sourceDateStart} onChange={(event) => setSourceDateStart(event.target.value)} />
+                  <DateInput label="ate" value={sourceDateEnd} onChange={(event) => setSourceDateEnd(event.target.value)} />
+                  {sourceDateStart !== firstDayOfCurrentMonth() || sourceDateEnd !== todayDate() ? (
+                    <button type="button" onClick={() => { setSourceDateStart(firstDayOfCurrentMonth()); setSourceDateEnd(todayDate()); }}>Mes atual</button>
+                  ) : null}
+                  <button type="button" onClick={() => setShowCompanyResults((current) => !current)}>{showCompanyResults ? "Ocultar empresas" : "Listar empresas"}</button>
+                  {showCompanyResults || companySearchTerm.trim() ? (
+                    <div className="confirmation-company-results">
                       {companySearchResults.length ? companySearchResults.map((entity) => (
-                        <div key={entity.id} className="table-row">
+                        <div key={entity.id} className="confirmation-company-result-row">
                           <button
+                            type="button"
                             className={entity.id === sourceLegalEntityId ? "partner-action-button partner-action-button--primary" : "partner-action-button"}
-                            onClick={() => setSourceLegalEntityId(entity.id)}
+                            onClick={() => {
+                              setSourceLegalEntityId(entity.id);
+                              setCompanySearchTerm(legalEntityDisplayName(entity));
+                              setShowCompanyResults(false);
+                            }}
                           >
-                            {entity.tradeName} - {entity.cnpj}
+                            {legalEntitySearchLabel(entity)}
                           </button>
                         </div>
-                      )) : <div className="table-row"><span>Nenhuma empresa encontrada.</span></div>}
+                      )) : <div className="confirmation-company-result-row"><span>Nenhuma empresa encontrada.</span></div>}
+                    </div>
+                  ) : null}
+                  {selectedSourceCompany ? (
+                    <div className="confirmation-company-selected">
+                      <span>Empresa selecionada</span>
+                      <strong>{legalEntityDisplayName(selectedSourceCompany)}</strong>
+                      {selectedSourceCompany.tradeName !== legalEntityDisplayName(selectedSourceCompany) ? <small>Fantasia: {selectedSourceCompany.tradeName}</small> : null}
+                      <small>{selectedSourceCompany.cnpj ?? "CNPJ nao informado"}</small>
                     </div>
                   ) : null}
                 </FormGrid>
               )}
               {sourceDocuments.length ? (
                 <div className="table">
-                  <div className="table-head confirmation-source-grid"><span></span><span>NF</span><span>Emissao</span><span>Sacas</span><span>Valor total</span></div>
-                  {sourceDocuments.map((row) => (
-                    <div key={row.document.id} className="table-row confirmation-source-grid">
-                      <span><input type="checkbox" checked={Boolean(selectedDocumentIds[row.document.id])} onChange={(event) => setSelectedDocumentIds((current) => ({ ...current, [row.document.id]: event.target.checked }))} /></span>
-                      <span>{row.document.documentNumber}</span>
-                      <span>{formatDateBr(row.document.issueDate)}</span>
-                      <span>{row.sacks.replace(".", ",")}</span>
-                      <span>{formatCurrencyFromCents(row.document.totalAmountCents)}</span>
-                    </div>
-                  ))}
+                  <div className="table-head confirmation-source-grid"><span></span><span>NF</span><span>Empresa/Destinatario</span><span>Emissao</span><span>Sacas</span><span>Valor total</span></div>
+                  {sourceDocuments.map((row) => {
+                    const company = partnerLegalEntities.find((entity) => entity.id === row.document.partnerLegalEntityId);
+                    return (
+                      <div key={row.document.id} className="table-row confirmation-source-grid">
+                        <span><input type="checkbox" checked={Boolean(selectedDocumentIds[row.document.id])} onChange={(event) => setSelectedDocumentIds((current) => ({ ...current, [row.document.id]: event.target.checked }))} /></span>
+                        <span>{row.document.documentNumber}</span>
+                        <span>{company ? legalEntityDisplayName(company) : (fiscalDocumentCounterpartyNameFromSnapshot(row.document) ?? "Empresa nao vinculada")}</span>
+                        <span>{formatDateBr(row.document.issueDate)}</span>
+                        <span>{row.sacks.replace(".", ",")}</span>
+                        <span>{formatCurrencyFromCents(row.document.totalAmountCents)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <EmptyState
-                  title="Nenhuma nota confirmada"
+                  title="Nenhuma nota encontrada"
                   description={sourceSearchMode === "corretor"
-                    ? "Este cliente/corretor ainda nao possui notas fiscais confirmadas para gerar uma confirmacao."
-                    : "Essa empresa ainda nao possui notas fiscais confirmadas para gerar uma confirmacao."}
+                    ? "Este cliente/corretor nao possui notas fiscais confirmadas dentro do periodo selecionado."
+                    : sourceSearchMode === "numero"
+                      ? "Digite parte do numero da nota pra buscar (independente de empresa ou cliente)."
+                      : "Essa empresa/CNPJ nao possui notas fiscais confirmadas dentro do periodo selecionado. Confira o intervalo de datas ou clique em Mes atual."}
                 />
               )}
               <div className="confirmation-source-stats">
@@ -601,7 +733,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   {detail.parties.filter((party) => party.partyRole !== "ISSUER").map((party) => <ConfirmationPartyCard key={party.id} party={party} />)}
                 </div>
                 <FormGrid>
-                  <PartnerQuickSearch label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} partners={partners} legalEntities={partnerLegalEntities} />
+                  <LegalEntityQuickSearch label="Definir/alterar local de descarga" value={deliveryRecipientId} onChange={setDeliveryRecipientId} legalEntities={partnerLegalEntities} />
                   <button onClick={() => void setDeliveryRecipient()} disabled={!deliveryRecipientId}>Salvar local</button>
                 </FormGrid>
 

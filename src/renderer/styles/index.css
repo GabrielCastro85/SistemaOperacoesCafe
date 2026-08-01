@@ -998,6 +998,12 @@ input[type="checkbox"] {
   margin-bottom: var(--space-5);
 }
 
+.dashboard-update-banner {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(180px, 1fr));
@@ -1108,6 +1114,10 @@ table,
   padding: var(--space-5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
+}
+
+.ui-card + .ui-card {
+  margin-top: var(--space-5);
 }
 
 .ui-card p {
@@ -1459,8 +1469,22 @@ table tbody tr:hover {
 
 .import-column .form-grid {
   grid-template-columns: 1fr;
-  padding: 0;
-  border: 0;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface) 86%, transparent);
+  box-shadow: 0 10px 24px rgb(28 18 8 / 5%);
+}
+
+.import-column .form-grid label {
+  min-width: 0;
+}
+
+.import-column .toolbar {
+  gap: var(--space-3);
+  justify-content: flex-start;
+  padding-top: var(--space-1);
 }
 
 .import-column h4 {
@@ -2523,7 +2547,7 @@ table tbody tr:hover {
 }
 
 .confirmation-source-grid {
-  grid-template-columns: 32px 1fr 130px 100px 140px;
+  grid-template-columns: 32px 1fr 1.4fr 130px 100px 140px;
 }
 
 .confirmation-source-stats {
@@ -2710,6 +2734,62 @@ table tbody tr:hover {
 .form-grid > button {
   justify-self: start;
   align-self: end;
+}
+
+/* Resultado de busca (lista de empresas/parceiros) dentro de um form-grid
+   precisa ocupar a linha inteira -- senao o grid auto-fit espreme ele numa
+   unica coluna estreita, junto com os outros campos, e ele acaba flutuando
+   por cima de elementos vizinhos em vez de cair numa linha propria. */
+.form-grid > .table {
+  grid-column: 1 / -1;
+}
+
+.confirmation-company-results,
+.confirmation-company-selected {
+  grid-column: 1 / -1;
+}
+
+.confirmation-company-results {
+  display: grid;
+  gap: 8px;
+  max-height: min(320px, 42vh);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 7%, #fffdf8);
+}
+
+.confirmation-company-result-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.confirmation-company-result-row .partner-action-button {
+  justify-content: flex-start;
+  width: min(100%, 520px);
+  text-align: left;
+}
+
+.confirmation-company-selected {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-accent) 10%, white);
+}
+
+.confirmation-company-selected span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.confirmation-company-selected small {
+  color: var(--color-muted);
 }
 
 .form-grid label,
@@ -3341,11 +3421,28 @@ table tbody tr:hover {
 .auth-password-field {
   position: relative;
   display: flex;
+  margin-top: 6px;
+  border: 1px solid #d8d0c1;
+  border-radius: var(--radius-md);
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .auth-password-field input {
   flex: 1;
+  min-height: 42px;
+  border: 0;
+  background: transparent;
   padding-right: 66px;
+}
+
+.auth-password-field input:focus-visible {
+  outline: 0;
+}
+
+.auth-password-field:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 68%, #d8d0c1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 .auth-password-toggle {
@@ -3712,7 +3809,7 @@ table tbody tr:hover {
   grid-template-columns: repeat(12, 1fr);
   gap: 10px;
   align-items: end;
-  padding: 18px;
+  padding: 38px 18px 18px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background:
@@ -3727,11 +3824,46 @@ table tbody tr:hover {
   background: linear-gradient(180deg, var(--color-accent), #15120e);
 }
 
+.mini-chart__col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: stretch;
+  height: 100%;
+  min-width: 0;
+}
+
+.mini-chart__col span {
+  width: 100%;
+}
+
+.mini-chart__sacks-labels {
+  position: absolute;
+  z-index: 3;
+  inset: 38px 18px 18px;
+  pointer-events: none;
+}
+
+.mini-chart__sacks-label {
+  position: absolute;
+  transform: translate(-50%, -14px);
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgb(255 253 248 / 88%);
+  color: #d6a45f;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .mini-chart__line {
   position: absolute;
-  inset: 18px;
+  z-index: 2;
+  inset: 38px 18px 18px;
   width: calc(100% - 36px);
-  height: calc(100% - 36px);
+  height: calc(100% - 56px);
   overflow: visible;
   pointer-events: none;
 }

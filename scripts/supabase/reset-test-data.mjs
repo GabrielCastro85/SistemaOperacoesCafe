@@ -1,12 +1,9 @@
 /* global console, process */
-// Reset pedido pelo dono pra testar o sistema do zero: mantem organizations/
-// legal_entities/locations/products/app_users/roles/expense_categories, zera
-// clientes/fornecedores e tudo que foi lancado em cima deles (notas,
-// operacoes, cobrancas, contas a pagar, importacoes). Espelha exatamente a
-// migration SQLite "030_reset_partners_and_documents" -- roda no Postgres
-// (fonte compartilhada) pra nenhum PC re-sincronizar os dados antigos de
-// volta depois que a migration local rodar em cada maquina. Faz um dump em
-// JSON de cada tabela ANTES de apagar, como rede de seguranca.
+// Reset de release estavel: mantem cadastros comerciais, empresas/CNPJs,
+// fornecedores, produtos, regras por saca e usuarios. Zera somente dados
+// operacionais/testes (notas, XMLs, cobrancas, conta-corrente, acertos,
+// confirmacoes e relatorios). Roda no Postgres compartilhado para nenhum PC
+// re-sincronizar dados beta de volta. Faz dump JSON antes de apagar.
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +25,7 @@ function loadEnv() {
 
 const TABLES_TO_WIPE_IN_ORDER = [
   "business_partner_merges",
+  "financial_report_generations",
   "charge_status_history",
   "charge_document_versions",
   "client_payment_allocations",
@@ -38,9 +36,21 @@ const TABLES_TO_WIPE_IN_ORDER = [
   "payable_status_history",
   "payable_payment_allocations",
   "account_payable_operations",
+  "account_payable_allocations",
+  "deal_confirmation_document_versions",
+  "deal_confirmation_status_history",
+  "deal_payment_terms",
+  "deal_confirmation_signers",
+  "deal_confirmation_fiscal_documents",
+  "deal_confirmation_operations",
+  "deal_confirmation_clauses",
+  "deal_confirmation_items",
+  "deal_confirmation_parties",
+  "operation_rate_history",
   "fiscal_document_merge_history",
   "fiscal_document_events",
   "xml_import_files",
+  "spreadsheet_import_rows",
   "operations",
   "fiscal_document_items",
   "client_payments",
@@ -48,16 +58,18 @@ const TABLES_TO_WIPE_IN_ORDER = [
   "client_charges",
   "payable_payments",
   "accounts_payable",
+  "payable_installment_groups",
+  "payable_recurring_templates",
+  "deal_confirmations",
   "fiscal_documents",
   "xml_import_jobs",
-  "client_billing_profiles",
-  "service_rate_rules",
-  "purchase_rate_rules",
-  "partner_contacts",
-  "partner_legal_entities",
-  "business_partner_roles",
-  "business_partners"
+  "spreadsheet_import_jobs"
 ];
+
+async function tableExists(client, table) {
+  const result = await client.query("SELECT to_regclass($1) AS table_name", [`public.${table}`]);
+  return Boolean(result.rows[0]?.table_name);
+}
 
 async function main() {
   const env = loadEnv();
@@ -72,6 +84,11 @@ async function main() {
   console.log("Fazendo dump de seguranca antes de apagar qualquer coisa...");
   const dump = {};
   for (const table of TABLES_TO_WIPE_IN_ORDER) {
+    if (!(await tableExists(client, table))) {
+      dump[table] = [];
+      console.log(`  ${table}: tabela ausente, pulando`);
+      continue;
+    }
     const res = await client.query(`SELECT * FROM ${table}`);
     dump[table] = res.rows;
     console.log(`  ${table}: ${res.rows.length} linha(s)`);
@@ -88,11 +105,17 @@ async function main() {
   console.log("\nApagando...");
   try {
     await client.query("begin");
+    await client.query("UPDATE client_charges SET replaced_by_charge_id = NULL").catch(() => {});
+    await client.query("UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL").catch(() => {});
     for (const table of TABLES_TO_WIPE_IN_ORDER) {
+      if (!(await tableExists(client, table))) {
+        console.log(`  DELETE FROM ${table}: tabela ausente, pulando`);
+        continue;
+      }
       const res = await client.query(`DELETE FROM ${table}`);
       console.log(`  DELETE FROM ${table}: ${res.rowCount} linha(s)`);
     }
-    const seq = await client.query("UPDATE document_sequences SET current_number = 0");
+    const seq = await client.query("UPDATE document_sequences SET current_number = 0, updated_at = now()");
     console.log(`  UPDATE document_sequences (reset contador): ${seq.rowCount} linha(s)`);
     await client.query("commit");
     console.log("\nConcluido e confirmado.");

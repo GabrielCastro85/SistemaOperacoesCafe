@@ -84,7 +84,6 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
     setPartnerLegalEntities((await Promise.all(supplierPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setCategories(expenseCategories.filter((category) => category.isActive));
-    setSupplierId((current) => current || supplierPartners[0]?.id || "");
     setCategoryId((current) => current || expenseCategories.find((category) => category.isActive)?.id || expenseCategories[0]?.id || "");
   }, [organizationId]);
 

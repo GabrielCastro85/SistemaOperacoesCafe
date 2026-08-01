@@ -56,6 +56,14 @@ describe("local authentication and authorization", () => {
     expect(session.status).toBe("ACTIVE");
   });
 
+  it("allows creating users without email", async () => {
+    const auth = createAuthService();
+    const session = await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", email: "   ", password: "Senha@12345" });
+    expect(session.user.email).toBeNull();
+    const created = await auth.createUser({ displayName: "Usuario sem email", username: "sememail", email: "", password: "123", mustChangePassword: false });
+    expect(created.email).toBeNull();
+  });
+
   it("opens, locks, unlocks and logs out a local session", async () => {
     const auth = createAuthService();
     await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
@@ -67,6 +75,28 @@ describe("local authentication and authorization", () => {
     await expect(auth.unlock("Senha@12345")).resolves.toMatchObject({ status: "ACTIVE" });
     auth.logout();
     expect(auth.getCurrentSession()).toBeNull();
+  });
+
+  it("forces a new employee to set their own password on first login (mustChangePassword flow)", async () => {
+    const auth = createAuthService();
+    await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
+    const created = await auth.createUser({ displayName: "Ana", username: "ana", password: "temporaria123", mustChangePassword: true });
+    expect(created.mustChangePassword).toBe(true);
+    await auth.assignRole({ userId: created.id, roleId: "role-system-admin" });
+    auth.logout();
+
+    const firstLogin = await auth.login({ username: "ana", password: "temporaria123" });
+    expect(firstLogin.user.mustChangePassword).toBe(true);
+    expect(firstLogin.permissions).toContain("users.manage");
+
+    await expect(auth.changePassword({ currentPassword: "senha errada", newPassword: "novaSenha456" })).rejects.toThrow();
+    await auth.changePassword({ currentPassword: "temporaria123", newPassword: "novaSenha456" });
+    expect(auth.getCurrentSession()?.user.mustChangePassword).toBe(false);
+    auth.logout();
+
+    await expect(auth.login({ username: "ana", password: "temporaria123" })).rejects.toThrow();
+    const relogged = await auth.login({ username: "ana", password: "novaSenha456" });
+    expect(relogged.user.mustChangePassword).toBe(false);
   });
 
   it("keeps a verifiable sanitized audit hash chain", async () => {
@@ -84,9 +114,9 @@ describe("local authentication and authorization", () => {
     await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
     const created = await auth.createUser({ displayName: "Usuario Teste", username: "teste", email: "teste@local.test", password: "Senha@12345", mustChangePassword: false });
     expect(created.email).toBe("teste@local.test");
-    const locked = auth.updateUser({ id: created.id, status: "LOCKED" });
+    const locked = await auth.updateUser({ id: created.id, status: "LOCKED" });
     expect(locked.email).toBe("teste@local.test");
-    const reactivated = auth.updateUser({ id: created.id, status: "ACTIVE" });
+    const reactivated = await auth.updateUser({ id: created.id, status: "ACTIVE" });
     expect(reactivated.email).toBe("teste@local.test");
   });
 

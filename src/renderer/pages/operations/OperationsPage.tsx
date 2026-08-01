@@ -70,6 +70,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
+  const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
+  const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
   const scrollTo = useAutoScroll();
   const manualDetailRef = useRef<HTMLDivElement | null>(null);
   const spreadsheetResultRef = useRef<HTMLDivElement | null>(null);
@@ -89,7 +91,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     ]);
     setPartners(rolePartners);
     setSecondaryPartners(oppositeRolePartners);
-    setPartnerLegalEntities((await Promise.all(rolePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    const searchablePartners = [...rolePartners, ...oppositeRolePartners];
+    setPartnerLegalEntities((await Promise.all(searchablePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     setPartnerId((current) => (rolePartners.some((partner) => partner.id === current) ? current : ""));
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
@@ -215,6 +218,55 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   async function deleteCurrentDocument(): Promise<void> {
     if (!detail) return;
     await deleteDocument(detail.document);
+  }
+
+  async function completeDetailTriangulation(): Promise<void> {
+    if (!detail || !detailSecondaryPartnerId) return;
+    try {
+      const updated = await window.operationsCafe.completeFiscalDocumentTriangulation(detail.document.id, {
+        secondaryResponsiblePartnerId: detailSecondaryPartnerId
+      });
+      setDetail(updated);
+      setDetailSecondaryPartnerId("");
+      setMessage("Nota triangulada completada. A segunda perna entrou para a cobrança/acerto do parceiro selecionado.");
+      await load();
+      scrollTo(manualDetailRef);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao completar nota triangulada."}`);
+    }
+  }
+
+  // Nota lancada manualmente (sem XML) nunca fica com empresa/CNPJ vinculado
+  // -- so' o XML resolve isso sozinho. Sem empresa vinculada a nota nao pode
+  // entrar em Confirmacoes (busca por empresa/CNPJ ou por numero da nota),
+  // entao aqui deixa vincular depois, a qualquer momento.
+  async function linkCompanyToDocument(partnerLegalEntityId: string): Promise<void> {
+    if (!detail) return;
+    try {
+      const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
+        organizationId: detail.document.organizationId,
+        ownLegalEntityId: detail.document.ownLegalEntityId,
+        responsiblePartnerId: detail.document.responsiblePartnerId,
+        partnerLegalEntityId,
+        operationType: detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE",
+        secondaryResponsiblePartnerId: detail.document.secondaryResponsiblePartnerId,
+        secondaryOperationType: detail.document.secondaryOperationType,
+        accessKey: detail.document.accessKey,
+        documentNumber: detail.document.documentNumber,
+        series: detail.document.series,
+        issueDate: detail.document.issueDate,
+        totalAmountCents: detail.document.totalAmountCents,
+        hasPendingIssues: detail.document.hasPendingIssues,
+        pendingNotes: detail.document.pendingNotes,
+        notes: detail.document.notes
+      });
+      setDetail(updated);
+      setDetailCompanySearchTerm("");
+      setMessage("Empresa da nota vinculada.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao vincular empresa da nota."}`);
+    }
   }
 
   async function selectSpreadsheet(): Promise<void> {
@@ -603,6 +655,35 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <button className="invoice-action-button invoice-action-button--danger" onClick={() => void deleteCurrentDocument()}>Excluir nota</button>
             </div>
           </section>
+          <section className="invoice-action-card">
+            <header><span>Empresa da nota</span><strong>Necessaria para Confirmacoes</strong></header>
+            <p className="muted">Nota lancada manualmente (sem XML) nao vem com empresa/CNPJ vinculado. Sem isso ela nao aparece nas buscas de Confirmacoes por empresa ou por numero.</p>
+            {(() => {
+              const linkedCompany = partnerLegalEntities.find((entity) => entity.id === detail.document.partnerLegalEntityId);
+              if (linkedCompany) return <p><strong>Vinculada:</strong> {linkedCompany.tradeName || linkedCompany.legalName} ({linkedCompany.cnpj ?? "CNPJ nao informado"})</p>;
+              const term = detailCompanySearchTerm.trim().toUpperCase();
+              const digitsTerm = term.replace(/\D/g, "");
+              const matches = term ? partnerLegalEntities.filter((entity) =>
+                entity.tradeName.toUpperCase().includes(term) ||
+                entity.legalName.toUpperCase().includes(term) ||
+                (digitsTerm && entity.cnpj?.includes(digitsTerm))
+              ).slice(0, 8) : [];
+              return (
+                <>
+                  <TextField label="Buscar empresa por nome ou CNPJ" value={detailCompanySearchTerm} onChange={setDetailCompanySearchTerm} />
+                  {matches.length ? (
+                    <div className="confirmation-company-results">
+                      {matches.map((entity) => (
+                        <div key={entity.id} className="confirmation-company-result-row">
+                          <button type="button" className="partner-action-button" onClick={() => void linkCompanyToDocument(entity.id)}>{entity.tradeName || entity.legalName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : term ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
+                </>
+              );
+            })()}
+          </section>
         </div>
         <div className="cards">
           <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${formatProductUnit(item.unit)}`).join(" | ") || "Nenhum"}</strong></article>
@@ -619,6 +700,24 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               Venda: {partnerName(saleLeg?.responsiblePartnerId)}
               {saleLeg ? ` — ${formatCurrencyFromCents(saleLeg.appliedRateValueCents)}/saca (${formatCurrencyFromCents(saleLeg.serviceAmountCents)})` : " — sem operacao ainda"}
             </span>
+          </div>
+        ) : detail.operations.length ? (
+          <div className="operation-warning-card operation-warning-card--neutral">
+            <strong>Completar nota triangulada</strong>
+            <span>
+              Use quando a nota ja foi importada antes do cadastro do outro lado do negocio. O sistema cria a operacao oposta
+              para o parceiro/corretor escolhido, sem duplicar a chave da NF-e.
+            </span>
+            <div className="toolbar">
+              <PartnerQuickSearch
+                label={detailMainOperation?.operationType === "PURCHASE" ? "Cliente/corretor para cobranca" : "Fornecedor para acerto"}
+                value={detailSecondaryPartnerId}
+                onChange={setDetailSecondaryPartnerId}
+                partners={secondaryPartners}
+                legalEntities={partnerLegalEntities}
+              />
+              <button className="primary" disabled={!detailSecondaryPartnerId} onClick={() => void completeDetailTriangulation()}>Completar nota</button>
+            </div>
           </div>
         ) : null}
         {detail.rateHistory && detail.rateHistory.length > 0 ? (

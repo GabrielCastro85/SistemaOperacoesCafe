@@ -27,7 +27,8 @@ export function UsersPage(): JSX.Element {
       return;
     }
     try {
-      const user = await window.operationsCafe.createUser({ ...form, email: form.email || null, mustChangePassword: true });
+      const email = form.email.trim() ? form.email.trim() : null;
+      const user = await window.operationsCafe.createUser({ ...form, email, mustChangePassword: true });
       await window.operationsCafe.assignUserRole({ userId: user.id, roleId: form.roleId });
       setForm({ displayName: "", username: "", email: "", password: "", roleId: "role-viewer" });
       setMessage("Usuario criado.");
@@ -52,7 +53,7 @@ export function UsersPage(): JSX.Element {
       {isAdmin ? <div className="form-grid">
         <label>Nome<input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
         <label>Usuario<input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} /></label>
-        <label>Email<input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
+        <label>Email (opcional)<input value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
         <label>Senha temporaria<input type="password" autoComplete="off" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
         <label>Role<select value={form.roleId} onChange={(event) => setForm({ ...form, roleId: event.target.value })}>{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
         <button className="primary" type="button" onClick={() => void create()}>Criar usuario</button>

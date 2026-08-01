@@ -63,6 +63,53 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("applies surcharge ledger entries to increase a client charge", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    createConfirmedOperation(repo, partnerId, productId, "7002", "10.5");
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+
+    const surcharge = repo.createLedgerEntry({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", amountCents: 1200, entryDate: "2026-07-20", description: "Acrescimo comercial", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 1200, status: "CONFIRMED" });
+    const withSurcharge = repo.applyCredit({ ledgerEntryId: surcharge.id, clientChargeId: draft.charge.id, amountCents: 1200 });
+
+    expect(withSurcharge.charge.subtotalServicesCents).toBe(5250);
+    expect(withSurcharge.charge.finalAmountCents).toBe(6450);
+    expect(withSurcharge.adjustments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", amountCents: 1200 })
+    ]));
+    expect(repo.listLedgerEntries({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId }).find((entry) => entry.id === surcharge.id)?.availableAmountCents).toBe(0);
+    db.close();
+  });
+
+  it("listLedgerEntries filtra por periodo (entry_date)", async () => {
+    const { repo, db, partnerId } = await setup();
+    repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 1000, entryDate: "2026-06-15", description: "Adiantamento junho", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 1000 });
+    repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 2000, entryDate: "2026-07-15", description: "Adiantamento julho", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 2000 });
+
+    const all = repo.listLedgerEntries({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId });
+    expect(all).toHaveLength(2);
+
+    const julyOnly = repo.listLedgerEntries({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(julyOnly).toHaveLength(1);
+    expect(julyOnly[0].description).toBe("Adiantamento julho");
+    db.close();
+  });
+
+  it("adiantamento criado como DRAFT (checkbox desmarcado) nao entra no saldo ate ser confirmado", async () => {
+    const { repo, db, partnerId } = await setup();
+    const draft = repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 5000, entryDate: "2026-07-10", description: "Emprestimo", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 5000, status: "DRAFT" });
+    expect(draft.status).toBe("DRAFT");
+
+    const confirmed = repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 3000, entryDate: "2026-07-10", description: "Adiantamento imediato", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 3000 });
+    expect(confirmed.status).toBe("CONFIRMED");
+
+    const entries = repo.listLedgerEntries({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId });
+    const confirmedBalance = entries.filter((entry) => entry.status === "CONFIRMED").reduce((sum, entry) => sum + (entry.effect === "INCREASE_RECEIVABLE" ? entry.amountCents : -entry.amountCents), 0);
+    // So' o adiantamento confirmado abate o saldo -- o DRAFT fica registrado mas fora da conta ate ser confirmado depois.
+    expect(confirmedBalance).toBe(-3000);
+    db.close();
+  });
+
   it("summarizes internal/external sacks and value per client, zeroing clients without operations in the period", async () => {
     const { repo, db, partnerId, productId } = await setup();
     const otherPartner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Operacao", notes: null, roles: ["CLIENT"], isActive: true });

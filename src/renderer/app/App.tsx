@@ -61,6 +61,7 @@ import { SettingsHomePage } from "../pages/settings/SettingsHomePage";
 import { SystemSettingsPage } from "../pages/settings/SystemSettingsPage";
 import { RolesPage } from "../pages/settings/roles/RolesPage";
 import { UsersPage } from "../pages/settings/users/UsersPage";
+import { ChangePasswordPage } from "../pages/settings/ChangePasswordPage";
 import { legacyMenuFromPath, pathFromLegacyMenu } from "./navigation";
 import { AppProviders } from "./providers";
 
@@ -112,6 +113,7 @@ function RoutedApp(): JSX.Element {
   if (needsBootstrap === null) return <Splash />;
   if (needsBootstrap) return <FirstAdminSetupPage onSession={(nextSession) => { setNeedsBootstrap(false); setSession(nextSession); void refresh(); }} />;
   if (!session) return <LoginPage onSession={(nextSession) => { setSession(nextSession); void refresh(); }} />;
+  if (session.user.mustChangePassword) return <ChangePasswordPage session={session} onSession={setSession} mandatory />;
   if (!data) return <Splash />;
   if (!profile?.completedSetup) return <SetupWizard data={data} onSaved={setProfile} />;
 
@@ -161,7 +163,7 @@ function RoutedApp(): JSX.Element {
     setPath(nextPath);
   }
 
-  const page = renderRoute(path, data, profile, refresh, setProfile);
+  const page = renderRoute(path, data, profile, refresh, setProfile, session, setSession);
 
   return (
     <AppLayout
@@ -192,8 +194,11 @@ function renderRoute(
   data: BootstrapData,
   profile: InstallationProfile,
   refresh: () => Promise<BootstrapData>,
-  setProfile: (profile: InstallationProfile) => void
+  setProfile: (profile: InstallationProfile) => void,
+  session: AuthSession,
+  setSession: (session: AuthSession) => void
 ): JSX.Element {
+  if (path.startsWith("/settings/change-password")) return <ChangePasswordPage session={session} onSession={setSession} />;
   if (path.startsWith("/operations")) return <OperationsPage data={data} />;
   if (path.startsWith("/imports/spreadsheets/history")) return <SpreadsheetImportHistoryPage />;
   if (path.startsWith("/imports/spreadsheets/templates")) return <SpreadsheetMappingTemplatesPage />;

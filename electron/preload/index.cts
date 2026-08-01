@@ -220,6 +220,7 @@ const IPC_CHANNELS = {
   createFiscalDocument: "fiscalDocuments:create",
   updateFiscalDocument: "fiscalDocuments:update",
   deleteFiscalDocument: "fiscalDocuments:delete",
+  completeFiscalDocumentTriangulation: "fiscalDocuments:completeTriangulation",
   addFiscalDocumentItem: "fiscalDocuments:addItem",
   listOperations: "operations:list",
   addOperation: "operations:add",
@@ -229,6 +230,7 @@ const IPC_CHANNELS = {
   getOperationalIndicators: "operations:indicators",
   getMonthlyOperationTotals: "operations:monthlyTotals",
   getPartnerPeriodSackSummary: "operations:partnerPeriodSackSummary",
+  getCompanyPeriodSackSummary: "operations:companyPeriodSackSummary",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",
@@ -571,6 +573,7 @@ export interface OperationsCafeApi {
   createFiscalDocument: (input: unknown) => Promise<FiscalDocumentDetail>;
   updateFiscalDocument: (id: string, input: unknown) => Promise<FiscalDocumentDetail>;
   deleteFiscalDocument: (id: string) => Promise<void>;
+  completeFiscalDocumentTriangulation: (id: string, input: { secondaryResponsiblePartnerId: string }) => Promise<FiscalDocumentDetail>;
   addFiscalDocumentItem: (input: unknown) => Promise<FiscalDocumentItem>;
   listOperations: (filters?: { organizationId?: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; billingStatus?: "UNBILLED" | "RESERVED" | "BILLED" | "all" }) => Promise<Operation[]>;
   addOperation: (input: unknown) => Promise<Operation>;
@@ -580,6 +583,7 @@ export interface OperationsCafeApi {
   getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number }>;
   getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   getPartnerPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; businessPartnerId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
+  getCompanyPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; partnerLegalEntityId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -652,7 +656,7 @@ export interface OperationsCafeApi {
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
   regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
   openChargeDocument: (input: { chargeId: string; kind: "pdf" | "image" }) => Promise<boolean>;
-  listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string }) => Promise<ClientLedgerEntry[]>;
+  listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;
   createAdvance: (input: unknown) => Promise<ClientLedgerEntry>;
   createCredit: (input: unknown) => Promise<ClientLedgerEntry>;
@@ -937,6 +941,7 @@ const api: OperationsCafeApi = {
   createFiscalDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFiscalDocument, input) as Promise<FiscalDocumentDetail>,
   updateFiscalDocument: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateFiscalDocument, { id, input }) as Promise<FiscalDocumentDetail>,
   deleteFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFiscalDocument, id) as Promise<void>,
+  completeFiscalDocumentTriangulation: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.completeFiscalDocumentTriangulation, { id, input }) as Promise<FiscalDocumentDetail>,
   addFiscalDocumentItem: (input) => ipcRenderer.invoke(IPC_CHANNELS.addFiscalDocumentItem, input) as Promise<FiscalDocumentItem>,
   listOperations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listOperations, filters) as Promise<Operation[]>,
   addOperation: (input) => ipcRenderer.invoke(IPC_CHANNELS.addOperation, input) as Promise<Operation>,
@@ -956,6 +961,7 @@ const api: OperationsCafeApi = {
     }>,
   getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
   getPartnerPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
+  getCompanyPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getCompanyPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
   selectSpreadsheetFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectSpreadsheetFile) as Promise<WorkbookInspection | null>,
   inspectSpreadsheetWorkbook: (token) => ipcRenderer.invoke(IPC_CHANNELS.inspectSpreadsheetWorkbook, token) as Promise<WorkbookInspection>,
   previewSpreadsheetSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.previewSpreadsheetSheet, input) as Promise<SheetPreview>,

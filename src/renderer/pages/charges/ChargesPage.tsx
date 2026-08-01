@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, ClientCharge, ClientChargeDetail, FiscalDocument, LegalEntity, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
+import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, ClientCharge, ClientChargeDetail, ClientChargeOperation, ClientLedgerEntry, FiscalDocument, LegalEntity, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatCurrencyInput, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { DateInput, EmptyState, PageHeader, Tabs } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
@@ -8,6 +8,7 @@ import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives"
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { formatOperationScope } from "../../../shared/utils/operationLabels";
+import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 
@@ -71,6 +72,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [advanceInput, setAdvanceInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [surchargeInput, setSurchargeInput] = useState("");
+  const [clientCredits, setClientCredits] = useState<ClientLedgerEntry[]>([]);
+  const [clientSurcharges, setClientSurcharges] = useState<ClientLedgerEntry[]>([]);
+  const ledgerAutofillChargeIdRef = useRef<string | null>(null);
+  const ledgerAutofillClientIdRef = useRef<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [searchedOperations, setSearchedOperations] = useState(false);
   const [chargesTab, setChargesTab] = useState<"gerar" | "resumo" | "historico">("gerar");
@@ -84,13 +89,74 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setPartners(clients);
     setPartnerLegalEntities((await Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
     setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
-    setClientId((current) => current || clients[0]?.id || "");
     setCharges(await window.operationsCafe.listClientCharges({ status: "all" }));
     setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies }));
   }, [organizationId, includeAllCompanies]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setEligible([]); setClientPeriodOperations([]); setSearchedOperations(false); }, [clientId]);
+  useEffect(() => {
+    if (detail?.charge.clientPartnerId === clientId) return;
+    setEligible([]);
+    setClientPeriodOperations([]);
+    setSearchedOperations(false);
+    setDetail(null);
+    setClientCredits([]);
+    setClientSurcharges([]);
+    setAdvanceInput("");
+    setDiscountInput("");
+    setSurchargeInput("");
+    ledgerAutofillChargeIdRef.current = null;
+    ledgerAutofillClientIdRef.current = null;
+  }, [clientId, detail?.charge.clientPartnerId]);
+
+  const refreshClientLedgerAvailability = useCallback(async (clientPartnerId: string) => {
+    const entries = await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId });
+    const available = entries.filter((entry) => entry.status === "CONFIRMED" && (entry.availableAmountCents ?? 0) > 0);
+    const credits = available.filter((entry) => entry.effect === "REDUCE_RECEIVABLE");
+    const surcharges = available.filter((entry) => entry.effect === "INCREASE_RECEIVABLE");
+    setClientCredits(credits);
+    setClientSurcharges(surcharges);
+    return { credits, surcharges };
+  }, [organizationId, ownLegalEntityId]);
+
+  // Antes mesmo de gerar o rascunho, mostra na tela de cobranca os
+  // adiantamentos e acrescimos ja confirmados na conta-corrente do
+  // cliente/corretor selecionado. Assim a previa do valor final bate com o
+  // saldo que o usuario ja enxerga na aba Conta-corrente.
+  useEffect(() => {
+    if (!clientId || detail) return;
+    if (ledgerAutofillClientIdRef.current === clientId) return;
+    ledgerAutofillClientIdRef.current = clientId;
+    void (async () => {
+      const { credits, surcharges } = await refreshClientLedgerAvailability(clientId);
+      const totalCreditCents = credits.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+      const totalSurchargeCents = surcharges.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+      if (totalCreditCents > 0) setAdvanceInput(formatCurrencyFromCents(totalCreditCents));
+      if (totalSurchargeCents > 0) setSurchargeInput(formatCurrencyFromCents(totalSurchargeCents));
+    })();
+  }, [clientId, detail, refreshClientLedgerAvailability]);
+
+  // Assim que um rascunho de cobranca e' aberto, pre-preenche Adiantamento e
+  // Acrescimos com o que ja esta registrado (e confirmado, nao usado) na
+  // conta-corrente do cliente -- o dono nao precisa mais digitar de novo o
+  // que ja lancou la'. So' roda uma vez por rascunho (clientPartnerId nao
+  // muda durante a visualizacao do mesmo rascunho), entao nao atropela edicao
+  // manual depois de aplicar ajustes.
+  useEffect(() => {
+    if (!detail) {
+      ledgerAutofillChargeIdRef.current = null;
+      return;
+    }
+    if (ledgerAutofillChargeIdRef.current === detail.charge.id) return;
+    ledgerAutofillChargeIdRef.current = detail.charge.id;
+    void (async () => {
+      const { credits, surcharges } = await refreshClientLedgerAvailability(detail.charge.clientPartnerId);
+      const totalCreditCents = credits.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+      const totalSurchargeCents = surcharges.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+      if (totalCreditCents > 0) setAdvanceInput(formatCurrencyFromCents(Math.min(totalCreditCents, detail.charge.openAmountCents)));
+      if (totalSurchargeCents > 0) setSurchargeInput(formatCurrencyFromCents(totalSurchargeCents));
+    })();
+  }, [detail, refreshClientLedgerAvailability]);
 
   const loadPartnerSummary = useCallback(async () => {
     setPartnerSummary(await window.operationsCafe.getPartnerRateSummary({ organizationId, ownLegalEntityId, periodStart, periodEnd, includeAlreadyBilled, includeAllCompanies }));
@@ -174,6 +240,33 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     return operationDocuments[operation.fiscalDocumentId] ?? null;
   }
 
+  // A coluna "Empresa" das tabelas de cobranca mostra a CONTRAPARTE da nota
+  // (a empresa do outro lado -- pra quem/de quem a nota foi emitida), nao a
+  // nossa propria empresa (isso o dono ja sabe, ja que esta operando naquele
+  // contexto). A propria entidade continua aparecendo, so que menor/em
+  // segundo plano.
+  function counterpartyLabel(operation: Operation): string {
+    const document = operationDocument(operation);
+    const entityId = document?.partnerLegalEntityId;
+    if (entityId) {
+      const entity = partnerLegalEntities.find((item) => item.id === entityId);
+      if (entity) return entity.tradeName || entity.legalName;
+    }
+    if (document) {
+      const ownCnpj = legalEntities.find((item) => item.id === operation.ownLegalEntityId)?.cnpj ?? null;
+      const snapshotName = fiscalDocumentCounterpartyNameFromSnapshot(document, ownCnpj);
+      if (snapshotName) return snapshotName;
+    }
+    return "Nao identificado";
+  }
+
+  function chargeDetailCompanyLabel(operation: ClientChargeOperation): string {
+    return operation.destinationNameSnapshot?.trim()
+      || operation.issuerNameSnapshot?.trim()
+      || operation.ownLegalEntityNameSnapshot?.trim()
+      || "Nao identificado";
+  }
+
   function operationNoteLabel(operation: Operation): string {
     const document = operationDocument(operation);
     return document?.documentNumber ? `NF ${document.documentNumber}` : "NF nao localizada";
@@ -212,7 +305,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + openBilledChargesCents;
   const previewFinalCents = Math.max(0, chargeBaseCents + surchargeCents - advanceCents - discountCents);
-  const visibleFinalCents = detail ? detail.charge.finalAmountCents : previewFinalCents;
+  const hasPendingAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
+  const visibleFinalCents = previewFinalCents;
   const draftDisabledReason = draftGenerationBlockedReason();
   const receivedOrClosedOperations = diagnosticOperations.filter((operation) => !isOperationInOpenCharge(operation) && operation.billingStatus !== "UNBILLED");
   const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
@@ -278,31 +372,70 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function issue(): Promise<void> {
     if (!detail) return;
-    const issued = await window.operationsCafe.issueClientCharge(detail.charge.id);
-    setDetail(issued);
-    setMessage("Cobranca emitida. Agora escolha PDF ou Imagem para salvar onde preferir.");
-    await load();
-    scrollTo(detailRef);
+    try {
+      const adjusted = hasPendingAdjustments ? await applyPendingAdjustmentsToCharge(detail, false) : detail;
+      const issued = await window.operationsCafe.issueClientCharge(adjusted.charge.id);
+      setDetail(issued);
+      if (hasPendingAdjustments) {
+        await refreshClientLedgerAvailability(issued.charge.clientPartnerId);
+        setAdvanceInput("");
+        setDiscountInput("");
+        setSurchargeInput("");
+      }
+      setMessage("Cobranca emitida. Agora escolha PDF ou Imagem para salvar onde preferir.");
+      await load();
+      scrollTo(detailRef);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar cobranca."}`);
+    }
+  }
+
+  // Consome o saldo disponivel dos lancamentos da conta-corrente (adiantamentos
+  // ou acrescimos/emprestimos, conforme a lista passada) ate cobrir o valor
+  // pedido, mais antigo primeiro. O que sobrar sem lancamento correspondente
+  // vira um ajuste manual solto (ledgerEntryId null), igual sempre foi.
+  async function consumeLedgerEntries(entries: ClientLedgerEntry[], amountCentsRequested: number, chargeId: string, current: ClientChargeDetail): Promise<{ current: ClientChargeDetail; remainingCents: number }> {
+    let remaining = amountCentsRequested;
+    let latest = current;
+    for (const entry of entries) {
+      if (remaining <= 0) break;
+      const take = Math.min(entry.availableAmountCents ?? 0, remaining);
+      if (take <= 0) continue;
+      latest = await window.operationsCafe.applyChargeCredit({ ledgerEntryId: entry.id, clientChargeId: chargeId, amountCents: take });
+      remaining -= take;
+    }
+    return { current: latest, remainingCents: remaining };
+  }
+
+  async function applyPendingAdjustmentsToCharge(baseDetail: ClientChargeDetail, shouldRegenerateDocuments: boolean): Promise<ClientChargeDetail> {
+    let current = baseDetail;
+    if (advanceCents > 0) {
+      const consumed = await consumeLedgerEntries(clientCredits, advanceCents, current.charge.id, current);
+      current = consumed.current;
+      if (consumed.remainingCents > 0) {
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: consumed.remainingCents, sortOrder: 10, reason: "Ajuste manual" });
+      }
+    }
+    if (discountCents > 0) {
+      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: "Ajuste manual" });
+    }
+    if (surchargeCents > 0) {
+      const consumed = await consumeLedgerEntries(clientSurcharges, surchargeCents, current.charge.id, current);
+      current = consumed.current;
+      if (consumed.remainingCents > 0) {
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: "Ajuste manual" });
+      }
+    }
+    return shouldRegenerateDocuments && hasPendingAdjustments ? window.operationsCafe.regenerateChargeDocuments(current.charge.id) : current;
   }
 
   async function applyAdjustments(): Promise<void> {
     if (!detail) return;
     try {
-      let current = detail;
       const shouldRegenerateDocuments = !["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status);
-      if (advanceCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: advanceCents, sortOrder: 10, reason: "Ajuste manual" });
-      }
-      if (discountCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: "Ajuste manual" });
-      }
-      if (surchargeCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: surchargeCents, sortOrder: 30, reason: "Ajuste manual" });
-      }
-      if (shouldRegenerateDocuments && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0)) {
-        current = await window.operationsCafe.regenerateChargeDocuments(current.charge.id);
-      }
+      const current = await applyPendingAdjustmentsToCharge(detail, shouldRegenerateDocuments);
       setDetail(current);
+      await refreshClientLedgerAvailability(current.charge.clientPartnerId);
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
@@ -497,7 +630,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   return (
                     <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel)}`}>
                       <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
-                      <span>{companyLabel}</span>
+                      <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
                       <span>{formatStatusLabel(op.billingStatus)}</span>
@@ -523,7 +656,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     return (
                       <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel)}`}>
                         <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
-                        <span>{companyLabel}</span>
+                        <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
                         <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
                         <span>
                           <strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong>
@@ -541,6 +674,9 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
           <div className="charges-column">
             <h3>Ajustes e valores</h3>
+            {(clientCredits.length > 0 || clientSurcharges.length > 0) ? (
+              <p className="muted">Adiantamentos e acrescimos abaixo vieram da conta-corrente deste cliente/corretor. Eles ja entram na previa; gere o rascunho para aplicar na cobranca.</p>
+            ) : null}
             <div className="kv-list">
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
@@ -552,7 +688,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
               <strong>{formatCurrencyFromCents(visibleFinalCents)}</strong>
-              {!detail && eligible.length > 0 ? <small>Soma das notas elegiveis encontradas.</small> : null}
+              {!detail && eligible.length > 0 && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Soma das notas elegiveis com ajustes da conta-corrente.</small> : null}
+              {!detail && eligible.length > 0 && advanceCents === 0 && discountCents === 0 && surchargeCents === 0 ? <small>Soma das notas elegiveis encontradas.</small> : null}
               {!detail && openBilledChargesCents > 0 ? <small>Inclui cobrancas abertas: {formatCurrencyFromCents(openBilledChargesCents)}</small> : null}
               {detail && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
               {!detail ? (
@@ -613,10 +750,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           <div className="table-head charge-detail-operation-grid"><span>Nota fiscal</span><span>Empresa</span><span>Data</span><span>Produto</span><span>Sacas</span><span>Servico</span><span>Situação</span></div>
           {detail.operations.map((operation) => {
             const companyLabel = operation.ownLegalEntityNameSnapshot ?? "Empresa nao registrada";
+            const noteCompanyLabel = chargeDetailCompanyLabel(operation);
             return (
-              <div key={operation.id} className={`table-row charge-detail-operation-grid ${chargeCompanyClass(companyLabel)}`}>
+              <div key={operation.id} className={`table-row charge-detail-operation-grid ${chargeCompanyClass(noteCompanyLabel)}`}>
                 <span>{operation.fiscalDocumentNumberSnapshot ? `NF ${operation.fiscalDocumentNumberSnapshot}` : "NF -"}</span>
-                <span>{companyLabel}</span>
+                <span><strong>{noteCompanyLabel}</strong><small>{companyLabel}</small></span>
                 <span>{formatDateOnlyBr(operation.operationDateSnapshot)}</span>
                 <span>{operation.productNameSnapshot ?? "-"}</span>
                 <span><strong>{decimalTextBr(operation.quantitySacksDecimalSnapshot)}</strong><small>{formatCurrencyFromCents(operation.serviceRateCentsSnapshot)}/saca</small></span>

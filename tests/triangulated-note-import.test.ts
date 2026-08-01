@@ -129,6 +129,106 @@ describe("nota triangulada (compra de um fornecedor + venda pra outro corretor n
     db.close();
   });
 
+  it("resolve a regra de preco da segunda perna contra a empresa do parceiro SECUNDARIO, nao contra a contraparte original da nota", async () => {
+    // Bug real reportado: com uma regra generica "mesma UF" (R$5/saca) e uma
+    // regra especifica pra empresa da Primavera (R$4/saca), a segunda perna
+    // (venda pro Valani) estava sempre caindo na regra generica -- porque a
+    // resolucao usava a contraparte da nota original (a empresa do Leo ES),
+    // nao a empresa do Valani (Primavera), entao a regra especifica nunca
+    // batia.
+    const { repo, db, productId, dir } = await setup();
+    const leo = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo ES", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const leoCnpj = "33947549000228";
+    await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: leo.id, legalName: "Leo ES Comercio Ltda", tradeName: "Leo ES Comercio Ltda", cnpj: leoCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createPurchaseRateRule({ organizationId: villaId, businessPartnerId: leo.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 150, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const valani = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Valani", notes: null, roles: ["CLIENT"], isActive: true });
+    const primaveraCnpj = "12826691000247";
+    const primavera = await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: valani.id, legalName: "Primavera Cafe Ltda", tradeName: "Primavera Cafe Ltda", cnpj: primaveraCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    // Regra generica (mesma UF, sem empresa especifica) -- prioridade baixa.
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: valani.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 5, notes: null, isActive: true });
+    // Regra especifica pra empresa da Primavera -- mais especifica, deve vencer.
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: valani.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: primavera.id, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const key = makeAccessKey(9020);
+    const xml = nfeXml(key)
+      .replace(`<CNPJ>${ownCnpj}</CNPJ>`, `<CNPJ>${leoCnpj}</CNPJ>`)
+      .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${primaveraCnpj}</CNPJ>`);
+    const filePath = join(dir, "nfe-triangulada-regra-especifica.xml");
+    writeFileSync(filePath, xml, "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111140");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId, operationScope: "EXTERNAL", operationType: "PURCHASE", productId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = await repo.executeXmlImportJob(job.id);
+
+    expect(result.files[0].errorMessage).toBeNull();
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    const saleLeg = detail.operations.find((op) => op.operationType === "SALE");
+    expect(saleLeg?.appliedRateValueCents).toBe(400);
+    db.close();
+  });
+
+  it("completar nota triangulada retroativamente tambem resolve a regra especifica da empresa do parceiro secundario", async () => {
+    const { repo, db, productId, dir } = await setup();
+    const leo = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo ES", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const leoCnpj = "33947549000228";
+    await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: leo.id, legalName: "Leo ES Comercio Ltda", tradeName: "Leo ES Comercio Ltda", cnpj: leoCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createPurchaseRateRule({ organizationId: villaId, businessPartnerId: leo.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 150, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const primaveraCnpj = "12826691000247";
+    const key = makeAccessKey(9021);
+    const xml = nfeXml(key)
+      .replace(`<CNPJ>${ownCnpj}</CNPJ>`, `<CNPJ>${leoCnpj}</CNPJ>`)
+      .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${primaveraCnpj}</CNPJ>`);
+    const filePath = join(dir, "nfe-leo-antes-valani-regra.xml");
+    writeFileSync(filePath, xml, "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111141");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId, operationScope: "EXTERNAL", operationType: "PURCHASE", productId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const importResult = await repo.executeXmlImportJob(job.id);
+    const existingDocumentId = importResult.files[0].fiscalDocumentId as string;
+
+    const valani = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Valani", notes: null, roles: ["CLIENT"], isActive: true });
+    const primavera = await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: valani.id, legalName: "Primavera Cafe Ltda", tradeName: "Primavera Cafe Ltda", cnpj: primaveraCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: valani.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 5, notes: null, isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: valani.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: primavera.id, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const detail = repo.completeFiscalDocumentTriangulation(existingDocumentId, { secondaryResponsiblePartnerId: valani.id });
+    const saleLeg = detail.operations.find((op) => op.operationType === "SALE");
+    expect(saleLeg?.appliedRateValueCents).toBe(400);
+    db.close();
+  });
+
   it("nao gera segunda perna quando so' um lado resolve (comportamento de hoje continua igual)", async () => {
     const { repo, db, productId, dir } = await setup();
     const leo = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo ES", notes: null, roles: ["SUPPLIER"], isActive: true });
@@ -166,6 +266,75 @@ describe("nota triangulada (compra de um fornecedor + venda pra outro corretor n
     expect(detail.document.secondaryResponsiblePartnerId).toBeNull();
     expect(detail.operations).toHaveLength(1);
     expect(detail.operations[0].operationType).toBe("PURCHASE");
+    db.close();
+  });
+
+  it("completa a segunda perna ao reimportar XML duplicado depois que o corretor foi cadastrado", async () => {
+    const { repo, db, productId, dir } = await setup();
+    const leo = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo ES", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const leoCnpj = "33947549000228";
+    await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: leo.id, legalName: "Leo ES Comercio Ltda", tradeName: "Leo ES Comercio Ltda", cnpj: leoCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createPurchaseRateRule({ organizationId: villaId, businessPartnerId: leo.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 150, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const primaveraCnpj = "12826691000247";
+    const key = makeAccessKey(9010);
+    const xml = nfeXml(key)
+      .replace(`<CNPJ>${ownCnpj}</CNPJ>`, `<CNPJ>${leoCnpj}</CNPJ>`)
+      .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${primaveraCnpj}</CNPJ>`);
+    const firstPath = join(dir, "nfe-leo-antes-valani.xml");
+    writeFileSync(firstPath, xml, "utf8");
+    const firstInspection = inspectXmlFile(firstPath, "11111111-1111-4111-8111-111111111133");
+    const firstJob = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId, operationScope: "EXTERNAL", operationType: "PURCHASE", productId, createOperations: true }
+    });
+    const firstFile = repo.addXmlImportFile({ importJobId: firstJob.id, originalFileName: firstInspection.originalFileName, fileHash: firstInspection.fileHash, fileSize: firstInspection.fileSize, xmlType: firstInspection.xmlType, accessKey: firstInspection.accessKey, status: firstInspection.status, errorCode: null, errorMessage: null, warningCodes: firstInspection.warnings, extractedData: firstInspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(firstFile.id, firstPath);
+    const firstResult = await repo.executeXmlImportJob(firstJob.id);
+    const existingDocumentId = firstResult.files[0].fiscalDocumentId as string;
+    const before = repo.getFiscalDocument(existingDocumentId);
+    expect(before.document.secondaryResponsiblePartnerId).toBeNull();
+    expect(before.operations).toHaveLength(1);
+    expect(before.operations[0].operationType).toBe("PURCHASE");
+
+    const valani = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Valani", notes: null, roles: ["CLIENT"], isActive: true });
+    await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: valani.id, legalName: "Primavera Cafe Ltda", tradeName: "Primavera Cafe Ltda", cnpj: primaveraCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: valani.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const secondPath = join(dir, "nfe-leo-depois-valani.xml");
+    writeFileSync(secondPath, xml, "utf8");
+    const secondInspection = inspectXmlFile(secondPath, "11111111-1111-4111-8111-111111111134");
+    const secondJob = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId, operationScope: "EXTERNAL", operationType: "PURCHASE", productId, createOperations: true }
+    });
+    const secondFile = repo.addXmlImportFile({ importJobId: secondJob.id, originalFileName: secondInspection.originalFileName, fileHash: secondInspection.fileHash, fileSize: secondInspection.fileSize, xmlType: secondInspection.xmlType, accessKey: secondInspection.accessKey, status: secondInspection.status, errorCode: null, errorMessage: null, warningCodes: secondInspection.warnings, extractedData: secondInspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(secondFile.id, secondPath);
+    const secondResult = await repo.executeXmlImportJob(secondJob.id);
+
+    expect(secondResult.files[0].errorMessage).toBeNull();
+    const after = repo.getFiscalDocument(existingDocumentId);
+    expect(after.document.secondaryResponsiblePartnerId).toBe(valani.id);
+    expect(after.document.secondaryOperationType).toBe("SALE");
+    expect(after.operations).toHaveLength(2);
+    const saleLeg = after.operations.find((op) => op.operationType === "SALE");
+    expect(saleLeg?.responsiblePartnerId).toBe(valani.id);
+    expect(saleLeg?.appliedRateValueCents).toBe(400);
+    expect(repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: valani.id, periodStart: "2026-01-01", periodEnd: "2026-12-31" })).toHaveLength(1);
     db.close();
   });
 

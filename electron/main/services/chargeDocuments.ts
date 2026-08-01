@@ -26,6 +26,22 @@ type ChargeDocumentsInput = {
   relatedOpenChargeDetails?: ClientChargeDetail[];
 };
 
+type ChargeOperationSnapshot = ClientChargeDetail["operations"][number];
+type ChargeAdjustmentSnapshot = ClientChargeDetail["adjustments"][number];
+
+function chargeOperationCompanyName(operation: ChargeOperationSnapshot): string {
+  return operation.destinationNameSnapshot?.trim()
+    || operation.issuerNameSnapshot?.trim()
+    || operation.ownLegalEntityNameSnapshot?.trim()
+    || "-";
+}
+
+function chargeAdjustmentLine(adjustment: ChargeAdjustmentSnapshot): string {
+  const sign = adjustment.effect === "INCREASE_RECEIVABLE" ? "+" : "-";
+  const dateText = adjustment.ledgerEntryDate ? `${formatDate(adjustment.ledgerEntryDate)} - ` : "";
+  return `${sign} ${dateText}${adjustment.description}: R$ ${formatCents(adjustment.amountCents)}`;
+}
+
 export async function generateChargeDocuments(input: ChargeDocumentsInput): Promise<ChargeDocumentResult> {
   const number = sanitizeSegment(input.detail.charge.chargeNumber ?? input.detail.charge.id);
   const year = (input.detail.charge.issueDate ?? input.detail.charge.createdAt).slice(0, 4);
@@ -138,7 +154,7 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   drawSectionTitle(page, "Ajustes e pagamentos", margin, y, bold, ink, green);
   y -= 16;
   const leftLines = detail.adjustments.length
-    ? detail.adjustments.slice(0, 4).map((item) => `${item.effect === "INCREASE_RECEIVABLE" ? "+" : "-"} ${item.description}: R$ ${formatCents(item.amountCents)}`)
+    ? detail.adjustments.slice(0, 4).map(chargeAdjustmentLine)
     : ["Sem ajustes nesta cobranca."];
   const rightLines = detail.payments.length
     ? detail.payments.slice(0, 4).map((item) => `Pagamento alocado: R$ ${formatCents(item.amountCents)}`)
@@ -170,10 +186,10 @@ async function writeChargeWorkbook(filePath: string, input: { client: BusinessPa
   ]);
   const operations = workbook.addWorksheet("Operacoes");
   operations.addRow(["Empresa", "Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total"]);
-  input.detail.operations.forEach((item) => operations.addRow([item.ownLegalEntityNameSnapshot ?? "-", item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
+  input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
   const adjustments = workbook.addWorksheet("Ajustes");
-  adjustments.addRow(["Tipo", "Descricao", "Efeito", "Valor"]);
-  input.detail.adjustments.forEach((item) => adjustments.addRow([item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
+  adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor"]);
+  input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
   const payments = workbook.addWorksheet("Pagamentos");
   payments.addRow(["Pagamento", "Valor"]);
   input.detail.payments.forEach((item) => payments.addRow([item.clientPaymentId, item.amountCents / 100]));
@@ -252,14 +268,15 @@ function drawChargeOperationSectionsPdf(
     section.rows.forEach((row) => {
       ensureSpace(15);
       const item = row.operation;
-      const brandColors = chargeBrandPdfColors(item.ownLegalEntityNameSnapshot);
+      const companyName = chargeOperationCompanyName(item);
+      const brandColors = chargeBrandPdfColors(companyName);
       if (brandColors) {
         currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: brandColors.background });
         currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: brandColors.stripe });
       }
       currentPage.drawText(truncate(row.chargeNumber, style.font, 5.8, columns[0].width), { x: columns[0].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       currentPage.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 5.8, columns[1].width), { x: columns[1].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
-      currentPage.drawText(truncate(item.ownLegalEntityNameSnapshot ?? "-", style.font, 5.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+      currentPage.drawText(truncate(companyName, style.font, 5.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       currentPage.drawText(formatOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       drawRightText(currentPage, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 5.8, style.ink);
       drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)} x NF ${item.fiscalDocumentNumberSnapshot ?? "-"}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
@@ -532,7 +549,8 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
       const y = cursorY;
       cursorY += 25;
       const operation = item.operation;
-      const brandColors = chargeBrandSvgColors(operation.ownLegalEntityNameSnapshot);
+      const companyName = chargeOperationCompanyName(operation);
+      const brandColors = chargeBrandSvgColors(companyName);
       const rowBackground = brandColors
         ? `<rect x="${innerX}" y="${y - 16}" width="${innerWidth}" height="22" rx="3" fill="${brandColors.background}"/><rect x="${innerX}" y="${y - 16}" width="4" height="22" rx="2" fill="${brandColors.stripe}"/>`
         : "";
@@ -540,7 +558,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
       ${rowBackground}
       <text x="48" y="${y}" class="cell">${escapeXml(clipText(item.chargeNumber, 15))}</text>
       <text x="166" y="${y}" class="cell">${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
-      <text x="236" y="${y}" class="cell">${escapeXml(clipText(operation.ownLegalEntityNameSnapshot ?? "-", 46))}</text>
+      <text x="236" y="${y}" class="cell">${escapeXml(clipText(companyName, 46))}</text>
       <text x="622" y="${y}" class="cell">${escapeXml(formatOperationScope(operation.operationScopeSnapshot))}</text>
       <text x="760" y="${y}" class="cell right">${escapeXml(decimalTextBr(operation.quantitySacksDecimalSnapshot))}</text>
       <text x="${rightX}" y="${y}" class="cell right">R$ ${escapeXml(formatCents(operation.serviceAmountCentsSnapshot))} x NF ${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
@@ -632,7 +650,7 @@ function summaryImageSections(input: ChargeDocumentsInput): SummarySection[] {
   const defaultInternalRateCents = Math.max(0, ...rawSections.filter((section) => section.scope === "INTERNAL").map((section) => section.rateCents));
   return rawSections.map((section) => {
     const scopeText = section.scope === "INTERNAL" ? "INTERNO" : "EXTERNO";
-    const destinations = Array.from(new Set(section.rows.map((row) => row.operation.destinationNameSnapshot?.trim()).filter((value): value is string => Boolean(value))));
+    const destinations = Array.from(new Set(section.rows.map((row) => chargeOperationCompanyName(row.operation).trim()).filter((value) => value && value !== "-")));
     if (section.scope === "INTERNAL") {
       if (destinations.length === 1 && section.rateCents !== defaultInternalRateCents) {
         return {

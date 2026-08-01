@@ -261,6 +261,7 @@ export function AppLayout({
             <small>{userLabel}</small>
           </div>
           <div className="topbar-actions">
+            <button type="button" onClick={() => { window.location.hash = "#/settings/change-password"; }}>Trocar senha</button>
             <button type="button" onClick={onLock}>Bloquear</button>
             <button type="button" onClick={onLogout}>Sair</button>
           </div>
