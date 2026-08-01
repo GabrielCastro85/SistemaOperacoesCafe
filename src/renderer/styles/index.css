@@ -2122,7 +2122,11 @@ table tbody tr:hover {
 }
 
 .xml-files-grid {
-  grid-template-columns: 1.2fr 130px 120px 2fr 2fr;
+  grid-template-columns: minmax(170px, 1.05fr) 120px 95px minmax(260px, 1.45fr) minmax(220px, 1.15fr) minmax(180px, 0.9fr);
+}
+
+.xml-result-actions {
+  margin: 14px 0 12px;
 }
 
 .xml-batch-grid {

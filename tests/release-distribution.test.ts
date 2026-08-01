@@ -33,7 +33,7 @@ describe("Windows distribution", () => {
       scripts: Record<string, string>;
       build: { appId: string; win: { icon: string; requestedExecutionLevel: string } };
     };
-    expect(pkg.version).toBe("1.0.0");
+    expect(pkg.version).toBe("1.0.1");
     expect(pkg.author).toBeTruthy();
     expect(pkg.license).toBe("UNLICENSED");
     expect(pkg.engines?.node).toContain(">=20.19.0");
