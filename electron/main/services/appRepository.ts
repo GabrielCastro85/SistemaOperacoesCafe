@@ -207,6 +207,8 @@ import { generateChargeDocuments } from "./chargeDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
 import type { SharedRepository } from "./sharedRepository.js";
+import { SharedPushOutbox } from "./sharedPushOutbox.js";
+import { replayUserPush, replayUserDeletionPush } from "./security.js";
 import type { AppDirectories } from "../../../src/shared/types/domain.js";
 
 type DbRecord = Record<string, unknown>;
@@ -292,8 +294,31 @@ const HOT_SYNC_TABLES: Array<{ table: string; timestampColumn: string }> = [
   { table: "deal_payment_terms", timestampColumn: "updated_at" },
   { table: "deal_confirmation_signers", timestampColumn: "updated_at" },
   { table: "deal_confirmation_document_versions", timestampColumn: "created_at" },
-  { table: "deal_confirmation_status_history", timestampColumn: "changed_at" }
+  { table: "deal_confirmation_status_history", timestampColumn: "changed_at" },
+  // Registro permanente de exclusao (ver pushTombstone/applyTombstone abaixo)
+  // -- pulled aqui como qualquer outra tabela quente, mas nunca empurrado em
+  // lote (entra em BULK_PUSH_MANAGED_TABLES): cada exclusao gera SEU proprio
+  // tombstone no momento em que acontece, nunca em lote.
+  { table: "sync_tombstones", timestampColumn: "deleted_at" }
 ];
+
+// Algumas tabelas entram em HOT_SYNC_TABLES para serem PUXADAS dos outros PCs,
+// mas nao podem ser empurradas pelo reconciliador generico. Cada uma delas tem
+// um fluxo proprio ou restricao de seguranca no Supabase.
+const BULK_PUSH_MANAGED_TABLES = new Set([
+  "document_sequences",
+  "charge_status_history",
+  "app_users",
+  "user_credentials",
+  "user_role_assignments",
+  "sync_tombstones"
+]);
+
+// Tabelas onde um tombstone puxado de outro PC pode ser aplicado por um
+// DELETE simples (id = row_id), sem nenhuma tabela filha pra limpar junto.
+// fiscal_documents/client_charges/deal_confirmations/xml_import_jobs tem
+// filhas e por isso tem sua propria funcao de cascata (ver applyTombstone).
+const TOMBSTONE_APPLY_TABLES = new Set(HOT_SYNC_TABLES.map((entry) => entry.table));
 
 // Colunas boolean no Postgres (as mesmas colunas sao INTEGER 0/1 no SQLite
 // local) -- ao empurrar uma linha lida direto do SQLite pro Supabase, essas
@@ -324,7 +349,70 @@ function toSharedRow(row: DbRecord, table: string): DbRecord {
 }
 
 export class AppRepository {
-  constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories, private readonly sharedRepository?: SharedRepository) {}
+  private readonly outbox: SharedPushOutbox;
+
+  constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories, private readonly sharedRepository?: SharedRepository) {
+    this.outbox = new SharedPushOutbox(db);
+  }
+
+  /**
+   * Reenvia pro Supabase tudo que falhou em pushes anteriores (ver
+   * sharedPushOutbox.ts) -- chamado no comeco de syncSharedDataDown(), ou
+   * seja, tanto no poll automatico de 20s quanto no "Sincronizar agora"
+   * manual. So' assim um dado que so' existe neste PC (por causa de uma falha
+   * de rede/Supabase momentanea) tem uma chance real de chegar nos outros.
+   */
+  async flushSharedPushOutbox(): Promise<{ retried: number; stillPending: number }> {
+    if (!this.sharedRepository) return { retried: 0, stillPending: 0 };
+    const kinds = [
+      "fiscal_document",
+      "xml_import_job",
+      "client_charge",
+      "deal_confirmation",
+      "account_payable",
+      "payable_payment",
+      "client_payment",
+      "client_ledger_entry",
+      "user",
+      "user_deletion",
+      "tombstone"
+    ];
+    return this.outbox.flush(kinds, (kind, id) => this.replayOutboxPush(kind, id));
+  }
+
+  private async replayOutboxPush(kind: string, id: string): Promise<void> {
+    switch (kind) {
+      case "fiscal_document":
+        return this.pushFiscalDocumentToShared(id);
+      case "xml_import_job":
+        return this.pushXmlImportJobToShared(id);
+      case "client_charge":
+        return this.pushClientChargeToShared(id);
+      case "deal_confirmation":
+        return this.pushDealConfirmationToShared(id);
+      case "account_payable":
+        return this.pushAccountPayableToShared(id);
+      case "payable_payment":
+        return this.pushPayablePaymentToShared(id);
+      case "client_payment":
+        return this.pushClientPaymentToShared(id);
+      case "client_ledger_entry":
+        return this.pushClientLedgerEntryToShared(id);
+      case "user":
+        return replayUserPush(this.db, this.sharedRepository!, id);
+      case "user_deletion":
+        return replayUserDeletionPush(this.db, this.sharedRepository!, id);
+      case "tombstone": {
+        // entity_id guarda "tabela:id" (ver pushTombstone) -- so' o "id" puro
+        // nao bastaria pra saber qual tabela reenviar.
+        const sepIndex = id.indexOf(":");
+        if (sepIndex === -1) return;
+        return this.pushTombstone(id.slice(0, sepIndex), id.slice(sepIndex + 1));
+      }
+      default:
+        return;
+    }
+  }
 
   /**
    * Puxa do Supabase pro cache local tudo que mudou desde a ultima vez, pras
@@ -335,6 +423,12 @@ export class AppRepository {
    */
   async syncSharedDataDown(): Promise<Array<{ table: string; pulled: number }>> {
     if (!this.sharedRepository) return [];
+    // Reenvia pushes pendentes ANTES de puxar -- assim, se a rede voltou
+    // desde o ultimo ciclo, o que so' existia neste PC ja chega no Supabase
+    // antes deste PC puxar (evita puxar um estado velho por cima do que
+    // acabou de conseguir empurrar). Roda tanto no poll de 20s quanto no
+    // "Sincronizar agora" manual, ja que os dois passam por aqui.
+    await this.flushSharedPushOutbox().catch((error) => log.warn("Falha ao reenviar fila pendente pro Supabase", error instanceof Error ? error.message : String(error)));
     const results: Array<{ table: string; pulled: number }> = [];
     for (const { table, timestampColumn } of HOT_SYNC_TABLES) {
       try {
@@ -377,7 +471,14 @@ export class AppRepository {
     let sawFailure = false;
     for (const row of rows) {
       try {
-        this.db.transaction(() => this.upsertLocalRow(table, row))();
+        this.db.transaction(() => {
+          if (table === "sync_tombstones") {
+            this.recordLocalTombstone(String(row.table_name), String(row.row_id), String(row.deleted_at));
+            this.applyTombstone(String(row.table_name), String(row.row_id));
+          } else {
+            this.upsertLocalRow(table, row);
+          }
+        })();
         applied += 1;
         if (table === "business_partner_merges") {
           // Fusao decidida por OUTRO PC -- aplica localmente aqui tambem (sem
@@ -418,27 +519,37 @@ export class AppRepository {
    */
   async pushFiscalDocumentToShared(fiscalDocumentId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const doc = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as DbRecord | undefined;
-    if (!doc) return;
-    await this.sharedRepository.upsertRow("fiscal_documents", toSharedRow(doc, "fiscal_documents"));
-    const items = this.db.prepare("SELECT * FROM fiscal_document_items WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-    for (const item of items) await this.sharedRepository.upsertRow("fiscal_document_items", toSharedRow(item, "fiscal_document_items"));
-    const operations = this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-    for (const operation of operations) await this.sharedRepository.upsertRow("operations", toSharedRow(operation, "operations"));
-    const events = this.db.prepare("SELECT * FROM fiscal_document_events WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-    for (const event of events) await this.sharedRepository.upsertRow("fiscal_document_events", toSharedRow(event, "fiscal_document_events"));
-    const mergeHistory = this.db.prepare("SELECT * FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-    for (const entry of mergeHistory) await this.sharedRepository.upsertRow("fiscal_document_merge_history", toSharedRow(entry, "fiscal_document_merge_history"));
+    try {
+      const doc = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as DbRecord | undefined;
+      if (!doc) return;
+      await this.sharedRepository.upsertRow("fiscal_documents", toSharedRow(doc, "fiscal_documents"));
+      const items = this.db.prepare("SELECT * FROM fiscal_document_items WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+      for (const item of items) await this.sharedRepository.upsertRow("fiscal_document_items", toSharedRow(item, "fiscal_document_items"));
+      const operations = this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+      for (const operation of operations) await this.sharedRepository.upsertRow("operations", toSharedRow(operation, "operations"));
+      const events = this.db.prepare("SELECT * FROM fiscal_document_events WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+      for (const event of events) await this.sharedRepository.upsertRow("fiscal_document_events", toSharedRow(event, "fiscal_document_events"));
+      const mergeHistory = this.db.prepare("SELECT * FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
+      for (const entry of mergeHistory) await this.sharedRepository.upsertRow("fiscal_document_merge_history", toSharedRow(entry, "fiscal_document_merge_history"));
+    } catch (error) {
+      this.outbox.enqueue("fiscal_document", fiscalDocumentId, error);
+      throw error;
+    }
   }
 
   /** Mesma ideia de pushFiscalDocumentToShared, pro job de importacao de XML e seus arquivos. */
   async pushXmlImportJobToShared(jobId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const job = this.db.prepare("SELECT * FROM xml_import_jobs WHERE id = ?").get(jobId) as DbRecord | undefined;
-    if (!job) return;
-    await this.sharedRepository.upsertRow("xml_import_jobs", toSharedRow(job, "xml_import_jobs"));
-    const files = this.db.prepare("SELECT * FROM xml_import_files WHERE import_job_id = ?").all(jobId) as DbRecord[];
-    for (const file of files) await this.sharedRepository.upsertRow("xml_import_files", toSharedRow(file, "xml_import_files"));
+    try {
+      const job = this.db.prepare("SELECT * FROM xml_import_jobs WHERE id = ?").get(jobId) as DbRecord | undefined;
+      if (!job) return;
+      await this.sharedRepository.upsertRow("xml_import_jobs", toSharedRow(job, "xml_import_jobs"));
+      const files = this.db.prepare("SELECT * FROM xml_import_files WHERE import_job_id = ?").all(jobId) as DbRecord[];
+      for (const file of files) await this.sharedRepository.upsertRow("xml_import_files", toSharedRow(file, "xml_import_files"));
+    } catch (error) {
+      this.outbox.enqueue("xml_import_job", jobId, error);
+      throw error;
+    }
   }
 
   /**
@@ -449,23 +560,29 @@ export class AppRepository {
    */
   async pushClientChargeToShared(clientChargeId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const charge = this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(clientChargeId) as DbRecord | undefined;
-    if (!charge) return;
-    await this.sharedRepository.upsertRow("client_charges", toSharedRow(charge, "client_charges"));
-    const operations = this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of operations) await this.sharedRepository.upsertRow("client_charge_operations", toSharedRow(row, "client_charge_operations"));
-    const adjustments = this.db.prepare("SELECT * FROM client_charge_adjustments WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of adjustments) await this.sharedRepository.upsertRow("client_charge_adjustments", toSharedRow(row, "client_charge_adjustments"));
-    const paymentAllocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of paymentAllocations) await this.sharedRepository.upsertRow("client_payment_allocations", toSharedRow(row, "client_payment_allocations"));
-    const creditAllocations = this.db.prepare("SELECT * FROM client_credit_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of creditAllocations) await this.sharedRepository.upsertRow("client_credit_allocations", toSharedRow(row, "client_credit_allocations"));
-    const documentVersions = this.db.prepare("SELECT * FROM charge_document_versions WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of documentVersions) await this.sharedRepository.upsertRow("charge_document_versions", toSharedRow(row, "charge_document_versions"));
-    const statusHistory = this.db.prepare("SELECT * FROM charge_status_history WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of statusHistory) await this.sharedRepository.upsertRow("charge_status_history", toSharedRow(row, "charge_status_history"));
-    const ledgerEntries = this.db.prepare("SELECT * FROM client_ledger_entries WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-    for (const row of ledgerEntries) await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(row, "client_ledger_entries"));
+    try {
+      const charge = this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(clientChargeId) as DbRecord | undefined;
+      if (!charge) return;
+      await this.sharedRepository.upsertRow("client_charges", toSharedRow(charge, "client_charges"));
+      const operations = this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+      for (const row of operations) await this.sharedRepository.upsertRow("client_charge_operations", toSharedRow(row, "client_charge_operations"));
+      const adjustments = this.db.prepare("SELECT * FROM client_charge_adjustments WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+      for (const row of adjustments) await this.sharedRepository.upsertRow("client_charge_adjustments", toSharedRow(row, "client_charge_adjustments"));
+      const paymentAllocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+      for (const row of paymentAllocations) await this.sharedRepository.upsertRow("client_payment_allocations", toSharedRow(row, "client_payment_allocations"));
+      const creditAllocations = this.db.prepare("SELECT * FROM client_credit_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+      for (const row of creditAllocations) await this.sharedRepository.upsertRow("client_credit_allocations", toSharedRow(row, "client_credit_allocations"));
+      const documentVersions = this.db.prepare("SELECT * FROM charge_document_versions WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+      for (const row of documentVersions) await this.sharedRepository.upsertRow("charge_document_versions", toSharedRow(row, "charge_document_versions"));
+      // Historico de status e' auditoria local e nao tem permissao de escrita no
+      // writer generico do Supabase. O status atual da cobranca ja sobe em
+      // client_charges; nao bloqueamos a sync inteira por causa do historico.
+      const ledgerEntries = this.db.prepare("SELECT * FROM client_ledger_entries WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
+      for (const row of ledgerEntries) await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(row, "client_ledger_entries"));
+    } catch (error) {
+      this.outbox.enqueue("client_charge", clientChargeId, error);
+      throw error;
+    }
   }
 
   /**
@@ -478,27 +595,32 @@ export class AppRepository {
    */
   async pushDealConfirmationToShared(dealConfirmationId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
-    if (!confirmation) return;
-    await this.sharedRepository.upsertRow("deal_confirmations", toSharedRow(confirmation, "deal_confirmations"));
-    const parties = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of parties) await this.sharedRepository.upsertRow("deal_confirmation_parties", toSharedRow(row, "deal_confirmation_parties"));
-    const items = this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of items) await this.sharedRepository.upsertRow("deal_confirmation_items", toSharedRow(row, "deal_confirmation_items"));
-    const operations = this.db.prepare("SELECT * FROM deal_confirmation_operations WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of operations) await this.sharedRepository.upsertRow("deal_confirmation_operations", toSharedRow(row, "deal_confirmation_operations"));
-    const fiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of fiscalDocuments) await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", toSharedRow(row, "deal_confirmation_fiscal_documents"));
-    const clauses = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of clauses) await this.sharedRepository.upsertRow("deal_confirmation_clauses", toSharedRow(row, "deal_confirmation_clauses"));
-    const paymentTerms = this.db.prepare("SELECT * FROM deal_payment_terms WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of paymentTerms) await this.sharedRepository.upsertRow("deal_payment_terms", toSharedRow(row, "deal_payment_terms"));
-    const signers = this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of signers) await this.sharedRepository.upsertRow("deal_confirmation_signers", toSharedRow(row, "deal_confirmation_signers"));
-    const documentVersions = this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of documentVersions) await this.sharedRepository.upsertRow("deal_confirmation_document_versions", toSharedRow(row, "deal_confirmation_document_versions"));
-    const statusHistory = this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-    for (const row of statusHistory) await this.sharedRepository.upsertRow("deal_confirmation_status_history", toSharedRow(row, "deal_confirmation_status_history"));
+    try {
+      const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
+      if (!confirmation) return;
+      await this.sharedRepository.upsertRow("deal_confirmations", toSharedRow(confirmation, "deal_confirmations"));
+      const parties = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of parties) await this.sharedRepository.upsertRow("deal_confirmation_parties", toSharedRow(row, "deal_confirmation_parties"));
+      const items = this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of items) await this.sharedRepository.upsertRow("deal_confirmation_items", toSharedRow(row, "deal_confirmation_items"));
+      const operations = this.db.prepare("SELECT * FROM deal_confirmation_operations WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of operations) await this.sharedRepository.upsertRow("deal_confirmation_operations", toSharedRow(row, "deal_confirmation_operations"));
+      const fiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of fiscalDocuments) await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", toSharedRow(row, "deal_confirmation_fiscal_documents"));
+      const clauses = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of clauses) await this.sharedRepository.upsertRow("deal_confirmation_clauses", toSharedRow(row, "deal_confirmation_clauses"));
+      const paymentTerms = this.db.prepare("SELECT * FROM deal_payment_terms WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of paymentTerms) await this.sharedRepository.upsertRow("deal_payment_terms", toSharedRow(row, "deal_payment_terms"));
+      const signers = this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of signers) await this.sharedRepository.upsertRow("deal_confirmation_signers", toSharedRow(row, "deal_confirmation_signers"));
+      const documentVersions = this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of documentVersions) await this.sharedRepository.upsertRow("deal_confirmation_document_versions", toSharedRow(row, "deal_confirmation_document_versions"));
+      const statusHistory = this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      for (const row of statusHistory) await this.sharedRepository.upsertRow("deal_confirmation_status_history", toSharedRow(row, "deal_confirmation_status_history"));
+    } catch (error) {
+      this.outbox.enqueue("deal_confirmation", dealConfirmationId, error);
+      throw error;
+    }
   }
 
   async pushDealConfirmationTemplateToShared(id: string): Promise<void> {
@@ -521,43 +643,63 @@ export class AppRepository {
    */
   async pushAccountPayableToShared(accountPayableId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const payable = this.db.prepare("SELECT * FROM accounts_payable WHERE id = ?").get(accountPayableId) as DbRecord | undefined;
-    if (!payable) return;
-    await this.sharedRepository.upsertRow("accounts_payable", toSharedRow(payable, "accounts_payable"));
-    const operations = this.db.prepare("SELECT * FROM account_payable_operations WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-    for (const row of operations) await this.sharedRepository.upsertRow("account_payable_operations", toSharedRow(row, "account_payable_operations"));
-    const statusHistory = this.db.prepare("SELECT * FROM payable_status_history WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-    for (const row of statusHistory) await this.sharedRepository.upsertRow("payable_status_history", toSharedRow(row, "payable_status_history"));
-    const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-    for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
+    try {
+      const payable = this.db.prepare("SELECT * FROM accounts_payable WHERE id = ?").get(accountPayableId) as DbRecord | undefined;
+      if (!payable) return;
+      await this.sharedRepository.upsertRow("accounts_payable", toSharedRow(payable, "accounts_payable"));
+      const operations = this.db.prepare("SELECT * FROM account_payable_operations WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
+      for (const row of operations) await this.sharedRepository.upsertRow("account_payable_operations", toSharedRow(row, "account_payable_operations"));
+      const statusHistory = this.db.prepare("SELECT * FROM payable_status_history WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
+      for (const row of statusHistory) await this.sharedRepository.upsertRow("payable_status_history", toSharedRow(row, "payable_status_history"));
+      const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
+      for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
+    } catch (error) {
+      this.outbox.enqueue("account_payable", accountPayableId, error);
+      throw error;
+    }
   }
 
   /** Empurra um pagamento de conta a pagar + suas alocacoes. Ver pushAccountPayableToShared. */
   async pushPayablePaymentToShared(payablePaymentId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const payment = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(payablePaymentId) as DbRecord | undefined;
-    if (!payment) return;
-    await this.sharedRepository.upsertRow("payable_payments", toSharedRow(payment, "payable_payments"));
-    const allocations = this.db.prepare("SELECT * FROM payable_payment_allocations WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
-    for (const row of allocations) await this.sharedRepository.upsertRow("payable_payment_allocations", toSharedRow(row, "payable_payment_allocations"));
-    const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
-    for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
+    try {
+      const payment = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(payablePaymentId) as DbRecord | undefined;
+      if (!payment) return;
+      await this.sharedRepository.upsertRow("payable_payments", toSharedRow(payment, "payable_payments"));
+      const allocations = this.db.prepare("SELECT * FROM payable_payment_allocations WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
+      for (const row of allocations) await this.sharedRepository.upsertRow("payable_payment_allocations", toSharedRow(row, "payable_payment_allocations"));
+      const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
+      for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
+    } catch (error) {
+      this.outbox.enqueue("payable_payment", payablePaymentId, error);
+      throw error;
+    }
   }
 
   /** Empurra um pagamento avulso (nao vinculado a nenhuma cobranca especifica ainda). */
   async pushClientPaymentToShared(clientPaymentId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const payment = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(clientPaymentId) as DbRecord | undefined;
-    if (!payment) return;
-    await this.sharedRepository.upsertRow("client_payments", toSharedRow(payment, "client_payments"));
+    try {
+      const payment = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(clientPaymentId) as DbRecord | undefined;
+      if (!payment) return;
+      await this.sharedRepository.upsertRow("client_payments", toSharedRow(payment, "client_payments"));
+    } catch (error) {
+      this.outbox.enqueue("client_payment", clientPaymentId, error);
+      throw error;
+    }
   }
 
   /** Empurra um lancamento avulso de conta-corrente (adiantamento/credito sem cobranca vinculada ainda). */
   async pushClientLedgerEntryToShared(ledgerEntryId: string): Promise<void> {
     if (!this.sharedRepository) return;
-    const entry = this.db.prepare("SELECT * FROM client_ledger_entries WHERE id = ?").get(ledgerEntryId) as DbRecord | undefined;
-    if (!entry) return;
-    await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(entry, "client_ledger_entries"));
+    try {
+      const entry = this.db.prepare("SELECT * FROM client_ledger_entries WHERE id = ?").get(ledgerEntryId) as DbRecord | undefined;
+      if (!entry) return;
+      await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(entry, "client_ledger_entries"));
+    } catch (error) {
+      this.outbox.enqueue("client_ledger_entry", ledgerEntryId, error);
+      throw error;
+    }
   }
 
   /**
@@ -701,18 +843,47 @@ export class AppRepository {
     if (!this.sharedRepository) return [];
     await this.reconcileThirdPartyLegalEntityIds();
     await this.reconcileDuplicateExpenseCategories();
+    // Atualiza os tombstones ANTES de empurrar qualquer coisa -- sem isso, um
+    // PC que nunca soube de uma exclusao feita em outro lugar (ex: acabou de
+    // atualizar e ainda nao rodou um pull normal) empurraria de volta pro
+    // Supabase uma copia local zumba de algo que foi apagado de proposito.
+    // Foi exatamente esse buraco que ressuscitou o reset de dados de teste
+    // mais de uma vez em 2026-08-02 -- ver applyTombstone/pushTombstone.
+    await this.syncTableDown("sync_tombstones", "deleted_at").catch((error) =>
+      log.warn("Falha ao atualizar tombstones antes de empurrar", { error: error instanceof Error ? error.message : String(error) })
+    );
     const results: Array<{ table: string; pushed: number; error: string | null }> = [];
     for (const { table } of HOT_SYNC_TABLES) {
-      // document_sequences so' pode ser escrita via a RPC reserve_document_number
-      // (SECURITY DEFINER, migration 0006) -- de proposito nao tem policy de
-      // insert/update no Supabase, pra evitar dois PCs reservando o mesmo
-      // numero ao mesmo tempo. Entra em HOT_SYNC_TABLES so' pro lado de
-      // PUXAR (syncSharedDataDown); tentar empurrar sempre falha por RLS.
-      if (table === "document_sequences") {
+      // Tabelas gerenciadas por RPC/servico proprio entram aqui so' para o
+      // lado de PUXAR (syncSharedDataDown). Tentar empurrar em lote causa RLS,
+      // duplicidade ou FK fora de ordem no Supabase.
+      if (BULK_PUSH_MANAGED_TABLES.has(table)) {
         results.push({ table, pushed: 0, error: null });
         continue;
       }
-      const rows = this.db.prepare(`SELECT * FROM ${table}`).all() as DbRecord[];
+      let rows = this.db.prepare(`SELECT * FROM ${table}`).all() as DbRecord[];
+      const tombstonedIds = new Set(
+        (this.db.prepare("SELECT row_id FROM sync_tombstones WHERE table_name = ?").all(table) as Array<{ row_id: string }>).map((row) => row.row_id)
+      );
+      if (tombstonedIds.size > 0) {
+        const survivors: DbRecord[] = [];
+        for (const row of rows) {
+          const id = String(row.id);
+          if (tombstonedIds.has(id)) {
+            // Este PC ainda tinha localmente algo que foi apagado de
+            // proposito em outro lugar -- nunca reenvia, e aproveita pra se
+            // autocurar (apaga a copia local zumbi tambem).
+            try {
+              this.db.transaction(() => this.applyTombstone(table, id))();
+            } catch (error) {
+              log.warn(`Falha ao autocurar linha tombstoned (${table})`, { id, error: error instanceof Error ? error.message : String(error) });
+            }
+          } else {
+            survivors.push(row);
+          }
+        }
+        rows = survivors;
+      }
       if (rows.length === 0) {
         results.push({ table, pushed: 0, error: null });
         continue;
@@ -761,6 +932,127 @@ export class AppRepository {
         (error) => { clearTimeout(timer); reject(error); }
       );
     });
+  }
+
+  private recordLocalTombstone(tableName: string, rowId: string, deletedAt: string): void {
+    this.db.prepare(
+      `INSERT INTO sync_tombstones (table_name, row_id, deleted_at) VALUES (?, ?, ?)
+       ON CONFLICT(table_name, row_id) DO UPDATE SET deleted_at = excluded.deleted_at`
+    ).run(tableName, rowId, deletedAt);
+  }
+
+  /**
+   * Aplica localmente uma exclusao que veio de outro lugar (pull de
+   * sync_tombstones) ou que este PC descobriu tarde (self-heal em
+   * pushAllLocalReferenceDataToShared). fiscal_documents/client_charges/
+   * deal_confirmations/xml_import_jobs tem tabelas filhas -- espelha a MESMA
+   * cascata das funcoes delete*() publicas, so' que sem as checagens de
+   * regra de negocio (ex: "cobranca com pagamento nao pode ser excluida"):
+   * a decisao de apagar ja foi tomada em outro lugar, aplicar de novo aqui
+   * so' sincroniza o estado, nao inicia uma exclusao nova.
+   */
+  private applyTombstone(tableName: string, rowId: string): void {
+    switch (tableName) {
+      case "fiscal_documents":
+        return this.applyFiscalDocumentTombstone(rowId);
+      case "client_charges":
+        return this.applyClientChargeTombstone(rowId);
+      case "deal_confirmations":
+        return this.applyDealConfirmationTombstone(rowId);
+      case "xml_import_jobs":
+        return this.applyXmlImportJobTombstone(rowId);
+      default:
+        if (TOMBSTONE_APPLY_TABLES.has(tableName) && this.tableExists(tableName)) {
+          this.db.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(rowId);
+        }
+    }
+  }
+
+  /** Mesma cascata de deleteFiscalDocument, sem as checagens de vinculo (ver applyTombstone). */
+  private applyFiscalDocumentTombstone(id: string): void {
+    const now = new Date().toISOString();
+    if (this.tableExists("spreadsheet_import_rows")) this.db.prepare("UPDATE spreadsheet_import_rows SET fiscal_document_id = NULL, operation_id = NULL WHERE fiscal_document_id = ? OR operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id, id);
+    if (this.tableExists("xml_import_files")) this.db.prepare("UPDATE xml_import_files SET fiscal_document_id = NULL, status = 'REVERTED', updated_at = ? WHERE fiscal_document_id = ?").run(now, id);
+    if (this.tableExists("fiscal_document_merge_history")) this.db.prepare("DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").run(id);
+    if (this.tableExists("fiscal_document_events")) this.db.prepare("DELETE FROM fiscal_document_events WHERE fiscal_document_id = ?").run(id);
+    // deleteFiscalDocument() (a versao com regra de negocio) RECUSA apagar se
+    // a nota estiver vinculada a cobranca/confirmacao -- aqui a decisao ja
+    // foi tomada em outro lugar, entao desfaz o vinculo em vez de recusar
+    // (senao o DELETE de operations abaixo violaria FK contra essas tabelas).
+    if (this.tableExists("client_charge_operations")) this.db.prepare("DELETE FROM client_charge_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
+    if (this.tableExists("account_payable_operations")) this.db.prepare("DELETE FROM account_payable_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
+    if (this.tableExists("deal_confirmation_operations")) this.db.prepare("DELETE FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
+    if (this.tableExists("deal_confirmation_fiscal_documents")) this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ?").run(id);
+    if (this.tableExists("operation_rate_history")) this.db.prepare("DELETE FROM operation_rate_history WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
+    this.db.prepare("DELETE FROM operations WHERE fiscal_document_id = ?").run(id);
+    this.db.prepare("DELETE FROM fiscal_document_items WHERE fiscal_document_id = ?").run(id);
+    this.db.prepare("DELETE FROM fiscal_documents WHERE id = ?").run(id);
+  }
+
+  /** Mesma cascata de deleteClientCharge, sem as checagens de pagamento (ver applyTombstone). */
+  private applyClientChargeTombstone(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE client_charge_id = ?").run(now, id);
+    const creditAllocations = this.db.prepare("SELECT ledger_entry_id, amount_cents FROM client_credit_allocations WHERE client_charge_id = ?").all(id) as Array<{ ledger_entry_id: string; amount_cents: number }>;
+    creditAllocations.forEach((allocation) => this.db.prepare("UPDATE client_ledger_entries SET available_amount_cents = available_amount_cents + ?, updated_at = ? WHERE id = ?").run(allocation.amount_cents, now, allocation.ledger_entry_id));
+    this.db.prepare("UPDATE client_charges SET replaced_by_charge_id = NULL, updated_at = ? WHERE replaced_by_charge_id = ?").run(now, id);
+    [
+      "client_payment_allocations",
+      "client_credit_allocations",
+      "client_charge_adjustments",
+      "charge_status_history",
+      "charge_document_versions",
+      "client_charge_operations",
+      "client_ledger_entries"
+    ].forEach((tableName) => {
+      this.db.prepare(`DELETE FROM ${tableName} WHERE client_charge_id = ?`).run(id);
+    });
+    this.db.prepare("DELETE FROM client_charges WHERE id = ?").run(id);
+  }
+
+  /** Mesma cascata de deleteDealConfirmation (ver applyTombstone). */
+  private applyDealConfirmationTombstone(id: string): void {
+    this.db.prepare("UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL, updated_at = ? WHERE replaced_by_confirmation_id = ?").run(new Date().toISOString(), id);
+    [
+      "deal_confirmation_status_history",
+      "deal_confirmation_document_versions",
+      "deal_confirmation_signers",
+      "deal_payment_terms",
+      "deal_confirmation_clauses",
+      "deal_confirmation_fiscal_documents",
+      "deal_confirmation_operations",
+      "deal_confirmation_items",
+      "deal_confirmation_parties"
+    ].forEach((tableName) => {
+      this.db.prepare(`DELETE FROM ${tableName} WHERE deal_confirmation_id = ?`).run(id);
+    });
+    this.db.prepare("DELETE FROM deal_confirmations WHERE id = ?").run(id);
+  }
+
+  private applyXmlImportJobTombstone(id: string): void {
+    if (this.tableExists("xml_import_files")) this.db.prepare("DELETE FROM xml_import_files WHERE import_job_id = ?").run(id);
+    this.db.prepare("DELETE FROM xml_import_jobs WHERE id = ?").run(id);
+  }
+
+  /**
+   * Registra localmente (sempre, mesmo sem rede) e tenta empurrar pro
+   * Supabase a exclusao de UMA linha -- chamado depois que a exclusao local
+   * ja comitou (ver deleteFiscalDocument/deleteClientCharge/
+   * deleteDealConfirmation em ipc/handlers.ts, mesmo padrao de
+   * pushFiscalDocumentToShared etc: escreve local primeiro, sincrono, so'
+   * depois tenta a rede). Falha de rede vai pra fila de reenvio (ver
+   * sharedPushOutbox.ts) exatamente como qualquer outro push.
+   */
+  async pushTombstone(tableName: string, rowId: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.recordLocalTombstone(tableName, rowId, now);
+    if (!this.sharedRepository) return;
+    try {
+      await this.sharedRepository.upsertRow("sync_tombstones", { table_name: tableName, row_id: rowId, deleted_at: now });
+    } catch (error) {
+      this.outbox.enqueue("tombstone", `${tableName}:${rowId}`, error);
+      throw error;
+    }
   }
 
   getBootstrapData(version: string): BootstrapData {
@@ -934,15 +1226,43 @@ export class AppRepository {
    * linha completa porque o INSERT do upsert precisa satisfazer as colunas
    * NOT NULL da tabela mesmo quando cai no ramo de UPDATE.
    */
+  // app_users e' a unica tabela onde exclusao precisa mesmo propagar pros
+  // outros PCs (ver AuthService.deleteUser/pushUserDeletionToShared em
+  // security.ts) -- como um pull incremental por updated_at nao tem como
+  // detectar "essa linha sumiu do Postgres", a exclusao marca deleted_at em
+  // vez de apagar de verdade la'. Quando essa linha marcada chega aqui pelo
+  // pull, replica a mesma exclusao em cascata que o PC de origem fez
+  // localmente, em vez de reviver o usuario com um upsert comum.
+  private cascadeDeleteUserLocally(userId: string): void {
+    this.db.prepare("DELETE FROM local_sessions WHERE user_id = ?").run(userId);
+    this.db.prepare("DELETE FROM user_password_history WHERE user_id = ?").run(userId);
+    this.db.prepare("DELETE FROM user_credentials WHERE user_id = ?").run(userId);
+    this.db.prepare("DELETE FROM user_role_assignments WHERE user_id = ?").run(userId);
+    this.db.prepare("DELETE FROM app_users WHERE id = ?").run(userId);
+  }
+
   private upsertLocalRow(table: string, row: DbRecord): void {
+    if (table === "app_users" && row.deleted_at) {
+      this.cascadeDeleteUserLocally(String(row.id));
+      return;
+    }
     const normalized: DbRecord = {};
     for (const [key, value] of Object.entries(row)) {
       normalized[key] = typeof value === "boolean" ? (value ? 1 : 0) : value;
     }
     const columns = Object.keys(normalized);
     const placeholders = columns.map((c) => `@${c}`).join(", ");
-    const updates = columns.filter((c) => c !== "id").map((c) => `${c} = excluded.${c}`).join(", ");
-    this.db.prepare(`INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${updates}`).run(normalized);
+    // business_partner_roles e' a unica tabela onde o Postgres gera seu proprio
+    // id (ver comentario em pushAllLocalReferenceDataToShared/insertRow) --
+    // isso significa que o id que chega aqui puxando do Supabase pode ser
+    // DIFERENTE do id que este PC (ou outro) usou quando criou a mesma role
+    // localmente antes dela sincronizar. Mirar o upsert em `id` nesse caso faz
+    // um INSERT novo em vez de atualizar a linha existente, violando o indice
+    // unico (business_partner_id, role) -- precisa mirar a chave natural, igual
+    // ja e' feito no lado de empurrar (push) pra essa mesma tabela.
+    const conflictTarget = table === "business_partner_roles" ? "business_partner_id, role" : "id";
+    const updates = columns.filter((c) => !conflictTarget.split(", ").includes(c)).map((c) => `${c} = excluded.${c}`).join(", ");
+    this.db.prepare(`INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders}) ON CONFLICT(${conflictTarget}) DO UPDATE SET ${updates}`).run(normalized);
   }
 
   /**
@@ -3422,6 +3742,45 @@ export class AppRepository {
     return this.getClientCharge(charge.id);
   }
 
+  // Exclusao definitiva (nao so' cancelamento): apaga a cobranca e o historico
+  // dela de vez, igual ja funciona pra confirmacoes de negocio (ver
+  // deleteDealConfirmation). Cobranca com pagamento registrado nao pode ser
+  // excluida por aqui -- so' cancelClientCharge, que preserva o rastro.
+  deleteClientCharge(id: string): void {
+    const detail = this.getClientCharge(id);
+    if (detail.charge.status === "PAID" || detail.charge.paidAmountCents > 0) throw new Error("Cobranca com pagamento registrado nao pode ser excluida.");
+    const documentPaths = detail.documents.flatMap((document) => [document.pdfFilePath, document.excelFilePath, document.imageFilePath]).filter((path): path is string => Boolean(path));
+    const now = new Date().toISOString();
+    const trx = this.db.transaction(() => {
+      this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE client_charge_id = ?").run(now, id);
+      detail.creditAllocations.forEach((allocation) => this.db.prepare("UPDATE client_ledger_entries SET available_amount_cents = available_amount_cents + ?, updated_at = ? WHERE id = ?").run(allocation.amountCents, now, allocation.ledgerEntryId));
+      this.db.prepare("UPDATE client_charges SET replaced_by_charge_id = NULL, updated_at = ? WHERE replaced_by_charge_id = ?").run(now, id);
+      [
+        "client_payment_allocations",
+        "client_credit_allocations",
+        "client_charge_adjustments",
+        "charge_status_history",
+        "charge_document_versions",
+        "client_charge_operations",
+        // SERVICE_CHARGE lancado na conta-corrente quando a cobranca foi emitida
+        // (ver issueClientCharge) -- se ficasse orfao aqui, inflava o "total dos
+        // servicos" do cliente com um valor que nao corresponde a cobranca nenhuma.
+        "client_ledger_entries"
+      ].forEach((tableName) => {
+        this.db.prepare(`DELETE FROM ${tableName} WHERE client_charge_id = ?`).run(id);
+      });
+      this.db.prepare("DELETE FROM client_charges WHERE id = ?").run(id);
+    });
+    trx();
+    documentPaths.forEach((filePath) => {
+      try {
+        if (existsSync(filePath)) unlinkSync(filePath);
+      } catch {
+        // A remocao do registro e mais importante; sobras de arquivo nao travam a exclusao.
+      }
+    });
+  }
+
   cancelClientCharge(id: string, reason: string): ClientChargeDetail {
     if (!reason.trim()) throw new Error("Motivo obrigatorio.");
     const detail = this.getClientCharge(id);
@@ -5374,8 +5733,11 @@ export class AppRepository {
   }
 
   private recordPayableStatus(id: string, previous: string | null, next: string, reason: string): void {
+    // changed_by_user_id fica null (em vez de um placeholder tipo "usuario-provisorio")
+    // porque a coluna correspondente no Postgres e' uuid -- mandar uma string
+    // fixa la' quebrava o push desse historico pra sempre.
     this.db.prepare("INSERT INTO payable_status_history (id, account_payable_id, previous_status, new_status, reason, changed_by_user_id, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), id, previous, next, reason, "usuario-provisorio", new Date().toISOString());
+      .run(randomUUID(), id, previous, next, reason, null, new Date().toISOString());
   }
 
   private buildRecurringOccurrences(template: PayableRecurringTemplate, monthsAhead: number): Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: "ESTIMATED" | "CONFIRMED" }> {
@@ -6387,8 +6749,11 @@ export class AppRepository {
   }
 
   private recordDealStatus(id: string, previousStatus: DealConfirmationStatus | null, newStatus: DealConfirmationStatus, reason: string | null): void {
+    // changed_by_user_id fica null pelo mesmo motivo de recordPayableStatus:
+    // a coluna no Postgres e' uuid, um placeholder de texto fixo quebrava o
+    // push desse historico pra sempre.
     this.db.prepare("INSERT INTO deal_confirmation_status_history (id, deal_confirmation_id, previous_status, new_status, reason, changed_by_user_id, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), id, previousStatus, newStatus, reason, "usuario-provisorio", new Date().toISOString());
+      .run(randomUUID(), id, previousStatus, newStatus, reason, null, new Date().toISOString());
   }
 
   private reserveNextDealConfirmationNumber(organizationId: string, ownLegalEntityId: string, yearText: string): string {

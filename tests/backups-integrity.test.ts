@@ -46,7 +46,7 @@ describe("backups, restore preparation and integrity", () => {
     expect(job.documentCount).toBeGreaterThan(0);
     const inspection = backups.verify({ path: job.storedFilePath });
     expect(inspection.valid).toBe(true);
-    expect(inspection.manifest?.databaseMigrationVersion).toBe("036_stable_release_operational_reset");
+    expect(inspection.manifest?.databaseMigrationVersion).toBe("040_sync_tombstones");
     expect(inspection.manifest?.totalFileCount).toBe(job.fileCount);
   });
 
@@ -77,6 +77,29 @@ describe("backups, restore preparation and integrity", () => {
     const orphans = backups.findOrphans();
     expect(orphans.findings.some((finding) => finding.findingType === "TEMPORARY_FILE")).toBe(true);
     expect(backups.generateIntegrityReport().reportPath).toContain("integrity");
+  });
+
+  it("executeRestore reverte o banco para o estado do backup, dentro de um diretorio isolado (nunca o banco real)", async () => {
+    const { context, auth, backups } = await createServices();
+    const beforeBackup = await backups.create({ backupType: "FULL", destinationType: "INTERNAL", encrypted: false });
+
+    // Muda o estado DEPOIS do backup -- e' isso que precisa sumir apos restaurar.
+    await auth.createUser({ displayName: "Sera Revertido", username: "sera-revertido", email: null, password: "Trocar@123", mustChangePassword: true });
+    expect(auth.listUsers().map((user) => user.username)).toContain("sera-revertido");
+
+    const restoreJob = await backups.executeRestore({ path: beforeBackup.storedFilePath, password: null, currentUserPassword: "Senha@12345" });
+    expect(restoreJob.status).toBe("COMPLETED");
+    // executeRestore troca o arquivo do banco no disco (replaceCurrentState) --
+    // a conexao aberta em memoria nao acompanha a troca sozinha, entao reabre
+    // pra ler o estado restaurado de verdade (mesma limitacao que o app real
+    // tem: depois de restaurar, precisa reiniciar pra reabrir o banco novo).
+    context.db.close();
+    const { initializeDatabase: reopenDb } = await import("../electron/main/database/database");
+    const reopened = reopenDb(context.directories);
+    databases.push(reopened);
+    const reopenedAuth = new (await import("../electron/main/services/security")).AuthService(reopened);
+    await reopenedAuth.login({ username: "admin", password: "Senha@12345" });
+    expect(reopenedAuth.listUsers().map((user) => user.username)).not.toContain("sera-revertido");
   });
 
   it("applies retention without deleting protected backups", async () => {

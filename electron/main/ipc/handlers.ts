@@ -115,6 +115,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());
   handle(IPC_CHANNELS.createUser, (_event, payload: unknown) => auth.createUser(payload));
   handle(IPC_CHANNELS.updateUser, (_event, payload: unknown) => auth.updateUser(payload));
+  handle(IPC_CHANNELS.deleteUser, (_event, payload: unknown) => auth.deleteUser(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listRoles, () => auth.listRoles());
   handle(IPC_CHANNELS.listPermissions, () => auth.listPermissions());
   handle(IPC_CHANNELS.assignUserRole, (_event, payload: unknown) => auth.assignRole(payload));
@@ -426,7 +427,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     await repository.pushFiscalDocumentToShared(result.document.id).catch((error) => logPushFailure("updateFiscalDocument", error));
     return result;
   });
-  handle(IPC_CHANNELS.deleteFiscalDocument, (_event, payload: unknown) => repository.deleteFiscalDocument(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.deleteFiscalDocument, async (_event, payload: unknown) => {
+    const id = z.string().uuid().parse(payload);
+    repository.deleteFiscalDocument(id);
+    await repository.pushTombstone("fiscal_documents", id).catch((error) => logPushFailure("deleteFiscalDocument", error));
+  });
   handle(IPC_CHANNELS.completeFiscalDocumentTriangulation, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     const result = repository.completeFiscalDocumentTriangulation(data.id, data.input);
@@ -752,6 +757,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     await repository.pushClientChargeToShared(result.charge.id).catch((error) => logPushFailure("cancelClientCharge", error));
     return result;
   });
+  handle(IPC_CHANNELS.deleteClientCharge, async (_event, payload: unknown) => {
+    const id = z.string().uuid().parse(payload);
+    repository.deleteClientCharge(id);
+    await repository.pushTombstone("client_charges", id).catch((error) => logPushFailure("deleteClientCharge", error));
+  });
   handle(IPC_CHANNELS.listClientCharges, (_event, payload: unknown) => repository.listClientCharges(z.object({ organizationId: z.string().uuid().optional(), clientPartnerId: z.string().uuid().optional(), status: z.string().optional() }).optional().parse(payload) ?? {}));
   handle(IPC_CHANNELS.getClientCharge, (_event, payload: unknown) => repository.getClientCharge(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.regenerateChargeDocuments, async (_event, payload: unknown) => {
@@ -985,7 +995,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     await pushConfirmation(result.confirmation.id, "duplicateDealConfirmationAsDraft");
     return result;
   });
-  handle(IPC_CHANNELS.deleteDealConfirmation, (_event, payload: unknown) => repository.deleteDealConfirmation(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.deleteDealConfirmation, async (_event, payload: unknown) => {
+    const id = z.string().uuid().parse(payload);
+    const result = repository.deleteDealConfirmation(id);
+    await repository.pushTombstone("deal_confirmations", id).catch((error) => logPushFailure("deleteDealConfirmation", error));
+    return result;
+  });
   handle(IPC_CHANNELS.updateDealConfirmationDraft, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), input: z.unknown() }).parse(payload);
     const result = repository.updateDealConfirmationDraft(data.id, data.input);

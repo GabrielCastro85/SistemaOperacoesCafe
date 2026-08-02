@@ -1,6 +1,6 @@
 {
   "name": "sistema-operacoes-cafe",
-  "version": "1.0.1",
+  "version": "1.0.13",
   "private": true,
   "description": "Aplicativo desktop offline-first para gerenciamento de operacoes de empresas do ramo de cafe.",
   "author": "Sistema Operacoes Cafe",
@@ -82,7 +82,7 @@
   },
   "build": {
     "appId": "br.com.operacoescafe.multiempresa",
-    "productName": "Sistema de Operacoes de Cafe",
+    "productName": "Operações Café",
     "executableName": "SistemaOperacoesCafe",
     "directories": {
       "output": "release"
@@ -106,8 +106,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Sistema de Operacoes de Cafe",
-      "uninstallDisplayName": "Sistema de Operacoes de Cafe",
+      "shortcutName": "Operações Café",
+      "uninstallDisplayName": "Operações Café",
       "deleteAppDataOnUninstall": false,
       "language": "1046"
     }

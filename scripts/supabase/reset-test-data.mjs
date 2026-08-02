@@ -117,6 +117,32 @@ async function main() {
     }
     const seq = await client.query("UPDATE document_sequences SET current_number = 0, updated_at = now()");
     console.log(`  UPDATE document_sequences (reset contador): ${seq.rowCount} linha(s)`);
+
+    // Grava um tombstone por linha apagada dos 4 tipos "raiz" (as tabelas
+    // filhas nao precisam de tombstone proprio -- cada PC que aplica o
+    // tombstone da raiz já apaga a cascata inteira localmente, ver
+    // applyTombstone em electron/main/services/appRepository.ts). Sem isso,
+    // qualquer PC que ainda nao sabia dessas linhas (ou tinha copia local
+    // desatualizada) reenvia elas de volta pro Supabase na proxima
+    // sincronizacao/reconexao -- foi exatamente isso que trouxe os dados de
+    // teste de volta mais de uma vez depois dos resets anteriores.
+    if (await tableExists(client, "sync_tombstones")) {
+      const tombstoneTables = ["fiscal_documents", "xml_import_jobs", "client_charges", "deal_confirmations"];
+      for (const table of tombstoneTables) {
+        const ids = (dump[table] ?? []).map((row) => row.id);
+        for (const id of ids) {
+          await client.query(
+            `INSERT INTO sync_tombstones (table_name, row_id, deleted_at) VALUES ($1, $2, now())
+             ON CONFLICT (table_name, row_id) DO UPDATE SET deleted_at = excluded.deleted_at`,
+            [table, id]
+          );
+        }
+        if (ids.length > 0) console.log(`  sync_tombstones (${table}): ${ids.length} marcado(s)`);
+      }
+    } else {
+      console.log("  AVISO: tabela sync_tombstones ainda nao existe no Postgres -- rode a migration 0017 antes, senao PCs desatualizados podem reenviar esses dados de volta.");
+    }
+
     await client.query("commit");
     console.log("\nConcluido e confirmado.");
   } catch (error) {

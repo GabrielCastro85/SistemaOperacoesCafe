@@ -125,6 +125,26 @@ describe("local authentication and authorization", () => {
       expect(getIpcPolicy(channel).mode).toMatch(/public|authenticated|permission/);
     }
     expect(getIpcPolicy("users:create")).toMatchObject({ mode: "permission", permission: "users.manage" });
+    expect(getIpcPolicy("users:delete")).toMatchObject({ mode: "permission", permission: "users.manage" });
     expect(getIpcPolicy("unknown:channel")).toMatchObject({ mode: "authenticated" });
+  });
+
+  it("deleteUser removes the account for good -- it can no longer log in and disappears from listUsers", async () => {
+    const auth = createAuthService();
+    await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
+    const created = await auth.createUser({ displayName: "Thadeu", username: "thadeu", password: "temporaria123", mustChangePassword: true });
+    await auth.assignRole({ userId: created.id, roleId: "role-employee-operacional" });
+    expect(auth.listUsers().map((user) => user.id)).toContain(created.id);
+
+    await auth.deleteUser(created.id);
+
+    expect(auth.listUsers().map((user) => user.id)).not.toContain(created.id);
+    await expect(auth.login({ username: "thadeu", password: "temporaria123" })).rejects.toThrow();
+  });
+
+  it("blocks deleting your own logged-in account", async () => {
+    const auth = createAuthService();
+    const session = await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
+    await expect(auth.deleteUser(session.user.id)).rejects.toThrow(/proprio usuario/);
   });
 });

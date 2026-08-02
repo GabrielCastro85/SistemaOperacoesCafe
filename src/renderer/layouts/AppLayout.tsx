@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
@@ -94,7 +94,17 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
 // poll automatico de 20s (ver electron/main/index.ts) traz algo novo de
 // outro PC, com atalho pra sincronizar na hora. So' aparece se este PC
 // estiver conectado ao Supabase (senao nao ha nada pra sincronizar).
-function SharedSyncIndicator(): JSX.Element | null {
+//
+// onDataSynced() forca a tela atual a remontar do zero (ver syncRefreshKey
+// em AppLayout) -- de proposito so' e' chamado aqui dentro de syncNow()
+// (clique manual em "Sincronizar agora"), nunca a partir do poll automatico
+// de 20s. Chamar num poll em segundo plano apagaria sem aviso qualquer
+// formulario que o usuario estivesse preenchendo naquele momento (ex:
+// lancando uma nota) so' porque OUTRO PC sincronizou algo sem relacao
+// nenhuma -- com 4 PCs ativos ao mesmo tempo, isso ia acontecer o tempo
+// todo. O clique manual e' seguro porque e' uma acao que o proprio usuario
+// pediu, sabendo que a tela vai atualizar.
+function SharedSyncIndicator({ onDataSynced }: { onDataSynced: () => void }): JSX.Element | null {
   const [connected, setConnected] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
@@ -123,6 +133,7 @@ function SharedSyncIndicator(): JSX.Element | null {
     try {
       await window.operationsCafe.syncSharedData();
       setPendingCount(0);
+      onDataSynced();
     } finally {
       setSyncing(false);
     }
@@ -171,6 +182,10 @@ export function AppLayout({
   children
 }: AppLayoutProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
+  const [syncRefreshKey, setSyncRefreshKey] = useState(0);
+  const refreshSyncedData = useCallback(() => {
+    setSyncRefreshKey((value) => value + 1);
+  }, []);
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveOrganizationLogoSrc(organization, variant);
@@ -266,10 +281,10 @@ export function AppLayout({
             <button type="button" onClick={onLogout}>Sair</button>
           </div>
         </header>
-        {children}
+        <Fragment key={syncRefreshKey}>{children}</Fragment>
         <footer className="app-statusbar">
           <span>Backup automático ativo</span>
-          <SharedSyncIndicator />
+          <SharedSyncIndicator onDataSynced={refreshSyncedData} />
           <strong>{theme.appName} {version}</strong>
         </footer>
       </section>

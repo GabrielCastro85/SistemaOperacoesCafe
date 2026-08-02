@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AppRole, AppUser, AuthSession } from "../../../../shared/types/domain";
 import { PageHeader } from "../../../design-system";
+import { requestDecision } from "../../../utils/dialogs";
 
 export function UsersPage(): JSX.Element {
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -47,6 +48,25 @@ export function UsersPage(): JSX.Element {
     await load();
   }
 
+  async function deleteUser(user: AppUser): Promise<void> {
+    if (!isAdmin) {
+      setMessage("Somente o administrador pode excluir usuarios.");
+      return;
+    }
+    const confirmed = await requestDecision({
+      title: "Excluir usuario definitivamente",
+      message: `Excluir ${user.displayName} (${user.username}) para sempre? Ele perde o acesso e o cadastro some deste PC e, assim que os outros sincronizarem, some deles tambem -- nao pode ser desfeito.`
+    });
+    if (!confirmed) return;
+    try {
+      await window.operationsCafe.deleteUser(user.id);
+      setMessage("Usuario excluido.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao excluir usuario.");
+    }
+  }
+
   return (
     <section className="content-section settings">
       <PageHeader eyebrow="Configuracoes" title="Usuarios" description="Cadastro local, bloqueio e atribuicao inicial de roles." />
@@ -70,6 +90,7 @@ export function UsersPage(): JSX.Element {
             <span className="row-actions">
               {isAdmin ? user.status === "ACTIVE" ? <button onClick={() => void setStatus(user.id, "LOCKED")}>Bloquear</button> : <button onClick={() => void setStatus(user.id, "ACTIVE")}>Reativar</button> : null}
               {isAdmin ? <button className="danger-action" onClick={() => void setStatus(user.id, "INACTIVE")}>Inativar</button> : <span>-</span>}
+              {isAdmin && user.id !== session?.user.id ? <button className="danger-action" onClick={() => void deleteUser(user)}>Excluir</button> : null}
             </span>
           </div>
         ))}

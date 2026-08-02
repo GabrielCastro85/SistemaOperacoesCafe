@@ -63,6 +63,47 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("deleteClientCharge remove a cobranca de vez, libera a operacao, estorna o credito usado e apaga os arquivos gerados", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    createConfirmedOperation(repo, partnerId, productId, "7002", "10.5");
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+    const operationId = eligible[0].id;
+    const credit = repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 2000, entryDate: "2026-07-10", description: "Adiantamento", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 2000 });
+    repo.applyCredit({ ledgerEntryId: credit.id, clientChargeId: draft.charge.id, amountCents: 1500 });
+    const issued = await repo.issueClientCharge(draft.charge.id);
+    const pdfPath = issued.charge.pdfFilePath as string;
+    const excelPath = issued.charge.excelFilePath as string;
+    const imagePath = issued.charge.imageFilePath as string;
+    expect(existsSync(pdfPath)).toBe(true);
+
+    repo.deleteClientCharge(issued.charge.id);
+
+    expect(() => repo.getClientCharge(issued.charge.id)).toThrow();
+    const releasedOperation = repo.listOperations({ organizationId: villaId }).find((item) => item.id === operationId);
+    if (!releasedOperation) throw new Error("Operacao nao encontrada apos exclusao da cobranca.");
+    expect(releasedOperation.billingStatus).toBe("UNBILLED");
+    expect(releasedOperation.clientChargeId).toBeNull();
+    const refreshedCredit = repo.listLedgerEntries({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId }).find((entry) => entry.id === credit.id);
+    expect(refreshedCredit?.availableAmountCents).toBe(2000);
+    expect(existsSync(pdfPath)).toBe(false);
+    expect(existsSync(excelPath)).toBe(false);
+    expect(existsSync(imagePath)).toBe(false);
+    db.close();
+  });
+
+  it("deleteClientCharge bloqueia cobranca com pagamento registrado -- so' cancelClientCharge preserva o rastro nesse caso", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    createConfirmedOperation(repo, partnerId, productId, "7003", "10.5");
+    const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+    const issued = await repo.issueClientCharge(draft.charge.id);
+    const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: 1000, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+    repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: 1000 });
+    expect(() => repo.deleteClientCharge(issued.charge.id)).toThrow(/pagamento registrado/);
+    db.close();
+  });
+
   it("applies surcharge ledger entries to increase a client charge", async () => {
     const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "7002", "10.5");

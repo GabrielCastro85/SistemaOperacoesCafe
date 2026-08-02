@@ -475,7 +475,26 @@ export class BackupService {
   private async replaceCurrentState(tempDir: string): Promise<void> {
     const dbSource = join(tempDir, "database", "application.sqlite");
     if (!existsSync(dbSource)) throw new Error("Banco restaurado ausente.");
+    // O banco atual (que esta sendo substituido) pode ter transacoes recentes
+    // ainda so' no WAL, nao checkpointadas pro arquivo principal -- sobrescrever
+    // so' o .sqlite e deixar o -wal antigo no lugar faz o SQLite reaplicar
+    // essas transacoes "fantasmas" por cima do banco restaurado na proxima vez
+    // que abrir, revivendo dado que devia ter sumido com a restauracao. A
+    // conexao (this.context.db) continua aberta durante o restore inteiro (o
+    // proprio executeRestore ainda escreve nela depois desta funcao), entao
+    // apagar o -wal por fora (rmSync) da' EBUSY no Windows -- o jeito seguro e'
+    // pedir pra ELA MESMA fazer o checkpoint e truncar o proprio WAL antes da
+    // copia, isso esvazia o arquivo sem precisar excluir nada que ela tenha
+    // aberto.
+    this.context.db.pragma("wal_checkpoint(TRUNCATE)");
     copyFileSync(dbSource, this.context.directories.databasePath);
+    // Se o banco restaurado (ja fechado apos migrations/quick_check) ainda
+    // tiver seu proprio -wal/-shm por algum motivo, copia junto -- senao o
+    // conteudo dele ficaria perdido do mesmo jeito.
+    for (const suffix of ["-wal", "-shm"]) {
+      const sourceSidecar = `${dbSource}${suffix}`;
+      if (existsSync(sourceSidecar)) copyFileSync(sourceSidecar, `${this.context.directories.databasePath}${suffix}`);
+    }
     const docsSource = join(tempDir, "documents");
     if (existsSync(docsSource)) {
       rmSync(this.context.directories.documentsDir, { recursive: true, force: true });

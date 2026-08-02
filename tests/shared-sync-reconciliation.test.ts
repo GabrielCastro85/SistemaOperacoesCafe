@@ -89,6 +89,17 @@ describe("shared sync reconciliation", () => {
     expect(sequencesResult?.error).toBeNull();
     expect(fake.bulkCalls.some((call) => call.table === "document_sequences")).toBe(false);
 
+    // Usuarios e historico de status tambem entram em HOT_SYNC_TABLES para
+    // serem puxados dos outros PCs, mas nao devem ser empurrados pelo botao
+    // "Sincronizar agora" em lote: usuarios sobem pelo AuthService e
+    // charge_status_history e' auditoria local sem policy de escrita generica.
+    for (const table of ["charge_status_history", "app_users", "user_credentials", "user_role_assignments"]) {
+      const result = results.find((r) => r.table === table);
+      expect(result?.error).toBeNull();
+      expect(result?.pushed).toBe(0);
+      expect(fake.bulkCalls.some((call) => call.table === table)).toBe(false);
+    }
+
     db.close();
   });
 

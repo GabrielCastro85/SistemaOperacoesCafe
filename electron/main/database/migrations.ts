@@ -2970,5 +2970,147 @@ export const migrations: Migration[] = [
         UPDATE app_settings SET value = '1970-01-01T00:00:00.000Z', updated_at = datetime('now') WHERE key LIKE 'sync_cursor_%';
       `);
     }
+  },
+  {
+    name: "037_app_users_soft_delete",
+    up: (db) => {
+      // Espelha a coluna deleted_at adicionada no Postgres (migration
+      // 0016_app_users_soft_delete.sql) -- sem essa coluna aqui, TODO pull de
+      // app_users falha ("table app_users has no column named deleted_at"),
+      // ja que upsertLocalRow em appRepository.ts grava todas as colunas que
+      // vierem da linha compartilhada. So' e' usada localmente pra detectar a
+      // marca e replicar a exclusao em cascata (ver upsertLocalRow) -- nunca
+      // fica preenchida de verdade aqui, ja que exclusao local e' sempre
+      // imediata (DELETE de verdade, nao soft-delete).
+      db.exec(`ALTER TABLE app_users ADD COLUMN deleted_at TEXT;`);
+    }
+  },
+  {
+    name: "038_shared_push_outbox",
+    up: (db) => {
+      // Fila local de reenvio pro Supabase. Ate' aqui, todo push que falhava
+      // (rede instavel, PC offline por um instante, etc.) so' logava um aviso
+      // e desistia pra sempre -- a gravacao local funcionava, mas o dado
+      // ficava preso so' naquele PC, sem ninguem perceber ("dados nao
+      // aparecem nos outros PCs"). Essa tabela guarda o que falhou; o proximo
+      // ciclo de sincronizacao (poll de 20s ou "Sincronizar agora") tenta de
+      // novo ate' conseguir. Dedup por (push_kind, entity_id): a mesma
+      // entidade falhando de novo antes do reenvio funcionar so' atualiza a
+      // mesma linha, nao acumula.
+      db.exec(`
+        CREATE TABLE shared_push_outbox (
+          id TEXT PRIMARY KEY,
+          push_kind TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 1,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          last_attempted_at TEXT,
+          UNIQUE(push_kind, entity_id)
+        );
+      `);
+    }
+  },
+  {
+    name: "039_operational_reset_2026_08_02",
+    up: (db) => {
+      // Mesma logica de 036_stable_release_operational_reset (que ja e' o
+      // espelho local de scripts/supabase/reset-test-data.mjs), pro reset
+      // operacional que rodou direto no Postgres na madrugada de 02/08/2026
+      // (~03:57 UTC). Precisa de uma migracao NOVA (nao reaproveitar a 036)
+      // porque um PC que ja tinha atualizado antes desse reset ja rodou a
+      // 036 faz tempo -- migracao so' roda uma vez por PC. Sem isso, um PC
+      // que sincronizou dados antes do reset (ex: ficou desligado durante a
+      // madrugada) nunca fica sabendo que aquelas linhas sumiram do
+      // Supabase: o pull so' traz linha nova/alterada, nunca detecta uma
+      // linha que deixou de existir la'.
+      //
+      // DIFERENCA importante em relacao a' 036: aqui o wipe e' filtrado por
+      // data (< CUTOFF, um pouco depois do horario real do reset). A 036
+      // rodou numa fase de testes sem uso real; agora o sistema tem PCs
+      // ativos o dia todo, entao um wipe cego apagaria localmente qualquer
+      // nota/cobranca/confirmacao lancada DEPOIS do reset por um PC que so'
+      // atualiza mais tarde -- exatamente o tipo de perda de dados que a
+      // fila de reenvio (038) foi criada pra evitar do lado do push. Cadastros
+      // (empresas, clientes/corretores, fornecedores, produtos, regras de
+      // tarifa) ficam de fora, igual no reset original.
+      const CUTOFF = "2026-08-02T04:00:00.000Z";
+      db.exec(`
+        UPDATE client_charges SET replaced_by_charge_id = NULL WHERE updated_at < '${CUTOFF}';
+        UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL WHERE updated_at < '${CUTOFF}';
+
+        DELETE FROM business_partner_merges WHERE created_at < '${CUTOFF}';
+        DELETE FROM financial_report_generations WHERE created_at < '${CUTOFF}';
+
+        DELETE FROM charge_status_history WHERE created_at < '${CUTOFF}';
+        DELETE FROM charge_document_versions WHERE created_at < '${CUTOFF}';
+        DELETE FROM client_payment_allocations WHERE allocated_at < '${CUTOFF}';
+        DELETE FROM client_credit_allocations WHERE allocated_at < '${CUTOFF}';
+        DELETE FROM client_charge_adjustments WHERE updated_at < '${CUTOFF}';
+        DELETE FROM client_charge_operations WHERE created_at < '${CUTOFF}';
+
+        DELETE FROM payable_document_attachments WHERE created_at < '${CUTOFF}';
+        DELETE FROM payable_status_history WHERE changed_at < '${CUTOFF}';
+        DELETE FROM payable_payment_allocations WHERE allocated_at < '${CUTOFF}';
+        DELETE FROM account_payable_operations WHERE created_at < '${CUTOFF}';
+        DELETE FROM account_payable_allocations WHERE updated_at < '${CUTOFF}';
+
+        DELETE FROM deal_confirmation_document_versions WHERE created_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_status_history WHERE changed_at < '${CUTOFF}';
+        DELETE FROM deal_payment_terms WHERE updated_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_signers WHERE updated_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_fiscal_documents WHERE created_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_operations WHERE created_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_clauses WHERE updated_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_items WHERE updated_at < '${CUTOFF}';
+        DELETE FROM deal_confirmation_parties WHERE updated_at < '${CUTOFF}';
+
+        DELETE FROM operation_rate_history WHERE changed_at < '${CUTOFF}';
+        DELETE FROM fiscal_document_merge_history WHERE created_at < '${CUTOFF}';
+        DELETE FROM fiscal_document_events WHERE created_at < '${CUTOFF}';
+
+        DELETE FROM xml_import_files WHERE updated_at < '${CUTOFF}';
+        DELETE FROM spreadsheet_import_rows WHERE created_at < '${CUTOFF}';
+
+        DELETE FROM operations WHERE updated_at < '${CUTOFF}';
+        DELETE FROM fiscal_document_items WHERE updated_at < '${CUTOFF}';
+        DELETE FROM client_payments WHERE updated_at < '${CUTOFF}';
+        DELETE FROM client_ledger_entries WHERE updated_at < '${CUTOFF}';
+        DELETE FROM client_charges WHERE updated_at < '${CUTOFF}';
+        DELETE FROM payable_payments WHERE updated_at < '${CUTOFF}';
+        DELETE FROM accounts_payable WHERE updated_at < '${CUTOFF}';
+        DELETE FROM payable_installment_groups WHERE updated_at < '${CUTOFF}';
+        DELETE FROM payable_recurring_templates WHERE updated_at < '${CUTOFF}';
+        DELETE FROM deal_confirmations WHERE updated_at < '${CUTOFF}';
+        DELETE FROM fiscal_documents WHERE updated_at < '${CUTOFF}';
+        DELETE FROM xml_import_jobs WHERE updated_at < '${CUTOFF}';
+        DELETE FROM spreadsheet_import_jobs WHERE created_at < '${CUTOFF}';
+
+        UPDATE document_sequences SET current_number = 0, updated_at = datetime('now');
+        UPDATE app_settings SET value = '1970-01-01T00:00:00.000Z', updated_at = datetime('now') WHERE key LIKE 'sync_cursor_%';
+      `);
+    }
+  },
+  {
+    name: "040_sync_tombstones",
+    up: (db) => {
+      // Espelho local de supabase/migrations/0017_sync_tombstones.sql --
+      // registro permanente de "essa linha foi apagada de proposito" pra
+      // qualquer tabela compartilhada. Sem isso, pushAllLocalReferenceDataToShared
+      // (upsert de tudo que existe localmente, chamado a cada "Sincronizar
+      // agora"/reconexao) ressuscita pro Postgres qualquer linha que este PC
+      // ainda nao sabia que tinha sido apagada em outro lugar -- ver
+      // appRepository.ts (pushTombstone/applyTombstone) e a migracao 039
+      // (o mesmo problema, resolvido so' pra uma data especifica; esta aqui
+      // e' a versao permanente, vale pra qualquer exclusao futura tambem).
+      db.exec(`
+        CREATE TABLE sync_tombstones (
+          table_name TEXT NOT NULL,
+          row_id TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          PRIMARY KEY (table_name, row_id)
+        );
+      `);
+    }
   }
 ];

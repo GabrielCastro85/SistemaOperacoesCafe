@@ -13,6 +13,7 @@ import type {
   LocalSessionStatus
 } from "../../../src/shared/types/domain.js";
 import type { SharedRepository } from "./sharedRepository.js";
+import { SharedPushOutbox } from "./sharedPushOutbox.js";
 
 const CREDENTIAL_FORMAT = "scrypt$v1$N=16384,r=8,p=1,keylen=64";
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
@@ -37,6 +38,30 @@ function toSharedAuthRow(row: DbRecord, table: string): DbRecord {
     if (column in converted) converted[column] = Boolean(Number(converted[column]));
   }
   return converted;
+}
+
+/**
+ * Reenvio de usuario/exclusao de usuario pro Supabase, chamado pela fila de
+ * reenvio em appRepository.ts (flushSharedPushOutbox). Exportadas como
+ * funcoes soltas (em vez de metodos privados de AuthService) porque o
+ * reenvio roda a partir de AppRepository, que nao tem (nem deveria ter) uma
+ * instancia de AuthService -- as duas classes so' compartilham o mesmo `db`
+ * e `sharedRepository`, que e' tudo que essa logica precisa.
+ */
+export async function replayUserPush(db: Database.Database, sharedRepository: SharedRepository, userId: string): Promise<void> {
+  const user = db.prepare("SELECT * FROM app_users WHERE id = ?").get(userId) as DbRecord | undefined;
+  if (user) await sharedRepository.upsertRow("app_users", toSharedAuthRow(user, "app_users"));
+  const credential = db.prepare("SELECT * FROM user_credentials WHERE user_id = ?").get(userId) as DbRecord | undefined;
+  if (credential) await sharedRepository.upsertRow("user_credentials", toSharedAuthRow(credential, "user_credentials"));
+  const assignments = db.prepare("SELECT * FROM user_role_assignments WHERE user_id = ?").all(userId) as DbRecord[];
+  for (const assignment of assignments) await sharedRepository.upsertRow("user_role_assignments", toSharedAuthRow(assignment, "user_role_assignments"));
+}
+
+export async function replayUserDeletionPush(db: Database.Database, sharedRepository: SharedRepository, userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  await sharedRepository.deleteWhere("user_role_assignments", { user_id: userId });
+  await sharedRepository.deleteWhere("user_credentials", { user_id: userId });
+  await sharedRepository.updateRow("app_users", userId, { deleted_at: now, updated_at: now });
 }
 
 export const AUTH_PUBLIC_CHANNELS = new Set([
@@ -107,8 +132,11 @@ export class AuthError extends Error {
 
 export class AuthService {
   private currentSessionId: string | null = null;
+  private readonly outbox: SharedPushOutbox;
 
-  constructor(private readonly db: Database.Database, private readonly sharedRepository?: SharedRepository) {}
+  constructor(private readonly db: Database.Database, private readonly sharedRepository?: SharedRepository) {
+    this.outbox = new SharedPushOutbox(db);
+  }
 
   /**
    * Login de funcionario passa a sincronizar entre os 4 PCs -- sem isso, um
@@ -120,14 +148,10 @@ export class AuthService {
   private async pushUserToShared(userId: string): Promise<void> {
     if (!this.sharedRepository) return;
     try {
-      const user = this.db.prepare("SELECT * FROM app_users WHERE id = ?").get(userId) as DbRecord | undefined;
-      if (user) await this.sharedRepository.upsertRow("app_users", toSharedAuthRow(user, "app_users"));
-      const credential = this.db.prepare("SELECT * FROM user_credentials WHERE user_id = ?").get(userId) as DbRecord | undefined;
-      if (credential) await this.sharedRepository.upsertRow("user_credentials", toSharedAuthRow(credential, "user_credentials"));
-      const assignments = this.db.prepare("SELECT * FROM user_role_assignments WHERE user_id = ?").all(userId) as DbRecord[];
-      for (const assignment of assignments) await this.sharedRepository.upsertRow("user_role_assignments", toSharedAuthRow(assignment, "user_role_assignments"));
+      await replayUserPush(this.db, this.sharedRepository, userId);
     } catch (error) {
-      log.warn("Falha ao sincronizar usuario com o Supabase (gravacao local prossegue mesmo assim)", error instanceof Error ? error.message : error);
+      log.warn("Falha ao sincronizar usuario com o Supabase (gravacao local prossegue mesmo assim; sera reenviado automaticamente)", error instanceof Error ? error.message : error);
+      this.outbox.enqueue("user", userId, error);
     }
   }
 
@@ -294,6 +318,44 @@ export class AuthService {
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "users.update", entityType: "app_user", entityId: id, result: "SUCCESS", severity: "WARNING" });
     await this.pushUserToShared(id);
     return this.getUser(id);
+  }
+
+  // Exclusao definitiva -- ao contrario do resto do app (onde excluir e'
+  // sempre local, deletes nunca propagam), usuario precisa mesmo sumir dos
+  // outros PCs: ficar so' local deixaria a conta reaparecendo ou continuando
+  // logavel em outra maquina. Nao da pra so' apagar a linha no Postgres (nao
+  // tem como o outro PC detectar "essa linha sumiu" num pull incremental por
+  // updated_at) -- em vez disso marca deleted_at em app_users (linha continua
+  // existindo, so' com a marca) e apaga de verdade os filhos (credenciais,
+  // papeis). Quando outro PC puxa essa linha marcada, syncTableDown detecta
+  // deleted_at e replica a exclusao localmente (ver upsertLocalRow em
+  // appRepository.ts). Nao mexe em audit_events -- e' o log de auditoria
+  // encadeado por hash, precisa continuar intacto mesmo depois que o usuario
+  // que fez a acao deixa de existir (por isso audit_events guarda
+  // actor_username junto, pra continuar legivel).
+  async deleteUser(id: string): Promise<void> {
+    const session = this.requireSession("users.manage");
+    if (session.user.id === id) throw new AuthError("Voce nao pode excluir seu proprio usuario.", "SELF_DELETE_BLOCKED");
+    const user = this.getUser(id);
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM local_sessions WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM user_password_history WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM user_credentials WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM user_role_assignments WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM app_users WHERE id = ?").run(id);
+    })();
+    this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "users.delete", entityType: "app_user", entityId: id, result: "SUCCESS", severity: "CRITICAL", metadata: { username: user.username } });
+    await this.pushUserDeletionToShared(id);
+  }
+
+  private async pushUserDeletionToShared(userId: string): Promise<void> {
+    if (!this.sharedRepository) return;
+    try {
+      await replayUserDeletionPush(this.db, this.sharedRepository, userId);
+    } catch (error) {
+      log.warn("Falha ao propagar exclusao de usuario pro Supabase (exclusao local ja aconteceu; sera reenviado automaticamente)", error instanceof Error ? error.message : error);
+      this.outbox.enqueue("user_deletion", userId, error);
+    }
   }
 
   listRoles(): AppRole[] {

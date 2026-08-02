@@ -138,7 +138,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   useEffect(() => {
     if (!organizationId) return;
     void Promise.all([
-      window.operationsCafe.getBillingSummary({ organizationId, ownLegalEntityId }),
+      window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies: true }),
       window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId, periodStart: periodStart || null, periodEnd: periodEnd || null }),
       window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: periodStart || null, dateEnd: periodEnd || null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
       window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
@@ -232,7 +232,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
       <div className="dashboard-grid dashboard-grid--hero">
         <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
         <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
-        <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
+        <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber geral</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
         <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
       </div>
 

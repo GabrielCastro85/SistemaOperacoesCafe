@@ -41,8 +41,8 @@ export const buildVariantConfigs: Record<AppVariant, BuildVariantConfig> = {
   multiempresa: {
     variant: "multiempresa",
     appId: "br.com.operacoescafe.multiempresa",
-    productName: "Sistema de Operacoes de Cafe",
-    displayName: "Sistema de Operacoes de Cafe Multiempresa",
+    productName: "Operações Café",
+    displayName: "Operações Café",
     executableName: "SistemaOperacoesCafe",
     artifactPrefix: "SistemaOperacoesCafe",
     iconPath: "build/icons/multiempresa.ico",

@@ -4,24 +4,24 @@ chcp 65001 >nul
 
 set "BASE=%~dp0"
 
-title Atualizar Sistema de Operacoes de Cafe
+title Atualizar Operacoes Cafe
 
 echo.
-echo Atualizador do Sistema de Operacoes de Cafe
-echo ==========================================
+echo Atualizador do Operacoes Cafe
+echo =============================
 echo.
 echo Este script fecha o aplicativo aberto e instala a versao mais nova por cima.
 echo.
 
 call :latest "SistemaOperacoesCafe-Setup-*-x64.exe" INSTALLER
 
-call :check "%INSTALLER%" "Sistema de Operacoes de Cafe"
+call :check "%INSTALLER%" "Operacoes Cafe"
 if errorlevel 1 goto :failed
 
 echo Fechando aplicativos abertos...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -Name VillaCoffeeOperacoes,GraoEGraoOperacoes,SistemaOperacoesCafe -ErrorAction SilentlyContinue | Stop-Process -Force"
 
-call :install "%INSTALLER%" "Sistema de Operacoes de Cafe"
+call :install "%INSTALLER%" "Operacoes Cafe"
 if errorlevel 1 goto :failed
 
 echo.

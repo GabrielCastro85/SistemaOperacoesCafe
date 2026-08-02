@@ -96,6 +96,7 @@ const IPC_CHANNELS = {
   listUsers: "users:list",
   createUser: "users:create",
   updateUser: "users:update",
+  deleteUser: "users:delete",
   listRoles: "roles:list",
   listPermissions: "roles:listPermissions",
   assignUserRole: "roles:assignUserRole",
@@ -298,6 +299,7 @@ const IPC_CHANNELS = {
   submitClientChargeForReview: "clientCharges:submitForReview",
   issueClientCharge: "clientCharges:issue",
   cancelClientCharge: "clientCharges:cancel",
+  deleteClientCharge: "clientCharges:delete",
   listClientCharges: "clientCharges:list",
   getClientCharge: "clientCharges:get",
   regenerateChargeDocuments: "clientCharges:regenerateDocuments",
@@ -447,6 +449,7 @@ export interface OperationsCafeApi {
   listUsers: () => Promise<AppUser[]>;
   createUser: (input: { displayName: string; username: string; email?: string | null; password: string; mustChangePassword?: boolean }) => Promise<AppUser>;
   updateUser: (input: { id: string; displayName?: string; email?: string | null; status?: AppUser["status"]; mustChangePassword?: boolean }) => Promise<AppUser>;
+  deleteUser: (id: string) => Promise<void>;
   listRoles: () => Promise<AppRole[]>;
   listPermissions: () => Promise<AppPermission[]>;
   assignUserRole: (input: { userId: string; roleId: string; organizationId?: string | null; legalEntityId?: string | null; expiresAt?: string | null }) => Promise<AppUser>;
@@ -652,6 +655,7 @@ export interface OperationsCafeApi {
   submitClientChargeForReview: (id: string) => Promise<ClientChargeDetail>;
   issueClientCharge: (id: string) => Promise<ClientChargeDetail>;
   cancelClientCharge: (id: string, reason: string) => Promise<ClientChargeDetail>;
+  deleteClientCharge: (id: string) => Promise<void>;
   listClientCharges: (filters?: { organizationId?: string; clientPartnerId?: string; status?: string }) => Promise<ClientCharge[]>;
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
   regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
@@ -798,6 +802,7 @@ const api: OperationsCafeApi = {
   listUsers: () => ipcRenderer.invoke(IPC_CHANNELS.listUsers) as Promise<AppUser[]>,
   createUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUser, input) as Promise<AppUser>,
   updateUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateUser, input) as Promise<AppUser>,
+  deleteUser: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteUser, id) as Promise<void>,
   listRoles: () => ipcRenderer.invoke(IPC_CHANNELS.listRoles) as Promise<AppRole[]>,
   listPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.listPermissions) as Promise<AppPermission[]>,
   assignUserRole: (input) => ipcRenderer.invoke(IPC_CHANNELS.assignUserRole, input) as Promise<AppUser>,
@@ -1031,6 +1036,7 @@ const api: OperationsCafeApi = {
   submitClientChargeForReview: (id) => ipcRenderer.invoke(IPC_CHANNELS.submitClientChargeForReview, id) as Promise<ClientChargeDetail>,
   issueClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.issueClientCharge, id) as Promise<ClientChargeDetail>,
   cancelClientCharge: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelClientCharge, { id, reason }) as Promise<ClientChargeDetail>,
+  deleteClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteClientCharge, id) as Promise<void>,
   listClientCharges: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listClientCharges, filters) as Promise<ClientCharge[]>,
   getClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.getClientCharge, id) as Promise<ClientChargeDetail>,
   regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail>,

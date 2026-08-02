@@ -35,7 +35,7 @@ describe("diagnostics IPC handler logic", () => {
     const diagnostics = createDiagnostics({ version: "1.0.0-rc.1", directories, db, buildVariant: buildVariantConfigs.multiempresa, sharedRepository: new SharedRepository(directories) }, repo);
     expect(diagnostics.databaseStatus).toBe("ok");
     expect(diagnostics.activeVariant).toBe("multiempresa");
-    expect(diagnostics.productName).toBe("Sistema de Operacoes de Cafe");
+    expect(diagnostics.productName).toBe("Operações Café");
     expect(diagnostics.appId).toBe("br.com.operacoescafe.multiempresa");
     expect(diagnostics.executableName).toBe("SistemaOperacoesCafe");
     expect(diagnostics.signatureStatus).toBe("UNSIGNED");

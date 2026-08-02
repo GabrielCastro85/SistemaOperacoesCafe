@@ -524,18 +524,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       return;
     }
     const confirmed = await requestDecision({
-      title: "Excluir cobranca",
-      message: `Excluir a cobranca ${charge.chargeNumber ?? "rascunho"}? As notas vinculadas voltarao a ficar disponiveis para nova cobranca.`
+      title: "Excluir cobranca definitivamente",
+      message: `Excluir a cobranca ${charge.chargeNumber ?? "rascunho"} para sempre? Ela some do historico e nao pode ser recuperada. As notas vinculadas voltarao a ficar disponiveis para nova cobranca.`
     });
     if (!confirmed) return;
-    const reason = await requestTextInput({ title: "Motivo da exclusao", label: "Informe o motivo para registrar no historico" });
-    if (!reason) return;
     try {
-      const cancelled = await window.operationsCafe.cancelClientCharge(charge.id, reason);
-      if (detail?.charge.id === charge.id) setDetail(cancelled);
+      await window.operationsCafe.deleteClientCharge(charge.id);
+      if (detail?.charge.id === charge.id) setDetail(null);
       await load();
       setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies }));
-      setMessage("Cobranca excluida/cancelada. As notas foram liberadas para nova cobranca.");
+      setMessage("Cobranca excluida definitivamente. As notas foram liberadas para nova cobranca.");
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir cobranca."}`);
     }

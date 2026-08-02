@@ -83,4 +83,51 @@ describe("cursor de sincronizacao (syncTableDown) nao pula linha que falhou no m
 
     db.close();
   });
+
+  it("reconcilia business_partner_roles pelo par (business_partner_id, role) em vez do id, ja que o Postgres gera seu proprio id pra essa tabela", async () => {
+    // Reproduz o travamento real: este PC cria uma role localmente (id local
+    // proprio) e a empurra pro Supabase sem enviar o id (insertRow simples,
+    // sem upsert) -- o Postgres gera um id novo pra ela. Quando esse mesmo PC
+    // (ou outro) depois PUXA essa linha de volta, o id que chega e' diferente
+    // do id local ja existente pra esse (business_partner_id, role). Mirar o
+    // upsert no id (em vez da chave natural) fazia isso virar um INSERT novo,
+    // que violava o indice unico (business_partner_id, role) pra sempre --
+    // exatamente o que travou a sincronizacao de business_partner_roles em
+    // producao (cliente INCONFEX, role CLIENT).
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-role-reconcile-"));
+    tempDirs.push(userData);
+    const directories = resolveAppDirectories(userData);
+    ensureAppDirectories(directories);
+    const db = initializeDatabase(directories);
+
+    const offlineRepo = new AppRepository(db);
+    offlineRepo.saveInstallationProfile({
+      installationName: "Villa",
+      appVariant: "villa",
+      defaultOrganizationId: villaId,
+      defaultLegalEntityId: ownLegalEntityId,
+      allowOrganizationSwitch: false,
+      allowLegalEntitySwitch: true,
+      completedSetup: true
+    });
+    const partner = await offlineRepo.createBusinessPartner({ organizationId: villaId, displayName: "Inconfex", notes: null, roles: ["CLIENT"], isActive: true });
+    const localRoleId = (db.prepare("SELECT id FROM business_partner_roles WHERE business_partner_id = ? AND role = 'CLIENT'").get(partner.id) as { id: string }).id;
+
+    const fake = new FakeSharedRepository();
+    const cloudGeneratedId = "cccccccc-0000-4000-8000-000000000099";
+    fake.rowsToReturn = [
+      { id: cloudGeneratedId, business_partner_id: partner.id, role: "CLIENT", created_at: "2026-01-01T00:00:05.000Z" }
+    ];
+    const onlineRepo = new AppRepository(db, directories, fake as unknown as SharedRepository);
+
+    await onlineRepo.syncSharedDataDown();
+
+    const roles = db.prepare("SELECT id, role FROM business_partner_roles WHERE business_partner_id = ?").all(partner.id) as Array<{ id: string; role: string }>;
+    expect(roles).toHaveLength(1);
+    expect(roles[0].role).toBe("CLIENT");
+    expect(roles[0].id).toBe(cloudGeneratedId);
+    expect(roles[0].id).not.toBe(localRoleId);
+
+    db.close();
+  });
 });

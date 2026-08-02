@@ -31,6 +31,14 @@ function inferXmlOperationScope(preview: NfeExtractedPreview | null): OperationS
   return issuerState === recipientState ? "INTERNAL" : "EXTERNAL";
 }
 
+function xmlImportIsVisuallyDeleted(job: XmlImportJob): boolean {
+  return job.status === "CANCELLED" || job.status === "REVERTED";
+}
+
+function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
+  return file.status === "REVERTED";
+}
+
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
@@ -111,7 +119,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       }];
     })));
     setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
-    setXmlHistory(await window.operationsCafe.listXmlImportJobs(organizationId));
+    const xmlJobs = await window.operationsCafe.listXmlImportJobs(organizationId);
+    setXmlHistory(xmlJobs.filter((job) => !xmlImportIsVisuallyDeleted(job)));
   }, [organizationId, ownLegalEntityId, operationType]);
 
   useEffect(() => { void load(); }, [load]);
@@ -202,14 +211,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       message: `Deseja excluir a nota ${document.documentNumber}? Itens e operacoes vinculados a ela tambem serao removidos.`
     });
     if (!confirmed) return;
-    const xmlJobIdToRefresh = xmlJob?.files.some((file) => file.fiscalDocumentId === document.id) ? xmlJob.job.id : null;
     try {
       await window.operationsCafe.deleteFiscalDocument(document.id);
       setDetail((current) => current?.document.id === document.id ? null : current);
-      setXmlJob((current) => current ? { ...current, files: current.files.map((file) => file.fiscalDocumentId === document.id ? { ...file, fiscalDocumentId: null, status: "REVERTED" } : file) } : current);
+      setXmlJob((current) => {
+        if (!current) return current;
+        const files = current.files.filter((file) => file.fiscalDocumentId !== document.id);
+        return files.length > 0 ? { ...current, files } : null;
+      });
       setMessage("Nota excluida definitivamente.");
       await load();
-      if (xmlJobIdToRefresh) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJobIdToRefresh));
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir nota."}`);
     }
@@ -223,10 +234,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   async function openXmlImportJob(jobId: string): Promise<void> {
     try {
       const openedJob = await window.operationsCafe.getXmlImportJob(jobId);
-      setXmlJob(openedJob);
+      const visibleFiles = openedJob.files.filter((file) => !xmlImportFileIsVisuallyDeleted(file));
+      setXmlJob(xmlImportIsVisuallyDeleted(openedJob.job) || visibleFiles.length === 0 ? null : { ...openedJob, files: visibleFiles });
       setSelectedXmlToken(null);
-      setMessage(openedJob.files.length ? "Detalhes da importacao XML carregados." : "Importacao XML carregada, mas sem arquivos vinculados.");
-      scrollTo(xmlResultRef);
+      setMessage(visibleFiles.length && !xmlImportIsVisuallyDeleted(openedJob.job) ? "Detalhes da importacao XML carregados." : "Importacao XML excluida. Ela nao aparece mais na tela.");
+      if (visibleFiles.length && !xmlImportIsVisuallyDeleted(openedJob.job)) scrollTo(xmlResultRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao detalhar importacao XML."}`);
     }
@@ -254,19 +266,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         if (!confirmed) return;
 
         await window.operationsCafe.cancelXmlImportJob(current.job.id);
-        setXmlJob(await window.operationsCafe.getXmlImportJob(current.job.id));
-        setMessage("Importacao XML cancelada. Nenhuma nota foi criada.");
+        setXmlJob(null);
+        setSelectedXmlToken(null);
+        setMessage("Importacao XML excluida. Nenhuma nota foi criada.");
         await load();
-        scrollTo(xmlHistoryRef);
         return;
       }
 
       const reason = await requestTextInput({ title: "Reverter XML", label: "Motivo da reversao XML" });
       if (!reason) return;
-      setXmlJob(await window.operationsCafe.revertXmlImportJob(current.job.id, reason));
-      setMessage("Importacao XML revertida.");
+      await window.operationsCafe.revertXmlImportJob(current.job.id, reason);
+      setXmlJob(null);
+      setSelectedXmlToken(null);
+      setMessage("Importacao XML revertida e removida da tela.");
       await load();
-      scrollTo(xmlHistoryRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir/reverter XML."}`);
     }
@@ -588,6 +601,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const validXmlBatchRows = xmlBatchRows.filter((row) => row.file.status !== "ERROR");
 
   const xmlJobStatus = xmlJob?.job.status;
+  const visibleXmlJobFiles = xmlJob?.files.filter((file) => !xmlImportFileIsVisuallyDeleted(file)) ?? [];
+  const visibleXmlJob = xmlJob && !xmlImportIsVisuallyDeleted(xmlJob.job) && visibleXmlJobFiles.length > 0
+    ? { ...xmlJob, files: visibleXmlJobFiles }
+    : null;
+  const visibleXmlHistory = xmlHistory.filter((job) => !xmlImportIsVisuallyDeleted(job));
   const xmlImportSteps: StepperStep[] = [
     { id: "import", label: "Importar arquivo", status: xmlQueue.length > 0 ? "complete" : "current" },
     { id: "read", label: "Leitura automatica", status: xmlQueue.length > 0 ? "complete" : "pending" },
@@ -665,7 +683,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
           const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then(setDetail)}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}</div>
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
@@ -944,7 +962,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           </div>
         ) : null}
         <div ref={xmlResultRef}>
-        {xmlJob ? (
+        {visibleXmlJob ? (
           <div className="section-title-row xml-result-actions">
             <div>
               <h3>Resultado da importacao XML</h3>
@@ -952,15 +970,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </div>
             <div className="actions">
               <button onClick={() => scrollTo(xmlHistoryRef)}>Ver historico</button>
-              <button className="danger" disabled={!xmlImportCanBeReverted(xmlJob.job)} onClick={() => void removeXmlImportJob()}>Excluir/Reverter importacao</button>
+              <button className="danger" disabled={!xmlImportCanBeReverted(visibleXmlJob.job)} onClick={() => void removeXmlImportJob()}>Excluir/Reverter importacao</button>
             </div>
           </div>
         ) : null}
-        {xmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{xmlJob.job.totalFiles}</strong></article><article><span>Validos</span><strong>{xmlJob.job.validFiles}</strong></article><article><span>Eventos</span><strong>{xmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{xmlJob.job.importedNotes}</strong></article><article><span>Erros</span><strong>{xmlJob.job.errorFiles}</strong></article><article><span>Itens sem operacao</span><strong>{xmlJob.job.itemsWithoutOperation}</strong></article></div> : null}
-        {xmlJob ? (
+        {visibleXmlJob ? <div className="cards"><article><span>Arquivos</span><strong>{visibleXmlJob.files.length}</strong></article><article><span>Validos</span><strong>{visibleXmlJob.files.filter((file) => file.status === "VALID" || file.status === "IMPORTED").length}</strong></article><article><span>Eventos</span><strong>{visibleXmlJob.job.importedEvents}</strong></article><article><span>Notas</span><strong>{visibleXmlJob.files.filter((file) => file.fiscalDocumentId).length}</strong></article><article><span>Erros</span><strong>{visibleXmlJob.files.filter((file) => file.status === "ERROR").length}</strong></article><article><span>Itens sem operacao</span><strong>{visibleXmlJob.job.itemsWithoutOperation}</strong></article></div> : null}
+        {visibleXmlJob ? (
           <div className="table">
             <div className="table-head xml-files-grid"><span>Arquivo</span><span>Status</span><span>Tipo</span><span>Chave</span><span>Detalhe</span><span>Acoes</span></div>
-            {xmlJob.files.map((file) => (
+            {visibleXmlJob.files.map((file) => (
               <div key={file.id} className="table-row xml-files-grid">
                 <span>{file.originalFileName}</span>
                 <span><StatusBadge status={file.status} label={xmlFileStatusLabel(file)} /></span>
@@ -968,7 +986,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <span>{file.accessKey ?? "-"}</span>
                 <span>{xmlFileDetailMessage(file)}</span>
                 <span className="row-actions">
-                  {file.fiscalDocumentId ? <button onClick={() => void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then(setDetail)}>Abrir nota</button> : <small className="muted">Nota ainda nao salva</small>}
+                  {file.fiscalDocumentId ? <button onClick={() => void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then((opened) => { setDetail(opened); setPageTab("documents"); scrollTo(manualDetailRef); })}>Abrir nota</button> : <small className="muted">Nota ainda nao salva</small>}
                   {file.fiscalDocumentId ? <button className="danger" onClick={() => {
                     const doc = documents.find((item) => item.id === file.fiscalDocumentId);
                     if (doc) void deleteDocument(doc);
@@ -979,10 +997,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             ))}
           </div>
         ) : null}
-        {xmlJob && xmlJob.files.some((file) => file.status === "PENDING_REVIEW") ? (
+        {visibleXmlJob && visibleXmlJob.files.some((file) => file.status === "PENDING_REVIEW") ? (
           <div className="table">
             <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente/corretor</span><span>Segundo parceiro (nota triangulada)</span><span>Acoes</span></div>
-            {xmlJob.files.filter((file) => file.status === "PENDING_REVIEW").map((file) => {
+            {visibleXmlJob.files.filter((file) => file.status === "PENDING_REVIEW").map((file) => {
               const { issuer, recipient } = xmlFileParty(file);
               return (
                 <div key={file.id} className="table-row xml-resolution-grid">
@@ -1014,7 +1032,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
       </AdminBlock>
       <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{xmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span className="row-actions"><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button className="danger" disabled={!xmlImportCanBeReverted(job)} onClick={() => void removeXmlImportJob(job.id)}>Excluir/Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{visibleXmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span className="row-actions"><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button className="danger" disabled={!xmlImportCanBeReverted(job)} onClick={() => void removeXmlImportJob(job.id)}>Excluir/Reverter</button></span></div>)}</div>
       </AdminBlock></div>
       </>}
       <Feedback message={message} />
