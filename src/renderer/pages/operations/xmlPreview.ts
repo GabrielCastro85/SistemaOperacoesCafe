@@ -106,33 +106,33 @@ export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, l
   }
   const issuerCnpj = preview.issuer?.cnpjCpf ? onlyDigits(preview.issuer.cnpjCpf) : cnpjFromAccessKey(preview.accessKey);
   const recipientCnpj = preview.recipient?.cnpjCpf ? onlyDigits(preview.recipient.cnpjCpf) : null;
-  const issuerLabel = preview.issuer?.tradeName ?? preview.issuer?.legalName ?? null;
-  const recipientLabel = preview.recipient?.tradeName ?? preview.recipient?.legalName ?? null;
+  const issuerLabel = preview.issuer?.legalName ?? preview.issuer?.tradeName ?? null;
+  const recipientLabel = preview.recipient?.legalName ?? preview.recipient?.tradeName ?? null;
   const ownByIssuer = issuerCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj) : undefined;
   const ownByRecipient = recipientCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj) : undefined;
   if (ownByIssuer) {
     return {
-      ownEntityLabel: ownByIssuer.tradeName,
+      ownEntityLabel: ownByIssuer.legalName || ownByIssuer.tradeName,
       counterpartyLabel: recipientLabel,
       counterpartyCnpj: recipientCnpj,
       issuerLabel,
       issuerCnpj,
       recipientLabel,
       recipientCnpj,
-      originLabel: ownByIssuer.tradeName,
+      originLabel: ownByIssuer.legalName || ownByIssuer.tradeName,
       isThirdPartyOrigin: false
     };
   }
   if (ownByRecipient) {
     return {
-      ownEntityLabel: ownByRecipient.tradeName,
+      ownEntityLabel: ownByRecipient.legalName || ownByRecipient.tradeName,
       counterpartyLabel: issuerLabel,
       counterpartyCnpj: issuerCnpj,
       issuerLabel,
       issuerCnpj,
       recipientLabel,
       recipientCnpj,
-      originLabel: ownByRecipient.tradeName,
+      originLabel: ownByRecipient.legalName || ownByRecipient.tradeName,
       isThirdPartyOrigin: false
     };
   }

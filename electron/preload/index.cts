@@ -136,6 +136,7 @@ const IPC_CHANNELS = {
   getActiveContext: "app:getActiveContext",
   getDiagnostics: "app:getDiagnostics",
   syncSharedData: "app:syncSharedData",
+  resetSyncCursorsAndResync: "app:resetSyncCursorsAndResync",
   sharedAuthStatus: "app:sharedAuthStatus",
   sharedAuthSignIn: "app:sharedAuthSignIn",
   sharedAuthSignOut: "app:sharedAuthSignOut",
@@ -178,6 +179,7 @@ const IPC_CHANNELS = {
   removeBusinessPartnerRole: "businessPartners:removeRole",
   listPartnerLegalEntities: "partnerLegalEntities:list",
   listUnlinkedPartnerLegalEntities: "partnerLegalEntities:listUnlinked",
+  resolveIssuerLegalEntityFromPartner: "partnerLegalEntities:resolveIssuer",
   createPartnerLegalEntity: "partnerLegalEntities:create",
   updatePartnerLegalEntity: "partnerLegalEntities:update",
   linkPartnerLegalEntity: "partnerLegalEntities:link",
@@ -489,6 +491,7 @@ export interface OperationsCafeApi {
   getActiveContext: () => Promise<ActiveContext>;
   getDiagnostics: () => Promise<Diagnostics>;
   syncSharedData: () => Promise<{ pushed: Array<{ table: string; pushed: number; error: string | null }>; pulled: Array<{ table: string; pulled: number }> }>;
+  resetSyncCursorsAndResync: () => Promise<Array<{ table: string; pulled: number }>>;
   sharedAuthStatus: () => Promise<{ connected: boolean; email: string | null }>;
   sharedAuthSignIn: (input: { email: string; password: string }) => Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>;
   sharedAuthSignOut: () => Promise<{ connected: boolean; email: string | null }>;
@@ -533,6 +536,7 @@ export interface OperationsCafeApi {
   removeBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
   listPartnerLegalEntities: (businessPartnerId: string) => Promise<BusinessPartnerLegalEntity[]>;
   listUnlinkedPartnerLegalEntities: (organizationId: string, search?: string) => Promise<BusinessPartnerLegalEntity[]>;
+  resolveIssuerLegalEntityFromPartner: (organizationId: string, partnerLegalEntityId: string) => Promise<LegalEntity>;
   createPartnerLegalEntity: (input: unknown) => Promise<BusinessPartnerLegalEntity>;
   updatePartnerLegalEntity: (id: string, input: unknown) => Promise<BusinessPartnerLegalEntity>;
   linkPartnerLegalEntity: (legalEntityId: string, businessPartnerId: string) => Promise<BusinessPartnerLegalEntity>;
@@ -571,7 +575,7 @@ export interface OperationsCafeApi {
   activatePurchaseRateRule: (id: string) => Promise<PurchaseRateRule>;
   deactivatePurchaseRateRule: (id: string) => Promise<PurchaseRateRule>;
   resolvePurchaseRateRule: (input: unknown) => Promise<ResolveRateResult>;
-  listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" }) => Promise<FiscalDocument[]>;
+  listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; includeThirdParty?: boolean }) => Promise<FiscalDocument[]>;
   getFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   createFiscalDocument: (input: unknown) => Promise<FiscalDocumentDetail>;
   updateFiscalDocument: (id: string, input: unknown) => Promise<FiscalDocumentDetail>;
@@ -844,6 +848,7 @@ const api: OperationsCafeApi = {
   getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.getActiveContext) as Promise<ActiveContext>,
   getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.getDiagnostics) as Promise<Diagnostics>,
   syncSharedData: () => ipcRenderer.invoke(IPC_CHANNELS.syncSharedData) as Promise<{ pushed: Array<{ table: string; pushed: number; error: string | null }>; pulled: Array<{ table: string; pulled: number }> }>,
+  resetSyncCursorsAndResync: () => ipcRenderer.invoke(IPC_CHANNELS.resetSyncCursorsAndResync) as Promise<Array<{ table: string; pulled: number }>>,
   sharedAuthStatus: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthStatus) as Promise<{ connected: boolean; email: string | null }>,
   sharedAuthSignIn: (input) => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignIn, input) as Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>,
   sharedAuthSignOut: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignOut) as Promise<{ connected: boolean; email: string | null }>,
@@ -903,6 +908,7 @@ const api: OperationsCafeApi = {
   removeBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.removeBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
   listPartnerLegalEntities: (businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerLegalEntities, businessPartnerId) as Promise<BusinessPartnerLegalEntity[]>,
   listUnlinkedPartnerLegalEntities: (organizationId, search) => ipcRenderer.invoke(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, { organizationId, search }) as Promise<BusinessPartnerLegalEntity[]>,
+  resolveIssuerLegalEntityFromPartner: (organizationId, partnerLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.resolveIssuerLegalEntityFromPartner, { organizationId, partnerLegalEntityId }) as Promise<LegalEntity>,
   createPartnerLegalEntity: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPartnerLegalEntity, input) as Promise<BusinessPartnerLegalEntity>,
   updatePartnerLegalEntity: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updatePartnerLegalEntity, { id, input }) as Promise<BusinessPartnerLegalEntity>,
   linkPartnerLegalEntity: (legalEntityId, businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.linkPartnerLegalEntity, { legalEntityId, businessPartnerId }) as Promise<BusinessPartnerLegalEntity>,

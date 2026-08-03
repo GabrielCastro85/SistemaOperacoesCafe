@@ -1,0 +1,144 @@
+/* Refinamento visual global carregado por ultimo.
+   Mantem as cores do tema ativo: Villa e Grao seguem com suas identidades. */
+:root {
+  --polish-accent: var(--brand-accent, var(--brand-primary, #18b870));
+  --polish-border: color-mix(in srgb, var(--polish-accent) 18%, #d7c2a4);
+  --polish-focus: color-mix(in srgb, var(--polish-accent) 34%, transparent);
+  --polish-muted: #5f5549;
+}
+
+#root button,
+#root .button,
+#root [role="button"] {
+  min-height: 38px;
+  border-radius: 8px;
+  font-weight: 700;
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+}
+
+#root button:not(:disabled):hover,
+#root .button:not(:disabled):hover,
+#root [role="button"]:not(:disabled):hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--polish-accent) 45%, #b99b72);
+  box-shadow: 0 8px 20px rgba(23, 18, 10, 0.1);
+}
+
+#root button:disabled,
+#root .button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  box-shadow: none;
+  transform: none;
+}
+
+#root input:not([type="checkbox"]):not([type="radio"]),
+#root select,
+#root textarea {
+  min-height: 40px;
+  border-radius: 8px;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+}
+
+#root input:not([type="checkbox"]):not([type="radio"]):focus,
+#root select:focus,
+#root textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--polish-accent) 55%, #b99b72);
+  box-shadow: 0 0 0 3px var(--polish-focus);
+}
+
+#root input[type="checkbox"],
+#root input[type="radio"] {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  margin: 0;
+  vertical-align: middle;
+}
+
+#root table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+#root th,
+#root td {
+  padding: 12px 14px;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+#root th {
+  font-size: 0.78rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--polish-muted);
+}
+
+#root tr + tr td {
+  border-top: 1px solid rgba(126, 100, 68, 0.16);
+}
+
+#root .card,
+#root .panel,
+#root .surface,
+#root .section-card,
+#root .data-card,
+#root .summary-card {
+  border-radius: 10px;
+}
+
+#root .modal,
+#root [role="dialog"] {
+  border-radius: 12px;
+}
+
+#root [role="dialog"] .modal-footer,
+#root .modal-footer {
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+#root [role="dialog"] label,
+#root .modal label {
+  line-height: 1.25;
+}
+
+#root .empty-state,
+#root .empty,
+#root [data-empty="true"] {
+  padding: 32px;
+  border-radius: 10px;
+  border: 1px dashed rgba(126, 100, 68, 0.28);
+  background: rgba(255, 255, 255, 0.36);
+}
+
+@media (max-width: 1500px) {
+  #root th,
+  #root td {
+    padding: 10px 12px;
+  }
+
+  #root button,
+  #root .button,
+  #root [role="button"] {
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 1280px) {
+  #root th,
+  #root td {
+    padding: 9px 10px;
+    font-size: 0.92rem;
+  }
+
+  #root input:not([type="checkbox"]):not([type="radio"]),
+  #root select,
+  #root textarea {
+    min-height: 38px;
+  }
+}

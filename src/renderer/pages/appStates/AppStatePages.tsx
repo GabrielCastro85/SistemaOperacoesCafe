@@ -376,7 +376,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
           </div>
           <div className="dashboard-grid dashboard-grid--compact">
             <article><span>Organizações</span><strong>{organizations.length}</strong></article>
-            <article><span>CNPJs</span><strong>{legalEntities.length}</strong></article>
+            <article><span>CNPJs</span><strong>{legalEntities.filter(isOperationalLegalEntity).length}</strong></article>
             <article><span>Locais</span><strong>{locations.length}</strong></article>
             <article><span>Créditos</span><strong>{formatCurrencyFromCents(billingSummary?.availableCreditsCents ?? 0)}</strong></article>
           </div>

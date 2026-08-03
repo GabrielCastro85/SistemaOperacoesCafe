@@ -131,3 +131,65 @@ describe("cursor de sincronizacao (syncTableDown) nao pula linha que falhou no m
     db.close();
   });
 });
+
+// Fake generico (qualquer tabela) pra exercitar resetSyncCursorsAndResync --
+// simula um PC cujo cursor de "legal_entities" ja avancou alem de uma linha
+// antiga (ex: comecou a sincronizar essa tabela so' depois dela ja ter
+// historico no Supabase), entao um "Sincronizar agora" normal nunca mais
+// buscaria essa linha de volta.
+class GenericFakeSharedRepository {
+  rowsByTable: Record<string, Array<Record<string, unknown>>> = {};
+  checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  async pullChangesSince(table: string, _timestampColumn: string, since: string): Promise<Array<Record<string, unknown>>> {
+    return (this.rowsByTable[table] ?? []).filter((row) => String(row.updated_at) > since);
+  }
+}
+
+describe("resetSyncCursorsAndResync (sincronizacao completa manual)", () => {
+  it("rebaixa uma linha antiga que o cursor ja tinha 'pulado', mesmo sem nenhuma mudanca nova", async () => {
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-full-resync-"));
+    tempDirs.push(userData);
+    const directories = resolveAppDirectories(userData);
+    ensureAppDirectories(directories);
+    const db = initializeDatabase(directories);
+
+    const fake = new GenericFakeSharedRepository();
+    const staleEntityId = "dddddddd-0000-4000-8000-000000000001";
+    fake.rowsByTable.legal_entities = [{
+      id: staleEntityId,
+      organization_id: villaId,
+      trade_name: "Empresa Antiga Nunca Baixada",
+      legal_name: "Empresa Antiga Nunca Baixada LTDA",
+      cnpj: "11222333000181",
+      address_line: "Rua Antiga",
+      address_number: "1",
+      district: "Centro",
+      city: "Belo Horizonte",
+      state: "MG",
+      postal_code: "30000000",
+      document_prefix: null,
+      is_active: 1,
+      created_at: "2020-01-01T00:00:00.000Z",
+      updated_at: "2020-01-01T00:00:00.000Z"
+    }];
+    const repo = new AppRepository(db, directories, fake as unknown as SharedRepository);
+
+    // Simula o cursor deste PC ja tendo avancado alem da linha antiga (ex:
+    // essa tabela so' entrou no hot-sync depois que a linha ja existia la').
+    db.prepare(
+      `INSERT INTO app_settings (id, key, value, value_type, created_at, updated_at) VALUES (@id, @key, @value, 'string', @now, @now)`
+    ).run({ id: "seed-cursor", key: "sync_cursor_legal_entities", value: "2025-01-01T00:00:00.000Z", now: new Date().toISOString() });
+
+    // "Sincronizar agora" normal nao acha nada (cursor ja passou da linha antiga).
+    const normalPull = await repo.syncSharedDataDown();
+    expect(db.prepare("SELECT id FROM legal_entities WHERE id = ?").get(staleEntityId)).toBeUndefined();
+    expect(normalPull.find((entry) => entry.table === "legal_entities")?.pulled).toBe(0);
+
+    // Sincronizacao completa esquece o cursor e traz a linha antiga de volta.
+    const fullPull = await repo.resetSyncCursorsAndResync();
+    expect(db.prepare("SELECT trade_name FROM legal_entities WHERE id = ?").get(staleEntityId)).toMatchObject({ trade_name: "Empresa Antiga Nunca Baixada" });
+    expect(fullPull.find((entry) => entry.table === "legal_entities")?.pulled).toBe(1);
+
+    db.close();
+  });
+});

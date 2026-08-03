@@ -14,6 +14,7 @@ export function SystemSettingsPage(): JSX.Element {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
 
   useEffect(() => {
     void window.operationsCafe.getUpdateStatus().then(setUpdateStatus);
@@ -111,6 +112,28 @@ export function SystemSettingsPage(): JSX.Element {
     }
   }
 
+  // "Sincronizar agora" so' busca o que mudou depois do ultimo cursor salvo
+  // -- se este PC nunca chegou a baixar algo antigo (ex: comecou a
+  // sincronizar uma tabela depois dela ja ter historico no Supabase), aquele
+  // dado antigo fica pra sempre invisivel aqui, mesmo sincronizando toda
+  // hora. Isso esquece o cursor de cada tabela e baixa tudo de novo do zero.
+  async function fullResync(): Promise<void> {
+    setError(null);
+    setMessage(null);
+    setResyncing(true);
+    try {
+      const pulled = await window.operationsCafe.resetSyncCursorsAndResync();
+      const pulledSomething = pulled.filter((item) => item.pulled > 0);
+      setMessage(pulledSomething.length > 0
+        ? `Sincronizacao completa -- recebido: ${pulledSomething.map((item) => `${item.table} (${item.pulled})`).join(", ")}.`
+        : "Sincronizacao completa: nada para baixar (este PC ja estava com tudo).");
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : "Falha na sincronizacao completa.");
+    } finally {
+      setResyncing(false);
+    }
+  }
+
   return (
     <section className="content-section">
       <PageHeader eyebrow="Sistema" title="Sistema" description="Ajustes administrativos adicionais." />
@@ -129,10 +152,18 @@ export function SystemSettingsPage(): JSX.Element {
             {error ? <Alert tone="danger">{error}</Alert> : null}
             {message ? <Alert tone="success">{message}</Alert> : null}
             {connected ? (
-              <div className="actions">
-                <Button variant="secondary" onClick={() => void syncNow()} loading={loading}>Sincronizar agora</Button>
-                <Button variant="danger" onClick={() => void disconnect()} loading={loading}>Desconectar</Button>
-              </div>
+              <>
+                <div className="actions">
+                  <Button variant="secondary" onClick={() => void syncNow()} loading={loading}>Sincronizar agora</Button>
+                  <Button variant="danger" onClick={() => void disconnect()} loading={loading}>Desconectar</Button>
+                </div>
+                <p className="ui-field__hint">
+                  Se algum lançamento de outro PC nunca aparece aqui mesmo depois de "Sincronizar agora" (ex: histórico de importação de XML vazio quando deveria ter notas), use a sincronização completa abaixo -- ela é mais lenta, mas rebaixa tudo do zero.
+                </p>
+                <div className="actions">
+                  <Button variant="secondary" onClick={() => void fullResync()} loading={resyncing}>Sincronização completa (rebaixar tudo de novo)</Button>
+                </div>
+              </>
             ) : (
               <>
                 <Input label="E-mail" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" />

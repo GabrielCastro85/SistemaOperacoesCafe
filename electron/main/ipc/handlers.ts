@@ -191,6 +191,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     acknowledgeSyncUpdates();
     return { pushed, pulled };
   });
+  handle(IPC_CHANNELS.resetSyncCursorsAndResync, async () => {
+    const pulled = await repository.resetSyncCursorsAndResync();
+    acknowledgeSyncUpdates();
+    return pulled;
+  });
   handle(IPC_CHANNELS.getSharedSyncStatus, () => getSyncStatus());
   handle(IPC_CHANNELS.sharedAuthStatus, async () => {
     const session = await context.sharedRepository.getSession();
@@ -340,6 +345,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ organizationId: z.string().uuid(), search: z.string().optional() }).parse(payload);
     return repository.listUnlinkedPartnerLegalEntities(data.organizationId, data.search);
   });
+  handle(IPC_CHANNELS.resolveIssuerLegalEntityFromPartner, (_event, payload: unknown) => {
+    const data = z.object({ organizationId: z.string().uuid(), partnerLegalEntityId: z.string().uuid() }).parse(payload);
+    return repository.resolveIssuerLegalEntityFromPartner(data.organizationId, data.partnerLegalEntityId);
+  });
   handle(IPC_CHANNELS.createPartnerLegalEntity, (_event, payload: unknown) => repository.createPartnerLegalEntity(payload));
   handle(IPC_CHANNELS.lookupCnpj, (_event, payload: unknown) => lookupCnpj(z.string().min(1).parse(payload)));
   handle(IPC_CHANNELS.updatePartnerLegalEntity, (_event, payload: unknown) => {
@@ -409,7 +418,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
           organizationId: z.string().uuid().optional(),
           ownLegalEntityId: z.string().uuid().optional(),
           search: z.string().optional(),
-          status: z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED", "all"]).optional()
+          status: z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED", "all"]).optional(),
+          includeThirdParty: z.boolean().optional()
         })
         .optional()
         .parse(payload) ?? {}

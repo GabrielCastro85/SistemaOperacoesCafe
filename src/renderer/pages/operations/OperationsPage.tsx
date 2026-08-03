@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatDateBr, formatDateOnlyBr, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
-import { EmptyState, FileDropzone, ListStepsIcon, PageHeader, StatusBadge, Stepper, Tabs } from "../../design-system";
+import { DateInput, EmptyState, FileDropzone, ListStepsIcon, PageHeader, StatusBadge, Stepper, Tabs } from "../../design-system";
 import type { StepperStep } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
@@ -40,6 +40,24 @@ function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
 }
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
+  function brazilDateValue(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    throw new Error("Nao foi possivel determinar a data de Brasilia.");
+  }
+
+  return `${year}-${month}-${day}`;
+}
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const ownLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
@@ -55,6 +73,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [number, setNumber] = useState("");
   const [accessKey, setAccessKey] = useState("");
   const [total, setTotal] = useState("0,00");
+  const [issueDate, setIssueDate] = useState(() => brazilDateValue());
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [unitPrice, setUnitPrice] = useState("0.0000");
@@ -80,6 +99,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
   const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
+  // Nota terceirizada lancada manualmente: nem emitente nem destinatario e' a
+  // empresa propria ativa no topo -- ver resolveIssuerLegalEntityFromPartner.
+  // Vazio = comportamento de sempre (emissora = CNPJ proprio ativo).
+  const [manualIssuerSearchTerm, setManualIssuerSearchTerm] = useState("");
+  const [manualIssuerPartnerLegalEntityId, setManualIssuerPartnerLegalEntityId] = useState<string | null>(null);
   const scrollTo = useAutoScroll();
   const manualDetailRef = useRef<HTMLDivElement | null>(null);
   const spreadsheetResultRef = useRef<HTMLDivElement | null>(null);
@@ -100,12 +124,21 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setPartners(rolePartners);
     setSecondaryPartners(oppositeRolePartners);
     const searchablePartners = [...rolePartners, ...oppositeRolePartners];
-    setPartnerLegalEntities((await Promise.all(searchablePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    // Empresas/CNPJs sem cliente/corretor dono (cadastradas direto em
+    // "Empresas e CNPJs") nao aparecem percorrendo os parceiros -- precisa
+    // buscar as soltas separadamente e juntar, senao elas nunca aparecem nas
+    // buscas desta tela (responsavel da nota, empresa da nota, resolucao de
+    // XML), mesmo depois de cadastradas (ver mesmo padrao em PartnersPage).
+    const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
+      Promise.all(searchablePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    ]);
+    setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setPartnerId((current) => (rolePartners.some((partner) => partner.id === current) ? current : ""));
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
-    const fiscalDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "all" });
+    const fiscalDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "all", includeThirdParty: true });
     setDocuments(fiscalDocuments);
     const details = await Promise.all(fiscalDocuments.map((doc) => window.operationsCafe.getFiscalDocument(doc.id)));
     setDocumentServiceInfo(Object.fromEntries(details.map((docDetail) => {
@@ -129,23 +162,35 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function createDocument(): Promise<void> {
     try {
+      // Nota terceirizada: usuario escolheu uma empresa emissora diferente do
+      // CNPJ proprio ativo -- resolve (ou cria) o "CNPJ emissor" terceirizado
+      // ANTES de criar a nota, e usa ele no lugar do ownLegalEntityId normal.
+      let issuerLegalEntityId = ownLegalEntityId;
+      let notes: string | null = null;
+      if (manualIssuerPartnerLegalEntityId) {
+        const issuer = await window.operationsCafe.resolveIssuerLegalEntityFromPartner(organizationId, manualIssuerPartnerLegalEntityId);
+        issuerLegalEntityId = issuer.id;
+        notes = "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio.";
+      }
       const created = await window.operationsCafe.createFiscalDocument({
         organizationId,
-        ownLegalEntityId,
+        ownLegalEntityId: issuerLegalEntityId,
         responsiblePartnerId: partnerId,
         partnerLegalEntityId: null,
         operationType,
         accessKey: onlyDigits(accessKey),
         documentNumber: number,
         series: null,
-        issueDate: new Date().toISOString().slice(0, 10),
+        issueDate,
         totalAmountCents: parseCurrency(total),
         hasPendingIssues: false,
         pendingNotes: null,
-        notes: null
+        notes
       });
       setDetail(created);
       setMessage(created.document.duplicateWarning ?? "Nota criada.");
+      setManualIssuerSearchTerm("");
+      setManualIssuerPartnerLegalEntityId(null);
       await load();
       scrollTo(manualDetailRef);
     } catch (errorValue) {
@@ -169,7 +214,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       await window.operationsCafe.addOperation({
         fiscalDocumentId: detail.document.id,
         fiscalDocumentItemId: item.id,
-        ownLegalEntityId,
+        ownLegalEntityId: detail.document.ownLegalEntityId,
         responsiblePartnerId: detail.document.responsiblePartnerId,
         productId: productId || null,
         operationType,
@@ -365,7 +410,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       storedFilePath: null,
       selectedSheetName: selectedSheet,
       importType: preview.suggestedMapping.clientName ? "GENERAL_SALES" : "CLIENT_INDIVIDUAL",
-      settings: { defaultPartnerId: partnerId, operationType, defaultOperationScope: scope, defaultProductId: productId, defaultDate: new Date().toISOString().slice(0, 10) }
+      settings: {
+        defaultPartnerId: partnerId,
+        operationType,
+        defaultOperationScope: scope,
+        defaultProductId: productId,
+        defaultDate: brazilDateValue()
+      }
     });
     const validated = await window.operationsCafe.validateSpreadsheetImportRows({
       token: workbook.token,
@@ -373,7 +424,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       sheetName: selectedSheet,
       headerRow: Number(headerRow),
       mapping: preview.suggestedMapping,
-      defaults: { defaultPartnerId: partnerId, operationType, defaultOperationScope: scope, defaultProductId: productId, defaultDate: new Date().toISOString().slice(0, 10) }
+      defaults: {
+        defaultPartnerId: partnerId,
+        operationType,
+        defaultOperationScope: scope,
+        defaultProductId: productId,
+        defaultDate: brazilDateValue()
+      }
     });
     setImportJob(validated);
     setMessage("Linhas validadas.");
@@ -582,7 +639,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const selectedXmlOwnMismatch = Boolean(
     selectedXmlParties.ownEntityLabel &&
     ownLegalEntity &&
-    selectedXmlParties.ownEntityLabel !== ownLegalEntity.tradeName
+    selectedXmlParties.ownEntityLabel !== (ownLegalEntity.legalName || ownLegalEntity.tradeName)
   );
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
   const xmlBatchRows = xmlQueue.map((file) => {
@@ -663,8 +720,36 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       <AdminBlock title="Notas e operacoes manuais">
         <div className="operation-context-note">
           <span>CNPJ ativo para notas</span>
-          <strong>{ownLegalEntity?.tradeName ?? "Nao selecionado"}</strong>
+          <strong>{ownLegalEntity ? (ownLegalEntity.legalName || ownLegalEntity.tradeName) : "Nao selecionado"}</strong>
           <small>{ownLegalEntity?.cnpj ?? "CNPJ pendente"} - a lista abaixo mostra somente notas desse CNPJ.</small>
+        </div>
+        <div className="operation-context-note">
+          <span>Empresa emissora (opcional)</span>
+          <strong>{manualIssuerPartnerLegalEntityId ? (() => { const selected = partnerLegalEntities.find((entity) => entity.id === manualIssuerPartnerLegalEntityId); return selected ? (selected.legalName || selected.tradeName) : "Selecionada"; })() : "Nenhuma -- emissora e' o CNPJ proprio ativo acima"}</strong>
+          <small>Deixe vazio se a nota foi emitida pela sua propria empresa. Escolha outra empresa aqui quando a nota e' de terceiro (nem emitente nem destinatario e' sua empresa) -- ela entra so' em cobrancas, nao em fechamento de negocio.</small>
+          {manualIssuerPartnerLegalEntityId ? (
+            <button type="button" onClick={() => { setManualIssuerPartnerLegalEntityId(null); setManualIssuerSearchTerm(""); }}>Remover empresa emissora</button>
+          ) : (
+            <>
+              <TextField label="Buscar empresa emissora por nome ou CNPJ" value={manualIssuerSearchTerm} onChange={setManualIssuerSearchTerm} />
+              {manualIssuerSearchTerm.trim() ? (
+                <div className="confirmation-company-results">
+                  {partnerLegalEntities
+                    .filter((entity) => {
+                      const term = manualIssuerSearchTerm.trim().toUpperCase();
+                      const digitsTerm = term.replace(/\D/g, "");
+                      return entity.tradeName.toUpperCase().includes(term) || entity.legalName.toUpperCase().includes(term) || (digitsTerm.length > 0 && (entity.cnpj?.includes(digitsTerm) ?? false));
+                    })
+                    .slice(0, 8)
+                    .map((entity) => (
+                      <div key={entity.id} className="confirmation-company-result-row">
+                        <button type="button" className="partner-action-button" onClick={() => { setManualIssuerPartnerLegalEntityId(entity.id); setManualIssuerSearchTerm(""); }}>{entity.legalName || entity.tradeName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
+                      </div>
+                    ))}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
         <div className="cards">
           <article><span>Notas deste CNPJ</span><strong>{documents.length}</strong></article>
@@ -676,6 +761,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel" : "Cliente/corretor responsavel"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
           <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
+          <DateInput label="Data de emissão" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} />
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
         </FormGrid>
@@ -683,7 +769,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
           const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
+          // Nota terceirizada aparece aqui mesmo com CNPJ emissor diferente do
+          // ativo no topo (ver listFiscalDocuments) -- mostra a empresa
+          // emissora real pra nao parecer que a nota e' do CNPJ ativo.
+          const isThirdPartyRow = doc.ownLegalEntityId !== ownLegalEntityId;
+          const docOwnEntity = isThirdPartyRow ? data.legalEntities.find((entity) => entity.id === doc.ownLegalEntityId) : null;
+          const docOwnEntityName = docOwnEntity ? (docOwnEntity.legalName || docOwnEntity.tradeName) : null;
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}</div>
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
@@ -730,7 +822,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <p className="muted">Nota lancada manualmente (sem XML) nao vem com empresa/CNPJ vinculado. Sem isso ela nao aparece nas buscas de Confirmacoes por empresa ou por numero.</p>
             {(() => {
               const linkedCompany = partnerLegalEntities.find((entity) => entity.id === detail.document.partnerLegalEntityId);
-              if (linkedCompany) return <p><strong>Vinculada:</strong> {linkedCompany.tradeName || linkedCompany.legalName} ({linkedCompany.cnpj ?? "CNPJ nao informado"})</p>;
+              if (linkedCompany) return <p><strong>Vinculada:</strong> {linkedCompany.legalName || linkedCompany.tradeName} ({linkedCompany.cnpj ?? "CNPJ nao informado"})</p>;
               const term = detailCompanySearchTerm.trim().toUpperCase();
               const digitsTerm = term.replace(/\D/g, "");
               const matches = term ? partnerLegalEntities.filter((entity) =>
@@ -745,7 +837,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <div className="confirmation-company-results">
                       {matches.map((entity) => (
                         <div key={entity.id} className="confirmation-company-result-row">
-                          <button type="button" className="partner-action-button" onClick={() => void linkCompanyToDocument(entity.id)}>{entity.tradeName || entity.legalName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
+                          <button type="button" className="partner-action-button" onClick={() => void linkCompanyToDocument(entity.id)}>{entity.legalName || entity.tradeName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
                         </div>
                       ))}
                     </div>
@@ -873,7 +965,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 {selectedXmlOwnMismatch ? (
                   <div className="operation-warning-card">
                     <strong>Atencao: XML de outro CNPJ</strong>
-                    <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity?.tradeName}. A nota sera salva na empresa correta do XML para entrar nas cobrancas.</span>
+                    <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity ? (ownLegalEntity.legalName || ownLegalEntity.tradeName) : "-"}. A nota sera salva na empresa correta do XML para entrar nas cobrancas.</span>
                   </div>
                 ) : null}
                 {selectedXmlParties.isThirdPartyOrigin ? (
@@ -1006,8 +1098,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <div key={file.id} className="table-row xml-resolution-grid">
                   <span>{file.originalFileName}</span>
                   <span>Pendente</span>
-                  <span>{issuer?.tradeName ?? issuer?.legalName ?? "-"}</span>
-                  <span>{recipient?.tradeName ?? recipient?.legalName ?? "-"}</span>
+                  <span>{issuer?.legalName ?? issuer?.tradeName ?? "-"}</span>
+                  <span>{recipient?.legalName ?? recipient?.tradeName ?? "-"}</span>
                   <span>
                     <PartnerQuickSearch label="Cliente/corretor" value={xmlResolutionSelections[file.id] ?? ""} onChange={(value) => setXmlResolutionSelections((current) => ({ ...current, [file.id]: value }))} partners={partners} legalEntities={partnerLegalEntities} />
                   </span>

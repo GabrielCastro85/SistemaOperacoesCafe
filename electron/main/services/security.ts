@@ -338,6 +338,21 @@ export class AuthService {
     if (session.user.id === id) throw new AuthError("Voce nao pode excluir seu proprio usuario.", "SELF_DELETE_BLOCKED");
     const user = this.getUser(id);
     this.db.transaction(() => {
+      // audit_events referencia local_sessions/app_users sem CASCADE -- pra
+      // uma conta com historico real de uso (qualquer login/acao ja
+      // registrada), apagar as sessoes/o usuario direto violaria essa FK.
+      // Desvincula em vez de apagar: actor_username ja guarda o nome pra
+      // manter o log legivel (ver comentario acima), entao perder session_id/
+      // actor_user_id nao tira informacao nenhuma da trilha de auditoria.
+      this.db.prepare("UPDATE audit_events SET session_id = NULL WHERE session_id IN (SELECT id FROM local_sessions WHERE user_id = ?)").run(id);
+      this.db.prepare("UPDATE audit_events SET actor_user_id = NULL WHERE actor_user_id = ?").run(id);
+      // backup_jobs/restore_jobs/integrity_check_runs guardam quem disparou a
+      // acao so' como referencia informativa (coluna aceita NULL) -- mesma
+      // logica do audit_events acima, desvincula em vez de apagar o job.
+      this.db.prepare("UPDATE backup_jobs SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(id);
+      this.db.prepare("UPDATE restore_jobs SET executed_by_user_id = NULL WHERE executed_by_user_id = ?").run(id);
+      this.db.prepare("UPDATE integrity_check_runs SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(id);
+      this.db.prepare("DELETE FROM user_role_legal_entity_access WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM local_sessions WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM user_password_history WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM user_credentials WHERE user_id = ?").run(id);

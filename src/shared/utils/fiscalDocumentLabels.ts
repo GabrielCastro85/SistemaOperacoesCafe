@@ -35,7 +35,7 @@ export function fiscalDocumentCounterpartyNameFromSnapshot(document: FiscalDocum
 }
 
 function partyName(party: FiscalSnapshotParty | null): string | null {
-  const name = (party?.tradeName || party?.legalName) as string | undefined;
+  const name = (party?.legalName || party?.tradeName) as string | undefined;
   return name?.trim() || null;
 }
 

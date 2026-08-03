@@ -142,6 +142,27 @@ describe("local authentication and authorization", () => {
     await expect(auth.login({ username: "thadeu", password: "temporaria123" })).rejects.toThrow();
   });
 
+  it("deleteUser works even when the account has real audit history (login, actions) -- unlinks audit_events instead of crashing on the FK", async () => {
+    const auth = createAuthService();
+    await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
+    const created = await auth.createUser({ displayName: "Thadeu", username: "thadeu", password: "temporaria123", mustChangePassword: true });
+    await auth.assignRole({ userId: created.id, roleId: "role-employee-operacional" });
+
+    // Gera historico de auditoria de verdade pro usuario: login, logout, login de novo --
+    // cada um cria uma linha em local_sessions com audit_events apontando pra ela.
+    const firstSession = await auth.login({ username: "thadeu", password: "temporaria123" });
+    auth.logout();
+    await auth.login({ username: "thadeu", password: "temporaria123" });
+    auth.logout();
+    expect(firstSession.user.id).toBe(created.id);
+
+    await auth.login({ username: "admin", password: "Senha@12345" });
+    await auth.deleteUser(created.id);
+
+    expect(auth.listUsers().map((user) => user.id)).not.toContain(created.id);
+    await expect(auth.login({ username: "thadeu", password: "temporaria123" })).rejects.toThrow();
+  });
+
   it("blocks deleting your own logged-in account", async () => {
     const auth = createAuthService();
     const session = await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });

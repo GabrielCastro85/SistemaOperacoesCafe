@@ -1059,8 +1059,6 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
-.actions button,
-.row-actions button,
 .inline-actions button,
 .toolbar button,
 .settings-tabs button {
@@ -1069,7 +1067,7 @@ input[type="checkbox"] {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 18px;
   margin-block: 20px;
 }
@@ -1318,8 +1316,9 @@ textarea {
 
 .ui-tabs button.active {
   color: var(--color-primary-text);
-  border-color: var(--color-primary);
-  background: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-accent) 70%, var(--color-primary));
+  background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 72%, #000));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 .ui-table-wrap {
@@ -1845,10 +1844,15 @@ table tbody tr:hover {
   box-shadow: 0 16px 40px rgb(43 31 18 / 16%);
 }
 
-.row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+/* Colunas de acoes de tabela costumam ser estreitas -- botoes mais
+   compactos aqui cabem 3 numa linha so' com mais frequencia, em vez de
+   deixar o ultimo sozinho numa linha nova (ex: Editar/Arquivar/Excluir).
+   !important necessario pra vencer a especificidade da regra generica de
+   button (button:not(...):not(...)..., varias exclusoes por classe). */
+.row-actions button {
+  min-height: 32px !important;
+  padding: 5px 10px !important;
+  font-size: 13px !important;
 }
 
 .ui-toast {
@@ -1979,8 +1983,7 @@ table tbody tr:hover {
 }
 
 .settings-tabs,
-.toolbar,
-.actions {
+.toolbar {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -1988,8 +1991,10 @@ table tbody tr:hover {
 }
 
 .settings-tabs button.active {
-  border-color: var(--brand-accent);
-  background: color-mix(in srgb, var(--brand-accent) 12%, white);
+  color: var(--color-primary-text);
+  border-color: color-mix(in srgb, var(--brand-accent) 70%, var(--color-primary));
+  background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 72%, #000));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-accent) 22%, transparent);
 }
 
 .admin-block {
@@ -2038,13 +2043,37 @@ table tbody tr:hover {
   background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
-.actions,
-.row-actions,
 .table-row > span:last-child {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* flex-wrap com flex-basis de ~50%: 2 botoes dividem a linha; quando sobra 1
+   sozinho na linha de baixo (total impar, ex: Editar/Arquivar/Excluir), ele
+   e' o unico naquela linha, entao flex-grow:1 estica ele pra ocupar o
+   espaco inteiro em vez de ficar pequeno com metade vazio do lado. Um
+   grupo de 1 botao so' (:only-child) fica no tamanho natural, sem esticar.
+   .actions e .row-actions sao o mesmo padrao (grupo de botoes de acao),
+   usados de forma intercambiavel pelas paginas -- mesmo tratamento pras duas. */
+.actions,
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.actions > *:not(:only-child),
+.row-actions > *:not(:only-child) {
+  flex: 1 1 calc(50% - 4px);
+  min-width: 70px;
+}
+
+.actions > *:only-child,
+.row-actions > *:only-child {
+  flex: 0 1 auto;
 }
 
 .org-grid {

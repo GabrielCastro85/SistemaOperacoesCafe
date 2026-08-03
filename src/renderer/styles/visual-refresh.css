@@ -1,0 +1,294 @@
+/* Visual refresh loaded after the base theme.
+   Keep this layer broad and conservative so it improves every module without
+   changing the business flow or company branding. */
+
+:root {
+  --ui-accent: var(--company-accent, var(--theme-accent, var(--accent-color, #18b978)));
+  --ui-line: color-mix(in srgb, var(--ui-accent) 18%, #d8c3a2);
+  --ui-paper: rgba(255, 252, 246, 0.96);
+  --ui-paper-soft: rgba(248, 240, 226, 0.72);
+  --ui-text: #090705;
+  --ui-muted: #6d6152;
+  --ui-danger: #982f22;
+  --ui-shadow: 0 14px 34px rgba(34, 22, 8, 0.09);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 0;
+}
+
+button,
+.button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"] {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdf8 0%, #f7eddf 100%);
+  color: var(--ui-text);
+  font: inherit;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease,
+    background 160ms ease,
+    opacity 160ms ease;
+}
+
+button:hover:not(:disabled),
+.button:hover:not(:disabled),
+[role="button"]:hover:not([aria-disabled="true"]),
+input[type="button"]:hover:not(:disabled),
+input[type="submit"]:hover:not(:disabled),
+input[type="reset"]:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--ui-accent) 18%, transparent),
+    0 10px 22px rgba(27, 17, 6, 0.12);
+  transform: translateY(-1px);
+}
+
+button:active:not(:disabled),
+.button:active:not(:disabled),
+[role="button"]:active:not([aria-disabled="true"]) {
+  transform: translateY(0);
+}
+
+button:disabled,
+button[aria-disabled="true"],
+.button:disabled,
+.button[aria-disabled="true"],
+input[type="button"]:disabled,
+input[type="submit"]:disabled,
+input[type="reset"]:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+button[class*="primary" i],
+button[class*="success" i],
+.btn-primary,
+.btn-success {
+  border-color: color-mix(in srgb, var(--ui-accent) 80%, #09110c);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ui-accent) 92%, #ffffff) 0%,
+    color-mix(in srgb, var(--ui-accent) 72%, #07120d) 100%
+  );
+  color: #fffaf0;
+}
+
+button[class*="danger" i],
+button[class*="delete" i],
+button[class*="excluir" i],
+.btn-danger,
+.danger {
+  border-color: #d99b90;
+  background: linear-gradient(180deg, #fff8f5 0%, #fff0ec 100%);
+  color: var(--ui-danger);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  width: 100%;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.94);
+  color: var(--ui-text);
+  font: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+textarea {
+  min-height: 92px;
+  padding: 10px 12px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--ui-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 20%, transparent);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  margin: 0 8px 0 0;
+  accent-color: var(--ui-accent);
+  transform: none !important;
+}
+
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.25;
+}
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+}
+
+thead th {
+  padding: 12px 14px;
+  background: color-mix(in srgb, #f2e7d4 88%, var(--ui-accent));
+  color: #604729;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+tbody td {
+  padding: 13px 14px;
+  border-top: 1px solid rgba(124, 91, 47, 0.14);
+  vertical-align: middle;
+}
+
+tbody tr:hover td {
+  background: color-mix(in srgb, var(--ui-accent) 7%, #fffaf0);
+}
+
+td:last-child,
+th:last-child {
+  text-align: left;
+  white-space: normal;
+}
+
+td:last-child button {
+  margin: 3px 4px 3px 0;
+}
+
+:where(.card, .panel, .surface, .box, .metric-card, .summary-card, [class*="card" i], [class*="panel" i]) {
+  border-color: var(--ui-line);
+  border-radius: 12px;
+  box-shadow: var(--ui-shadow);
+}
+
+:where(.page, .page-content, .content, .main-content, [class*="Page" i]) {
+  min-width: 0;
+}
+
+:where(.page, .page-content, .content, .main-content) > * + * {
+  margin-top: 18px;
+}
+
+:where(.actions, .button-row, .form-actions, [class*="actions" i]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+:where(.form-grid, [class*="form-grid" i]) {
+  gap: 14px 16px;
+  align-items: end;
+}
+
+:where(.modal, .dialog, [role="dialog"]) {
+  border-radius: 12px;
+}
+
+:where(.modal, .dialog, [role="dialog"]) :where(.actions, .form-actions, [class*="actions" i]) {
+  padding-top: 12px;
+}
+
+@media (max-width: 1366px) {
+  body {
+    font-size: 14px;
+  }
+
+  button,
+  .button,
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"] {
+    min-height: 36px;
+    padding-inline: 12px;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select {
+    min-height: 38px;
+  }
+
+  thead th,
+  tbody td {
+    padding: 10px 12px;
+  }
+
+  :where(.page, .page-content, .content, .main-content) {
+    padding-inline: 20px !important;
+  }
+
+  :where(.metric-grid, .cards-grid, [class*="metric" i][class*="grid" i]) {
+    gap: 12px !important;
+  }
+}
+
+@media (max-width: 1120px) {
+  :where(.dashboard-grid, .metrics-grid, .cards-grid, .form-grid, [class*="grid" i]) {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 860px) {
+  button,
+  .button,
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"] {
+    width: 100%;
+  }
+
+  :where(.actions, .button-row, .form-actions, [class*="actions" i]) {
+    align-items: stretch;
+  }
+}

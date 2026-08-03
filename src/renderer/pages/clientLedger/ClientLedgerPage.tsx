@@ -42,7 +42,14 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const load = useCallback(async () => {
     const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clients);
-    setPartnerLegalEntities((await Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    // Empresas/CNPJs sem cliente/corretor dono nao aparecem percorrendo os
+    // parceiros -- precisa buscar as soltas separadamente e juntar (ver
+    // mesmo padrao em PartnersPage/OperationsPage/ChargesPage).
+    const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
+      Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    ]);
+    setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     const selected = clientId;
     if (selected) {
       setEntries(await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId: selected, periodStart: periodStart || null, periodEnd: periodEnd || null }));

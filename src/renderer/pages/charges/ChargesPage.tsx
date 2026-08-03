@@ -87,7 +87,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const load = useCallback(async () => {
     const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clients);
-    setPartnerLegalEntities((await Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    // Empresas/CNPJs sem cliente/corretor dono (cadastradas direto em
+    // "Empresas e CNPJs") nao aparecem percorrendo os parceiros -- precisa
+    // buscar as soltas separadamente e juntar, senao a coluna "Empresa" desta
+    // tela mostra "Nao identificado" mesmo pra nota ja vinculada a uma dessas
+    // empresas (ver mesmo padrao em PartnersPage/OperationsPage).
+    const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
+      Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    ]);
+    setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setCharges(await window.operationsCafe.listClientCharges({ status: "all" }));
     setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies }));
@@ -218,7 +227,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   function legalEntityLabel(id: string): string {
     const entity = legalEntities.find((item) => item.id === id) ?? data.legalEntities.find((item) => item.id === id);
-    return entity?.tradeName ?? id;
+    return entity?.legalName || entity?.tradeName || id;
   }
 
   function chargeCompanyClass(value: string | null | undefined): string {
@@ -250,7 +259,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     const entityId = document?.partnerLegalEntityId;
     if (entityId) {
       const entity = partnerLegalEntities.find((item) => item.id === entityId);
-      if (entity) return entity.tradeName || entity.legalName;
+      if (entity) return entity.legalName || entity.tradeName;
     }
     if (document) {
       const ownCnpj = legalEntities.find((item) => item.id === operation.ownLegalEntityId)?.cnpj ?? null;

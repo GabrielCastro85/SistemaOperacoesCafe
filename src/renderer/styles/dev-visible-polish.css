@@ -1,0 +1,165 @@
+:root {
+  --ui-accent: var(--company-accent, var(--theme-accent, var(--accent-color, #18b978)));
+  --ui-line: color-mix(in srgb, var(--ui-accent) 18%, #cdbb9d);
+  --ui-shadow: 0 12px 28px rgba(45, 31, 16, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+.button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  max-width: 100%;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--ui-line);
+  background: linear-gradient(180deg, #fffaf1 0%, #f8efe1 100%);
+  color: inherit;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.75) inset;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease, background 140ms ease;
+}
+
+button:hover:not(:disabled),
+.button:hover:not(:disabled),
+[role="button"]:hover:not(:disabled),
+input[type="button"]:hover:not(:disabled),
+input[type="submit"]:hover:not(:disabled),
+input[type="reset"]:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-accent) 55%, #cdbb9d);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 18%, transparent), 0 8px 20px rgba(28, 20, 11, 0.1);
+  transform: translateY(-1px);
+}
+
+button:disabled,
+.button:disabled,
+[aria-disabled="true"],
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  min-height: 40px;
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--ui-line);
+  background: #fffaf3;
+  color: inherit;
+  padding: 8px 12px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ui-accent) 70%, #cdbb9d);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 22%, transparent);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  padding: 0 !important;
+  margin: 0 8px 0 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+thead th {
+  padding: 12px 14px;
+  background: color-mix(in srgb, #f1e5d3 72%, transparent);
+  text-align: left;
+}
+
+tbody td {
+  padding: 12px 14px;
+  border-top: 1px solid rgba(143, 111, 71, 0.16);
+  vertical-align: middle;
+}
+
+tbody tr:hover td {
+  background: color-mix(in srgb, var(--ui-accent) 7%, transparent);
+}
+
+.card,
+.panel,
+[class*="card" i],
+[class*="panel" i] {
+  border-radius: 12px;
+  box-shadow: var(--ui-shadow);
+}
+
+[class*="actions" i],
+[class*="button-row" i],
+[class*="toolbar" i] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 1366px) {
+  body {
+    font-size: 14px;
+  }
+
+  button,
+  .button,
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"] {
+    min-height: 36px;
+    padding: 7px 12px;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-height: 38px;
+  }
+
+  thead th,
+  tbody td {
+    padding: 10px 12px;
+  }
+}
+
+@media (max-width: 980px) {
+  table {
+    font-size: 13px;
+  }
+
+  button,
+  .button,
+  [role="button"] {
+    white-space: normal;
+  }
+}

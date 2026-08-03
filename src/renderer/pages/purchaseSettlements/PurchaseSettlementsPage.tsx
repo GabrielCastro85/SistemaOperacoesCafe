@@ -81,7 +81,14 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
     const supplierPartners = await window.operationsCafe.listBusinessPartners({ role: "SUPPLIER", status: "active" });
     const expenseCategories = await window.operationsCafe.listExpenseCategories(organizationId);
     setSuppliers(supplierPartners);
-    setPartnerLegalEntities((await Promise.all(supplierPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    // Empresas/CNPJs sem fornecedor dono nao aparecem so' percorrendo os
+    // fornecedores -- precisa buscar as soltas separadamente e juntar (ver
+    // mesmo padrao em PartnersPage/OperationsPage/ChargesPage).
+    const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
+      Promise.all(supplierPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    ]);
+    setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setCategories(expenseCategories.filter((category) => category.isActive));
     setCategoryId((current) => current || expenseCategories.find((category) => category.isActive)?.id || expenseCategories[0]?.id || "");

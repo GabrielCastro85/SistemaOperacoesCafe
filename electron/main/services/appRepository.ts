@@ -444,6 +444,23 @@ export class AppRepository {
     return results;
   }
 
+  /**
+   * "Sincronizacao completa" manual (Configuracoes) -- apaga o cursor salvo
+   * de cada tabela compartilhada e chama syncSharedDataDown() em seguida,
+   * forcando esse PC a rebaixar TUDO desde o inicio, nao so' o que mudou
+   * depois do ultimo cursor salvo. Existe pra corrigir o caso em que o
+   * cursor deste PC avancou alem de uma linha antiga que ele nunca chegou a
+   * baixar de verdade (ex: PC que so' comecou a sincronizar uma tabela nova
+   * depois que ela ja tinha historico no Supabase) -- sem isso, esse PC
+   * ficaria pra sempre sem ver aquelas linhas antigas, ja que o pull normal
+   * so' busca WHERE updated_at > cursor.
+   */
+  async resetSyncCursorsAndResync(): Promise<Array<{ table: string; pulled: number }>> {
+    const deleteCursor = this.db.prepare("DELETE FROM app_settings WHERE key = ?");
+    for (const { table } of HOT_SYNC_TABLES) deleteCursor.run(`sync_cursor_${table}`);
+    return this.syncSharedDataDown();
+  }
+
   private async syncTableDown(table: string, timestampColumn: string): Promise<{ table: string; pulled: number }> {
     if (!this.sharedRepository) return { table, pulled: 0 };
     const cursorKey = `sync_cursor_${table}`;
@@ -1234,6 +1251,14 @@ export class AppRepository {
   // pull, replica a mesma exclusao em cascata que o PC de origem fez
   // localmente, em vez de reviver o usuario com um upsert comum.
   private cascadeDeleteUserLocally(userId: string): void {
+    // Mesmo motivo do AuthService.deleteUser (audit_events referencia
+    // local_sessions/app_users sem CASCADE) -- desvincula antes de apagar.
+    this.db.prepare("UPDATE audit_events SET session_id = NULL WHERE session_id IN (SELECT id FROM local_sessions WHERE user_id = ?)").run(userId);
+    this.db.prepare("UPDATE audit_events SET actor_user_id = NULL WHERE actor_user_id = ?").run(userId);
+    this.db.prepare("UPDATE backup_jobs SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(userId);
+    this.db.prepare("UPDATE restore_jobs SET executed_by_user_id = NULL WHERE executed_by_user_id = ?").run(userId);
+    this.db.prepare("UPDATE integrity_check_runs SET created_by_user_id = NULL WHERE created_by_user_id = ?").run(userId);
+    this.db.prepare("DELETE FROM user_role_legal_entity_access WHERE user_id = ?").run(userId);
     this.db.prepare("DELETE FROM local_sessions WHERE user_id = ?").run(userId);
     this.db.prepare("DELETE FROM user_password_history WHERE user_id = ?").run(userId);
     this.db.prepare("DELETE FROM user_credentials WHERE user_id = ?").run(userId);
@@ -2439,12 +2464,22 @@ export class AppRepository {
     return this.getPurchaseRateRule(id);
   }
 
-  listFiscalDocuments(filters: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all" } = {}): FiscalDocument[] {
+  listFiscalDocuments(filters: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; includeThirdParty?: boolean } = {}): FiscalDocument[] {
+    // Nota terceirizada (emissora e' um CNPJ TERC-XML, nem a nossa propria
+    // empresa) nunca bate com nenhum CNPJ ativo -- sem esse extra ela ficaria
+    // invisivel pra sempre em "Notas e operacoes", ja que a lista normalmente
+    // filtra por ownLegalEntityId do CNPJ selecionado no topo da tela. So'
+    // liga com includeThirdParty=true (tela de gestao de notas) -- indicadores
+    // agregados (Dashboard etc) continuam estritos ao CNPJ ativo, senao o
+    // valor das notas terceirizadas vazaria pro total de TODOS os CNPJs.
+    const thirdPartyEntityIds = filters.ownLegalEntityId && filters.includeThirdParty
+      ? new Set(this.listLegalEntities({ status: "all" }).filter((entity) => this.isThirdPartyLegalEntity(entity)).map((entity) => entity.id))
+      : null;
     return (this.db.prepare("SELECT * FROM fiscal_documents ORDER BY issue_date DESC, updated_at DESC").all() as DbRecord[])
       .map(mapFiscalDocument)
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
       .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
-      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
+      .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId || (thirdPartyEntityIds?.has(item.ownLegalEntityId) ?? false))
       .filter((item) => !filters.status || filters.status === "all" || item.status === filters.status)
       .filter((item) => this.matchesSearch([item.documentNumber, item.accessKey ?? "", item.pendingNotes ?? ""], filters.search));
   }
@@ -4437,6 +4472,53 @@ export class AppRepository {
     }, deterministicUuid("thirdPartyLegalEntity", cnpj));
   }
 
+  /**
+   * Equivalente de getOrCreateThirdPartyLegalEntityFromXml, mas pra' nota
+   * lancada manualmente (sem XML): usuario escolhe como "empresa emissora"
+   * uma empresa/CNPJ ja' cadastrada em partner_legal_entities (que pode nem
+   * ter corretor/cliente dono -- ver listUnlinkedPartnerLegalEntities) que
+   * nao e' nenhum dos CNPJs proprios. Reusa o mesmo CNPJ pra' criar (ou
+   * reaproveitar, se ja' existir) o "CNPJ emissor" que fiscal_documents
+   * exige como own_legal_entity_id -- e' assim que a nota fica marcada como
+   * terceirizada (ver isThirdPartyLegalEntity), igual uma nota terceirizada
+   * importada de XML.
+   */
+  resolveIssuerLegalEntityFromPartner(organizationId: string, partnerLegalEntityId: string): LegalEntity {
+    const partnerEntity = this.getPartnerLegalEntity(partnerLegalEntityId);
+    if (!partnerEntity.cnpj || !isValidCnpj(partnerEntity.cnpj)) throw new Error("Empresa emissora sem CNPJ valido cadastrado.");
+    const existing = this.listLegalEntities({ status: "all" }).find((entity) => entity.cnpj === partnerEntity.cnpj);
+    if (existing) return existing;
+    const fallbackOwn = this.listLegalEntities({ organizationId, status: "active" }).find((entity) => !this.isThirdPartyLegalEntity(entity))
+      ?? this.listLegalEntities({ status: "active" }).find((entity) => !this.isThirdPartyLegalEntity(entity));
+    if (!fallbackOwn) throw new Error("Nenhum CNPJ proprio cadastrado pra usar como referencia de endereco.");
+    const partyState = partnerEntity.state?.toUpperCase() ?? "";
+    return this.createLegalEntityLocalOnly({
+      organizationId,
+      legalName: partnerEntity.legalName,
+      tradeName: partnerEntity.tradeName || partnerEntity.legalName,
+      cnpj: partnerEntity.cnpj,
+      stateRegistration: partnerEntity.stateRegistration,
+      municipalRegistration: partnerEntity.municipalRegistration,
+      email: partnerEntity.email,
+      phone: partnerEntity.phone,
+      addressLine: partnerEntity.addressLine ?? "Endereco nao informado",
+      addressNumber: partnerEntity.addressNumber ?? "S/N",
+      addressComplement: partnerEntity.addressComplement,
+      district: partnerEntity.district ?? "Nao informado",
+      city: partnerEntity.city ?? fallbackOwn.city,
+      state: (/^[A-Z]{2}$/.test(partyState) ? partyState : fallbackOwn.state) as LegalEntity["state"],
+      postalCode: partnerEntity.postalCode || fallbackOwn.postalCode || "00000000",
+      documentPrefix: "TERC-XML",
+      defaultBankName: null,
+      defaultBankCode: null,
+      defaultBankAgency: null,
+      defaultBankAccount: null,
+      defaultPixKey: null,
+      isDraft: true,
+      isActive: true
+    }, deterministicUuid("thirdPartyLegalEntity", partnerEntity.cnpj));
+  }
+
   private resolveCounterpartyPartnerForXml(organizationId: string, extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
     const counterparty = this.resolveXmlCounterparty(extracted, ownLegalEntityId, direction);
     const counterpartyDoc = counterparty.documentNumber;
@@ -4611,7 +4693,7 @@ export class AppRepository {
 
   private fiscalSnapshotPartyName(document: FiscalDocument, partyKey: "issuer" | "recipient"): string | null {
     const party = this.fiscalSnapshotParty(document, partyKey);
-    return this.stringOrNull(party?.tradeName) ?? this.stringOrNull(party?.legalName);
+    return this.stringOrNull(party?.legalName) ?? this.stringOrNull(party?.tradeName);
   }
 
   private fiscalSnapshotPartyDocument(document: FiscalDocument, partyKey: "issuer" | "recipient"): string | null {
@@ -4648,14 +4730,14 @@ export class AppRepository {
       const doc = this.getFiscalDocument(operation.fiscalDocumentId).document;
       const product = operation.productId ? this.getProduct(operation.productId) : null;
       const ownLegalEntity = this.getLegalEntity(operation.ownLegalEntityId);
-      const issuerName = this.fiscalSnapshotPartyName(doc, "issuer") ?? ownLegalEntity.tradeName;
+      const issuerName = this.fiscalSnapshotPartyName(doc, "issuer") ?? (ownLegalEntity.legalName || ownLegalEntity.tradeName);
       const companyName = this.fiscalDocumentCompanyName(doc, ownLegalEntity) ?? issuerName;
       this.db.prepare(`INSERT INTO client_charge_operations (
         id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot, fiscal_document_number_snapshot,
         fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
         service_rate_cents_snapshot, service_amount_cents_snapshot, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
+        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
     });
   }

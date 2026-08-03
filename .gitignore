@@ -12,3 +12,4 @@ tmp/
 *.sqlite-shm
 *.sqlite-wal
 scripts/supabase/dumps/
+.claude/settings.local.json

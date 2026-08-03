@@ -17,15 +17,19 @@ function broadcast(): void {
 }
 
 // Chamado depois de QUALQUER syncSharedDataDown (tanto o poll automatico de
-// 20s quanto o "Sincronizar agora" manual) -- soma quantas linhas novas
-// chegaram desde a ultima vez que o usuario "viu" (acknowledgeSyncUpdates),
-// pra alimentar o badge "X atualizacoes pendentes" no rodape do app. Nao
-// persiste entre reinicios do app de proposito: e' so' uma notificacao de
-// "algo novo chegou", nao um registro de auditoria.
+// 20s quanto o "Sincronizar agora" manual), pra alimentar o badge "X
+// atualizacoes pendentes" no rodape do app. Reflete so' o que o ciclo MAIS
+// RECENTE trouxe -- nao acumula entre ciclos. Um acumulador somando a cada
+// poll de 20s cresce pra sempre sempre que uma mesma linha precisa ser
+// reaplicada em mais de um ciclo (ex: cursor preso atras de uma linha com
+// erro permanente em outra tabela -- ver comentario em syncTableDown), o que
+// fazia o badge crescer indefinidamente mesmo com o app em dia. Sempre
+// notifica (inclusive quando zera) pra o badge sumir assim que um ciclo nao
+// trouxer nada de novo, sem esperar um "Sincronizar agora" manual.
 export function recordSyncResult(pulled: Array<{ table: string; pulled: number }>): void {
   const total = pulled.reduce((sum, entry) => sum + entry.pulled, 0);
-  status = { pendingCount: status.pendingCount + total, lastSyncedAt: new Date().toISOString() };
-  if (total > 0) broadcast();
+  status = { pendingCount: total, lastSyncedAt: new Date().toISOString() };
+  broadcast();
 }
 
 export function acknowledgeSyncUpdates(): void {

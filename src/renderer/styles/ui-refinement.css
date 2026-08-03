@@ -1,0 +1,242 @@
+:root {
+  --ui-accent: var(--company-accent, var(--brand-accent, #19b972));
+  --ui-surface: var(--color-surface, #fffaf2);
+  --ui-card: var(--color-card, #fffdf8);
+  --ui-border: var(--color-border, #d9c5a7);
+  --ui-border-strong: color-mix(in srgb, var(--ui-border) 68%, #8a6a3d);
+  --ui-text: var(--color-text, #101412);
+  --ui-muted: var(--color-muted, #5f5145);
+  --ui-danger: #9c2f1f;
+  --ui-radius: 8px;
+  --ui-focus: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 20%, transparent);
+  --ui-shadow: 0 16px 34px rgba(23, 14, 5, 0.1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+:where(.app-shell, .workspace-shell, .page-shell, .page, .page-content, .content, .app-content, .workspace, .panel, .card, .table-card, .modal, .dialog, .form-grid, .toolbar, .actions, .filters, .field, .field-row) {
+  min-width: 0;
+}
+
+:where(button, .button, .btn, [role="button"]) {
+  min-height: 38px;
+  border-radius: var(--ui-radius);
+  border: 1px solid var(--ui-border);
+  background: linear-gradient(180deg, #fffdf8 0%, #fff7ec 100%);
+  color: var(--ui-text);
+  font-weight: 700;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  line-height: 1.15;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease, background 140ms ease;
+}
+
+:where(button, .button, .btn, [role="button"]):hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-focus);
+  transform: translateY(-1px);
+}
+
+:where(button, .button, .btn, [role="button"]):active:not(:disabled):not([aria-disabled="true"]) {
+  transform: translateY(0);
+}
+
+:where(button, .button, .btn, [role="button"]):disabled,
+:where(button, .button, .btn, [role="button"])[aria-disabled="true"] {
+  opacity: 0.52;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+:where(.danger, .danger-button, .btn-danger, button[data-variant="danger"]) {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border));
+  color: var(--ui-danger);
+  background: linear-gradient(180deg, #fff7f2 0%, #fff1eb 100%);
+}
+
+:where(input, select, textarea) {
+  min-height: 40px;
+  border-radius: var(--ui-radius);
+  border: 1px solid var(--ui-border);
+  background: #fffaf4;
+  color: var(--ui-text);
+  padding: 0 12px;
+  font: inherit;
+  min-width: 0;
+}
+
+:where(textarea) {
+  min-height: 88px;
+  padding-block: 10px;
+  resize: vertical;
+}
+
+:where(input, select, textarea):focus {
+  outline: none;
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-focus);
+}
+
+:where(input[type="checkbox"], input[type="radio"]) {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  accent-color: var(--ui-accent);
+}
+
+:where(.card, .panel, .table-card, .summary-card, .metric-card, .form-card, .details-card, .modal-section, .empty-state) {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  box-shadow: var(--ui-shadow);
+}
+
+:where(.page, .page-content, .content, .app-content, .workspace) {
+  padding-inline: clamp(20px, 2.2vw, 36px);
+  padding-block: clamp(20px, 2.1vw, 34px) 76px;
+}
+
+:where(.page-header, .section-header, .toolbar, .actions, .filters, .button-row, .tabs, .tab-list, .periodicity, .modal-footer, .dialog-footer) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+:where(.page-header, .section-header) {
+  justify-content: space-between;
+}
+
+:where(.filters, .toolbar) {
+  row-gap: 14px;
+}
+
+:where(.form-grid, .filters-grid, .metrics-grid, .summary-grid, .dashboard-metrics) {
+  display: grid;
+  gap: 16px;
+}
+
+:where(.metrics-grid, .summary-grid, .dashboard-metrics) {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+:where(.form-grid, .filters-grid) {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+}
+
+:where(.dashboard-grid, .two-column-grid) {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 18px;
+}
+
+:where(.table-card, .table-wrapper, .table-scroll) {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+:where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+:where(th, td) {
+  padding: 12px 14px;
+  vertical-align: middle;
+}
+
+:where(td.actions, .actions-cell, .table-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+:where(.modal, .dialog, [role="dialog"]) {
+  max-width: min(1120px, calc(100vw - 32px));
+}
+
+:where(.modal-content, .dialog-content) {
+  padding: clamp(18px, 2vw, 28px);
+}
+
+:where(.modal-footer, .dialog-footer) {
+  justify-content: flex-end;
+  padding: 14px clamp(18px, 2vw, 28px);
+}
+
+:where(.empty-state) {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 22px;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--ui-surface) 82%, #fff);
+}
+
+@media (max-width: 1440px) {
+  :where(.page, .page-content, .content, .app-content, .workspace) {
+    padding-inline: 24px;
+  }
+
+  :where(.dashboard-grid, .two-column-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1366px) {
+  :where(.page, .page-content, .content, .app-content, .workspace) {
+    padding-inline: 22px;
+    padding-top: 22px;
+  }
+
+  :where(.metrics-grid, .summary-grid, .dashboard-metrics) {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  }
+
+  :where(th, td) {
+    padding: 10px 12px;
+  }
+}
+
+@media (max-width: 1100px) {
+  :where(.form-grid, .filters-grid) {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  :where(.page-header, .section-header) {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  :where(.page, .page-content, .content, .app-content, .workspace) {
+    padding-inline: 16px;
+  }
+
+  :where(.metrics-grid, .summary-grid, .dashboard-metrics, .form-grid, .filters-grid) {
+    grid-template-columns: 1fr;
+  }
+}

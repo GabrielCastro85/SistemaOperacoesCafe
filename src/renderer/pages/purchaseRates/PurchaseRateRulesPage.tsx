@@ -59,7 +59,10 @@ export function PurchaseRateRulesPage({ data }: { data: BootstrapData }): JSX.El
       .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
       .sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR"));
     setSuppliers(supplierPartners);
-    setPartnerLegalEntities((await Promise.all(supplierPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat());
+    // Empresas/CNPJs sem fornecedor dono nao aparecem so' percorrendo os
+    // fornecedores -- reaproveita o mesmo merge linked+unlinked ja feito
+    // acima pra allCounterpartyLegalEntities.
+    setPartnerLegalEntities(allCounterpartyLegalEntities);
     setCounterpartyLegalEntities(allCounterpartyLegalEntities);
     setProducts(activeProducts);
     setRules(activeRules);

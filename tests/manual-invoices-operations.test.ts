@@ -74,6 +74,39 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
+  it("resolveIssuerLegalEntityFromPartner cria (ou reaproveita) o CNPJ terceirizado a partir de uma empresa solta, pra' nota manual de terceiro", async () => {
+    const { repo, db } = await setup();
+    // Empresa cadastrada em "Empresas e CNPJs" sem cliente/corretor dono --
+    // exatamente o cenario de uma nota terceirizada lancada manualmente.
+    const standalone = await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: null, legalName: "CEREAIS MINEIRA LTDA", tradeName: "CEREAIS MINEIRA LTDA",
+      cnpj: "67968272000150", stateRegistration: null, municipalRegistration: null, email: null, phone: null,
+      addressLine: "R DIRCEU DA FONSECA", addressNumber: "00", addressComplement: null, district: "MANGABEIRAS",
+      city: "JOAO MONLEVADE", state: "MG", postalCode: "35930189", isPrimary: false, isActive: true, isDraft: false
+    });
+
+    const issuer = repo.resolveIssuerLegalEntityFromPartner(villaId, standalone.id);
+    expect(issuer.cnpj).toBe("67968272000150");
+    expect(issuer.documentPrefix).toBe("TERC-XML");
+    expect(issuer.tradeName).toBe("CEREAIS MINEIRA LTDA");
+
+    // Chamando de novo com o mesmo CNPJ reaproveita a MESMA linha, nao cria duplicata.
+    const issuerAgain = repo.resolveIssuerLegalEntityFromPartner(villaId, standalone.id);
+    expect(issuerAgain.id).toBe(issuer.id);
+    expect(repo.listLegalEntities({ status: "all" }).filter((entity) => entity.cnpj === "67968272000150")).toHaveLength(1);
+
+    // A nota criada com esse CNPJ como ownLegalEntityId fica marcada como
+    // terceirizada -- nem emitente nem destinatario e' a Villa.
+    const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Comprador Terceiro", notes: null, roles: ["CLIENT"], isActive: true });
+    const doc = repo.createFiscalDocument({
+      organizationId: villaId, ownLegalEntityId: issuer.id, responsiblePartnerId: partner.id, partnerLegalEntityId: null,
+      accessKey: null, documentNumber: "900", series: "1", issueDate: "2026-08-02", totalAmountCents: 176400,
+      hasPendingIssues: false, pendingNotes: null, notes: "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio."
+    });
+    expect(doc.document.ownLegalEntityId).toBe(issuer.id);
+    db.close();
+  });
+
   it("creates invoice and operation with a shared client registered under another organization", async () => {
     const { repo, db, productId } = await setup();
     const graoId = "22222222-2222-4222-8222-222222222222";

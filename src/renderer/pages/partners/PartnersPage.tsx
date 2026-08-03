@@ -651,6 +651,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     .map((partner) => [partner.id, partner.displayName] as [string, string]);
   const isCompanyModal = modalMode === "createCompany" || modalMode === "editCompany";
   const isClientCreateModal = modalMode === "createClient";
+  const isClientEditModal = modalMode === "editClient";
   const currentCompanyForm = modalMode === "editCompany" ? detailLegalEntityForm : manualLegalEntityForm;
   const updateCurrentCompanyForm = (field: keyof LegalEntityForm, value: string): void => {
     if (modalMode === "editCompany") updateDetailLegalEntityForm(field, value);
@@ -923,17 +924,70 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
             <footer className="partner-modal__footer">
               {isClientCreateModal ? (
                 <>
-                  <button className="partner-action-button" onClick={() => { setManualLegalEntityForm(emptyLegalEntityForm); setLookupResult(null); }}>Limpar dados</button>
-                  <button className="partner-action-button partner-action-button--primary" disabled={roles.length === 0 || !organizationId} onClick={() => void saveManualPartner()}>Cadastrar cliente ou fornecedor</button>
+                  <button
+                    className="partner-action-button"
+                    onClick={() => {
+                      setManualLegalEntityForm(emptyLegalEntityForm);
+                      setLookupResult(null);
+                    }}
+                  >
+                    Limpar dados
+                  </button>
+
+                  <button
+                    className="partner-action-button partner-action-button--primary"
+                    disabled={roles.length === 0 || !organizationId}
+                    onClick={() => void saveManualPartner()}
+                  >
+                    Cadastrar cliente ou fornecedor
+                  </button>
                 </>
               ) : null}
+
+              {isClientEditModal ? (
+                <button
+                  className="partner-action-button partner-action-button--primary"
+                  disabled={
+                    !selected ||
+                    !editPartnerName.trim() ||
+                    editPartnerRoles.length === 0
+                  }
+                  onClick={() => void savePartnerEdit()}
+                >
+                  Salvar alterações
+                </button>
+              ) : null}
+
               {isCompanyModal ? (
                 <>
-                  <button className="partner-action-button" onClick={() => { setManualLegalEntityForm(emptyLegalEntityForm); setDetailLegalEntityForm(emptyLegalEntityForm); setLookupResult(null); }}>Limpar dados</button>
-                  <button className="partner-action-button partner-action-button--primary" onClick={() => void saveCompany()}>{modalMode === "editCompany" ? "Salvar empresa" : "Cadastrar empresa"}</button>
+                  <button
+                    className="partner-action-button"
+                    onClick={() => {
+                      setManualLegalEntityForm(emptyLegalEntityForm);
+                      setDetailLegalEntityForm(emptyLegalEntityForm);
+                      setLookupResult(null);
+                    }}
+                  >
+                    Limpar dados
+                  </button>
+
+                  <button
+                    className="partner-action-button partner-action-button--primary"
+                    onClick={() => void saveCompany()}
+                  >
+                    {modalMode === "editCompany"
+                      ? "Salvar empresa"
+                      : "Cadastrar empresa"}
+                  </button>
                 </>
               ) : null}
-              <button className="partner-action-button" onClick={closePartnerModal}>Fechar</button>
+
+              <button
+                className="partner-action-button"
+                onClick={closePartnerModal}
+              >
+                Fechar
+              </button>
             </footer>
           </div>
         </div>
