@@ -72,6 +72,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [advanceInput, setAdvanceInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [surchargeInput, setSurchargeInput] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
   const [clientCredits, setClientCredits] = useState<ClientLedgerEntry[]>([]);
   const [clientSurcharges, setClientSurcharges] = useState<ClientLedgerEntry[]>([]);
   const ledgerAutofillChargeIdRef = useRef<string | null>(null);
@@ -114,6 +115,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setAdvanceInput("");
     setDiscountInput("");
     setSurchargeInput("");
+    setAdjustmentReason("");
     ledgerAutofillChargeIdRef.current = null;
     ledgerAutofillClientIdRef.current = null;
   }, [clientId, detail?.charge.clientPartnerId]);
@@ -381,21 +383,48 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function issue(): Promise<void> {
     if (!detail) return;
+
+    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+      setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
+      return;
+    }
+
     try {
-      const adjusted = hasPendingAdjustments ? await applyPendingAdjustmentsToCharge(detail, false) : detail;
-      const issued = await window.operationsCafe.issueClientCharge(adjusted.charge.id);
+      const adjusted = hasPendingAdjustments
+        ? await applyPendingAdjustmentsToCharge(detail, false)
+        : detail;
+
+      const issued = await window.operationsCafe.issueClientCharge(
+        adjusted.charge.id
+      );
+
       setDetail(issued);
+
       if (hasPendingAdjustments) {
-        await refreshClientLedgerAvailability(issued.charge.clientPartnerId);
+        await refreshClientLedgerAvailability(
+          issued.charge.clientPartnerId
+        );
+
         setAdvanceInput("");
         setDiscountInput("");
         setSurchargeInput("");
+        setAdjustmentReason("");
       }
-      setMessage("Cobranca emitida. Agora escolha PDF ou Imagem para salvar onde preferir.");
+
+      setMessage(
+        "Cobranca emitida. Agora escolha PDF ou Imagem para salvar onde preferir."
+      );
+
       await load();
       scrollTo(detailRef);
     } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar cobranca."}`);
+      setMessage(
+        `Erro: ${
+          errorValue instanceof Error
+            ? errorValue.message
+            : "falha ao gerar cobranca."
+        }`
+      );
     }
   }
 
@@ -422,17 +451,17 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       const consumed = await consumeLedgerEntries(clientCredits, advanceCents, current.charge.id, current);
       current = consumed.current;
       if (consumed.remainingCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: consumed.remainingCents, sortOrder: 10, reason: "Ajuste manual" });
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: consumed.remainingCents, sortOrder: 10, reason: adjustmentReason.trim() || "Ajuste manual" });
       }
     }
     if (discountCents > 0) {
-      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: "Ajuste manual" });
+      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: adjustmentReason.trim() || "Ajuste manual" });
     }
     if (surchargeCents > 0) {
       const consumed = await consumeLedgerEntries(clientSurcharges, surchargeCents, current.charge.id, current);
       current = consumed.current;
       if (consumed.remainingCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: "Ajuste manual" });
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: adjustmentReason.trim() || "Ajuste manual" });
       }
     }
     return shouldRegenerateDocuments && hasPendingAdjustments ? window.operationsCafe.regenerateChargeDocuments(current.charge.id) : current;
@@ -440,6 +469,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function applyAdjustments(): Promise<void> {
     if (!detail) return;
+    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+      setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
+      return;
+    }
     try {
       const shouldRegenerateDocuments = !["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status);
       const current = await applyPendingAdjustmentsToCharge(detail, shouldRegenerateDocuments);
@@ -448,6 +481,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
+      setAdjustmentReason("");
       setMessage(shouldRegenerateDocuments ? "Ajustes aplicados. Escolha PDF ou Imagem para salvar uma nova copia." : "Ajustes aplicados.");
       await load();
       scrollTo(detailRef);
@@ -458,11 +492,37 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function registerPayment(): Promise<void> {
     if (!detail) return;
-    const value = await requestTextInput({ title: "Registrar recebimento", label: "Valor recebido (R$)" });
+
+    const value = await requestTextInput({
+      title: "Registrar recebimento",
+      label: "Valor recebido (R$)"
+    });
+
     if (!value) return;
+
     const amountCents = parseCurrencyToCents(value);
-    const payment = await window.operationsCafe.createClientPayment({ organizationId, ownLegalEntityId, clientPartnerId: detail.charge.clientPartnerId, paymentDate: new Date().toISOString().slice(0, 10), amountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
-    setDetail(await window.operationsCafe.allocateClientPayment({ clientPaymentId: payment.id, clientChargeId: detail.charge.id, amountCents }));
+
+    const payment = await window.operationsCafe.createClientPayment({
+      organizationId,
+      ownLegalEntityId,
+      clientPartnerId: detail.charge.clientPartnerId,
+      paymentDate: new Date().toISOString().slice(0, 10),
+      amountCents,
+      paymentMethod: "PIX",
+      bankAccountDescription: null,
+      transactionReference: null,
+      notes: null,
+      attachmentPath: null
+    });
+
+    setDetail(
+      await window.operationsCafe.allocateClientPayment({
+        clientPaymentId: payment.id,
+        clientChargeId: detail.charge.id,
+        amountCents
+      })
+    );
+
     await load();
     scrollTo(detailRef);
   }
@@ -689,6 +749,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
               <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
             </div>
+            <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
+              <span>Motivo do ajuste</span>
+              <textarea
+                value={adjustmentReason}
+                onChange={(event) => setAdjustmentReason(event.target.value)}
+                placeholder="Ex.: diferença de frete, correção de valor ou acordo comercial"
+                rows={3}
+                disabled={!detail}
+              />
+            </label>
             <div className="toolbar">
               <button onClick={() => void applyAdjustments()} disabled={!detail}>Aplicar ajustes</button>
             </div>

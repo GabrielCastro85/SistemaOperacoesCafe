@@ -35,6 +35,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const [entryDate, setEntryDate] = useState(() => localDateInputValue(new Date()));
   const [applyNow, setApplyNow] = useState(true);
   const [movementKind, setMovementKind] = useState<"ADIANTAMENTO" | "ACRESCIMO" | "EMPRESTIMO">("ADIANTAMENTO");
+  const [movementNotes, setMovementNotes] = useState("");
   const [periodStart, setPeriodStart] = useState(() => currentMonthToDateRange().periodStart);
   const [periodEnd, setPeriodEnd] = useState(() => currentMonthToDateRange().periodEnd);
   const [message, setMessage] = useState<string | null>(null);
@@ -65,7 +66,10 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   }, [organizationId, ownLegalEntityId, clientId, periodStart, periodEnd]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setShowClientDetails(false); }, [clientId]);
+  useEffect(() => {
+    setShowClientDetails(false);
+    setMovementNotes("");
+  }, [clientId]);
 
   const MOVEMENT_KIND_CONFIG: Record<typeof movementKind, { entryType: "ADVANCE_RECEIVED" | "SURCHARGE" | "MANUAL_ADJUSTMENT"; effect: "REDUCE_RECEIVABLE" | "INCREASE_RECEIVABLE"; description: string; actionLabel: string; confirmedMessage: string; draftMessage: string }> = {
     ADIANTAMENTO: { entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", description: "Adiantamento recebido", actionLabel: "Registrar adiantamento", confirmedMessage: "Adiantamento registrado e ja abatido do saldo.", draftMessage: "Adiantamento registrado, mas ainda nao abate do saldo (confirme depois quando quiser aplicar)." },
@@ -74,12 +78,56 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   };
 
   async function createLedgerMovement(): Promise<void> {
+    if (!clientId) {
+      setMessage("Selecione um cliente antes de registrar o lançamento.");
+      return;
+    }
+
     const amountCents = parseCurrencyToCents(amount);
+
+    if (amountCents <= 0) {
+      setMessage("Informe um valor maior que zero.");
+      return;
+    }
+
+    if (movementKind !== "ADIANTAMENTO" && !movementNotes.trim()) {
+      setMessage("Informe uma observação para o acréscimo ou empréstimo.");
+      return;
+    }
+
     const config = MOVEMENT_KIND_CONFIG[movementKind];
-    await window.operationsCafe.createLedgerEntry({ organizationId, ownLegalEntityId, clientPartnerId: clientId, clientChargeId: null, entryType: config.entryType, effect: config.effect, amountCents, entryDate, description: config.description, referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: amountCents, status: applyNow ? "CONFIRMED" : "DRAFT" });
-    setMessage(applyNow ? config.confirmedMessage : config.draftMessage);
-    setEntryDate(localDateInputValue(new Date()));
-    await load();
+
+    try {
+      await window.operationsCafe.createLedgerEntry({
+        organizationId,
+        ownLegalEntityId,
+        clientPartnerId: clientId,
+        clientChargeId: null,
+        entryType: config.entryType,
+        effect: config.effect,
+        amountCents,
+        entryDate,
+        description: config.description,
+        referenceNumber: null,
+        notes: movementNotes.trim() || null,
+        attachmentPath: null,
+        availableAmountCents: amountCents,
+        status: applyNow ? "CONFIRMED" : "DRAFT"
+      });
+
+      setMessage(applyNow ? config.confirmedMessage : config.draftMessage);
+      setEntryDate(localDateInputValue(new Date()));
+      setMovementNotes("");
+      await load();
+    } catch (errorValue) {
+      setMessage(
+        `Erro: ${
+          errorValue instanceof Error
+            ? errorValue.message
+            : "falha ao registrar o lançamento."
+        }`
+      );
+    }
   }
 
   const client = partners.find((item) => item.id === clientId) ?? null;
@@ -165,12 +213,18 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
           />
           <TextField label="Valor (R$)" value={amount} onChange={setAmount} />
           <DateInput label="Data do lancamento" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} />
+          <TextField
+            label={movementKind === "ADIANTAMENTO" ? "Observacao (opcional)" : "Observacao"}
+            value={movementNotes}
+            onChange={setMovementNotes}
+          />
           <label className="checkbox">
             <input type="checkbox" checked={applyNow} onChange={(event) => setApplyNow(event.target.checked)} /> Ja abater/somar no saldo agora
           </label>
           <button className="primary" onClick={() => void createLedgerMovement()}>{MOVEMENT_KIND_CONFIG[movementKind].actionLabel}</button>
         </FormGrid>
         {!applyNow ? <p className="muted">Sem marcar, o lancamento fica registrado no historico mas nao entra no saldo ate ser confirmado.</p> : null}
+        {movementKind !== "ADIANTAMENTO" ? <p className="muted">A observacao e obrigatoria para acrescimos e emprestimos.</p> : null}
         {movementKind !== "ADIANTAMENTO" ? <p className="muted">Acrescimos e emprestimos aumentam o quanto o cliente deve -- quando houver uma cobranca em aberto para ele, esse valor aparece automaticamente em "Acrescimos" na tela de Cobrancas.</p> : null}
       </AdminBlock>
 
