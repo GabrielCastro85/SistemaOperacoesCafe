@@ -4208,7 +4208,14 @@ export class AppRepository {
         sourceDescription: String(xmlItem.description ?? ""),
         ncm: this.stringOrNull(xmlItem.ncm)
       });
-      const productId = typeof resolution.productId === "string" ? resolution.productId : productAlias?.productId ?? null;
+      const referencedProductId = this.resolveProductFromReferencedXml(extracted);
+      // Ordem de prioridade:
+      // 1. alias especifico do produto do XML;
+      // 2. produto herdado da NF-e referenciada (ex.: "ACRESCIMO DE PESO");
+      // 3. produto padrao selecionado na tela de importacao.
+      const productId = productAlias?.productId
+        ?? referencedProductId
+        ?? (typeof resolution.productId === "string" ? resolution.productId : null);
       const product = productId ? this.getProduct(productId) : null;
       const sacks = this.resolveSacksForXmlItem(xmlItem, product, resolution);
       const item = this.addFiscalDocumentItem({
@@ -4589,6 +4596,31 @@ export class AppRepository {
   private issuerCnpjFromAccessKey(accessKey: string | null): string | null {
     const key = this.onlyDigits(accessKey ?? "");
     return key.length === 44 ? key.slice(6, 20) : null;
+  }
+
+  private resolveProductFromReferencedXml(extracted: Record<string, unknown>): string | null {
+    const keys = Array.isArray(extracted.referencedAccessKeys)
+      ? extracted.referencedAccessKeys.filter((value): value is string => typeof value === "string" && /^\d{44}$/.test(value))
+      : [];
+
+    for (const accessKey of keys) {
+      const referencedDocument = this.db
+        .prepare("SELECT id FROM fiscal_documents WHERE access_key = ? LIMIT 1")
+        .get(accessKey) as { id: string } | undefined;
+
+      if (!referencedDocument) continue;
+
+      const rows = this.db
+        .prepare("SELECT DISTINCT product_id FROM fiscal_document_items WHERE fiscal_document_id = ? AND product_id IS NOT NULL")
+        .all(referencedDocument.id) as Array<{ product_id: string }>;
+
+      // So herda automaticamente quando a nota original possui um unico
+      // produto identificado. Com mais de um produto, exige classificacao
+      // manual para nao escolher Arábica/Conilon incorretamente.
+      if (rows.length === 1) return rows[0].product_id;
+    }
+
+    return null;
   }
 
   private resolveSacksForXmlItem(xmlItem: Record<string, unknown>, product: Product | null, resolution: Record<string, unknown>): string | null {

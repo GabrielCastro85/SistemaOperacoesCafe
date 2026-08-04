@@ -18,6 +18,25 @@ function decimalTextBr(value: string | null): string {
   return value ? value.replace(".", ",") : "-";
 }
 
+function xmlQuantityInSacks(
+  quantity: string | null | undefined,
+  unit: string | null | undefined
+): string | null {
+  if (!quantity) return null;
+
+  const normalizedUnit = unit?.trim().toUpperCase() ?? "";
+  const numericQuantity = Number(quantity.replace(",", "."));
+
+  if (!Number.isFinite(numericQuantity)) return quantity;
+
+  if (["KG", "KGS", "KILO", "KILOS", "QUILO", "QUILOS"].includes(normalizedUnit)) {
+    const sacks = numericQuantity / 60;
+    return sacks.toFixed(6).replace(/\.?0+$/, "");
+  }
+
+  return quantity;
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} bytes`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -38,6 +57,9 @@ function xmlImportIsVisuallyDeleted(job: XmlImportJob): boolean {
 function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
   return file.status === "REVERTED";
 }
+
+type DocumentSortKey = "number" | "client";
+type SortDirection = "asc" | "desc";
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   function brazilDateValue(date = new Date()): string {
@@ -66,6 +88,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
+  const [documentSort, setDocumentSort] = useState<{ key: DocumentSortKey | null; direction: SortDirection }>({
+    key: null,
+    direction: "asc"
+  });
   const [documentServiceInfo, setDocumentServiceInfo] = useState<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>({});
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -634,6 +660,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedXmlParties = resolveOwnAndCounterparty(selectedXmlPreview, data.legalEntities);
   const selectedXmlItem = selectedXmlPreview?.items[0] ?? null;
+  const selectedXmlSacks = xmlQuantityInSacks(
+    selectedXmlItem?.commercialQuantity,
+    selectedXmlItem?.commercialUnit
+  );
   const selectedXmlInferredScope = inferXmlOperationScope(selectedXmlPreview);
   const selectedXmlScope = selectedXmlFile ? xmlScopeOverrides[selectedXmlFile.token] ?? selectedXmlInferredScope ?? scope : scope;
   const selectedXmlOwnMismatch = Boolean(
@@ -690,6 +720,51 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const isTriangulatedDetail = Boolean(detail?.document.secondaryResponsiblePartnerId);
   const purchaseLeg = detail?.operations.find((op) => op.operationType === "PURCHASE") ?? null;
   const saleLeg = detail?.operations.find((op) => op.operationType === "SALE") ?? null;
+
+  const documentClientName = (document: FiscalDocument): string =>
+    partners.find((partner) => partner.id === document.responsiblePartnerId)?.displayName ??
+    document.responsiblePartnerId ??
+    "";
+
+  function toggleDocumentSort(key: DocumentSortKey): void {
+    setDocumentSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc"
+    }));
+  }
+
+  function documentSortIndicator(key: DocumentSortKey): string {
+    if (documentSort.key !== key) return "↕";
+    return documentSort.direction === "asc" ? "↑" : "↓";
+  }
+
+  const sortedDocuments = [...documents].sort((left, right) => {
+    if (!documentSort.key) return 0;
+
+    let comparison = 0;
+    if (documentSort.key === "client") {
+      comparison = documentClientName(left).localeCompare(documentClientName(right), "pt-BR", {
+        sensitivity: "base",
+        numeric: true
+      });
+    } else {
+      const leftNumber = Number(left.documentNumber);
+      const rightNumber = Number(right.documentNumber);
+      comparison =
+        Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+          ? leftNumber - rightNumber
+          : left.documentNumber.localeCompare(right.documentNumber, "pt-BR", {
+              sensitivity: "base",
+              numeric: true
+            });
+    }
+
+    if (comparison === 0) {
+      comparison = left.issueDate.localeCompare(right.issueDate);
+    }
+
+    return documentSort.direction === "asc" ? comparison : -comparison;
+  });
 
   return (
     <section className="content-section settings">
@@ -765,7 +840,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
         </FormGrid>
-        <div className="table"><div className="table-head invoice-grid"><span>Numero</span><span>Cliente/corretor</span><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{documents.map((doc) => {
+        <div className="table"><div className="table-head invoice-grid"><button type="button" className={`table-sort-button${documentSort.key === "number" ? " active" : ""}`} onClick={() => toggleDocumentSort("number")} aria-label={`Ordenar notas por numero ${documentSort.key === "number" && documentSort.direction === "asc" ? "do maior para o menor" : "do menor para o maior"}`}><span>Numero</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("number")}</span></button><button type="button" className={`table-sort-button${documentSort.key === "client" ? " active" : ""}`} onClick={() => toggleDocumentSort("client")} aria-label={`Ordenar notas por cliente ${documentSort.key === "client" && documentSort.direction === "asc" ? "de Z a A" : "de A a Z"}`}><span>Cliente/corretor</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("client")}</span></button><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{sortedDocuments.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
           const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
@@ -775,7 +850,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           const isThirdPartyRow = doc.ownLegalEntityId !== ownLegalEntityId;
           const docOwnEntity = isThirdPartyRow ? data.legalEntities.find((entity) => entity.id === doc.ownLegalEntityId) : null;
           const docOwnEntityName = docOwnEntity ? (docOwnEntity.legalName || docOwnEntity.tradeName) : null;
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span>{partners.find((partner) => partner.id === doc.responsiblePartnerId)?.displayName ?? doc.responsiblePartnerId}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
+          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span>{documentClientName(doc)}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}</div>
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
@@ -979,7 +1054,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div><dt>Emitente da nota</dt><dd>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</dd></div>
                   <div><dt>Destinatario da nota</dt><dd>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</dd></div>
                   <div><dt>Produto</dt><dd>{selectedXmlItem?.description ?? "-"}</dd></div>
-                  <div><dt>Quantidade</dt><dd>{decimalTextBr(selectedXmlItem?.commercialQuantity ?? null)} sacas</dd></div>
+                  <div>
+                    <dt>Quantidade</dt>
+                    <dd>
+                      {decimalTextBr(selectedXmlSacks)} sacas
+                      {selectedXmlItem?.commercialQuantity && selectedXmlItem?.commercialUnit
+                        ? ` (${decimalTextBr(selectedXmlItem.commercialQuantity)} ${selectedXmlItem.commercialUnit})`
+                        : ""}
+                    </dd>
+                  </div>
                   <div><dt>R$/saca</dt><dd>{selectedXmlItem?.commercialUnitValue ? formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100)) : "-"}</dd></div>
                   <div><dt>Valor total</dt><dd>{selectedXmlPreview.productsAmountCents != null ? formatCurrencyFromCents(selectedXmlPreview.productsAmountCents) : "-"}</dd></div>
                 </dl>
@@ -1045,7 +1128,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <span><strong>{row.parties.originLabel}</strong><small>{row.parties.isThirdPartyOrigin ? "Terceirizada/externa" : "CNPJ proprio"}</small></span>
                   <span>{row.parties.recipientLabel ?? row.parties.issuerLabel ?? "Nao identificado"}</span>
                   <span>{row.firstItem?.description ?? "-"}</span>
-                  <span>{decimalTextBr(row.firstItem?.commercialQuantity ?? null)}</span>
+                  <span>
+                    {decimalTextBr(
+                      xmlQuantityInSacks(
+                        row.firstItem?.commercialQuantity,
+                        row.firstItem?.commercialUnit
+                      )
+                    )}
+                  </span>
                   <span>{formatOperationScope(row.operationScope)}</span>
                   <span><StatusBadge status={row.file.status} /></span>
                 </button>

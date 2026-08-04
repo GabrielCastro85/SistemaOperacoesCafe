@@ -15,7 +15,7 @@ const parser = new XMLParser({
   parseTagValue: false,
   parseAttributeValue: false,
   trimValues: true,
-  isArray: (name) => ["det", "dup", "vol"].includes(name)
+  isArray: (name) => ["det", "dup", "vol", "NFref"].includes(name)
 });
 
 export interface ParsedXmlNfe {
@@ -119,6 +119,9 @@ function parseNfe(nfe: Record<string, unknown>, prot: Record<string, unknown> | 
   const warnings: string[] = [];
   if (idKey && !isValidAccessKey(idKey)) throw new Error("Digito verificador da chave de acesso invalido.");
   if (protocolKey && idKey && protocolKey !== idKey) throw new Error("Chave da NF-e diverge da chave do protocolo.");
+  const referencedAccessKeys = arrayOf(ide.NFref)
+    .map((reference) => digits(text(reference.refNFe)))
+    .filter((key) => /^\d{44}$/.test(key));
   const items = arrayOf(inf.det).map((det) => {
     const prod = asRecord(det.prod);
     return {
@@ -162,6 +165,7 @@ function parseNfe(nfe: Record<string, unknown>, prot: Record<string, unknown> | 
       exitedAt: dateOnly(text(ide.dhSaiEnt) || text(ide.dSaiEnt)),
       occurrenceCityCode: text(ide.cMunFG),
       emissionType: text(ide.tpEmis),
+      referencedAccessKeys,
       issuer: partySnapshot(emit),
       recipient: partySnapshot(dest),
       items,

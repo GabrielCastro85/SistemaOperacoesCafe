@@ -11,6 +11,7 @@ interface NfePartySnapshot {
 interface NfeItemPreview {
   description: string | null;
   commercialQuantity: string | null;
+  commercialUnit: string | null;
   commercialUnitValue: string | null;
   totalAmountCents: number | null;
 }
@@ -44,24 +45,35 @@ function num(value: unknown): number | null {
 function party(value: unknown): NfePartySnapshot | null {
   const record = asRecord(value);
   if (!record) return null;
-  return { legalName: str(record.legalName), tradeName: str(record.tradeName), cnpjCpf: str(record.cnpjCpf), state: str(record.state) };
+  return {
+    legalName: str(record.legalName),
+    tradeName: str(record.tradeName),
+    cnpjCpf: str(record.cnpjCpf),
+    state: str(record.state)
+  };
 }
 
-export function parseNfeExtractedPreview(data: Record<string, unknown> | null | undefined): NfeExtractedPreview | null {
+export function parseNfeExtractedPreview(
+  data: Record<string, unknown> | null | undefined
+): NfeExtractedPreview | null {
   if (!data) return null;
+
   const totals = asRecord(data.totals);
   const transport = asRecord(data.transport);
+
   const items = Array.isArray(data.items)
     ? data.items.map((raw): NfeItemPreview => {
         const item = asRecord(raw) ?? {};
         return {
           description: str(item.description),
           commercialQuantity: str(item.commercialQuantity),
+          commercialUnit: str(item.commercialUnit),
           commercialUnitValue: str(item.commercialUnitValue),
           totalAmountCents: num(item.totalAmountCents)
         };
       })
     : [];
+
   return {
     accessKey: str(data.accessKey),
     model: str(data.model),
@@ -90,7 +102,10 @@ export interface OwnAndCounterparty {
 }
 
 /** Best-effort local preview only — the backend re-resolves the own CNPJ and counterparty independently when the file is actually imported. */
-export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, legalEntities: LegalEntity[]): OwnAndCounterparty {
+export function resolveOwnAndCounterparty(
+  preview: NfeExtractedPreview | null,
+  legalEntities: LegalEntity[]
+): OwnAndCounterparty {
   if (!preview) {
     return {
       ownEntityLabel: null,
@@ -104,12 +119,22 @@ export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, l
       isThirdPartyOrigin: false
     };
   }
-  const issuerCnpj = preview.issuer?.cnpjCpf ? onlyDigits(preview.issuer.cnpjCpf) : cnpjFromAccessKey(preview.accessKey);
-  const recipientCnpj = preview.recipient?.cnpjCpf ? onlyDigits(preview.recipient.cnpjCpf) : null;
+
+  const issuerCnpj = preview.issuer?.cnpjCpf
+    ? onlyDigits(preview.issuer.cnpjCpf)
+    : cnpjFromAccessKey(preview.accessKey);
+  const recipientCnpj = preview.recipient?.cnpjCpf
+    ? onlyDigits(preview.recipient.cnpjCpf)
+    : null;
   const issuerLabel = preview.issuer?.legalName ?? preview.issuer?.tradeName ?? null;
   const recipientLabel = preview.recipient?.legalName ?? preview.recipient?.tradeName ?? null;
-  const ownByIssuer = issuerCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj) : undefined;
-  const ownByRecipient = recipientCnpj ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj) : undefined;
+  const ownByIssuer = issuerCnpj
+    ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj)
+    : undefined;
+  const ownByRecipient = recipientCnpj
+    ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj)
+    : undefined;
+
   if (ownByIssuer) {
     return {
       ownEntityLabel: ownByIssuer.legalName || ownByIssuer.tradeName,
@@ -123,6 +148,7 @@ export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, l
       isThirdPartyOrigin: false
     };
   }
+
   if (ownByRecipient) {
     return {
       ownEntityLabel: ownByRecipient.legalName || ownByRecipient.tradeName,
@@ -136,6 +162,7 @@ export function resolveOwnAndCounterparty(preview: NfeExtractedPreview | null, l
       isThirdPartyOrigin: false
     };
   }
+
   return {
     ownEntityLabel: null,
     counterpartyLabel: recipientLabel,
