@@ -468,7 +468,18 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function applyAdjustments(): Promise<void> {
-    if (!detail) return;
+    if (!detail) {
+      if (!hasPendingAdjustments) {
+        setMessage("Informe ao menos um adiantamento, desconto ou acrescimo.");
+        return;
+      }
+      if (!adjustmentReason.trim()) {
+        setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
+        return;
+      }
+      setMessage("Ajustes aplicados na previa. O valor final e os documentos internos ja consideram esses valores.");
+      return;
+    }
     if (hasPendingAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
       return;
@@ -576,6 +587,60 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
+  async function generateInternalPreview(kind: "pdf" | "image"): Promise<void> {
+    if (!clientId || eligible.length === 0) {
+      setMessage("Selecione o cliente e encontre notas elegiveis antes de gerar a previa.");
+      return;
+    }
+    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+      setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
+      return;
+    }
+
+    let temporaryChargeId: string | null = null;
+    try {
+      const draft = await window.operationsCafe.createClientChargeDraft({
+        organizationId,
+        ownLegalEntityId,
+        clientPartnerId: clientId,
+        billingProfileId: null,
+        periodicity,
+        periodStart,
+        periodEnd,
+        dueDate,
+        notes: "PREVIA INTERNA",
+        internalNotes: "Rascunho temporario criado apenas para exportacao de previa interna.",
+        operationIds: eligible.map((item) => item.id)
+      });
+      temporaryChargeId = draft.charge.id;
+
+      const adjusted = hasPendingAdjustments
+        ? await applyPendingAdjustmentsToCharge(draft, false)
+        : draft;
+
+      const exported = await window.operationsCafe.openChargeDocument({
+        chargeId: adjusted.charge.id,
+        kind
+      });
+
+      setMessage(exported
+        ? `${kind === "pdf" ? "PDF" : "Imagem"} de previa interna salvo. Nenhuma cobranca definitiva foi criada.`
+        : "Exportacao cancelada. Nenhuma cobranca definitiva foi criada.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar previa interna."}`);
+    } finally {
+      if (temporaryChargeId) {
+        try {
+          await window.operationsCafe.deleteClientCharge(temporaryChargeId);
+        } catch (cleanupError) {
+          setMessage(`A previa foi processada, mas o rascunho temporario nao pôde ser removido: ${cleanupError instanceof Error ? cleanupError.message : "erro desconhecido"}.`);
+        }
+      }
+      await load();
+      await findOperations();
+    }
+  }
+
   async function openDocument(kind: "pdf" | "image"): Promise<void> {
     if (!detail) return;
     try {
@@ -619,7 +684,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       </div>
 
       <div className="settings-tabs">
-        <button className={chargesTab === "gerar" ? "active" : ""} onClick={() => setChargesTab("gerar")}>Gerar cobranca</button>
+        <button className={chargesTab === "gerar" ? "active" : ""} onClick={() => setChargesTab("gerar")}>Gerar planilha da cobranca</button>
         <button className={chargesTab === "resumo" ? "active" : ""} onClick={() => setChargesTab("resumo")}>Resumo do periodo</button>
         <button className={chargesTab === "historico" ? "active" : ""} onClick={() => setChargesTab("historico")}>Historico</button>
       </div>
@@ -734,6 +799,30 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                       </div>
                     );
                   })}
+                  {!detail && advanceCents > 0 ? (
+                    <div className="table-row charge-operation-grid charge-row--adjustment">
+                      <span><strong>Adiantamento</strong><small>{adjustmentReason.trim() || "Ajuste informado"}</small></span>
+                      <span>AJUSTE</span><span>Abatimento</span>
+                      <span>- {formatCurrencyFromCents(advanceCents)}</span>
+                      <span>Previa</span><span>Reduz o valor final</span>
+                    </div>
+                  ) : null}
+                  {!detail && discountCents > 0 ? (
+                    <div className="table-row charge-operation-grid charge-row--adjustment">
+                      <span><strong>Desconto</strong><small>{adjustmentReason.trim() || "Ajuste informado"}</small></span>
+                      <span>AJUSTE</span><span>Desconto</span>
+                      <span>- {formatCurrencyFromCents(discountCents)}</span>
+                      <span>Previa</span><span>Reduz o valor final</span>
+                    </div>
+                  ) : null}
+                  {!detail && surchargeCents > 0 ? (
+                    <div className="table-row charge-operation-grid charge-row--adjustment">
+                      <span><strong>Acrescimo</strong><small>{adjustmentReason.trim() || "Ajuste informado"}</small></span>
+                      <span>AJUSTE</span><span>Acrescimo</span>
+                      <span>+ {formatCurrencyFromCents(surchargeCents)}</span>
+                      <span>Previa</span><span>Aumenta o valor final</span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -742,12 +831,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           <div className="charges-column">
             <h3>Ajustes e valores</h3>
             {(clientCredits.length > 0 || clientSurcharges.length > 0) ? (
-              <p className="muted">Adiantamentos e acrescimos abaixo vieram da conta-corrente deste cliente/corretor. Eles ja entram na previa; gere o rascunho para aplicar na cobranca.</p>
+              <p className="muted">Adiantamentos e acrescimos abaixo vieram da conta-corrente deste cliente/corretor. Eles ja entram na previa. Voce pode gerar PDF ou imagem interna antes da cobranca definitiva.</p>
             ) : null}
             <div className="kv-list">
-              <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
-              <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
-              <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" disabled={!detail} /></dd></div>
+              <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
+              <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" /></dd></div>
+              <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" /></dd></div>
             </div>
             <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
               <span>Motivo do ajuste</span>
@@ -756,11 +845,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 onChange={(event) => setAdjustmentReason(event.target.value)}
                 placeholder="Ex.: diferença de frete, correção de valor ou acordo comercial"
                 rows={3}
-                disabled={!detail}
+               
               />
             </label>
             <div className="toolbar">
-              <button onClick={() => void applyAdjustments()} disabled={!detail}>Aplicar ajustes</button>
+              <button onClick={() => void applyAdjustments()}>Aplicar ajustes</button>
             </div>
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
@@ -770,10 +859,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               {!detail && openBilledChargesCents > 0 ? <small>Inclui cobrancas abertas: {formatCurrencyFromCents(openBilledChargesCents)}</small> : null}
               {detail && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
               {!detail ? (
-                <span className="disabled-action-tip" tabIndex={draftDisabledReason ? 0 : -1}>
-                  <button className="primary" onClick={() => void createDraft()} disabled={Boolean(draftDisabledReason)}>Gerar rascunho</button>
-                  {draftDisabledReason ? <span className="disabled-action-tip__card" role="tooltip">{draftDisabledReason}</span> : null}
-                </span>
+                <>
+                  <div className="inline-actions">
+                    <button onClick={() => void generateInternalPreview("pdf")} disabled={Boolean(draftDisabledReason)}>Previa interna PDF</button>
+                    <button onClick={() => void generateInternalPreview("image")} disabled={Boolean(draftDisabledReason)}>Previa interna imagem</button>
+                  </div>
+                  <span className="disabled-action-tip" tabIndex={draftDisabledReason ? 0 : -1}>
+                    <button className="primary" onClick={() => void createDraft()} disabled={Boolean(draftDisabledReason)}>Preparar cobranca definitiva</button>
+                    {draftDisabledReason ? <span className="disabled-action-tip__card" role="tooltip">{draftDisabledReason}</span> : null}
+                  </span>
+                </>
               ) : ["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status) ? (
                 <button className="primary" onClick={() => void issue()}>Gerar cobranca</button>
               ) : (

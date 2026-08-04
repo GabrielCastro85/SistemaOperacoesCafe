@@ -70,6 +70,7 @@ const SUMMARY_IMAGE_WIDTH = 1100;
 async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> {
   const { organization, ownLegalEntity, client, clientLegalEntity, detail } = input;
   const { charge } = detail;
+  const isInternalPreview = charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA";
   const pageWidth = 595.28;
   const pageHeight = 841.89;
   const margin = 28;
@@ -100,10 +101,10 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
     page.drawImage(logo.image, { x: margin + 12, y: pageHeight - margin - 72, width: logoBox.width, height: logoBox.height });
   }
   const headerX = margin + 82;
-  page.drawText("FECHAMENTO DE SERVICOS", { x: headerX, y: pageHeight - margin - 24, size: 14, font: bold, color: headerText });
+  page.drawText(isInternalPreview ? "PREVIA INTERNA - FECHAMENTO" : "FECHAMENTO DE SERVICOS", { x: headerX, y: pageHeight - margin - 24, size: 14, font: bold, color: headerText });
   page.drawText(ownLegalEntity.tradeName, { x: headerX, y: pageHeight - margin - 42, size: 9, font: bold, color: rgb(0.84, 0.75, 0.63) });
   drawTextBox(page, `${ownLegalEntity.legalName}\nCNPJ: ${formatTaxId(ownLegalEntity.cnpj)}${ownLegalEntity.stateRegistration ? ` | IE: ${ownLegalEntity.stateRegistration}` : ""}`, headerX, pageHeight - margin - 49, 265, 30, { font, bold, size: 7.1, minSize: 5.8, lineHeight: 1.14, maxLines: 2, color: headerText });
-  drawRightText(page, `No ${charge.chargeNumber ?? "Rascunho"}`, pageWidth - margin - 145, pageHeight - margin - 24, 130, bold, 13, headerText);
+  drawRightText(page, isInternalPreview ? "NAO EMITIDA" : `No ${charge.chargeNumber ?? "Rascunho"}`, pageWidth - margin - 145, pageHeight - margin - 24, 130, bold, 13, headerText);
   drawRightText(page, `Emissao: ${formatDate(charge.issueDate ?? charge.createdAt)}`, pageWidth - margin - 145, pageHeight - margin - 42, 130, font, 7, rgb(0.82, 0.76, 0.67));
   drawRightText(page, `Vencimento: ${formatDate(charge.dueDate)}`, pageWidth - margin - 145, pageHeight - margin - 56, 130, font, 7, rgb(0.82, 0.76, 0.67));
 
@@ -163,7 +164,7 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   drawInfoBox(page, "PAGAMENTOS", rightLines, margin + boxWidth + boxGap, y, boxWidth, 64, { font, bold, ink, muted, border, paper, gold });
 
   page.drawText(`Gerado pelo Sistema de Operacoes de Cafe em ${formatDateTime(new Date().toISOString())}`, { x: margin, y: 22, size: 6.5, font, color: muted });
-  page.drawText(`${organization.appDisplayName} | Documento local`, { x: pageWidth - margin - 160, y: 22, size: 6.5, font: bold, color: gold });
+  page.drawText(isInternalPreview ? `${organization.appDisplayName} | PREVIA INTERNA - NAO ENVIAR COMO COBRANCA` : `${organization.appDisplayName} | Documento local`, { x: pageWidth - margin - 250, y: 22, size: 6.5, font: bold, color: gold });
   return doc.save();
 }
 
@@ -598,9 +599,9 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
   <rect width="${width}" height="${height}" fill="#f8f5ed"/>
   <rect x="0" y="0" width="${width}" height="88" fill="${primary}"/>
   <rect x="0" y="88" width="${width}" height="4" fill="${accent}"/>
-  <text x="34" y="38" class="title">FECHAMENTO DE SERVICOS</text>
+  <text x="34" y="38" class="title">${charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA" ? "PREVIA INTERNA - FECHAMENTO" : "FECHAMENTO DE SERVICOS"}</text>
   <text x="34" y="64" class="sub">${escapeXml(clipText(input.organization.appDisplayName, 52))}</text>
-  <text x="${rightX}" y="38" class="charge-number">No ${escapeXml(charge.chargeNumber ?? "Rascunho")}</text>
+  <text x="${rightX}" y="38" class="charge-number">${charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA" ? "NAO EMITIDA" : `No ${escapeXml(charge.chargeNumber ?? "Rascunho")}`}</text>
   <text x="${rightX}" y="63" class="charge-date">Vencimento: ${escapeXml(formatDate(charge.dueDate))}</text>
 
   <rect x="34" y="118" width="486" height="58" rx="8" fill="#fffdf8" stroke="#cbb895"/>
