@@ -3513,6 +3513,7 @@ export class AppRepository {
     const rows = this.db.prepare(`
       SELECT
         operations.id,
+        operations.fiscal_document_id,
         operations.quantity_sacks_decimal,
         operations.applied_rate_value_cents,
         fiscal_document_items.sacks_quantity_decimal
@@ -3536,12 +3537,14 @@ export class AppRepository {
       periodEnd: filters.periodEnd ?? null
     }) as Array<{
       id: string;
+      fiscal_document_id: string;
       quantity_sacks_decimal: string;
       applied_rate_value_cents: number;
       sacks_quantity_decimal: string;
     }>;
 
     const now = new Date().toISOString();
+    const correctedFiscalDocumentIds = new Set<string>();
     const update = this.db.prepare(`
       UPDATE operations
       SET quantity_sacks_decimal = ?,
@@ -3557,11 +3560,25 @@ export class AppRepository {
 
       const correctedAmount = multiplyDecimalByCents(correctSacks, row.applied_rate_value_cents);
       update.run(correctSacks, correctedAmount, now, row.id);
+      correctedFiscalDocumentIds.add(row.fiscal_document_id);
       log.info("Quantidade em sacas corrigida antes da cobranca", {
         operationId: row.id,
         previousQuantitySacks: currentSacks,
         correctedQuantitySacks: correctSacks
       });
+    }
+
+    // No aplicativo instalado existe sincronizacao com o Supabase. Sem reenviar
+    // a nota/operacoes corrigidas, o proximo pull pode trazer de volta o valor
+    // antigo (ex.: 2640) e desfazer a correcao que funcionava apenas localmente.
+    // A outbox e esvaziada antes do pull, garantindo que a quantidade em sacas
+    // corrigida seja compartilhada antes de baixar alteracoes remotas.
+    for (const fiscalDocumentId of correctedFiscalDocumentIds) {
+      this.outbox.enqueue(
+        "fiscal_document",
+        fiscalDocumentId,
+        new Error("Reenvio apos corrigir quantidade KG para sacas.")
+      );
     }
   }
 
