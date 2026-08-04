@@ -61,7 +61,14 @@ export interface LegalEntity {
   defaultBankCode: string | null;
   defaultBankAgency: string | null;
   defaultBankAccount: string | null;
+  defaultBankAccountType: string | null;
+  defaultBankHolderName: string | null;
+  defaultBankHolderDocument: string | null;
   defaultPixKey: string | null;
+  defaultPixKeyType: string | null;
+  defaultPaymentTerms: string | null;
+  defaultDeliveryTerms: string | null;
+  defaultConfirmationNotes: string | null;
   isDraft: boolean;
   isActive: boolean;
   createdAt: string;
@@ -1452,7 +1459,11 @@ export interface DealConfirmation {
   bankCode: string | null;
   bankAgency: string | null;
   bankAccount: string | null;
+  bankAccountType: string | null;
+  bankHolderName: string | null;
+  bankHolderDocument: string | null;
   pixKey: string | null;
+  pixKeyType: string | null;
   templateSnapshotJson: string | null;
   pendingIssuesJson: string;
   issuedDocumentVersionId: string | null;

@@ -88,6 +88,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
+  const [documentSearch, setDocumentSearch] = useState("");
   const [documentSort, setDocumentSort] = useState<{ key: DocumentSortKey | null; direction: SortDirection }>({
     key: null,
     direction: "asc"
@@ -738,7 +739,40 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     return documentSort.direction === "asc" ? "↑" : "↓";
   }
 
-  const sortedDocuments = [...documents].sort((left, right) => {
+  const normalizeDocumentSearch = (value: string | null | undefined): string =>
+    (value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Z0-9]/gi, "")
+      .toUpperCase();
+
+  const documentMatchesSearch = (document: FiscalDocument): boolean => {
+    const term = normalizeDocumentSearch(documentSearch);
+    if (!term) return true;
+
+    const clientName = documentClientName(document);
+    const ownEntity = data.legalEntities.find((entity) => entity.id === document.ownLegalEntityId);
+    const partnerEntity = partnerLegalEntities.find((entity) => entity.id === document.partnerLegalEntityId);
+
+    const searchableValues = [
+      document.documentNumber,
+      document.series,
+      document.accessKey,
+      clientName,
+      ownEntity?.legalName,
+      ownEntity?.tradeName,
+      ownEntity?.cnpj,
+      partnerEntity?.legalName,
+      partnerEntity?.tradeName,
+      partnerEntity?.cnpj
+    ];
+
+    return searchableValues.some((value) => normalizeDocumentSearch(value).includes(term));
+  };
+
+  const filteredDocuments = documents.filter(documentMatchesSearch);
+
+  const sortedDocuments = [...filteredDocuments].sort((left, right) => {
     if (!documentSort.key) return 0;
 
     let comparison = 0;
@@ -840,6 +874,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
         </FormGrid>
+        <div className="toolbar document-search-toolbar">
+          <TextField
+            label="Pesquisar notas por numero, cliente, empresa ou CNPJ"
+            value={documentSearch}
+            onChange={setDocumentSearch}
+          />
+          {documentSearch ? (
+            <button type="button" onClick={() => setDocumentSearch("")}>Limpar</button>
+          ) : null}
+          <span className="muted">
+            {filteredDocuments.length} de {documents.length} nota(s)
+          </span>
+        </div>
         <div className="table"><div className="table-head invoice-grid"><button type="button" className={`table-sort-button${documentSort.key === "number" ? " active" : ""}`} onClick={() => toggleDocumentSort("number")} aria-label={`Ordenar notas por numero ${documentSort.key === "number" && documentSort.direction === "asc" ? "do maior para o menor" : "do menor para o maior"}`}><span>Numero</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("number")}</span></button><button type="button" className={`table-sort-button${documentSort.key === "client" ? " active" : ""}`} onClick={() => toggleDocumentSort("client")} aria-label={`Ordenar notas por cliente ${documentSort.key === "client" && documentSort.direction === "asc" ? "de Z a A" : "de A a Z"}`}><span>Cliente/corretor</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("client")}</span></button><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{sortedDocuments.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
@@ -851,7 +898,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           const docOwnEntity = isThirdPartyRow ? data.legalEntities.find((entity) => entity.id === doc.ownLegalEntityId) : null;
           const docOwnEntityName = docOwnEntity ? (docOwnEntity.legalName || docOwnEntity.tradeName) : null;
           return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span>{documentClientName(doc)}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
-        })}</div>
+        })}
+        {sortedDocuments.length === 0 ? (
+          <EmptyState
+            title="Nenhuma nota encontrada"
+            description={documentSearch ? "Tente pesquisar por outro numero, cliente, empresa ou CNPJ." : "Nenhuma nota cadastrada para este CNPJ."}
+          />
+        ) : null}
+        </div>
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
         <div className="invoice-detail-layout">

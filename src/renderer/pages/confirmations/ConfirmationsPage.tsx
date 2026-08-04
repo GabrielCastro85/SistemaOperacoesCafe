@@ -106,7 +106,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [bankCode, setBankCode] = useState("");
   const [bankAgency, setBankAgency] = useState("");
   const [bankAccount, setBankAccount] = useState("");
+  const [bankAccountType, setBankAccountType] = useState("");
+  const [bankHolderName, setBankHolderName] = useState("");
+  const [bankHolderDocument, setBankHolderDocument] = useState("");
   const [pixKey, setPixKey] = useState("");
+  const [pixKeyType, setPixKeyType] = useState("");
   const [deliveryText, setDeliveryText] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
   const [qualityTerms, setQualityTerms] = useState("");
@@ -218,7 +222,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     setBankCode(current.confirmation.bankCode ?? "");
     setBankAgency(current.confirmation.bankAgency ?? "");
     setBankAccount(current.confirmation.bankAccount ?? "");
+    setBankAccountType(current.confirmation.bankAccountType ?? "");
+    setBankHolderName(current.confirmation.bankHolderName ?? "");
+    setBankHolderDocument(current.confirmation.bankHolderDocument ?? "");
     setPixKey(current.confirmation.pixKey ?? "");
+    setPixKeyType(current.confirmation.pixKeyType ?? "");
     setDeliveryText(current.confirmation.deliveryLocationSnapshot ?? "");
     setPaymentTerms(current.confirmation.paymentTermsSnapshot ?? "");
     setQualityTerms(current.confirmation.qualityTermsSnapshot ?? "");
@@ -446,7 +454,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       bankCode: bankCode || null,
       bankAgency: bankAgency || null,
       bankAccount: bankAccount || null,
-      pixKey: pixKey || null
+      bankAccountType: bankAccountType || null,
+      bankHolderName: bankHolderName || null,
+      bankHolderDocument: bankHolderDocument || null,
+      pixKey: pixKey || null,
+      pixKeyType: pixKeyType || null
     });
     setDetail(updated);
     setMessage("Dados de corretagem e banco atualizados.");
@@ -759,7 +771,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   <TextField label="Codigo do banco" value={bankCode} onChange={setBankCode} />
                   <TextField label="Agencia" value={bankAgency} onChange={setBankAgency} />
                   <TextField label="Conta" value={bankAccount} onChange={setBankAccount} />
+                  <TextField label="Tipo da conta" value={bankAccountType} onChange={setBankAccountType} />
+                  <TextField label="Titular da conta" value={bankHolderName} onChange={setBankHolderName} />
+                  <TextField label="CPF/CNPJ do titular" value={bankHolderDocument} onChange={setBankHolderDocument} />
                   <TextField label="Chave PIX" value={pixKey} onChange={setPixKey} />
+                  <TextField label="Tipo da chave PIX" value={pixKeyType} onChange={setPixKeyType} />
                   <button onClick={() => void saveBankDetails()}>Salvar dados</button>
                 </FormGrid>
 
@@ -793,7 +809,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                     <article><span>Local de descarga</span><strong>{deliveryText || dealPartyName("DELIVERY_RECIPIENT")}</strong></article>
                     <article><span>Notas selecionadas</span><strong>{detail.fiscalDocuments.map((doc) => `NF ${doc.documentNumber}`).join(", ") || "-"}</strong></article>
                     <article><span>Observacoes</span><strong>{publicNotes || "Sem observacoes"}</strong></article>
-                    <article><span>Dados bancarios</span><strong>{[bankName, bankAgency ? `Ag. ${bankAgency}` : "", bankAccount ? `Conta ${bankAccount}` : "", pixKey ? `PIX ${pixKey}` : ""].filter(Boolean).join(" · ") || "Nao informado"}</strong></article>
+                    <article><span>Dados bancarios</span><strong>{[bankName, bankAgency ? `Ag. ${bankAgency}` : "", bankAccount ? `Conta ${bankAccount}` : "", bankHolderName ? `Titular ${bankHolderName}` : "", pixKey ? `PIX ${pixKey}` : ""].filter(Boolean).join(" · ") || "Nao informado"}</strong></article>
                   </div>
                   {detail.pendingIssues.length ? <p className="charge-blocked-note">Existem pendencias nesta confirmacao. Revise antes de emitir definitivamente.</p> : null}
                 </div>

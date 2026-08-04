@@ -173,6 +173,12 @@ export class SharedRepository {
     return data;
   }
 
+  async findOne(table: string, match: SharedRow): Promise<SharedRow | null> {
+    const { data, error } = await this.client.from(table).select("*").match(match).maybeSingle();
+    if (error) throw new Error(translateDbError(error.message));
+    return data;
+  }
+
   async insertRow(table: string, row: SharedRow): Promise<SharedRow> {
     const { data, error } = await this.client.from(table).insert(row).select().single();
     if (error) throw new Error(translateDbError(error.message));

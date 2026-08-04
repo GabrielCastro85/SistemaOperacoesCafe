@@ -311,7 +311,27 @@ const BULK_PUSH_MANAGED_TABLES = new Set([
   "app_users",
   "user_credentials",
   "user_role_assignments",
-  "sync_tombstones"
+  "sync_tombstones",
+
+  // Hierarquias com pai/filhos e chaves naturais. Sao enviadas pelos metodos
+  // push*ToShared depois da reconciliacao de UUIDs, nunca pelo lote generico.
+  "fiscal_documents",
+  "fiscal_document_items",
+  "operations",
+  "fiscal_document_events",
+  "fiscal_document_merge_history",
+  "xml_import_jobs",
+  "xml_import_files",
+  "deal_confirmations",
+  "deal_confirmation_parties",
+  "deal_confirmation_items",
+  "deal_confirmation_operations",
+  "deal_confirmation_fiscal_documents",
+  "deal_confirmation_clauses",
+  "deal_payment_terms",
+  "deal_confirmation_signers",
+  "deal_confirmation_document_versions",
+  "deal_confirmation_status_history"
 ]);
 
 // Tabelas onde um tombstone puxado de outro PC pode ser aplicado por um
@@ -539,11 +559,28 @@ export class AppRepository {
     try {
       const doc = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as DbRecord | undefined;
       if (!doc) return;
-      await this.sharedRepository.upsertRow("fiscal_documents", toSharedRow(doc, "fiscal_documents"));
+      const accessKey = typeof doc.access_key === "string" && doc.access_key.trim() ? doc.access_key.trim() : null;
+      const existing = accessKey ? await this.sharedRepository.findOne("fiscal_documents", { access_key: accessKey }) : null;
+      const remoteFiscalDocumentId = existing?.id ? String(existing.id) : fiscalDocumentId;
+      const sharedDoc = toSharedRow(doc, "fiscal_documents");
+      if (remoteFiscalDocumentId !== fiscalDocumentId) {
+        const { id: _ignoredId, ...patch } = sharedDoc;
+        await this.sharedRepository.updateRow("fiscal_documents", remoteFiscalDocumentId, patch);
+      } else {
+        await this.sharedRepository.upsertRow("fiscal_documents", sharedDoc);
+      }
       const items = this.db.prepare("SELECT * FROM fiscal_document_items WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-      for (const item of items) await this.sharedRepository.upsertRow("fiscal_document_items", toSharedRow(item, "fiscal_document_items"));
+      for (const item of items) {
+        const row = toSharedRow(item, "fiscal_document_items");
+        row.fiscal_document_id = remoteFiscalDocumentId;
+        await this.sharedRepository.upsertRow("fiscal_document_items", row);
+      }
       const operations = this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-      for (const operation of operations) await this.sharedRepository.upsertRow("operations", toSharedRow(operation, "operations"));
+      for (const operation of operations) {
+        const row = toSharedRow(operation, "operations");
+        row.fiscal_document_id = remoteFiscalDocumentId;
+        await this.sharedRepository.upsertRow("operations", row);
+      }
       const events = this.db.prepare("SELECT * FROM fiscal_document_events WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
       for (const event of events) await this.sharedRepository.upsertRow("fiscal_document_events", toSharedRow(event, "fiscal_document_events"));
       const mergeHistory = this.db.prepare("SELECT * FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
@@ -562,7 +599,11 @@ export class AppRepository {
       if (!job) return;
       await this.sharedRepository.upsertRow("xml_import_jobs", toSharedRow(job, "xml_import_jobs"));
       const files = this.db.prepare("SELECT * FROM xml_import_files WHERE import_job_id = ?").all(jobId) as DbRecord[];
-      for (const file of files) await this.sharedRepository.upsertRow("xml_import_files", toSharedRow(file, "xml_import_files"));
+      for (const file of files) {
+        const row = toSharedRow(file, "xml_import_files");
+        row.import_job_id = jobId;
+        await this.sharedRepository.upsertRow("xml_import_files", row);
+      }
     } catch (error) {
       this.outbox.enqueue("xml_import_job", jobId, error);
       throw error;
@@ -614,26 +655,113 @@ export class AppRepository {
     if (!this.sharedRepository) return;
     try {
       const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
-      if (!confirmation) return;
-      await this.sharedRepository.upsertRow("deal_confirmations", toSharedRow(confirmation, "deal_confirmations"));
+      if (!confirmation) {
+        this.outbox.discard("deal_confirmation", dealConfirmationId);
+        return;
+      }
+      const confirmationNumber = typeof confirmation.confirmation_number === "string" && confirmation.confirmation_number.trim()
+        ? confirmation.confirmation_number.trim()
+        : null;
+      let existing = confirmationNumber
+        ? await this.sharedRepository.findOne("deal_confirmations", {
+            organization_id: confirmation.organization_id,
+            own_legal_entity_id: confirmation.own_legal_entity_id,
+            confirmation_number: confirmationNumber
+          })
+        : null;
+
+      const normalize = (value: unknown): string => String(value ?? "").trim().toUpperCase();
+      const sameNaturalKey = (row: DbRecord): boolean =>
+        normalize(row.organization_id) === normalize(confirmation.organization_id) &&
+        normalize(row.own_legal_entity_id) === normalize(confirmation.own_legal_entity_id) &&
+        normalize(row.confirmation_number) === normalize(confirmationNumber);
+
+      // PostgREST pode nao devolver a linha no findOne quando ha pequenas
+      // diferencas de espaco/caixa em dados antigos. O indice unico do banco,
+      // porem, ainda pode acusar conflito. Faz uma segunda busca normalizada.
+      if (!existing && confirmationNumber) {
+        const candidates = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number");
+        existing = candidates.find((row) => sameNaturalKey(row)) ?? null;
+      }
+
+      let remoteDealConfirmationId = existing?.id ? String(existing.id) : dealConfirmationId;
+      const sharedConfirmation = toSharedRow(confirmation, "deal_confirmations");
+
+      try {
+        if (remoteDealConfirmationId !== dealConfirmationId) {
+          const { id: _ignoredId, ...patch } = sharedConfirmation;
+          await this.sharedRepository.updateRow("deal_confirmations", remoteDealConfirmationId, patch);
+          this.outbox.remap("deal_confirmation", dealConfirmationId, remoteDealConfirmationId);
+        } else {
+          await this.sharedRepository.upsertRow("deal_confirmations", sharedConfirmation);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/Ja existe um registro com esses dados/i.test(message) || !confirmationNumber) throw error;
+
+        const candidates = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number");
+        const canonical = candidates.find((row) => sameNaturalKey(row));
+        if (!canonical?.id) throw error;
+
+        remoteDealConfirmationId = String(canonical.id);
+        const { id: _ignoredId, ...patch } = sharedConfirmation;
+        await this.sharedRepository.updateRow("deal_confirmations", remoteDealConfirmationId, patch);
+        this.outbox.remap("deal_confirmation", dealConfirmationId, remoteDealConfirmationId);
+      }
       const parties = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of parties) await this.sharedRepository.upsertRow("deal_confirmation_parties", toSharedRow(row, "deal_confirmation_parties"));
+      for (const source of parties) {
+        const row = toSharedRow(source, "deal_confirmation_parties");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_parties", row);
+      }
       const items = this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of items) await this.sharedRepository.upsertRow("deal_confirmation_items", toSharedRow(row, "deal_confirmation_items"));
+      for (const source of items) {
+        const row = toSharedRow(source, "deal_confirmation_items");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_items", row);
+      }
       const operations = this.db.prepare("SELECT * FROM deal_confirmation_operations WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of operations) await this.sharedRepository.upsertRow("deal_confirmation_operations", toSharedRow(row, "deal_confirmation_operations"));
+      for (const source of operations) {
+        const row = toSharedRow(source, "deal_confirmation_operations");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_operations", row);
+      }
       const fiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of fiscalDocuments) await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", toSharedRow(row, "deal_confirmation_fiscal_documents"));
+      for (const source of fiscalDocuments) {
+        const row = toSharedRow(source, "deal_confirmation_fiscal_documents");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", row);
+      }
       const clauses = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of clauses) await this.sharedRepository.upsertRow("deal_confirmation_clauses", toSharedRow(row, "deal_confirmation_clauses"));
+      for (const source of clauses) {
+        const row = toSharedRow(source, "deal_confirmation_clauses");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_clauses", row);
+      }
       const paymentTerms = this.db.prepare("SELECT * FROM deal_payment_terms WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of paymentTerms) await this.sharedRepository.upsertRow("deal_payment_terms", toSharedRow(row, "deal_payment_terms"));
+      for (const source of paymentTerms) {
+        const row = toSharedRow(source, "deal_payment_terms");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_payment_terms", row);
+      }
       const signers = this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of signers) await this.sharedRepository.upsertRow("deal_confirmation_signers", toSharedRow(row, "deal_confirmation_signers"));
+      for (const source of signers) {
+        const row = toSharedRow(source, "deal_confirmation_signers");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_signers", row);
+      }
       const documentVersions = this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of documentVersions) await this.sharedRepository.upsertRow("deal_confirmation_document_versions", toSharedRow(row, "deal_confirmation_document_versions"));
+      for (const source of documentVersions) {
+        const row = toSharedRow(source, "deal_confirmation_document_versions");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_document_versions", row);
+      }
       const statusHistory = this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const row of statusHistory) await this.sharedRepository.upsertRow("deal_confirmation_status_history", toSharedRow(row, "deal_confirmation_status_history"));
+      for (const source of statusHistory) {
+        const row = toSharedRow(source, "deal_confirmation_status_history");
+        row.deal_confirmation_id = remoteDealConfirmationId;
+        await this.sharedRepository.upsertRow("deal_confirmation_status_history", row);
+      }
     } catch (error) {
       this.outbox.enqueue("deal_confirmation", dealConfirmationId, error);
       throw error;
@@ -840,6 +968,126 @@ export class AppRepository {
   }
 
   /**
+   * Troca localmente um UUID por outro ja existente no Supabase, preservando
+   * todas as referencias por FK. A linha remota passa a ser a identidade
+   * canonica, evitando duplicidade e falhas em cascata nos registros filhos.
+   */
+  private redirectLocalPrimaryKey(table: string, localId: string, sharedId: string, releaseUniqueColumns: string[] = []): void {
+    if (localId === sharedId) return;
+    const localRow = this.db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(localId) as DbRecord | undefined;
+    if (!localRow) return;
+
+    const references = this.findColumnsReferencing(table);
+    const transaction = this.db.transaction(() => {
+      for (const column of releaseUniqueColumns) {
+        if (column in localRow) this.db.prepare(`UPDATE ${table} SET ${column} = NULL WHERE id = ?`).run(localId);
+      }
+
+      const columns = Object.keys(localRow).filter((column) => column !== "id");
+      this.db.prepare(
+        `INSERT OR IGNORE INTO ${table} (id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})`
+      ).run(sharedId, ...columns.map((column) => localRow[column]));
+
+      for (const { table: referencingTable, column } of references) {
+        this.db.prepare(`UPDATE ${referencingTable} SET ${column} = ? WHERE ${column} = ?`).run(sharedId, localId);
+      }
+
+      this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(localId);
+    });
+    transaction();
+  }
+
+  private async reconcileDuplicateProducts(): Promise<void> {
+    if (!this.sharedRepository) return;
+    const localRows = this.db.prepare("SELECT id, organization_id, code FROM products WHERE code IS NOT NULL").all() as Array<{ id: string; organization_id: string; code: string }>;
+    if (localRows.length === 0) return;
+    const sharedRows = await this.sharedRepository.listAll("products", "code") as Array<{ id: string; organization_id: string; code: string | null }>;
+    const key = (organizationId: string, code: string): string => `${organizationId}::${code}`;
+    const sharedByKey = new Map(sharedRows.filter((row) => row.code).map((row) => [key(row.organization_id, row.code as string), row.id]));
+    for (const local of localRows) {
+      const sharedId = sharedByKey.get(key(local.organization_id, local.code));
+      if (sharedId && sharedId !== local.id) this.redirectLocalPrimaryKey("products", local.id, sharedId, ["code"]);
+    }
+  }
+
+  private async reconcileDuplicateFiscalDocuments(): Promise<void> {
+    if (!this.sharedRepository) return;
+    const localRows = this.db.prepare("SELECT id, access_key FROM fiscal_documents WHERE access_key IS NOT NULL AND TRIM(access_key) <> ''").all() as Array<{ id: string; access_key: string }>;
+    if (localRows.length === 0) return;
+    const sharedRows = await this.sharedRepository.listAll("fiscal_documents", "access_key") as Array<{ id: string; access_key: string | null }>;
+    const sharedByKey = new Map(sharedRows.filter((row) => row.access_key).map((row) => [String(row.access_key), row.id]));
+    for (const local of localRows) {
+      const sharedId = sharedByKey.get(local.access_key);
+      if (sharedId && sharedId !== local.id) this.redirectLocalPrimaryKey("fiscal_documents", local.id, sharedId, ["access_key"]);
+    }
+  }
+
+  private async reconcileDuplicateDealConfirmations(): Promise<void> {
+    if (!this.sharedRepository) return;
+    const localRows = this.db.prepare(
+      "SELECT id, organization_id, own_legal_entity_id, confirmation_number FROM deal_confirmations WHERE confirmation_number IS NOT NULL AND TRIM(confirmation_number) <> ''"
+    ).all() as Array<{ id: string; organization_id: string; own_legal_entity_id: string; confirmation_number: string }>;
+    if (localRows.length === 0) return;
+
+    const sharedRows = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number") as Array<{
+      id: string;
+      organization_id: string;
+      own_legal_entity_id: string;
+      confirmation_number: string | null;
+    }>;
+
+    const normalize = (value: unknown): string => String(value ?? "").trim().toUpperCase();
+    const key = (organizationId: unknown, legalEntityId: unknown, number: unknown): string =>
+      `${normalize(organizationId)}::${normalize(legalEntityId)}::${normalize(number)}`;
+
+    const sharedByKey = new Map(
+      sharedRows
+        .filter((row) => row.confirmation_number)
+        .map((row) => [key(row.organization_id, row.own_legal_entity_id, row.confirmation_number), row.id])
+    );
+
+    for (const local of localRows) {
+      const sharedId = sharedByKey.get(key(local.organization_id, local.own_legal_entity_id, local.confirmation_number));
+      if (!sharedId || sharedId === local.id) continue;
+
+      this.redirectLocalPrimaryKey("deal_confirmations", local.id, sharedId, ["confirmation_number"]);
+      this.outbox.remap("deal_confirmation", local.id, sharedId);
+    }
+  }
+
+  private async pushManagedHierarchiesToShared(results: Array<{ table: string; pushed: number; error: string | null }>): Promise<void> {
+    const pushEach = async (table: string, ids: string[], push: (id: string) => Promise<void>): Promise<void> => {
+      let pushed = 0;
+      let lastError: string | null = null;
+      for (const id of ids) {
+        try {
+          await push(id);
+          pushed += 1;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "Falha desconhecida.";
+        }
+      }
+      results.push({ table, pushed, error: lastError });
+    };
+
+    await pushEach(
+      "fiscal_documents",
+      (this.db.prepare("SELECT id FROM fiscal_documents").all() as Array<{ id: string }>).map((row) => row.id),
+      (id) => this.pushFiscalDocumentToShared(id)
+    );
+    await pushEach(
+      "xml_import_jobs",
+      (this.db.prepare("SELECT id FROM xml_import_jobs").all() as Array<{ id: string }>).map((row) => row.id),
+      (id) => this.pushXmlImportJobToShared(id)
+    );
+    await pushEach(
+      "deal_confirmations",
+      (this.db.prepare("SELECT id FROM deal_confirmations").all() as Array<{ id: string }>).map((row) => row.id),
+      (id) => this.pushDealConfirmationToShared(id)
+    );
+  }
+
+  /**
    * Empurra pro Supabase TUDO que existe localmente nas tabelas
    * compartilhadas (mesma lista e' ordem de HOT_SYNC_TABLES, que ja' respeita
    * FK), um lote por tabela. Resolve tanto o caso de um PC que ja tinha
@@ -860,6 +1108,9 @@ export class AppRepository {
     if (!this.sharedRepository) return [];
     await this.reconcileThirdPartyLegalEntityIds();
     await this.reconcileDuplicateExpenseCategories();
+    await this.reconcileDuplicateProducts();
+    await this.reconcileDuplicateFiscalDocuments();
+    await this.reconcileDuplicateDealConfirmations();
     // Atualiza os tombstones ANTES de empurrar qualquer coisa -- sem isso, um
     // PC que nunca soube de uma exclusao feita em outro lugar (ex: acabou de
     // atualizar e ainda nao rodou um pull normal) empurraria de volta pro
@@ -870,6 +1121,7 @@ export class AppRepository {
       log.warn("Falha ao atualizar tombstones antes de empurrar", { error: error instanceof Error ? error.message : String(error) })
     );
     const results: Array<{ table: string; pushed: number; error: string | null }> = [];
+    await this.pushManagedHierarchiesToShared(results);
     for (const { table } of HOT_SYNC_TABLES) {
       // Tabelas gerenciadas por RPC/servico proprio entram aqui so' para o
       // lado de PUXAR (syncSharedDataDown). Tentar empurrar em lote causa RLS,
@@ -1365,7 +1617,11 @@ export class AppRepository {
       phone: data.phone, address_line: data.addressLine, address_number: data.addressNumber, address_complement: data.addressComplement,
       district: data.district, city: data.city, state: data.state, postal_code: data.postalCode, document_prefix: data.documentPrefix,
       default_bank_name: data.defaultBankName, default_bank_code: data.defaultBankCode, default_bank_agency: data.defaultBankAgency,
-      default_bank_account: data.defaultBankAccount, default_pix_key: data.defaultPixKey,
+      default_bank_account: data.defaultBankAccount, default_bank_account_type: data.defaultBankAccountType,
+      default_bank_holder_name: data.defaultBankHolderName, default_bank_holder_document: data.defaultBankHolderDocument,
+      default_pix_key: data.defaultPixKey, default_pix_key_type: data.defaultPixKeyType,
+      default_payment_terms: data.defaultPaymentTerms, default_delivery_terms: data.defaultDeliveryTerms,
+      default_confirmation_notes: data.defaultConfirmationNotes,
       is_draft: data.isDraft, is_active: data.isActive, created_at: now, updated_at: now
     };
   }
@@ -1399,7 +1655,11 @@ export class AppRepository {
       phone: data.phone, address_line: data.addressLine, address_number: data.addressNumber, address_complement: data.addressComplement,
       district: data.district, city: data.city, state: data.state, postal_code: data.postalCode, document_prefix: data.documentPrefix,
       default_bank_name: data.defaultBankName, default_bank_code: data.defaultBankCode, default_bank_agency: data.defaultBankAgency,
-      default_bank_account: data.defaultBankAccount, default_pix_key: data.defaultPixKey,
+      default_bank_account: data.defaultBankAccount, default_bank_account_type: data.defaultBankAccountType,
+      default_bank_holder_name: data.defaultBankHolderName, default_bank_holder_document: data.defaultBankHolderDocument,
+      default_pix_key: data.defaultPixKey, default_pix_key_type: data.defaultPixKeyType,
+      default_payment_terms: data.defaultPaymentTerms, default_delivery_terms: data.defaultDeliveryTerms,
+      default_confirmation_notes: data.defaultConfirmationNotes,
       is_draft: data.isDraft, is_active: data.isActive, updated_at: new Date().toISOString()
     };
     await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, row));
@@ -4590,7 +4850,14 @@ export class AppRepository {
       defaultBankCode: null,
       defaultBankAgency: null,
       defaultBankAccount: null,
+      defaultBankAccountType: null,
+      defaultBankHolderName: null,
+      defaultBankHolderDocument: null,
       defaultPixKey: null,
+      defaultPixKeyType: null,
+      defaultPaymentTerms: null,
+      defaultDeliveryTerms: null,
+      defaultConfirmationNotes: null,
       isDraft: true,
       isActive: true
     }, deterministicUuid("thirdPartyLegalEntity", cnpj));
@@ -4637,7 +4904,14 @@ export class AppRepository {
       defaultBankCode: null,
       defaultBankAgency: null,
       defaultBankAccount: null,
+      defaultBankAccountType: null,
+      defaultBankHolderName: null,
+      defaultBankHolderDocument: null,
       defaultPixKey: null,
+      defaultPixKeyType: null,
+      defaultPaymentTerms: null,
+      defaultDeliveryTerms: null,
+      defaultConfirmationNotes: null,
       isDraft: true,
       isActive: true
     }, deterministicUuid("thirdPartyLegalEntity", partnerEntity.cnpj));
@@ -6105,10 +6379,11 @@ export class AppRepository {
         confirmation_date, negotiation_date, status, signature_status, currency_code, total_quantity_sacks_decimal,
         total_commercial_amount_cents, delivery_location_snapshot, delivery_start_date, delivery_end_date,
         payment_terms_snapshot, quality_terms_snapshot, general_terms_snapshot, public_notes, internal_notes,
-        brokerage_percentage_basis_points, bank_name, bank_code, bank_agency, bank_account, pix_key,
+        brokerage_percentage_basis_points, bank_name, bank_code, bank_agency, bank_account, bank_account_type,
+        bank_holder_name, bank_holder_document, pix_key, pix_key_type,
         template_snapshot_json, pending_issues_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
-        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, draftNumber, draftNumber, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.pixKey, template ? JSON.stringify(template) : null, now, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
+        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, draftNumber, draftNumber, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? own.defaultDeliveryTerms ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? own.defaultPaymentTerms ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? own.defaultConfirmationNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.bankAccountType, bankDefaults.bankHolderName, bankDefaults.bankHolderDocument, bankDefaults.pixKey, bankDefaults.pixKeyType, template ? JSON.stringify(template) : null, now, now);
       this.addDealPartyInternal({ dealConfirmationId: id, partyRole: "ISSUER", ownLegalEntityId: own.id, businessPartnerId: null, partnerLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 0 });
       this.recordDealStatus(id, null, "DRAFT", "Rascunho criado");
     });
@@ -6292,7 +6567,11 @@ export class AppRepository {
       bank_code = @bankCode,
       bank_agency = @bankAgency,
       bank_account = @bankAccount,
+      bank_account_type = @bankAccountType,
+      bank_holder_name = @bankHolderName,
+      bank_holder_document = @bankHolderDocument,
       pix_key = @pixKey,
+      pix_key_type = @pixKeyType,
       updated_at = @updatedAt
       WHERE id = @id`)
       .run({
@@ -6313,7 +6592,11 @@ export class AppRepository {
         bankCode: data.bankCode ?? current.bankCode,
         bankAgency: data.bankAgency ?? current.bankAgency,
         bankAccount: data.bankAccount ?? current.bankAccount,
+        bankAccountType: data.bankAccountType ?? current.bankAccountType,
+        bankHolderName: data.bankHolderName ?? current.bankHolderName,
+        bankHolderDocument: data.bankHolderDocument ?? current.bankHolderDocument,
         pixKey: data.pixKey ?? current.pixKey,
+        pixKeyType: data.pixKeyType ?? current.pixKeyType,
         updatedAt: new Date().toISOString()
       });
     return this.getDealConfirmation(id);
@@ -7212,13 +7495,17 @@ export class AppRepository {
   private resolveDealBankDefaults(
     ownLegalEntity: LegalEntity,
     data: ReturnType<typeof dealConfirmationDraftInputSchema.parse>
-  ): { bankName: string | null; bankCode: string | null; bankAgency: string | null; bankAccount: string | null; pixKey: string | null } {
+  ): { bankName: string | null; bankCode: string | null; bankAgency: string | null; bankAccount: string | null; bankAccountType: string | null; bankHolderName: string | null; bankHolderDocument: string | null; pixKey: string | null; pixKeyType: string | null } {
     return {
       bankName: data.bankName ?? ownLegalEntity.defaultBankName ?? null,
       bankCode: data.bankCode ?? ownLegalEntity.defaultBankCode ?? null,
       bankAgency: data.bankAgency ?? ownLegalEntity.defaultBankAgency ?? null,
       bankAccount: data.bankAccount ?? ownLegalEntity.defaultBankAccount ?? null,
-      pixKey: data.pixKey ?? ownLegalEntity.defaultPixKey ?? null
+      bankAccountType: data.bankAccountType ?? ownLegalEntity.defaultBankAccountType ?? null,
+      bankHolderName: data.bankHolderName ?? ownLegalEntity.defaultBankHolderName ?? ownLegalEntity.legalName ?? null,
+      bankHolderDocument: data.bankHolderDocument ?? ownLegalEntity.defaultBankHolderDocument ?? ownLegalEntity.cnpj ?? null,
+      pixKey: data.pixKey ?? ownLegalEntity.defaultPixKey ?? null,
+      pixKeyType: data.pixKeyType ?? ownLegalEntity.defaultPixKeyType ?? null
     };
   }
 

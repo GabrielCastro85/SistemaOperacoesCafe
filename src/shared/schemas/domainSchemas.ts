@@ -133,7 +133,14 @@ export const legalEntityInputSchema = z
     defaultBankCode: nullableText.optional().default(null),
     defaultBankAgency: nullableText.optional().default(null),
     defaultBankAccount: nullableText.optional().default(null),
+    defaultBankAccountType: nullableText.optional().default(null),
+    defaultBankHolderName: nullableText.optional().default(null),
+    defaultBankHolderDocument: nullableText.optional().default(null),
     defaultPixKey: nullableText.optional().default(null),
+    defaultPixKeyType: nullableText.optional().default(null),
+    defaultPaymentTerms: nullableText.optional().default(null),
+    defaultDeliveryTerms: nullableText.optional().default(null),
+    defaultConfirmationNotes: nullableText.optional().default(null),
     isDraft: z.boolean(),
     isActive: z.boolean()
   })
@@ -841,7 +848,11 @@ const dealConfirmationDraftInputBaseSchema = z.object({
   bankCode: nullableText.optional(),
   bankAgency: nullableText.optional(),
   bankAccount: nullableText.optional(),
-  pixKey: nullableText.optional()
+  bankAccountType: nullableText.optional(),
+  bankHolderName: nullableText.optional(),
+  bankHolderDocument: nullableText.optional(),
+  pixKey: nullableText.optional(),
+  pixKeyType: nullableText.optional()
 });
 
 export const dealConfirmationDraftInputSchema = dealConfirmationDraftInputBaseSchema.refine((data) => !data.deliveryStartDate || !data.deliveryEndDate || data.deliveryEndDate >= data.deliveryStartDate, "Periodo de entrega invalido.");

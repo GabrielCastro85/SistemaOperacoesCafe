@@ -3113,4 +3113,29 @@ export const migrations: Migration[] = [
       `);
     }
   }
+  ,{
+    name: "041_confirmation_company_defaults",
+    up: (db) => {
+      const legalEntityColumns = [
+        ["default_bank_account_type", "TEXT"],
+        ["default_bank_holder_name", "TEXT"],
+        ["default_bank_holder_document", "TEXT"],
+        ["default_pix_key_type", "TEXT"],
+        ["default_payment_terms", "TEXT"],
+        ["default_delivery_terms", "TEXT"],
+        ["default_confirmation_notes", "TEXT"]
+      ] as const;
+      const confirmationColumns = [
+        ["bank_account_type", "TEXT"],
+        ["bank_holder_name", "TEXT"],
+        ["bank_holder_document", "TEXT"],
+        ["pix_key_type", "TEXT"]
+      ] as const;
+      const hasColumn = (table: string, column: string): boolean =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((item) => item.name === column);
+      for (const [column, type] of legalEntityColumns) if (!hasColumn("legal_entities", column)) db.exec(`ALTER TABLE legal_entities ADD COLUMN ${column} ${type}`);
+      for (const [column, type] of confirmationColumns) if (!hasColumn("deal_confirmations", column)) db.exec(`ALTER TABLE deal_confirmations ADD COLUMN ${column} ${type}`);
+    }
+  }
+
 ];

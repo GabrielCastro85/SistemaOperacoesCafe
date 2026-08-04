@@ -328,7 +328,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   });
   currentY -= 7;
 
-  const commercialHeight = 66;
+  const commercialHeight = 82;
   const colWidth = (contentWidth - 10) / 2;
   const commercialLines = [
     `Pagamento: ${confirmation.paymentTermsSnapshot ?? "Nao informado"}`,
@@ -339,15 +339,17 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
     confirmation.bankName ? `Banco: ${confirmation.bankName}` : null,
     confirmation.bankCode ? `Numero do banco: ${confirmation.bankCode}` : null,
     confirmation.bankAgency ? `Agencia: ${confirmation.bankAgency}` : null,
-    confirmation.bankAccount ? `Conta: ${confirmation.bankAccount}` : null,
-    confirmation.pixKey ? `PIX: ${confirmation.pixKey}` : null
+    confirmation.bankAccount ? `Conta: ${confirmation.bankAccount}${confirmation.bankAccountType ? ` (${confirmation.bankAccountType})` : ""}` : null,
+    confirmation.bankHolderName ? `Titular: ${confirmation.bankHolderName}` : null,
+    confirmation.bankHolderDocument ? `Documento titular: ${formatTaxId(confirmation.bankHolderDocument)}` : null,
+    confirmation.pixKey ? `PIX${confirmation.pixKeyType ? ` (${confirmation.pixKeyType})` : ""}: ${confirmation.pixKey}` : null
   ].filter((item): item is string => Boolean(item));
   page.drawRectangle({ x: margin, y: currentY - commercialHeight, width: colWidth, height: commercialHeight, color: rgb(1, 0.99, 0.965), borderColor: border, borderWidth: 0.6 });
   page.drawRectangle({ x: margin + colWidth + 10, y: currentY - commercialHeight, width: colWidth, height: commercialHeight, color: rgb(1, 0.99, 0.965), borderColor: border, borderWidth: 0.6 });
   page.drawText("Condicoes comerciais", { x: margin + 7, y: currentY - 10, size: 6.4, font: bold, color: gold });
   page.drawText("Dados para deposito", { x: margin + colWidth + 17, y: currentY - 10, size: 6.4, font: bold, color: gold });
-  drawTextBox(page, commercialLines.join("\n") || "Nao informado", margin + 7, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 7, minSize: 5.6, lineHeight: 1.14, maxLines: 5, color: ink, important: true });
-  drawTextBox(page, bankLines.join("\n") || "Nao informado", margin + colWidth + 17, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 7, minSize: 5.6, lineHeight: 1.14, maxLines: 5, color: ink, important: true });
+  drawTextBox(page, commercialLines.join("\n") || "Nao informado", margin + 7, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 7, minSize: 5.6, lineHeight: 1.14, maxLines: 6, color: ink, important: true });
+  drawTextBox(page, bankLines.join("\n") || "Nao informado", margin + colWidth + 17, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 6.7, minSize: 5.2, lineHeight: 1.1, maxLines: 8, color: ink, important: true });
   currentY -= commercialHeight + 8;
 
   page.drawRectangle({ x: margin, y: currentY - 26, width: contentWidth, height: 26, color: rgb(0.94, 0.91, 0.84), borderColor: green, borderWidth: 0.7 });
@@ -609,8 +611,10 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   const bankLines: string[] = [];
   if (confirmation.bankName) bankLines.push(`Banco: ${confirmation.bankName}${confirmation.bankCode ? ` (${confirmation.bankCode})` : ""}`);
   if (confirmation.bankAgency) bankLines.push(`Agencia: ${confirmation.bankAgency}`);
-  if (confirmation.bankAccount) bankLines.push(`Conta: ${confirmation.bankAccount}`);
-  if (confirmation.pixKey) bankLines.push(`PIX: ${confirmation.pixKey}`);
+  if (confirmation.bankAccount) bankLines.push(`Conta: ${confirmation.bankAccount}${confirmation.bankAccountType ? ` (${confirmation.bankAccountType})` : ""}`);
+  if (confirmation.bankHolderName) bankLines.push(`Titular: ${confirmation.bankHolderName}`);
+  if (confirmation.bankHolderDocument) bankLines.push(`Documento titular: ${formatTaxId(confirmation.bankHolderDocument)}`);
+  if (confirmation.pixKey) bankLines.push(`PIX${confirmation.pixKeyType ? ` (${confirmation.pixKeyType})` : ""}: ${confirmation.pixKey}`);
   const bankX = margin + paymentColWidth + 20;
   page.drawRectangle({ x: bankX, y: blockTop - 43, width: paymentColWidth, height: 43, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
   page.drawText("Dados para deposito", { x: bankX + 8, y: blockTop - 12, size: 6.8, font: bold, color: gold });
