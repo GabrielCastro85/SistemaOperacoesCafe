@@ -2077,6 +2077,33 @@ export class AppRepository {
   activateProduct(id: string): Promise<Product> { return this.setProductActive(id, true); }
   deactivateProduct(id: string): Promise<Product> { return this.setProductActive(id, false); }
 
+  /**
+   * Exclui definitivamente somente produto sem qualquer referencia no banco.
+   * Produtos ja usados devem ser apenas desativados, preservando historico.
+   * A propagacao entre PCs e feita pelo tombstone no handler IPC.
+   */
+  permanentlyDeleteProduct(id: string): void {
+    const product = this.getProduct(id);
+    const references = this.findColumnsReferencing("products")
+      .map(({ table, column }) => ({
+        table,
+        count: (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).get(id) as { count: number }).count
+      }))
+      .filter((entry) => entry.count > 0);
+
+    if (references.length > 0) {
+      const details = references
+        .slice(0, 5)
+        .map((entry) => `${entry.table} (${entry.count})`)
+        .join(", ");
+      throw new Error(
+        `Nao e possivel excluir o produto "${product.name}" porque ele possui registros vinculados: ${details}. Desative o produto para impedir novos usos.`
+      );
+    }
+
+    this.db.prepare("DELETE FROM products WHERE id = ?").run(id);
+  }
+
   getBillingProfile(businessPartnerId: string): ClientBillingProfile | null {
     const partner = this.getBusinessPartner(businessPartnerId);
     const row = this.db.prepare("SELECT * FROM client_billing_profiles WHERE business_partner_id = ?").get(partner.id) as DbRecord | undefined;
@@ -6102,12 +6129,15 @@ export class AppRepository {
         this.linkDealOperationInternal(draft.confirmation.id, operationId);
         const operation = this.getOperation(operationId);
         const product = operation.productId ? this.getProduct(operation.productId) : null;
+        const fiscalItem = operation.fiscalDocumentItemId
+          ? this.getFiscalDocument(operation.fiscalDocumentId).items.find((item) => item.id === operation.fiscalDocumentItemId) ?? null
+          : null;
         this.addDealItemInternal({
           dealConfirmationId: draft.confirmation.id,
           sortOrder: this.nextDealSortOrder("deal_confirmation_items", draft.confirmation.id),
           productId: operation.productId,
-          productNameSnapshot: product?.name ?? "Cafe",
-          productDescriptionSnapshot: product?.description ?? null,
+          productNameSnapshot: fiscalItem?.description ?? product?.name ?? "Cafe",
+          productDescriptionSnapshot: fiscalItem?.description ?? product?.description ?? null,
           cropSnapshot: null,
           qualitySnapshot: null,
           packagingSnapshot: null,
@@ -6152,7 +6182,9 @@ export class AppRepository {
             dealConfirmationId: draft.confirmation.id,
             sortOrder: this.nextDealSortOrder("deal_confirmation_items", draft.confirmation.id),
             productId: item.productId,
-            productNameSnapshot: product?.name ?? item.description,
+            // Documento comercial deve reproduzir o item da NF. O productId
+            // permanece vinculado apenas para classificacao e relatorios.
+            productNameSnapshot: item.description,
             productDescriptionSnapshot: item.description,
             cropSnapshot: null,
             qualitySnapshot: null,

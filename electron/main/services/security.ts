@@ -83,7 +83,8 @@ export const CHANNEL_PERMISSION_RULES: Array<{ pattern: RegExp; policy: IpcPolic
   { pattern: /^auth:/, policy: { mode: "authenticated" } },
   { pattern: /^users:create/, policy: { mode: "permission", permission: "users.manage" } },
   { pattern: /^users:/, policy: { mode: "permission", permission: "users.manage" } },
-  { pattern: /^roles:(assign|create|update|delete)/, policy: { mode: "permission", permission: "users.manage" } }
+  { pattern: /^roles:(assign|create|update|delete)/, policy: { mode: "permission", permission: "users.manage" } },
+  { pattern: /^products:permanentlyDelete$/, policy: { mode: "permission", permission: "users.manage" } }
 ];
 
 export function getIpcPolicy(channel: string): IpcPolicy {

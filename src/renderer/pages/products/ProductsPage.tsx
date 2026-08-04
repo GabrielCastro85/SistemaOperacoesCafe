@@ -20,6 +20,7 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
   const [name, setName] = useState("");
   const [weight, setWeight] = useState("60");
   const [message, setMessage] = useState<string | null>(null);
+  const [busyProductId, setBusyProductId] = useState<string | null>(null);
   const scrollTo = useAutoScroll();
   const productsListRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,6 +55,40 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
     }
   }
 
+  async function toggleProduct(product: Product): Promise<void> {
+    try {
+      setBusyProductId(product.id);
+      if (product.isActive) await window.operationsCafe.deactivateProduct(product.id);
+      else await window.operationsCafe.activateProduct(product.id);
+      setMessage(product.isActive ? "Produto desativado." : "Produto reativado.");
+      await load();
+      await refresh();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao alterar o produto."}`);
+    } finally {
+      setBusyProductId(null);
+    }
+  }
+
+  async function permanentlyDeleteProduct(product: Product): Promise<void> {
+    const confirmed = window.confirm(
+      `Excluir definitivamente o produto "${product.name}"?\n\nEssa opcao so funcionara se o produto nunca tiver sido usado. Produtos com historico devem ser desativados.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setBusyProductId(product.id);
+      await window.operationsCafe.permanentlyDeleteProduct(product.id);
+      setMessage("Produto excluido definitivamente.");
+      await load();
+      await refresh();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir o produto."}`);
+    } finally {
+      setBusyProductId(null);
+    }
+  }
+
   return (
     <section className="content-section settings compact-crud-page products-page">
       <PageHeader title="Produtos" eyebrow="Comercial" description="Cadastre produtos usados em notas, operacoes, regras por saca e confirmacoes." />
@@ -65,20 +100,43 @@ export function ProductsPage({ data, refresh }: { data: BootstrapData; refresh: 
         </FormGrid>
       </AdminBlock>
       <div ref={productsListRef}>
-      <AdminBlock title="Produtos cadastrados">
-        <DataTable
-          rows={products}
-          getRowKey={(row) => row.id}
-          columns={[
-            { key: "name", header: "Nome", render: (row) => row.name },
-            { key: "code", header: "Codigo", render: (row) => row.code ?? "-" },
-            { key: "category", header: "Categoria", render: (row) => productLabels[row.category] },
-            { key: "unit", header: "Unidade", render: (row) => formatProductUnit(row.defaultUnit) },
-            { key: "weight", header: "Peso saca", align: "right", render: (row) => (row.defaultSackWeightKg ? `${row.defaultSackWeightKg} kg` : "-") },
-            { key: "status", header: "Status", render: (row) => <StatusBadge status={row.isActive ? "ACTIVE" : "INACTIVE"} label={row.isActive ? "Ativo" : "Inativo"} /> }
-          ]}
-        />
-      </AdminBlock>
+        <AdminBlock title="Produtos cadastrados">
+          <DataTable
+            rows={products}
+            getRowKey={(row) => row.id}
+            columns={[
+              { key: "name", header: "Nome", render: (row) => row.name },
+              { key: "code", header: "Codigo", render: (row) => row.code ?? "-" },
+              { key: "category", header: "Categoria", render: (row) => productLabels[row.category] },
+              { key: "unit", header: "Unidade", render: (row) => formatProductUnit(row.defaultUnit) },
+              { key: "weight", header: "Peso saca", align: "right", render: (row) => (row.defaultSackWeightKg ? `${row.defaultSackWeightKg} kg` : "-") },
+              { key: "status", header: "Status", render: (row) => <StatusBadge status={row.isActive ? "ACTIVE" : "INACTIVE"} label={row.isActive ? "Ativo" : "Inativo"} /> },
+              {
+                key: "actions",
+                header: "Acoes",
+                render: (row) => (
+                  <div className="table-actions">
+                    <button
+                      type="button"
+                      onClick={() => void toggleProduct(row)}
+                      disabled={busyProductId === row.id}
+                    >
+                      {row.isActive ? "Desativar" : "Reativar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => void permanentlyDeleteProduct(row)}
+                      disabled={busyProductId === row.id}
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                )
+              }
+            ]}
+          />
+        </AdminBlock>
       </div>
       <Feedback message={message} />
     </section>

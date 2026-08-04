@@ -112,6 +112,7 @@ export const IPC_CHANNELS = {
   updateProduct: "products:update",
   activateProduct: "products:activate",
   deactivateProduct: "products:deactivate",
+  permanentlyDeleteProduct: "products:permanentlyDelete",
   getBillingProfile: "billingProfiles:get",
   upsertBillingProfile: "billingProfiles:upsert",
   activateBillingProfile: "billingProfiles:activate",

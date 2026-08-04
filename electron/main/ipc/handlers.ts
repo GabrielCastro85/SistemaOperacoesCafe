@@ -381,6 +381,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.activateProduct, (_event, payload: unknown) => repository.activateProduct(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.deactivateProduct, (_event, payload: unknown) => repository.deactivateProduct(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.permanentlyDeleteProduct, async (_event, payload: unknown) => {
+    const id = z.string().uuid().parse(payload);
+    repository.permanentlyDeleteProduct(id);
+    await repository.pushTombstone("products", id).catch((error) => logPushFailure("permanentlyDeleteProduct", error));
+    return null;
+  });
   handle(IPC_CHANNELS.getBillingProfile, (_event, payload: unknown) => repository.getBillingProfile(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.upsertBillingProfile, (_event, payload: unknown) => repository.upsertBillingProfile(payload));
   handle(IPC_CHANNELS.activateBillingProfile, (_event, payload: unknown) => repository.activateBillingProfile(z.string().uuid().parse(payload)));
