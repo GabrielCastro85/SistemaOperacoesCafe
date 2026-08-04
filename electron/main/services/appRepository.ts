@@ -3493,7 +3493,80 @@ export class AppRepository {
       .sort((a, b) => b.totalAmountCents - a.totalAmountCents);
   }
 
+  /**
+   * Corrige operacoes ainda nao cobradas usando a quantidade em sacas ja
+   * calculada no item fiscal. Isso cobre registros antigos/sincronizados em
+   * que quantity_sacks_decimal ficou com a quantidade comercial em KG
+   * (ex.: 2640) apesar de fiscal_document_items.sacks_quantity_decimal estar
+   * correto (ex.: 44).
+   *
+   * Apenas operacoes UNBILLED sao alteradas. Snapshots de cobrancas ja
+   * emitidas permanecem intocados.
+   */
+  private normalizeUnbilledOperationSacksFromFiscalItems(filters: {
+    organizationId: string;
+    ownLegalEntityId?: string;
+    responsiblePartnerId?: string;
+    periodStart?: string;
+    periodEnd?: string;
+  }): void {
+    const rows = this.db.prepare(`
+      SELECT
+        operations.id,
+        operations.quantity_sacks_decimal,
+        operations.applied_rate_value_cents,
+        fiscal_document_items.sacks_quantity_decimal
+      FROM operations
+      INNER JOIN fiscal_document_items
+        ON fiscal_document_items.id = operations.fiscal_document_item_id
+      WHERE operations.organization_id = @organizationId
+        AND operations.billing_status = 'UNBILLED'
+        AND operations.status <> 'CANCELED'
+        AND fiscal_document_items.sacks_quantity_decimal IS NOT NULL
+        AND fiscal_document_items.sacks_quantity_decimal <> ''
+        AND (@ownLegalEntityId IS NULL OR operations.own_legal_entity_id = @ownLegalEntityId)
+        AND (@responsiblePartnerId IS NULL OR operations.responsible_partner_id = @responsiblePartnerId)
+        AND (@periodStart IS NULL OR operations.operation_date >= @periodStart)
+        AND (@periodEnd IS NULL OR operations.operation_date <= @periodEnd)
+    `).all({
+      organizationId: filters.organizationId,
+      ownLegalEntityId: filters.ownLegalEntityId ?? null,
+      responsiblePartnerId: filters.responsiblePartnerId ?? null,
+      periodStart: filters.periodStart ?? null,
+      periodEnd: filters.periodEnd ?? null
+    }) as Array<{
+      id: string;
+      quantity_sacks_decimal: string;
+      applied_rate_value_cents: number;
+      sacks_quantity_decimal: string;
+    }>;
+
+    const now = new Date().toISOString();
+    const update = this.db.prepare(`
+      UPDATE operations
+      SET quantity_sacks_decimal = ?,
+          service_amount_cents = ?,
+          updated_at = ?
+      WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      const correctSacks = normalizeDecimalText(row.sacks_quantity_decimal);
+      const currentSacks = normalizeDecimalText(row.quantity_sacks_decimal);
+      if (correctSacks === currentSacks) continue;
+
+      const correctedAmount = multiplyDecimalByCents(correctSacks, row.applied_rate_value_cents);
+      update.run(correctSacks, correctedAmount, now, row.id);
+      log.info("Quantidade em sacas corrigida antes da cobranca", {
+        operationId: row.id,
+        previousQuantitySacks: currentSacks,
+        correctedQuantitySacks: correctSacks
+      });
+    }
+  }
+
   private refreshOperationServiceRates(filters: { organizationId: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string }): void {
+    this.normalizeUnbilledOperationSacksFromFiscalItems(filters);
     const operations = this.listOperations({
       organizationId: filters.organizationId,
       ownLegalEntityId: filters.ownLegalEntityId,
@@ -4754,6 +4827,20 @@ export class AppRepository {
   private reserveOperationsForCharge(clientChargeId: string, operationIds: string[]): void {
     const charge = this.getClientCharge(clientChargeId).charge;
     const now = new Date().toISOString();
+
+    // Garante a mesma conversao usada na tela de notas antes de congelar o
+    // snapshot da cobranca. E' uma segunda barreira para rascunhos criados por
+    // fluxos que nao passaram pela busca de operacoes da tela.
+    const operationOrganizations = Array.from(new Set(
+      operationIds.map((operationId) => this.getOperation(operationId).organizationId)
+    ));
+    operationOrganizations.forEach((organizationId) => {
+      this.normalizeUnbilledOperationSacksFromFiscalItems({
+        organizationId,
+        responsiblePartnerId: charge.clientPartnerId
+      });
+    });
+
     operationIds.forEach((operationId) => {
       const operation = this.getOperation(operationId);
       if (operation.responsiblePartnerId !== charge.clientPartnerId) throw new Error("Operacao fora do escopo da cobranca.");
