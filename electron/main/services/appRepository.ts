@@ -3386,7 +3386,23 @@ export class AppRepository {
     let status = data.status;
     let errorCode = data.errorCode;
     let errorMessage = data.errorMessage;
-    const sameHash = this.db.prepare("SELECT id FROM xml_import_files WHERE file_hash = ? AND status IN ('IMPORTED','DUPLICATE') LIMIT 1").get(data.fileHash);
+    // Só considera o hash duplicado quando o XML anterior foi realmente
+    // importado e ainda possui uma nota fiscal existente. Registros antigos
+    // marcados apenas como DUPLICATE não podem bloquear novas tentativas para
+    // sempre, principalmente depois que a nota/importação original foi
+    // excluída ou revertida.
+    const sameHash = this.db.prepare(`
+      SELECT xml_import_files.id
+      FROM xml_import_files
+      INNER JOIN fiscal_documents
+        ON fiscal_documents.id = xml_import_files.fiscal_document_id
+      LEFT JOIN xml_import_jobs
+        ON xml_import_jobs.id = xml_import_files.import_job_id
+      WHERE xml_import_files.file_hash = ?
+        AND xml_import_files.status = 'IMPORTED'
+        AND COALESCE(xml_import_jobs.status, '') <> 'REVERTED'
+      LIMIT 1
+    `).get(data.fileHash);
     if (sameHash) {
       status = "DUPLICATE";
       errorCode = "DUPLICATE_HASH";
@@ -5047,10 +5063,6 @@ export class AppRepository {
   }
 
   private resolveSacksForXmlItem(xmlItem: Record<string, unknown>, product: Product | null, resolution: Record<string, unknown>): string | null {
-    if (typeof resolution.manualSacks === "string" && resolution.manualSacks) {
-      return normalizeDecimalText(resolution.manualSacks);
-    }
-
     const unit = String(xmlItem.commercialUnit ?? "").trim().toUpperCase();
     const description = this.normalizeXmlDescription(xmlItem.description);
     const quantity = String(xmlItem.commercialQuantity ?? "");
@@ -5060,21 +5072,57 @@ export class AppRepository {
     // O valor fiscal continua armazenado no item e entra normalmente na confirmação.
     if (this.isXmlValueAdditionItem(xmlItem)) return null;
 
-    const sackWeightKg = product?.defaultSackWeightKg ? String(product.defaultSackWeightKg) : "60";
+    const configuredSackWeightKg = product?.defaultSackWeightKg
+      ? String(product.defaultSackWeightKg)
+      : "60";
+    const parsedConfiguredWeight = Number(configuredSackWeightKg.replace(",", "."));
+    const effectiveSackWeightKg =
+      Number.isFinite(parsedConfiguredWeight) && parsedConfiguredWeight > 1
+        ? configuredSackWeightKg
+        : "60";
 
-    // Alguns emissores usam UN ou SC, mas informam quilogramas na quantidade.
-    // Para acréscimo de peso, a descrição tem prioridade sobre a unidade fiscal.
+    // Acréscimos de peso sempre representam quilogramas, mesmo quando o XML
+    // usa uma unidade inadequada como UN ou SC.
     if (this.isXmlWeightAdditionItem(xmlItem)) {
-      return divideDecimalText(quantity, sackWeightKg);
+      return divideDecimalText(quantity, effectiveSackWeightKg);
     }
 
-    if (isXmlSackUnit(unit)) return normalizeDecimalText(quantity);
-    if (isXmlKgUnit(unit)) return divideDecimalText(quantity, sackWeightKg);
-    if (isXmlTonUnit(unit)) return divideDecimalText(multiplyDecimalText(quantity, "1000"), sackWeightKg);
-    if (isXmlBigBagUnit(unit) || description.includes("BIG BAG") || description.includes("BIGBAG")) {
-      const bigBagWeightKg = typeof resolution.bigBagWeightKg === "string" && resolution.bigBagWeightKg ? resolution.bigBagWeightKg : "1000";
-      return divideDecimalText(multiplyDecimalText(quantity, bigBagWeightKg), sackWeightKg);
+    // A unidade física do XML tem prioridade sobre manualSacks. A tela pode
+    // preencher manualSacks automaticamente com a quantidade bruta; em uma NF
+    // emitida em KG isso faria 160 kg virarem 160 sacas.
+    if (isXmlKgUnit(unit)) {
+      return divideDecimalText(quantity, effectiveSackWeightKg);
     }
+
+    if (isXmlTonUnit(unit)) {
+      return divideDecimalText(
+        multiplyDecimalText(quantity, "1000"),
+        effectiveSackWeightKg
+      );
+    }
+
+    if (isXmlBigBagUnit(unit) || description.includes("BIG BAG") || description.includes("BIGBAG")) {
+      const bigBagWeightKg =
+        typeof resolution.bigBagWeightKg === "string" && resolution.bigBagWeightKg
+          ? resolution.bigBagWeightKg
+          : "1000";
+      return divideDecimalText(
+        multiplyDecimalText(quantity, bigBagWeightKg),
+        effectiveSackWeightKg
+      );
+    }
+
+    // Em unidades realmente expressas em saca, mantém a quantidade original.
+    if (isXmlSackUnit(unit)) {
+      return normalizeDecimalText(quantity);
+    }
+
+    // Só usa a quantidade manual quando o XML não informa uma unidade física
+    // reconhecida.
+    if (typeof resolution.manualSacks === "string" && resolution.manualSacks) {
+      return normalizeDecimalText(resolution.manualSacks);
+    }
+
     return null;
   }
 
