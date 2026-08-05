@@ -5,7 +5,7 @@ import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
 import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
@@ -1141,18 +1141,30 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return result;
   });
   handle(IPC_CHANNELS.generateDealConfirmationPreview, async (_event, payload: unknown) => {
-    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar a previa da confirmacao");
-    if (!destinationDir) return null;
-    const detail = await repository.generateDealConfirmationPreview(z.string().uuid().parse(payload));
-    copyCurrentDealDocumentToDirectory(repository, detail.confirmation.issuedDocumentVersionId ?? detail.documents.at(-1)?.id ?? null, destinationDir);
+    const id = z.string().uuid().parse(payload);
+    const current = repository.getDealConfirmation(id);
+    const suggestedName = buildDealExportFileName(repository, current, true);
+    const targetPath = await selectExportPdfPath("Salvar previa da confirmacao", suggestedName);
+    if (!targetPath) return null;
+
+    const detail = await repository.generateDealConfirmationPreview(id);
+    copyCurrentDealDocumentToPath(
+      repository,
+      detail.confirmation.issuedDocumentVersionId ?? detail.documents.at(-1)?.id ?? null,
+      targetPath
+    );
     await pushConfirmation(detail.confirmation.id, "generateDealConfirmationPreview");
     return detail;
   });
   handle(IPC_CHANNELS.issueDealConfirmation, async (_event, payload: unknown) => {
-    const destinationDir = await selectExportDirectory("Escolha a pasta para salvar a confirmacao emitida");
-    if (!destinationDir) return null;
-    const detail = await repository.issueDealConfirmation(z.string().uuid().parse(payload));
-    copyCurrentDealDocumentToDirectory(repository, detail.confirmation.issuedDocumentVersionId, destinationDir);
+    const id = z.string().uuid().parse(payload);
+    const current = repository.getDealConfirmation(id);
+    const suggestedName = buildDealExportFileName(repository, current, false);
+    const targetPath = await selectExportPdfPath("Salvar confirmacao emitida", suggestedName);
+    if (!targetPath) return null;
+
+    const detail = await repository.issueDealConfirmation(id);
+    copyCurrentDealDocumentToPath(repository, detail.confirmation.issuedDocumentVersionId, targetPath);
     await pushConfirmation(detail.confirmation.id, "issueDealConfirmation");
     return detail;
   });
@@ -1316,6 +1328,84 @@ async function selectExportDirectory(title: string): Promise<string | null> {
   return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
+async function selectExportPdfPath(title: string, suggestedFileName: string): Promise<string | null> {
+  const result = await dialog.showSaveDialog({
+    title,
+    defaultPath: suggestedFileName,
+    filters: [{ name: "Documento PDF", extensions: ["pdf"] }]
+  });
+  return result.canceled ? null : result.filePath ?? null;
+}
+
+function buildDealExportFileName(
+  repository: AppRepository,
+  detail: ReturnType<AppRepository["getDealConfirmation"]>,
+  draft: boolean
+): string {
+  const own = repository.getLegalEntity(detail.confirmation.ownLegalEntityId);
+  const prefix = resolveDealFilePrefix(own);
+  const buyer = detail.parties.find((party) => party.partyRole === "BUYER");
+  const buyerName = resolveDealPartyFileName(buyer);
+  const baseName = buyerName ? `${prefix} x ${buyerName}` : prefix;
+  return `${draft ? "PREVIA - " : ""}${sanitizeExportFileName(baseName)}.pdf`;
+}
+
+function resolveDealFilePrefix(own: ReturnType<AppRepository["getLegalEntity"]>): string {
+  const explicit = own.documentPrefix?.trim();
+  if (explicit) return explicit.replace(/\s+/g, "");
+
+  const text = `${own.tradeName} ${own.legalName}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const state = own.state?.trim().toUpperCase();
+
+  if (text.includes("grao")) {
+    if (state === "MG") return "GGMG";
+    if (state === "SP") return "GGSP";
+    if (state === "DF") return "GGDF";
+    return "GG";
+  }
+
+  if (text.includes("villa") || text.includes("coffee")) {
+    if (state === "MG") return "VCMG";
+    if (state === "ES") return "VCES";
+    return "VC";
+  }
+
+  return "CONFIRMACAO";
+}
+
+function resolveDealPartyFileName(
+  party: ReturnType<AppRepository["getDealConfirmation"]>["parties"][number] | undefined
+): string | null {
+  if (!party) return null;
+  if (party.manualName?.trim()) return simplifyDealPartyName(party.manualName);
+
+  try {
+    const snapshot = JSON.parse(party.snapshotJson) as Record<string, unknown>;
+    const candidate = [
+      snapshot.tradeName,
+      snapshot.legalName,
+      snapshot.name,
+      snapshot.partnerName
+    ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return candidate ? simplifyDealPartyName(candidate) : null;
+  } catch {
+    return null;
+  }
+}
+
+function simplifyDealPartyName(value: string): string {
+  const cleaned = value
+    .replace(/\b(LTDA|S\/A|SA|EIRELI|ME|EPP)\b\.?/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Para nomes longos, usa as duas primeiras palavras relevantes no arquivo.
+  return cleaned.split(" ").slice(0, 2).join(" ") || value.trim();
+}
+
 function copyGeneratedFileToDirectory(sourcePath: string | null | undefined, destinationDir: string, fileName?: string | null): string {
   if (!sourcePath) throw new Error("Arquivo gerado nao encontrado.");
   mkdirSync(destinationDir, { recursive: true });
@@ -1324,10 +1414,24 @@ function copyGeneratedFileToDirectory(sourcePath: string | null | undefined, des
   return targetPath;
 }
 
+function copyGeneratedFileToPath(sourcePath: string | null | undefined, targetPath: string): string {
+  if (!sourcePath) throw new Error("Arquivo gerado nao encontrado.");
+  mkdirSync(join(targetPath, ".."), { recursive: true });
+  copyFileSync(sourcePath, targetPath);
+  if (!existsSync(targetPath)) throw new Error("O PDF foi gerado, mas nao foi encontrado no local escolhido.");
+  return targetPath;
+}
+
 function copyCurrentDealDocumentToDirectory(repository: AppRepository, documentVersionId: string | null | undefined, destinationDir: string): void {
   if (!documentVersionId) throw new Error("Documento gerado nao encontrado.");
   const document = repository.getDealDocumentVersion(documentVersionId);
   copyGeneratedFileToDirectory(document.storedFilePath, destinationDir, document.originalFileName);
+}
+
+function copyCurrentDealDocumentToPath(repository: AppRepository, documentVersionId: string | null | undefined, targetPath: string): void {
+  if (!documentVersionId) throw new Error("Documento gerado nao encontrado.");
+  const document = repository.getDealDocumentVersion(documentVersionId);
+  copyGeneratedFileToPath(document.storedFilePath, targetPath);
 }
 
 function buildChargeExportFileName(clientName: string, periodStart: string, periodEnd: string, kind: "pdf" | "image"): string {

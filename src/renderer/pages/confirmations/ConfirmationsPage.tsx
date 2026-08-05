@@ -19,6 +19,8 @@ interface SourceDocumentRow {
   sacks: string;
 }
 
+const MAX_NOTES_PER_CONFIRMATION = 6;
+
 function todayDate(): string {
   const date = new Date();
   const year = date.getFullYear();
@@ -327,6 +329,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function createFromNotes(): Promise<void> {
     const fiscalDocumentIds = selectedRows.map((row) => row.document.id);
     if (fiscalDocumentIds.length === 0) return;
+    if (fiscalDocumentIds.length > MAX_NOTES_PER_CONFIRMATION) {
+      setMessage(`Erro: cada confirmação aceita no máximo ${MAX_NOTES_PER_CONFIRMATION} notas fiscais.`);
+      return;
+    }
     const selectedBuyerIds = [...new Set(selectedRows.map((row) => row.document.responsiblePartnerId))];
     if (sourceSearchMode === "corretor" && selectedBuyerIds.length > 1) {
       setMessage("Erro: selecione notas do mesmo cliente para gerar uma confirmacao.");
@@ -686,7 +692,27 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                     const company = partnerLegalEntities.find((entity) => entity.id === row.document.partnerLegalEntityId);
                     return (
                       <div key={row.document.id} className="table-row confirmation-source-grid">
-                        <span><input type="checkbox" checked={Boolean(selectedDocumentIds[row.document.id])} onChange={(event) => setSelectedDocumentIds((current) => ({ ...current, [row.document.id]: event.target.checked }))} /></span>
+                        <span>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(selectedDocumentIds[row.document.id])}
+                            disabled={!selectedDocumentIds[row.document.id] && selectedCount >= MAX_NOTES_PER_CONFIRMATION}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setSelectedDocumentIds((current) => {
+                                const currentCount = Object.values(current).filter(Boolean).length;
+                                if (checked && currentCount >= MAX_NOTES_PER_CONFIRMATION) {
+                                  setMessage(`Limite atingido: selecione no máximo ${MAX_NOTES_PER_CONFIRMATION} notas por confirmação.`);
+                                  return current;
+                                }
+                                return { ...current, [row.document.id]: checked };
+                              });
+                            }}
+                            title={!selectedDocumentIds[row.document.id] && selectedCount >= MAX_NOTES_PER_CONFIRMATION
+                              ? `Limite de ${MAX_NOTES_PER_CONFIRMATION} notas atingido`
+                              : undefined}
+                          />
+                        </span>
                         <span>{row.document.documentNumber}</span>
                         <span>{company ? legalEntityDisplayName(company) : (fiscalDocumentCounterpartyNameFromSnapshot(row.document) ?? "Empresa nao vinculada")}</span>
                         <span>{formatDateBr(row.document.issueDate)}</span>
@@ -706,14 +732,36 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                       : "Essa empresa/CNPJ nao possui notas fiscais confirmadas dentro do periodo selecionado. Confira o intervalo de datas ou clique em Mes atual."}
                 />
               )}
+              <div
+                role="alert"
+                style={{
+                  marginTop: 12,
+                  marginBottom: 10,
+                  padding: "10px 12px",
+                  border: "1px solid #d7a33d",
+                  borderRadius: 8,
+                  background: "#fff7df",
+                  color: "#6b4a00",
+                  fontWeight: 600
+                }}
+              >
+                Atenção: cada confirmação aceita no máximo {MAX_NOTES_PER_CONFIRMATION} notas fiscais.
+                Ao atingir o limite, as demais notas ficam bloqueadas até que uma nota seja desmarcada.
+              </div>
               <div className="confirmation-source-stats">
-                <span>{selectedCount} nota(s) selecionada(s)</span>
+                <span>{selectedCount}/{MAX_NOTES_PER_CONFIRMATION} nota(s) selecionada(s)</span>
                 <span>Total de sacas: {selectedTotalSacks.replace(".", ",")}</span>
                 <span>Valor medio: {formatCurrencyFromCents(Math.round(selectedAvgPricePerSack * 100))}/saca</span>
                 <span>Valor total: {formatCurrencyFromCents(selectedTotalCents)}</span>
               </div>
               <div className="toolbar">
-                <button className="primary" onClick={() => void createFromNotes()} disabled={selectedCount === 0}>Gerar confirmacao das notas selecionadas</button>
+                <button
+                  className="primary"
+                  onClick={() => void createFromNotes()}
+                  disabled={selectedCount === 0 || selectedCount > MAX_NOTES_PER_CONFIRMATION}
+                >
+                  Gerar confirmação das notas selecionadas
+                </button>
               </div>
             </AdminBlock>
           )}

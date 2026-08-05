@@ -7346,10 +7346,29 @@ export class AppRepository {
     const own = this.getLegalEntity(ownLegalEntityId);
     const explicitPrefix = own.documentPrefix?.trim();
     if (explicitPrefix) return explicitPrefix.endsWith(" ") ? explicitPrefix : `${explicitPrefix} `;
+
     const organization = this.getOrganization(organizationId);
-    const text = `${organization.slug} ${organization.displayName} ${organization.appDisplayName} ${own.tradeName} ${own.legalName}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    if (text.includes("grao")) return "GG ";
-    if (text.includes("villa") || text.includes("coffee")) return "VC ";
+    const text = `${organization.slug} ${organization.displayName} ${organization.appDisplayName} ${own.tradeName} ${own.legalName}`
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    const state = own.state?.trim().toUpperCase();
+
+    // Prefixo automático por empresa e UF quando o cadastro ainda não possui
+    // um Prefixo documentos explícito.
+    if (text.includes("grao")) {
+      if (state === "MG") return "GGMG ";
+      if (state === "SP") return "GGSP ";
+      if (state === "DF") return "GGDF ";
+      return "GG ";
+    }
+
+    if (text.includes("villa") || text.includes("coffee")) {
+      if (state === "MG") return "VCMG ";
+      if (state === "ES") return "VCES ";
+      return "VC ";
+    }
+
     return "CN ";
   }
 
@@ -7363,9 +7382,66 @@ export class AppRepository {
 
   private ensureDealConfirmationNumber(id: string): void {
     const detail = this.getDealConfirmation(id);
-    if (detail.confirmation.confirmationNumber) return;
-    const number = this.reserveNextDealConfirmationNumber(detail.confirmation.organizationId, detail.confirmation.ownLegalEntityId, new Date().toISOString().slice(0, 4));
-    this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ?").run(number, new Date().toISOString(), id);
+    const confirmation = detail.confirmation;
+    const desiredPrefix = this.defaultDealConfirmationPrefix(
+      confirmation.organizationId,
+      confirmation.ownLegalEntityId
+    );
+
+    if (confirmation.confirmationNumber) {
+      // Mantém documentos já emitidos imutáveis. Em rascunhos, corrige prefixos
+      // antigos (ex.: VC 0001) quando o CNPJ passa a usar VCMG/VCES.
+      if (confirmation.status !== "DRAFT" && confirmation.status !== "PENDING_REVIEW") return;
+      if (confirmation.confirmationNumber.startsWith(desiredPrefix)) return;
+
+      const suffixMatch = confirmation.confirmationNumber.match(/(\d+)\s*$/);
+      const suffix = suffixMatch?.[1] ?? null;
+      const padding = Math.max(4, suffix?.length ?? 0);
+      let candidate = suffix
+        ? `${desiredPrefix}${suffix.padStart(padding, "0")}`
+        : this.reserveNextDealConfirmationNumber(
+            confirmation.organizationId,
+            confirmation.ownLegalEntityId,
+            new Date().toISOString().slice(0, 4)
+          );
+
+      const collision = this.db.prepare(`
+        SELECT id
+        FROM deal_confirmations
+        WHERE organization_id = ?
+          AND own_legal_entity_id = ?
+          AND confirmation_number = ?
+          AND id <> ?
+        LIMIT 1
+      `).get(
+        confirmation.organizationId,
+        confirmation.ownLegalEntityId,
+        candidate,
+        id
+      ) as { id: string } | undefined;
+
+      if (collision) {
+        candidate = this.reserveNextDealConfirmationNumber(
+          confirmation.organizationId,
+          confirmation.ownLegalEntityId,
+          new Date().toISOString().slice(0, 4)
+        );
+      }
+
+      this.db.prepare(
+        "UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ?"
+      ).run(candidate, new Date().toISOString(), id);
+      return;
+    }
+
+    const number = this.reserveNextDealConfirmationNumber(
+      confirmation.organizationId,
+      confirmation.ownLegalEntityId,
+      new Date().toISOString().slice(0, 4)
+    );
+    this.db.prepare(
+      "UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ?"
+    ).run(number, new Date().toISOString(), id);
   }
 
   private async generateDealDocumentVersion(id: string, documentType: DealConfirmationDocumentVersion["documentType"], versionId: string, draft: boolean, notes: string): Promise<DealConfirmationDocumentVersion> {

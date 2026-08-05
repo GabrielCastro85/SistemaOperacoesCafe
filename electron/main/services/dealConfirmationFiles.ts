@@ -58,7 +58,12 @@ export async function generateDealConfirmationPdf(input: {
   mkdirSync(targetDir, { recursive: true });
   const fileName = buildDealConfirmationFileName(input);
   const storedFilePath = join(targetDir, fileName);
-  const bytes = await buildCompactConfirmationPdf(input);
+  // O modelo compacto preserva uma página para até 6 itens.
+  // Acima disso, o modelo paginado continua como proteção para confirmações
+  // antigas ou criadas por outros fluxos.
+  const bytes = input.detail.items.length <= 6
+    ? await buildCompactConfirmationPdf(input)
+    : await buildConfirmationPdf(input);
   writeFileSync(storedFilePath, bytes);
   const stats = statSync(storedFilePath);
   return {
@@ -162,8 +167,8 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   const isGraoBrand = `${organization.slug} ${organization.displayName} ${ownLegalEntity.tradeName}`.toLowerCase().includes("grao");
   const headerColor = isGraoBrand ? rgb(0.015, 0.19, 0.13) : dark;
 
-  if (detail.items.length > 4) {
-    throw new Error("Modelo de uma pagina excedido: a confirmacao compacta aceita ate 4 itens negociados.");
+  if (detail.items.length > 6) {
+    throw new Error("Modelo de uma página excedido: a confirmação compacta aceita até 6 itens negociados.");
   }
 
   const doc = await PDFDocument.create();
@@ -602,12 +607,7 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
 
   // Payment + bank block
   drawSectionTitle("Condicoes comerciais");
-  ensureSpace(50);
   const paymentColWidth = (contentWidth - 20) / 2;
-  const blockTop = y;
-  page.drawRectangle({ x: margin, y: blockTop - 43, width: paymentColWidth, height: 43, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
-  page.drawText("Pagamento", { x: margin + 8, y: blockTop - 12, size: 6.8, font: bold, color: gold });
-  drawWrappedAt(confirmation.paymentTermsSnapshot ?? "Nao informado", margin + 8, blockTop - 25, paymentColWidth - 16, { size: 7.1, lineGap: 1 });
   const bankLines: string[] = [];
   if (confirmation.bankName) bankLines.push(`Banco: ${confirmation.bankName}${confirmation.bankCode ? ` (${confirmation.bankCode})` : ""}`);
   if (confirmation.bankAgency) bankLines.push(`Agencia: ${confirmation.bankAgency}`);
@@ -615,14 +615,26 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   if (confirmation.bankHolderName) bankLines.push(`Titular: ${confirmation.bankHolderName}`);
   if (confirmation.bankHolderDocument) bankLines.push(`Documento titular: ${formatTaxId(confirmation.bankHolderDocument)}`);
   if (confirmation.pixKey) bankLines.push(`PIX${confirmation.pixKeyType ? ` (${confirmation.pixKeyType})` : ""}: ${confirmation.pixKey}`);
+
+  // A altura acompanha a quantidade de dados bancarios para impedir que
+  // titular, documento ou PIX escapem do quadro.
+  const visibleBankLines = bankLines.length || 1;
+  const commercialBlockHeight = Math.max(50, Math.min(72, 25 + visibleBankLines * 7.2));
+  ensureSpace(commercialBlockHeight + 10);
+
+  const blockTop = y;
+  page.drawRectangle({ x: margin, y: blockTop - commercialBlockHeight, width: paymentColWidth, height: commercialBlockHeight, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
+  page.drawText("Pagamento", { x: margin + 8, y: blockTop - 12, size: 6.8, font: bold, color: gold });
+  drawWrappedAt(confirmation.paymentTermsSnapshot ?? "Nao informado", margin + 8, blockTop - 25, paymentColWidth - 16, { size: 6.8, lineGap: 0.6 });
+
   const bankX = margin + paymentColWidth + 20;
-  page.drawRectangle({ x: bankX, y: blockTop - 43, width: paymentColWidth, height: 43, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
+  page.drawRectangle({ x: bankX, y: blockTop - commercialBlockHeight, width: paymentColWidth, height: commercialBlockHeight, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
   page.drawText("Dados para deposito", { x: bankX + 8, y: blockTop - 12, size: 6.8, font: bold, color: gold });
   let bankY = blockTop - 25;
   (bankLines.length ? bankLines : ["Nao informado"]).forEach((item) => {
-    bankY = drawWrappedAt(item, bankX + 8, bankY, paymentColWidth - 16, { size: 7.1, lineGap: 1 });
+    bankY = drawWrappedAt(item, bankX + 8, bankY, paymentColWidth - 16, { size: 6.2, lineGap: 0.35 });
   });
-  y = blockTop - 52;
+  y = blockTop - commercialBlockHeight - 9;
 
   const notes = [
     confirmation.publicNotes ? `Observacoes: ${confirmation.publicNotes}` : null,
@@ -631,12 +643,17 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
     confirmation.generalTermsSnapshot ? `Condicoes gerais: ${confirmation.generalTermsSnapshot}` : null
   ].filter((item): item is string => Boolean(item));
   const notesHeight = Math.max(34, 14 + Math.min(notes.length || 1, 4) * 10);
-  ensureSpace(notesHeight);
-  page.drawRectangle({ x: margin, y: y - notesHeight, width: contentWidth, height: notesHeight, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.5 });
-  page.drawText("Observacoes", { x: margin + 8, y: y - 10, size: 6.8, font: bold, color: gold });
-  y -= 20;
-  (notes.length ? notes : ["Observacoes adicionais"]).slice(0, 4).forEach((item) => { y = drawWrappedAt(item, margin + 8, y, contentWidth - 16, { size: 6.8, color: muted, lineGap: 0.5 }); });
-  y -= 3;
+  ensureSpace(notesHeight + 8);
+  const notesTop = y;
+  page.drawRectangle({ x: margin, y: notesTop - notesHeight, width: contentWidth, height: notesHeight, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.5 });
+  page.drawText("Observacoes", { x: margin + 8, y: notesTop - 10, size: 6.8, font: bold, color: gold });
+  let notesY = notesTop - 20;
+  (notes.length ? notes : ["Observacoes adicionais"]).slice(0, 4).forEach((item) => {
+    notesY = drawWrappedAt(item, margin + 8, notesY, contentWidth - 16, { size: 6.8, color: muted, lineGap: 0.5 });
+  });
+  // Posiciona a próxima seção pela borda real do quadro, não pela quantidade
+  // de linhas desenhadas, mantendo títulos e cards alinhados.
+  y = notesTop - notesHeight - 8;
 
   const visibleClauses = detail.clauses.filter((clause) => clause.isVisible);
   if (visibleClauses.length > 0) {
@@ -651,7 +668,7 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
 
   // Signatures side by side
   if (detail.signers.length > 0) {
-    ensureSpace(104);
+    ensureSpace(92);
     drawSectionTitle("Assinaturas");
     const sigColWidth = (contentWidth - 20) / 2;
     const sigTop = y;
@@ -659,14 +676,14 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
       const col = index % 2;
       const sigX = margin + col * (sigColWidth + 20);
       const row = Math.floor(index / 2);
-      const boxTop = sigTop - row * 102;
-      page.drawRectangle({ x: sigX, y: boxTop - 82, width: sigColWidth, height: 82, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.6 });
-      page.drawText("Area para assinatura digital", { x: sigX + 16, y: boxTop - 14, size: 6.2, font, color: muted });
-      line(sigX + 16, sigX + sigColWidth - 16, boxTop - 55, rgb(0.2, 0.2, 0.2));
-      page.drawText(truncate(signer.name, bold, 7.8, sigColWidth - 32), { x: sigX + 16, y: boxTop - 68, size: 7.8, font: bold, color: ink });
-      page.drawText(`${PARTY_ROLE_LABELS[signer.partyRole] ?? signer.partyRole}${draft ? "" : ` - ${signer.signatureStatus}`}`, { x: sigX + 16, y: boxTop - 77, size: 6.6, font, color: muted });
+      const boxTop = sigTop - row * 88;
+      page.drawRectangle({ x: sigX, y: boxTop - 70, width: sigColWidth, height: 70, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.6 });
+      page.drawText("Area para assinatura digital", { x: sigX + 16, y: boxTop - 13, size: 6.2, font, color: muted });
+      line(sigX + 16, sigX + sigColWidth - 16, boxTop - 46, rgb(0.2, 0.2, 0.2));
+      page.drawText(truncate(signer.name, bold, 7.6, sigColWidth - 32), { x: sigX + 16, y: boxTop - 58, size: 7.6, font: bold, color: ink });
+      page.drawText(`${PARTY_ROLE_LABELS[signer.partyRole] ?? signer.partyRole}${draft ? "" : ` - ${signer.signatureStatus}`}`, { x: sigX + 16, y: boxTop - 67, size: 6.4, font, color: muted });
     });
-    y = sigTop - Math.ceil(detail.signers.length / 2) * 90 - 3;
+    y = sigTop - Math.ceil(detail.signers.length / 2) * 76 - 5;
   }
 
   ensureSpace(20);
