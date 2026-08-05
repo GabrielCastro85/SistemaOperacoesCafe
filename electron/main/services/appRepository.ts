@@ -5014,13 +5014,60 @@ export class AppRepository {
     return null;
   }
 
+  private normalizeXmlDescription(value: unknown): string {
+    return String(value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toUpperCase();
+  }
+
+  private isXmlWeightAdditionItem(xmlItem: Record<string, unknown>): boolean {
+    const description = this.normalizeXmlDescription(xmlItem.description);
+    return description.includes("ACRESCIMO DE PESO")
+      || description.includes("COMPLEMENTO DE PESO")
+      || description.includes("DIFERENCA DE PESO")
+      || description.includes("AJUSTE DE PESO");
+  }
+
+  private isXmlValueAdditionItem(xmlItem: Record<string, unknown>): boolean {
+    const description = this.normalizeXmlDescription(xmlItem.description);
+    return description.includes("ACRESCIMO DE VALOR")
+      || description.includes("COMPLEMENTO DE VALOR")
+      || description.includes("DIFERENCA DE VALOR")
+      || description.includes("AJUSTE DE VALOR");
+  }
+
+  private isDealValueAdditionItem(item: { productNameSnapshot: string; productDescriptionSnapshot: string | null }): boolean {
+    const description = this.normalizeXmlDescription(`${item.productNameSnapshot} ${item.productDescriptionSnapshot ?? ""}`);
+    return description.includes("ACRESCIMO DE VALOR")
+      || description.includes("COMPLEMENTO DE VALOR")
+      || description.includes("DIFERENCA DE VALOR")
+      || description.includes("AJUSTE DE VALOR");
+  }
+
   private resolveSacksForXmlItem(xmlItem: Record<string, unknown>, product: Product | null, resolution: Record<string, unknown>): string | null {
-    if (typeof resolution.manualSacks === "string" && resolution.manualSacks) return normalizeDecimalText(resolution.manualSacks);
+    if (typeof resolution.manualSacks === "string" && resolution.manualSacks) {
+      return normalizeDecimalText(resolution.manualSacks);
+    }
+
     const unit = String(xmlItem.commercialUnit ?? "").trim().toUpperCase();
-    const description = String(xmlItem.description ?? "").trim().toUpperCase();
+    const description = this.normalizeXmlDescription(xmlItem.description);
     const quantity = String(xmlItem.commercialQuantity ?? "");
     if (!quantity) return null;
+
+    // Complemento de valor não representa sacas e não deve gerar corretagem.
+    // O valor fiscal continua armazenado no item e entra normalmente na confirmação.
+    if (this.isXmlValueAdditionItem(xmlItem)) return null;
+
     const sackWeightKg = product?.defaultSackWeightKg ? String(product.defaultSackWeightKg) : "60";
+
+    // Alguns emissores usam UN ou SC, mas informam quilogramas na quantidade.
+    // Para acréscimo de peso, a descrição tem prioridade sobre a unidade fiscal.
+    if (this.isXmlWeightAdditionItem(xmlItem)) {
+      return divideDecimalText(quantity, sackWeightKg);
+    }
+
     if (isXmlSackUnit(unit)) return normalizeDecimalText(quantity);
     if (isXmlKgUnit(unit)) return divideDecimalText(quantity, sackWeightKg);
     if (isXmlTonUnit(unit)) return divideDecimalText(multiplyDecimalText(quantity, "1000"), sackWeightKg);
@@ -6466,9 +6513,11 @@ export class AppRepository {
             packagingSnapshot: null,
             originSnapshot: null,
             destinationSnapshot: null,
-            quantitySacksDecimal: item.sacksQuantity ?? item.quantity,
+            // Complemento/acréscimo de valor não representa quantidade física.
+            // Mantém o valor oficial da NF, mas soma zero às sacas da confirmação.
+            quantitySacksDecimal: this.isXmlValueAdditionItem({ description: item.description }) ? "0" : (item.sacksQuantity ?? item.quantity),
             sackWeightKgDecimal: product?.defaultSackWeightKg ? normalizeDecimalText(String(product.defaultSackWeightKg)) : "60",
-            unitPriceDecimal: item.unitPriceDecimal,
+            unitPriceDecimal: this.isXmlValueAdditionItem({ description: item.description }) ? "0" : item.unitPriceDecimal,
             totalAmountCents: item.totalAmountCents,
             totalOverrideReason: "Valor oficial importado da nota fiscal.",
             deliveryStartDate: null,
@@ -7254,8 +7303,13 @@ export class AppRepository {
     if (!has("BUYER")) issues.push({ code: "BUYER_MISSING", severity: "critical", message: "Comprador ausente." });
     if (detail.items.length === 0) issues.push({ code: "ITEMS_MISSING", severity: "critical", message: "Nenhum item informado." });
     detail.items.forEach((item) => {
-      if (decimalTextToScaled(item.quantitySacksDecimal) <= 0n) issues.push({ code: "INVALID_QUANTITY", severity: "critical", message: "Quantidade invalida." });
-      if (decimalTextToScaled(item.sackWeightKgDecimal) <= 0n) issues.push({ code: "INVALID_SACK_WEIGHT", severity: "critical", message: "Peso da saca invalido." });
+      const isValueAddition = this.isDealValueAdditionItem(item);
+      if (!isValueAddition && decimalTextToScaled(item.quantitySacksDecimal) <= 0n) {
+        issues.push({ code: "INVALID_QUANTITY", severity: "critical", message: "Quantidade invalida." });
+      }
+      if (!isValueAddition && decimalTextToScaled(item.sackWeightKgDecimal) <= 0n) {
+        issues.push({ code: "INVALID_SACK_WEIGHT", severity: "critical", message: "Peso da saca invalido." });
+      }
       if (item.totalWasManuallyOverridden && !item.totalOverrideReason) issues.push({ code: "TOTAL_OVERRIDE_REASON", severity: "critical", message: "Override de total sem justificativa." });
     });
     if (!detail.confirmation.paymentTermsSnapshot && detail.paymentTerms.length === 0) issues.push({ code: "PAYMENT_MISSING", severity: "warning", message: "Condicao de pagamento ausente." });

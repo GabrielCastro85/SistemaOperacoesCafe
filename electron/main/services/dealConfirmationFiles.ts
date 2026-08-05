@@ -326,8 +326,9 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
     const rowHeight = 23;
     page.drawRectangle({ x: margin, y: currentY - rowHeight, width: contentWidth, height: rowHeight, color: rgb(1, 0.995, 0.98), borderColor: rgb(0.88, 0.82, 0.72), borderWidth: 0.35 });
     drawTextBox(page, item.productNameSnapshot, columns[0].x, currentY - 6, columns[0].width, rowHeight - 6, { font, bold, size: 6.8, minSize: 5.5, lineHeight: 1.08, maxLines: 2, color: ink, important: true });
-    drawRightText(page, item.quantitySacksDecimal.replace(".", ","), columns[1].x, currentY - 14, columns[1].width, font, 6.9, ink);
-    drawRightText(page, `R$ ${formatDecimalCurrency(item.unitPriceDecimal)}`, columns[2].x, currentY - 14, columns[2].width, font, 6.9, ink);
+    const isValueAddition = isValueAdditionDescription(`${item.productNameSnapshot} ${item.productDescriptionSnapshot ?? ""}`);
+    drawRightText(page, isValueAddition ? "—" : item.quantitySacksDecimal.replace(".", ","), columns[1].x, currentY - 14, columns[1].width, font, 6.9, ink);
+    drawRightText(page, isValueAddition ? "—" : `R$ ${formatDecimalCurrency(item.unitPriceDecimal)}`, columns[2].x, currentY - 14, columns[2].width, font, 6.9, ink);
     drawRightText(page, `R$ ${formatCents(item.totalAmountCents)}`, columns[3].x, currentY - 14, columns[3].width, bold, 6.9, ink);
     currentY -= rowHeight;
   });
@@ -595,8 +596,9 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
     ensureSpace(22);
     page.drawRectangle({ x: margin, y: y - 15, width: contentWidth, height: 15, color: rgb(1, 0.995, 0.98), borderColor: rgb(0.88, 0.82, 0.72), borderWidth: 0.35 });
     page.drawText(truncate(item.productNameSnapshot, font, 7.2, columns[0].width), { x: columns[0].x, y: y - 10.5, size: 7.2, font, color: ink });
-    drawRightText(page, item.quantitySacksDecimal.replace(".", ","), columns[1].x, y - 10.5, columns[1].width, font, 7.2, ink);
-    drawRightText(page, `R$ ${formatDecimalCurrency(item.unitPriceDecimal)}`, columns[2].x, y - 10.5, columns[2].width, font, 7.2, ink);
+    const isValueAddition = isValueAdditionDescription(`${item.productNameSnapshot} ${item.productDescriptionSnapshot ?? ""}`);
+    drawRightText(page, isValueAddition ? "—" : item.quantitySacksDecimal.replace(".", ","), columns[1].x, y - 10.5, columns[1].width, font, 7.2, ink);
+    drawRightText(page, isValueAddition ? "—" : `R$ ${formatDecimalCurrency(item.unitPriceDecimal)}`, columns[2].x, y - 10.5, columns[2].width, font, 7.2, ink);
     drawRightText(page, `R$ ${formatCents(item.totalAmountCents)}`, columns[3].x, y - 10.5, columns[3].width, bold, 7.2, ink);
     y -= 16;
   });
@@ -1015,6 +1017,17 @@ function safeJson<T>(value: string, fallback: T): T {
 
 function formatCents(value: number): string {
   return (value / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function isValueAdditionDescription(value: string): boolean {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  return normalized.includes("ACRESCIMO DE VALOR")
+    || normalized.includes("COMPLEMENTO DE VALOR")
+    || normalized.includes("DIFERENCA DE VALOR")
+    || normalized.includes("AJUSTE DE VALOR");
 }
 
 function formatDecimalCurrency(value: string): string {
