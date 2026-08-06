@@ -2451,11 +2451,6 @@ export class AppRepository {
   activateServiceRateRule(id: string): Promise<ServiceRateRule> { return this.setServiceRateRuleActive(id, true); }
   deactivateServiceRateRule(id: string): Promise<ServiceRateRule> { return this.setServiceRateRuleActive(id, false); }
 
-  // TODO(supabase): so' apaga localmente por enquanto -- deletar em
-  // service_rate_rules (compartilhada) exige uma RPC (ver plano, "RPCs
-  // criticas") ja' que tambem zera service_rate_rule_id em operations na
-  // mesma transacao. Sera' resolvido junto com a camada transacional de
-  // fiscal_documents/operations, ainda pendente.
   async deleteServiceRateRule(id: string): Promise<void> {
     const rule = this.getServiceRateRule(id);
     const transaction = this.db.transaction(() => {
@@ -2463,6 +2458,7 @@ export class AppRepository {
       this.db.prepare("DELETE FROM service_rate_rules WHERE id = ?").run(id);
     });
     transaction();
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("service_rate_rules", { id }));
     await this.recomputeServiceRateRuleConflictWarnings(rule.businessPartnerId);
   }
 
