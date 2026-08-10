@@ -286,8 +286,8 @@ function drawChargeOperationSectionsPdf(
 
     ensureSpace(18);
     const subtotalY = cursorY - 1;
-    currentPage.drawText(`TOTAL SACAS: ${decimalTextBr(formatDecimal(section.sacks))}`, { x: columns[3].x, y: subtotalY, size: 5.8, font: style.bold, color: style.gold });
-    currentPage.drawText(`R$ ${formatCents(section.rateCents)}/saca`, { x: columns[4].x - 12, y: subtotalY, size: 5.8, font: style.bold, color: style.gold });
+    const subtotalLabel = `TOTAL SACAS: ${decimalTextBr(formatDecimal(section.sacks))} - R$ ${formatCents(section.rateCents)}/saca`;
+    drawRightText(currentPage, subtotalLabel, columns[3].x, subtotalY, columns[5].x - 6 - columns[3].x, style.bold, 5.8, style.gold);
     drawRightText(currentPage, `R$ ${formatCents(section.amountCents)}`, columns[5].x, subtotalY, columns[5].width, style.bold, 5.8, style.ink);
     cursorY -= 15;
   });
@@ -571,8 +571,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
       <rect x="${innerX}" y="${sectionY - 17}" width="${innerWidth}" height="22" rx="5" fill="#efe5d2"/>
       <text x="48" y="${sectionY}" class="section">${escapeXml(section.title)}</text>
       ${rowsMarkup}
-      <text x="622" y="${subtotalY}" class="subtotal-label">TOTAL SACAS: ${escapeXml(decimalTextBr(formatDecimal(section.sacks)))}</text>
-      <text x="760" y="${subtotalY}" class="subtotal-label right">R$ ${escapeXml(formatCents(section.rateCents))}/saca</text>
+      <text x="930" y="${subtotalY}" class="subtotal-label right">TOTAL SACAS: ${escapeXml(decimalTextBr(formatDecimal(section.sacks)))} - R$ ${escapeXml(formatCents(section.rateCents))}/saca</text>
       <text x="${rightX}" y="${subtotalY}" class="subtotal right">R$ ${escapeXml(formatCents(section.amountCents))}</text>
     `;
   }).join("");
