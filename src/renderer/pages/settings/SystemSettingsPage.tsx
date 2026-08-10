@@ -15,6 +15,8 @@ export function SystemSettingsPage(): JSX.Element {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  const [localOnlyMode, setLocalOnlyModeState] = useState(false);
+  const [localOnlyLoading, setLocalOnlyLoading] = useState(false);
 
   useEffect(() => {
     void window.operationsCafe.getUpdateStatus().then(setUpdateStatus);
@@ -49,7 +51,29 @@ export function SystemSettingsPage(): JSX.Element {
 
   useEffect(() => {
     void refreshStatus();
+    void window.operationsCafe.getLocalOnlyMode().then(setLocalOnlyModeState);
   }, []);
+
+  async function toggleLocalOnlyMode(enabled: boolean): Promise<void> {
+    setError(null);
+    setMessage(null);
+    setLocalOnlyLoading(true);
+    try {
+      const result = await window.operationsCafe.setLocalOnlyMode(enabled);
+      setLocalOnlyModeState(result);
+      if (result) {
+        setConnected(false);
+        setConnectedEmail(null);
+        setMessage("Modo somente local ativado. Este PC nao vai mais sincronizar com o Supabase nem com os outros computadores -- as atualizacoes do programa continuam funcionando normalmente.");
+      } else {
+        setMessage("Modo somente local desativado. Voce pode conectar este PC ao Supabase novamente quando quiser.");
+      }
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : "Falha ao alterar o modo somente local.");
+    } finally {
+      setLocalOnlyLoading(false);
+    }
+  }
 
   async function connect(): Promise<void> {
     setError(null);
@@ -140,6 +164,21 @@ export function SystemSettingsPage(): JSX.Element {
       <Card title="Conexao entre PCs (Supabase)" eyebrow="Compartilhamento">
         {checking ? (
           <p>Verificando conexao...</p>
+        ) : localOnlyMode ? (
+          <>
+            <p>
+              Status: <Badge tone="neutral">Modo somente local</Badge>
+            </p>
+            <p className="ui-field__hint">
+              Este PC esta configurado pra nunca sincronizar com o Supabase nem com os outros computadores do escritorio -- tudo o que voce lancar fica so' aqui.
+              As atualizacoes automaticas do programa continuam funcionando normalmente, independente disso.
+            </p>
+            {error ? <Alert tone="danger">{error}</Alert> : null}
+            {message ? <Alert tone="success">{message}</Alert> : null}
+            <div className="actions">
+              <Button variant="secondary" onClick={() => void toggleLocalOnlyMode(false)} loading={localOnlyLoading}>Desativar modo somente local</Button>
+            </div>
+          </>
         ) : (
           <>
             <p>
@@ -170,6 +209,12 @@ export function SystemSettingsPage(): JSX.Element {
                 <Input label="Senha" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
                 <div className="actions">
                   <Button variant="primary" onClick={() => void connect()} loading={loading} disabled={!email.trim() || !password}>Conectar</Button>
+                </div>
+                <p className="ui-field__hint">
+                  Prefere que este PC funcione sempre sozinho, sem tentar sincronizar com os outros? Ative o modo somente local abaixo -- as atualizacoes do programa continuam chegando normalmente.
+                </p>
+                <div className="actions">
+                  <Button variant="secondary" onClick={() => void toggleLocalOnlyMode(true)} loading={localOnlyLoading}>Ativar modo somente local</Button>
                 </div>
               </>
             )}

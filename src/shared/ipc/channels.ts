@@ -54,6 +54,8 @@ export const IPC_CHANNELS = {
   sharedAuthStatus: "app:sharedAuthStatus",
   sharedAuthSignIn: "app:sharedAuthSignIn",
   sharedAuthSignOut: "app:sharedAuthSignOut",
+  getLocalOnlyMode: "app:getLocalOnlyMode",
+  setLocalOnlyMode: "app:setLocalOnlyMode",
   getSharedSyncStatus: "app:getSharedSyncStatus",
   getUpdateStatus: "app:getUpdateStatus",
   checkForUpdates: "app:checkForUpdates",
