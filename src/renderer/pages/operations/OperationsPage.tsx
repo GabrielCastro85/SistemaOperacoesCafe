@@ -131,6 +131,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   // Vazio = comportamento de sempre (emissora = CNPJ proprio ativo).
   const [manualIssuerSearchTerm, setManualIssuerSearchTerm] = useState("");
   const [manualIssuerPartnerLegalEntityId, setManualIssuerPartnerLegalEntityId] = useState<string | null>(null);
+  // Cliente da revenda numa nota triangulada lancada manualmente -- so' usado
+  // quando manualIssuerPartnerLegalEntityId esta preenchido (ver createDocument).
+  const [manualSecondaryPartnerId, setManualSecondaryPartnerId] = useState("");
   const scrollTo = useAutoScroll();
   const manualDetailRef = useRef<HTMLDivElement | null>(null);
   const spreadsheetResultRef = useRef<HTMLDivElement | null>(null);
@@ -194,10 +197,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       // ANTES de criar a nota, e usa ele no lugar do ownLegalEntityId normal.
       let issuerLegalEntityId = ownLegalEntityId;
       let notes: string | null = null;
+      // Nota triangulada: nem emitente nem destinatario e' empresa propria --
+      // alem do emissor terceirizado, o usuario tambem informou o cliente da
+      // revenda (manualSecondaryPartnerId). Grava o parceiro/tipo secundario
+      // direto na nota (mesmo campo que XML/completeFiscalDocumentTriangulation
+      // usam) para addItemAndOperation criar as duas pernas por item.
+      const isTriangulated = Boolean(manualIssuerPartnerLegalEntityId && manualSecondaryPartnerId);
       if (manualIssuerPartnerLegalEntityId) {
         const issuer = await window.operationsCafe.resolveIssuerLegalEntityFromPartner(organizationId, manualIssuerPartnerLegalEntityId);
         issuerLegalEntityId = issuer.id;
-        notes = "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio.";
+        notes = isTriangulated
+          ? "Nota triangulada: compra do fornecedor revendida direto ao cliente, sem passar pelas nossas empresas."
+          : "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio.";
       }
       const created = await window.operationsCafe.createFiscalDocument({
         organizationId,
@@ -205,6 +216,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         responsiblePartnerId: partnerId,
         partnerLegalEntityId: null,
         operationType,
+        secondaryResponsiblePartnerId: isTriangulated ? manualSecondaryPartnerId : null,
+        secondaryOperationType: isTriangulated ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null,
         accessKey: onlyDigits(accessKey),
         documentNumber: number,
         series: null,
@@ -215,9 +228,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         notes
       });
       setDetail(created);
-      setMessage(created.document.duplicateWarning ?? "Nota criada.");
+      setMessage(created.document.duplicateWarning ?? (isTriangulated ? "Nota triangulada criada -- cada item lancado abaixo ja gera compra e venda automaticamente." : "Nota criada."));
       setManualIssuerSearchTerm("");
       setManualIssuerPartnerLegalEntityId(null);
+      setManualSecondaryPartnerId("");
       await load();
       scrollTo(manualDetailRef);
     } catch (errorValue) {
@@ -252,8 +266,33 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         manualOverrideReason: null,
         notes: null
       });
+      // Nota triangulada: cada item lancado ja ganha a segunda perna (tipo
+      // oposto, parceiro secundario) na hora, igual a importacao de XML --
+      // diferente de completeFiscalDocumentTriangulation, que so' pode ser
+      // chamada uma vez por nota e deixaria itens seguintes com uma perna so'.
+      if (detail.document.secondaryResponsiblePartnerId && detail.document.secondaryOperationType) {
+        const secondaryLegalEntities = await window.operationsCafe.listPartnerLegalEntities(detail.document.secondaryResponsiblePartnerId);
+        const secondaryLegalEntity = secondaryLegalEntities.find((entity) => entity.isPrimary && entity.isActive)
+          ?? secondaryLegalEntities.find((entity) => entity.isActive)
+          ?? null;
+        await window.operationsCafe.addOperation({
+          fiscalDocumentId: detail.document.id,
+          fiscalDocumentItemId: item.id,
+          ownLegalEntityId: detail.document.ownLegalEntityId,
+          responsiblePartnerId: detail.document.secondaryResponsiblePartnerId,
+          productId: productId || null,
+          operationType: detail.document.secondaryOperationType,
+          operationScope: scope,
+          operationDate: detail.document.issueDate,
+          quantitySacks: sacks,
+          manualRateValueCents: null,
+          manualOverrideReason: null,
+          notes: "Segunda perna (nota triangulada) criada manualmente",
+          counterpartyPartnerLegalEntityId: secondaryLegalEntity?.id ?? null
+        });
+      }
       setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
-      setMessage("Item e operacao adicionados.");
+      setMessage(detail.document.secondaryResponsiblePartnerId ? "Item e as duas operacoes (compra e venda) adicionados." : "Item e operacao adicionados.");
       await load();
       scrollTo(manualDetailRef);
     } catch (errorValue) {
@@ -835,9 +874,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="operation-context-note">
           <span>Empresa emissora (opcional)</span>
           <strong>{manualIssuerPartnerLegalEntityId ? (() => { const selected = partnerLegalEntities.find((entity) => entity.id === manualIssuerPartnerLegalEntityId); return selected ? (selected.legalName || selected.tradeName) : "Selecionada"; })() : "Nenhuma -- emissora e' o CNPJ proprio ativo acima"}</strong>
-          <small>Deixe vazio se a nota foi emitida pela sua propria empresa. Escolha outra empresa aqui quando a nota e' de terceiro (nem emitente nem destinatario e' sua empresa) -- ela entra so' em cobrancas, nao em fechamento de negocio.</small>
           {manualIssuerPartnerLegalEntityId ? (
-            <button type="button" onClick={() => { setManualIssuerPartnerLegalEntityId(null); setManualIssuerSearchTerm(""); }}>Remover empresa emissora</button>
+            <small>Nota triangulada: nem emitente nem destinatario e' sua empresa. Informe abaixo o fornecedor (emissor) e o cliente da revenda -- cada item lancado ja cria as duas operacoes (compra e venda) automaticamente.</small>
+          ) : (
+            <small>Deixe vazio se a nota foi emitida pela sua propria empresa. Escolha outra empresa aqui quando a nota e' de terceiro (nem emitente nem destinatario e' sua empresa).</small>
+          )}
+          {manualIssuerPartnerLegalEntityId ? (
+            <button type="button" onClick={() => { setManualIssuerPartnerLegalEntityId(null); setManualIssuerSearchTerm(""); setManualSecondaryPartnerId(""); }}>Remover empresa emissora</button>
           ) : (
             <>
               <TextField label="Buscar empresa emissora por nome ou CNPJ" value={manualIssuerSearchTerm} onChange={setManualIssuerSearchTerm} />
@@ -852,7 +895,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     .slice(0, 8)
                     .map((entity) => (
                       <div key={entity.id} className="confirmation-company-result-row">
-                        <button type="button" className="partner-action-button" onClick={() => { setManualIssuerPartnerLegalEntityId(entity.id); setManualIssuerSearchTerm(""); }}>{entity.legalName || entity.tradeName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
+                        <button type="button" className="partner-action-button" onClick={() => { setManualIssuerPartnerLegalEntityId(entity.id); setManualIssuerSearchTerm(""); setOperationType("PURCHASE"); }}>{entity.legalName || entity.tradeName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
                       </div>
                     ))}
                 </div>
@@ -866,14 +909,32 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(visibleServiceCents)}</strong></article>
         </div>
         <FormGrid>
-          <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-          <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel" : "Cliente/corretor responsavel"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+          {manualIssuerPartnerLegalEntityId ? (
+            <>
+              <PartnerQuickSearch label="Fornecedor (emissor)" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+              <PartnerQuickSearch label="Cliente (revenda)" value={manualSecondaryPartnerId} onChange={setManualSecondaryPartnerId} partners={secondaryPartners} legalEntities={partnerLegalEntities} />
+            </>
+          ) : (
+            <>
+              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel" : "Cliente/corretor responsavel"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+            </>
+          )}
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
           <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
           <DateInput label="Data de emissão" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} />
           <TextField label="Valor total" value={total} onChange={setTotal} />
-          <button className="primary" onClick={() => void createDocument()}>Criar nota</button>
+          <button
+            className="primary"
+            disabled={Boolean(manualIssuerPartnerLegalEntityId) && (!partnerId || !manualSecondaryPartnerId || partnerId === manualSecondaryPartnerId)}
+            onClick={() => void createDocument()}
+          >
+            Criar nota
+          </button>
         </FormGrid>
+        {manualIssuerPartnerLegalEntityId && partnerId && manualSecondaryPartnerId && partnerId === manualSecondaryPartnerId ? (
+          <p className="feedback" role="status" aria-live="polite">Fornecedor e cliente da nota triangulada precisam ser parceiros diferentes.</p>
+        ) : null}
         <div className="toolbar document-search-toolbar">
           <TextField
             label="Pesquisar notas por numero, cliente, empresa ou CNPJ"

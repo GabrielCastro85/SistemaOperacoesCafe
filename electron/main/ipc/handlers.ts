@@ -221,6 +221,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     await context.sharedRepository.signOut();
     return { connected: false, email: null };
   });
+  handle(IPC_CHANNELS.getLocalOnlyMode, () => repository.isLocalOnlyMode());
+  handle(IPC_CHANNELS.setLocalOnlyMode, async (_event, payload: unknown) => {
+    const enabled = z.boolean().parse(payload);
+    await repository.setLocalOnlyMode(enabled);
+    return repository.isLocalOnlyMode();
+  });
   handle(IPC_CHANNELS.getUpdateStatus, () => getUpdateStatus());
   handle(IPC_CHANNELS.checkForUpdates, () => {
     checkForUpdates();

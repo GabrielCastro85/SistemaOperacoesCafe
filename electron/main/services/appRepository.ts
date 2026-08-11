@@ -376,6 +376,31 @@ export class AppRepository {
   }
 
   /**
+   * "Modo somente local" -- PC configurado pra nunca sincronizar com o
+   * Supabase (nem push nem pull), mesmo com sessao autenticada disponivel.
+   * Guarda em app_settings (mesmo padrao dos cursores de sync) pra sobreviver
+   * a reinicios do app sem depender do estado da sessao Supabase. Ativar
+   * tambem desconecta a sessao atual, ja que "somente local" e "conectado" se
+   * excluem -- assim a UI nao fica num estado ambiguo (conectado, mas ignorado).
+   */
+  isLocalOnlyMode(): boolean {
+    const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get("local_only_mode") as { value: string } | undefined;
+    return row?.value === "true";
+  }
+
+  async setLocalOnlyMode(enabled: boolean): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO app_settings (id, key, value, value_type, created_at, updated_at)
+      VALUES (@id, @key, @value, 'boolean', @now, @now)
+      ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = @now
+    `).run({ id: randomUUID(), key: "local_only_mode", value: enabled ? "true" : "false", now });
+    if (enabled && this.sharedRepository) {
+      await this.sharedRepository.signOut().catch((error) => log.warn("Falha ao desconectar do Supabase ao ativar o modo somente local", error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
    * Reenvia pro Supabase tudo que falhou em pushes anteriores (ver
    * sharedPushOutbox.ts) -- chamado no comeco de syncSharedDataDown(), ou
    * seja, tanto no poll automatico de 20s quanto no "Sincronizar agora"
@@ -383,7 +408,7 @@ export class AppRepository {
    * de rede/Supabase momentanea) tem uma chance real de chegar nos outros.
    */
   async flushSharedPushOutbox(): Promise<{ retried: number; stillPending: number }> {
-    if (!this.sharedRepository) return { retried: 0, stillPending: 0 };
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return { retried: 0, stillPending: 0 };
     const kinds = [
       "fiscal_document",
       "xml_import_job",
@@ -442,7 +467,7 @@ export class AppRepository {
    * autenticada, e' um no-op silencioso (RLS bloquearia a leitura mesmo).
    */
   async syncSharedDataDown(): Promise<Array<{ table: string; pulled: number }>> {
-    if (!this.sharedRepository) return [];
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return [];
     // Reenvia pushes pendentes ANTES de puxar -- assim, se a rede voltou
     // desde o ultimo ciclo, o que so' existia neste PC ja chega no Supabase
     // antes deste PC puxar (evita puxar um estado velho por cima do que
@@ -482,7 +507,7 @@ export class AppRepository {
   }
 
   private async syncTableDown(table: string, timestampColumn: string): Promise<{ table: string; pulled: number }> {
-    if (!this.sharedRepository) return { table, pulled: 0 };
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return { table, pulled: 0 };
     const cursorKey = `sync_cursor_${table}`;
     const cursorRow = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(cursorKey) as { value: string } | undefined;
     const since = cursorRow?.value ?? "1970-01-01T00:00:00.000Z";
@@ -555,7 +580,7 @@ export class AppRepository {
    * neste PC, seja lancamento manual ou importacao de XML.
    */
   async pushFiscalDocumentToShared(fiscalDocumentId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const doc = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as DbRecord | undefined;
       if (!doc) return;
@@ -593,7 +618,7 @@ export class AppRepository {
 
   /** Mesma ideia de pushFiscalDocumentToShared, pro job de importacao de XML e seus arquivos. */
   async pushXmlImportJobToShared(jobId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const job = this.db.prepare("SELECT * FROM xml_import_jobs WHERE id = ?").get(jobId) as DbRecord | undefined;
       if (!job) return;
@@ -617,7 +642,7 @@ export class AppRepository {
    * chamado DEPOIS que a escrita local ja comitou.
    */
   async pushClientChargeToShared(clientChargeId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const charge = this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(clientChargeId) as DbRecord | undefined;
       if (!charge) return;
@@ -652,7 +677,7 @@ export class AppRepository {
    * escrita local ja comitou.
    */
   async pushDealConfirmationToShared(dealConfirmationId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
       if (!confirmation) {
@@ -769,13 +794,13 @@ export class AppRepository {
   }
 
   async pushDealConfirmationTemplateToShared(id: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const row = this.db.prepare("SELECT * FROM deal_confirmation_templates WHERE id = ?").get(id) as DbRecord | undefined;
     if (row) await this.sharedRepository.upsertRow("deal_confirmation_templates", toSharedRow(row, "deal_confirmation_templates"));
   }
 
   async pushDealClauseTemplateToShared(id: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const row = this.db.prepare("SELECT * FROM deal_clause_templates WHERE id = ?").get(id) as DbRecord | undefined;
     if (row) await this.sharedRepository.upsertRow("deal_clause_templates", toSharedRow(row, "deal_clause_templates"));
   }
@@ -787,7 +812,7 @@ export class AppRepository {
    * local (fiscal lanca a nota, financeiro precisa ver e pagar de outro PC).
    */
   async pushAccountPayableToShared(accountPayableId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const payable = this.db.prepare("SELECT * FROM accounts_payable WHERE id = ?").get(accountPayableId) as DbRecord | undefined;
       if (!payable) return;
@@ -806,7 +831,7 @@ export class AppRepository {
 
   /** Empurra um pagamento de conta a pagar + suas alocacoes. Ver pushAccountPayableToShared. */
   async pushPayablePaymentToShared(payablePaymentId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const payment = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(payablePaymentId) as DbRecord | undefined;
       if (!payment) return;
@@ -823,7 +848,7 @@ export class AppRepository {
 
   /** Empurra um pagamento avulso (nao vinculado a nenhuma cobranca especifica ainda). */
   async pushClientPaymentToShared(clientPaymentId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const payment = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(clientPaymentId) as DbRecord | undefined;
       if (!payment) return;
@@ -836,7 +861,7 @@ export class AppRepository {
 
   /** Empurra um lancamento avulso de conta-corrente (adiantamento/credito sem cobranca vinculada ainda). */
   async pushClientLedgerEntryToShared(ledgerEntryId: string): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       const entry = this.db.prepare("SELECT * FROM client_ledger_entries WHERE id = ?").get(ledgerEntryId) as DbRecord | undefined;
       if (!entry) return;
@@ -866,7 +891,7 @@ export class AppRepository {
    * e uma lista manual ficaria desatualizada a cada tabela nova.
    */
   private async reconcileThirdPartyLegalEntityIds(): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const localThirdParty = this.db.prepare(
       "SELECT id, cnpj FROM legal_entities WHERE document_prefix = 'TERC-XML' AND cnpj IS NOT NULL"
     ).all() as Array<{ id: string; cnpj: string }>;
@@ -931,7 +956,7 @@ export class AppRepository {
    * atualizar. Adota o id do Supabase localmente antes de empurrar.
    */
   private async reconcileDuplicateExpenseCategories(): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const localRows = this.db.prepare("SELECT * FROM expense_categories WHERE code IS NOT NULL").all() as DbRecord[];
     if (localRows.length === 0) return;
     let sharedRows: Array<{ id: string; organization_id: string; code: string | null }>;
@@ -998,7 +1023,7 @@ export class AppRepository {
   }
 
   private async reconcileDuplicateProducts(): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const localRows = this.db.prepare("SELECT id, organization_id, code FROM products WHERE code IS NOT NULL").all() as Array<{ id: string; organization_id: string; code: string }>;
     if (localRows.length === 0) return;
     const sharedRows = await this.sharedRepository.listAll("products", "code") as Array<{ id: string; organization_id: string; code: string | null }>;
@@ -1011,7 +1036,7 @@ export class AppRepository {
   }
 
   private async reconcileDuplicateFiscalDocuments(): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const localRows = this.db.prepare("SELECT id, access_key FROM fiscal_documents WHERE access_key IS NOT NULL AND TRIM(access_key) <> ''").all() as Array<{ id: string; access_key: string }>;
     if (localRows.length === 0) return;
     const sharedRows = await this.sharedRepository.listAll("fiscal_documents", "access_key") as Array<{ id: string; access_key: string | null }>;
@@ -1023,7 +1048,7 @@ export class AppRepository {
   }
 
   private async reconcileDuplicateDealConfirmations(): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     const localRows = this.db.prepare(
       "SELECT id, organization_id, own_legal_entity_id, confirmation_number FROM deal_confirmations WHERE confirmation_number IS NOT NULL AND TRIM(confirmation_number) <> ''"
     ).all() as Array<{ id: string; organization_id: string; own_legal_entity_id: string; confirmation_number: string }>;
@@ -1105,7 +1130,7 @@ export class AppRepository {
    * continua, em vez de travar "Sincronizar agora" pra sempre.
    */
   async pushAllLocalReferenceDataToShared(): Promise<Array<{ table: string; pushed: number; error: string | null }>> {
-    if (!this.sharedRepository) return [];
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return [];
     await this.reconcileThirdPartyLegalEntityIds();
     await this.reconcileDuplicateExpenseCategories();
     await this.reconcileDuplicateProducts();
@@ -1315,7 +1340,7 @@ export class AppRepository {
   async pushTombstone(tableName: string, rowId: string): Promise<void> {
     const now = new Date().toISOString();
     this.recordLocalTombstone(tableName, rowId, now);
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       await this.sharedRepository.upsertRow("sync_tombstones", { table_name: tableName, row_id: rowId, deleted_at: now });
     } catch (error) {
@@ -1569,7 +1594,7 @@ export class AppRepository {
    * acontecia, sem nenhum aviso.
    */
   private async trySharedReferenceWrite(action: () => Promise<unknown>): Promise<void> {
-    if (!this.sharedRepository) return;
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
       await action();
     } catch (error) {
@@ -2451,11 +2476,6 @@ export class AppRepository {
   activateServiceRateRule(id: string): Promise<ServiceRateRule> { return this.setServiceRateRuleActive(id, true); }
   deactivateServiceRateRule(id: string): Promise<ServiceRateRule> { return this.setServiceRateRuleActive(id, false); }
 
-  // TODO(supabase): so' apaga localmente por enquanto -- deletar em
-  // service_rate_rules (compartilhada) exige uma RPC (ver plano, "RPCs
-  // criticas") ja' que tambem zera service_rate_rule_id em operations na
-  // mesma transacao. Sera' resolvido junto com a camada transacional de
-  // fiscal_documents/operations, ainda pendente.
   async deleteServiceRateRule(id: string): Promise<void> {
     const rule = this.getServiceRateRule(id);
     const transaction = this.db.transaction(() => {
@@ -2463,6 +2483,7 @@ export class AppRepository {
       this.db.prepare("DELETE FROM service_rate_rules WHERE id = ?").run(id);
     });
     transaction();
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("service_rate_rules", { id }));
     await this.recomputeServiceRateRuleConflictWarnings(rule.businessPartnerId);
   }
 

@@ -140,6 +140,8 @@ const IPC_CHANNELS = {
   sharedAuthStatus: "app:sharedAuthStatus",
   sharedAuthSignIn: "app:sharedAuthSignIn",
   sharedAuthSignOut: "app:sharedAuthSignOut",
+  getLocalOnlyMode: "app:getLocalOnlyMode",
+  setLocalOnlyMode: "app:setLocalOnlyMode",
   getSharedSyncStatus: "app:getSharedSyncStatus",
   getUpdateStatus: "app:getUpdateStatus",
   checkForUpdates: "app:checkForUpdates",
@@ -496,6 +498,8 @@ export interface OperationsCafeApi {
   sharedAuthStatus: () => Promise<{ connected: boolean; email: string | null }>;
   sharedAuthSignIn: (input: { email: string; password: string }) => Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>;
   sharedAuthSignOut: () => Promise<{ connected: boolean; email: string | null }>;
+  getLocalOnlyMode: () => Promise<boolean>;
+  setLocalOnlyMode: (enabled: boolean) => Promise<boolean>;
   getSharedSyncStatus: () => Promise<SharedSyncStatus>;
   onSharedSyncStatusChanged: (listener: (status: SharedSyncStatus) => void) => () => void;
   getUpdateStatus: () => Promise<UpdateStatus>;
@@ -854,6 +858,8 @@ const api: OperationsCafeApi = {
   sharedAuthStatus: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthStatus) as Promise<{ connected: boolean; email: string | null }>,
   sharedAuthSignIn: (input) => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignIn, input) as Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>,
   sharedAuthSignOut: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignOut) as Promise<{ connected: boolean; email: string | null }>,
+  getLocalOnlyMode: () => ipcRenderer.invoke(IPC_CHANNELS.getLocalOnlyMode) as Promise<boolean>,
+  setLocalOnlyMode: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.setLocalOnlyMode, enabled) as Promise<boolean>,
   getSharedSyncStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getSharedSyncStatus) as Promise<SharedSyncStatus>,
   onSharedSyncStatusChanged: (listener) => {
     const channel = "app:sharedSyncStatusChanged";
