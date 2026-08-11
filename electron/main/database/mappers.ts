@@ -780,7 +780,7 @@ export function mapDocumentSequence(row: DbRecord): DocumentSequence {
     id: String(row.id),
     organizationId: String(row.organization_id),
     ownLegalEntityId: String(row.own_legal_entity_id),
-    documentType: "CLIENT_CHARGE",
+    documentType: row.document_type === "DEAL_CONFIRMATION" ? "DEAL_CONFIRMATION" : "CLIENT_CHARGE",
     year: typeof row.year === "number" ? row.year : null,
     prefix: textOrNull(row.prefix),
     currentNumber: Number(row.current_number),

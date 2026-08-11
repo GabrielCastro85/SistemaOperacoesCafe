@@ -118,6 +118,47 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("never reuses numbers below a manually set floor, but still fills gaps above it", async () => {
+    const { repo, db, seller, buyer, product } = await setup();
+    const first = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    const prefix = first.confirmation.confirmationNumber?.replace(/\d+$/, "") ?? "";
+    expect(first.confirmation.confirmationNumber).toBe(`${prefix}0001`);
+
+    const status = await repo.setDealConfirmationSequenceFloor(ownLegalEntityId, 20);
+    expect(status.currentNumber).toBe(20);
+    expect(status.nextNumber).toBe(`${prefix}0021`);
+
+    // Setting a lower floor afterwards must be a no-op (never decreases).
+    const noop = await repo.setDealConfirmationSequenceFloor(ownLegalEntityId, 5);
+    expect(noop.currentNumber).toBe(20);
+
+    const afterFloor = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    expect(afterFloor.confirmation.confirmationNumber).toBe(`${prefix}0021`);
+
+    const next = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    expect(next.confirmation.confirmationNumber).toBe(`${prefix}0022`);
+
+    // Deleting a confirmation above the floor still frees up its number for reuse.
+    expect(repo.deleteDealConfirmation(next.confirmation.id)).toBe(true);
+    const reusedAboveFloor = await issueMinimal(repo, seller.id, buyer.id, product.id);
+    expect(reusedAboveFloor.confirmation.confirmationNumber).toBe(`${prefix}0022`);
+
+    // The number below the floor stays orphaned forever -- never reused.
+    expect(repo.listDealConfirmations({ organizationId: villaId }).map((item) => item.confirmationNumber).sort()).toEqual([`${prefix}0001`, `${prefix}0021`, `${prefix}0022`]);
+    db.close();
+  });
+
+  it("applies a floor to every own legal entity at once", async () => {
+    const { repo, db } = await setup();
+    const before = repo.listDealConfirmationSequenceStatus().find((item) => item.ownLegalEntityId === ownLegalEntityId);
+    const results = await repo.setDealConfirmationSequenceFloorForAllEntities(20);
+    expect(results.some((item) => item.ownLegalEntityId === ownLegalEntityId && item.nextNumber === `${before?.prefix}0021`)).toBe(true);
+    expect(results.some((item) => item.ownLegalEntityId === graoLegalEntityId)).toBe(true);
+    const status = repo.listDealConfirmationSequenceStatus();
+    expect(status.find((item) => item.ownLegalEntityId === ownLegalEntityId)?.currentNumber).toBe(20);
+    db.close();
+  });
+
   it("creates from operation and fiscal document without changing billing status", async () => {
     const { repo, db, product } = await setup();
     const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "DIAMANTE CAFE", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });

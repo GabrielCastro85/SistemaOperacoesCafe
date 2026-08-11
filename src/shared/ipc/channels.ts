@@ -348,6 +348,9 @@ export const IPC_CHANNELS = {
   calculateDealDocumentHash: "dealConfirmationDocuments:calculateHash",
   previewDealConfirmationNumber: "dealSequences:previewConfirmationNumber",
   reserveDealConfirmationNumber: "dealSequences:reserveConfirmationNumber",
+  listDealConfirmationSequenceStatus: "dealSequences:listStatus",
+  setDealConfirmationSequenceFloor: "dealSequences:setFloor",
+  setDealConfirmationSequenceFloorForAllEntities: "dealSequences:setFloorForAllEntities",
   generateConfirmationReport: "dealReports:generate",
   getDealConfirmationSummary: "dealDashboard:summary",
   selectSignedDealPdf: "dealDocuments:selectSignedPdf"
