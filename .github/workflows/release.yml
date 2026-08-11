@@ -28,4 +28,8 @@ jobs:
       - name: Empacotar e publicar release no GitHub
         run: npx electron-builder --win nsis --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # O GITHUB_TOKEN automatico do Actions so' tem permissao neste
+          # repositorio -- publicar em SistemaOperacoesCafe-releases (o repo
+          # que o app instalado de fato consulta) exige um token proprio com
+          # acesso aquele outro repositorio, guardado como secret.
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
