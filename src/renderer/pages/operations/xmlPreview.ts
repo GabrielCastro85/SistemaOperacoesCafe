@@ -128,11 +128,17 @@ export function resolveOwnAndCounterparty(
     : null;
   const issuerLabel = preview.issuer?.legalName ?? preview.issuer?.tradeName ?? null;
   const recipientLabel = preview.recipient?.legalName ?? preview.recipient?.tradeName ?? null;
+  // Exclui "empresas" terceirizadas auto-criadas por importacoes de XML
+  // anteriores (ver getOrCreateThirdPartyLegalEntityFromXml no backend) --
+  // sem isso, um CNPJ de terceiro ja visto antes era tratado como se fosse
+  // uma das empresas proprias, mostrando o aviso errado ("XML de outro CNPJ")
+  // em vez do aviso real de nota triangulada/terceirizada.
+  const ownLegalEntities = legalEntities.filter((entity) => entity.documentPrefix !== "TERC-XML");
   const ownByIssuer = issuerCnpj
-    ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj)
+    ? ownLegalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj)
     : undefined;
   const ownByRecipient = recipientCnpj
-    ? legalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj)
+    ? ownLegalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj)
     : undefined;
 
   if (ownByIssuer) {
