@@ -1075,7 +1075,7 @@ export interface DocumentSequence {
   id: string;
   organizationId: string;
   ownLegalEntityId: string;
-  documentType: "CLIENT_CHARGE";
+  documentType: "CLIENT_CHARGE" | "DEAL_CONFIRMATION";
   year: number | null;
   prefix: string | null;
   currentNumber: number;
@@ -1083,6 +1083,15 @@ export interface DocumentSequence {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DealConfirmationSequenceStatus {
+  ownLegalEntityId: string;
+  tradeName: string;
+  prefix: string;
+  year: number;
+  currentNumber: number;
+  nextNumber: string;
 }
 
 export interface ChargeDocumentVersion {

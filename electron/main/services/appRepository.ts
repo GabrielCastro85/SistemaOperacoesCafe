@@ -209,7 +209,7 @@ import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeS
 import type { SharedRepository } from "./sharedRepository.js";
 import { SharedPushOutbox } from "./sharedPushOutbox.js";
 import { replayUserPush, replayUserDeletionPush } from "./security.js";
-import type { AppDirectories } from "../../../src/shared/types/domain.js";
+import type { AppDirectories, DealConfirmationSequenceStatus } from "../../../src/shared/types/domain.js";
 
 type DbRecord = Record<string, unknown>;
 type DealItemInput = ReturnType<typeof dealConfirmationItemInputSchema.parse> & { totalAmountCents?: number | null };
@@ -7125,7 +7125,7 @@ export class AppRepository {
     const row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, expectedPrefix) as DbRecord | undefined;
     const prefix = String(row?.prefix ?? expectedPrefix);
     const padding = Number(row?.padding ?? 4);
-    const next = this.findNextReusableDealConfirmationNumber(organizationId, ownLegalEntityId, year, prefix);
+    const next = this.findNextReusableDealConfirmationNumber(organizationId, ownLegalEntityId, year, prefix, Number(row?.current_number ?? 0));
     return `${prefix}${String(next).padStart(padding, "0")}`;
   }
 
@@ -7422,13 +7422,20 @@ export class AppRepository {
         .run(randomUUID(), organizationId, ownLegalEntityId, year, prefix, now, now);
       row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, prefix) as DbRecord;
     }
-    const next = this.findNextReusableDealConfirmationNumber(organizationId, ownLegalEntityId, year, String(row.prefix ?? prefix));
-    const current = Math.max(Number(row.current_number), next);
-    this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(current, now, row.id);
+    // current_number e' so' o piso manual (ver setDealConfirmationSequenceFloor) --
+    // nao ratcheia a cada emissao, senao o piso "vaza" pra cima com o numero mais
+    // alto ja emitido e passa a bloquear reaproveitamento de buracos recentes
+    // (ex: uma confirmacao cancelada logo apos ser emitida).
+    const floor = Number(row.current_number);
+    const next = this.findNextReusableDealConfirmationNumber(organizationId, ownLegalEntityId, year, String(row.prefix ?? prefix), floor);
     return `${String(row.prefix ?? "")}${String(next).padStart(Number(row.padding), "0")}`;
   }
 
-  private findNextReusableDealConfirmationNumber(organizationId: string, ownLegalEntityId: string, year: number, prefix: string): number {
+  // "floor" nunca e' reduzido (ver setDealConfirmationSequenceFloor) -- buracos
+  // deixados por numeros abaixo dele (ex: numeracao legada anterior ao uso do
+  // app, ou um piso definido manualmente) nunca sao reaproveitados, so' buracos
+  // ACIMA do piso (ex: uma confirmacao cancelada recentemente).
+  private findNextReusableDealConfirmationNumber(organizationId: string, ownLegalEntityId: string, year: number, prefix: string, floor: number = 0): number {
     const rows = this.db.prepare(`
       SELECT confirmation_number AS confirmationNumber
       FROM deal_confirmations
@@ -7445,9 +7452,86 @@ export class AppRepository {
       const suffix = number.slice(prefix.length).trim();
       if (/^\d+$/.test(suffix)) used.add(Number(suffix));
     });
-    let next = 1;
+    let next = floor + 1;
     while (used.has(next)) next += 1;
     return next;
+  }
+
+  listDealConfirmationSequenceStatus(): DealConfirmationSequenceStatus[] {
+    const year = new Date().getFullYear();
+    return this.listLegalEntities({ status: "active" })
+      .filter((entity) => !this.isThirdPartyLegalEntity(entity))
+      .map((entity) => {
+        const prefix = this.defaultDealConfirmationPrefix(entity.organizationId, entity.id);
+        const row = this.db.prepare(
+          "SELECT current_number, padding FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1"
+        ).get(entity.organizationId, entity.id, year, prefix) as { current_number: number; padding: number } | undefined;
+        const currentNumber = Number(row?.current_number ?? 0);
+        const padding = Number(row?.padding ?? 4);
+        const next = this.findNextReusableDealConfirmationNumber(entity.organizationId, entity.id, year, prefix, currentNumber);
+        return {
+          ownLegalEntityId: entity.id,
+          tradeName: entity.tradeName,
+          prefix,
+          year,
+          currentNumber,
+          nextNumber: `${prefix}${String(next).padStart(padding, "0")}`
+        };
+      });
+  }
+
+  /**
+   * Estabelece um piso pro numero de confirmacao da empresa no ano corrente --
+   * nunca reduz o numero atual (so' Math.max), e a proxima emitida vira
+   * floor+1. Buracos abaixo do piso (numeracao legada emitida fora do app,
+   * por exemplo) nunca voltam a ser reaproveitados (ver
+   * findNextReusableDealConfirmationNumber).
+   */
+  async setDealConfirmationSequenceFloor(ownLegalEntityId: string, floor: number): Promise<DealConfirmationSequenceStatus> {
+    if (!Number.isInteger(floor) || floor < 0) throw new Error("Numero invalido.");
+    const entity = this.getLegalEntity(ownLegalEntityId);
+    this.assertOrganizationWritable(entity.organizationId);
+    const year = new Date().getFullYear();
+    const now = new Date().toISOString();
+    const prefix = this.defaultDealConfirmationPrefix(entity.organizationId, ownLegalEntityId);
+    const existing = this.db.prepare(
+      "SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1"
+    ).get(entity.organizationId, ownLegalEntityId, year, prefix) as DbRecord | undefined;
+    const padding = Number(existing?.padding ?? 4);
+    const currentNumber = Math.max(Number(existing?.current_number ?? 0), floor);
+    const row: DbRecord = {
+      id: existing?.id ?? randomUUID(),
+      organization_id: entity.organizationId,
+      own_legal_entity_id: ownLegalEntityId,
+      document_type: "DEAL_CONFIRMATION",
+      year,
+      prefix,
+      current_number: currentNumber,
+      padding,
+      is_active: 1,
+      created_at: existing?.created_at ?? now,
+      updated_at: now
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.upsertRow("document_sequences", row));
+    this.upsertLocalRow("document_sequences", row);
+    const next = this.findNextReusableDealConfirmationNumber(entity.organizationId, ownLegalEntityId, year, prefix, currentNumber);
+    return {
+      ownLegalEntityId,
+      tradeName: entity.tradeName,
+      prefix,
+      year,
+      currentNumber,
+      nextNumber: `${prefix}${String(next).padStart(padding, "0")}`
+    };
+  }
+
+  async setDealConfirmationSequenceFloorForAllEntities(floor: number): Promise<DealConfirmationSequenceStatus[]> {
+    const entities = this.listLegalEntities({ status: "active" }).filter((entity) => !this.isThirdPartyLegalEntity(entity));
+    const results: DealConfirmationSequenceStatus[] = [];
+    for (const entity of entities) {
+      results.push(await this.setDealConfirmationSequenceFloor(entity.id, floor));
+    }
+    return results;
   }
 
   private findActiveDealConfirmationForFiscalDocuments(fiscalDocumentIds: string[]): DealConfirmationDetail | null {

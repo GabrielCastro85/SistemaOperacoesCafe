@@ -1293,6 +1293,15 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid() }).parse(payload);
     return repository.reserveDealConfirmationNumber(data.organizationId, data.ownLegalEntityId);
   });
+  handle(IPC_CHANNELS.listDealConfirmationSequenceStatus, () => repository.listDealConfirmationSequenceStatus());
+  handle(IPC_CHANNELS.setDealConfirmationSequenceFloor, (_event, payload: unknown) => {
+    const data = z.object({ ownLegalEntityId: z.string().uuid(), floor: z.number().int().min(0) }).parse(payload);
+    return repository.setDealConfirmationSequenceFloor(data.ownLegalEntityId, data.floor);
+  });
+  handle(IPC_CHANNELS.setDealConfirmationSequenceFloorForAllEntities, (_event, payload: unknown) => {
+    const data = z.object({ floor: z.number().int().min(0) }).parse(payload);
+    return repository.setDealConfirmationSequenceFloorForAllEntities(data.floor);
+  });
   handle(IPC_CHANNELS.generateConfirmationReport, async (_event, payload: unknown) => {
     const destinationDir = await selectExportDirectory("Escolha a pasta para salvar o relatorio de confirmacoes");
     if (!destinationDir) return null;

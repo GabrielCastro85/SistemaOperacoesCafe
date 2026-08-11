@@ -260,7 +260,7 @@ function renderRoute(
   if (path.startsWith("/settings/restore")) return <RestorePage />;
   if (path.startsWith("/settings/integrity")) return <IntegrityPage />;
   if (path.startsWith("/settings/retention")) return <RetentionPage />;
-  if (path.startsWith("/settings/document-sequences")) return <DocumentSequencesPage {...settingsProps} />;
+  if (path.startsWith("/settings/document-sequences")) return <DocumentSequencesPage />;
   if (path.startsWith("/settings/import-templates")) return <SpreadsheetMappingTemplatesPage />;
   if (path.startsWith("/settings/confirmation-templates")) return <ConfirmationTemplatesPage templates={[]} />;
   if (path.startsWith("/settings/clauses")) return <ClauseLibraryPage clauses={[]} />;

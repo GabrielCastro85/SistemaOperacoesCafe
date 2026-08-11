@@ -18,6 +18,7 @@ import type {
   BusinessPartnerRole,
   ClientBillingProfile,
   CnpjLookupResult,
+  DealConfirmationSequenceStatus,
   Diagnostics,
   InstallationProfile,
   LegalEntity,
@@ -433,6 +434,9 @@ const IPC_CHANNELS = {
   calculateDealDocumentHash: "dealConfirmationDocuments:calculateHash",
   previewDealConfirmationNumber: "dealSequences:previewConfirmationNumber",
   reserveDealConfirmationNumber: "dealSequences:reserveConfirmationNumber",
+  listDealConfirmationSequenceStatus: "dealSequences:listStatus",
+  setDealConfirmationSequenceFloor: "dealSequences:setFloor",
+  setDealConfirmationSequenceFloorForAllEntities: "dealSequences:setFloorForAllEntities",
   generateConfirmationReport: "dealReports:generate",
   getDealConfirmationSummary: "dealDashboard:summary",
   selectSignedDealPdf: "dealDocuments:selectSignedPdf"
@@ -793,6 +797,9 @@ export interface OperationsCafeApi {
   calculateDealDocumentHash: (id: string) => Promise<string>;
   previewDealConfirmationNumber: (organizationId: string, ownLegalEntityId: string) => Promise<string>;
   reserveDealConfirmationNumber: (organizationId: string, ownLegalEntityId: string) => Promise<string>;
+  listDealConfirmationSequenceStatus: () => Promise<DealConfirmationSequenceStatus[]>;
+  setDealConfirmationSequenceFloor: (ownLegalEntityId: string, floor: number) => Promise<DealConfirmationSequenceStatus>;
+  setDealConfirmationSequenceFloorForAllEntities: (floor: number) => Promise<DealConfirmationSequenceStatus[]>;
   generateConfirmationReport: (input: unknown) => Promise<ConfirmationReportGeneration | null>;
   getDealConfirmationSummary: (input: unknown) => Promise<DealConfirmationSummary>;
   selectSignedDealPdf: () => Promise<{ token: string; fileName: string; sizeBytes: number } | null>;
@@ -1178,6 +1185,9 @@ const api: OperationsCafeApi = {
   calculateDealDocumentHash: (id) => ipcRenderer.invoke(IPC_CHANNELS.calculateDealDocumentHash, id) as Promise<string>,
   previewDealConfirmationNumber: (organizationId, ownLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.previewDealConfirmationNumber, { organizationId, ownLegalEntityId }) as Promise<string>,
   reserveDealConfirmationNumber: (organizationId, ownLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.reserveDealConfirmationNumber, { organizationId, ownLegalEntityId }) as Promise<string>,
+  listDealConfirmationSequenceStatus: () => ipcRenderer.invoke(IPC_CHANNELS.listDealConfirmationSequenceStatus) as Promise<DealConfirmationSequenceStatus[]>,
+  setDealConfirmationSequenceFloor: (ownLegalEntityId, floor) => ipcRenderer.invoke(IPC_CHANNELS.setDealConfirmationSequenceFloor, { ownLegalEntityId, floor }) as Promise<DealConfirmationSequenceStatus>,
+  setDealConfirmationSequenceFloorForAllEntities: (floor) => ipcRenderer.invoke(IPC_CHANNELS.setDealConfirmationSequenceFloorForAllEntities, { floor }) as Promise<DealConfirmationSequenceStatus[]>,
   generateConfirmationReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.generateConfirmationReport, input) as Promise<ConfirmationReportGeneration | null>,
   getDealConfirmationSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDealConfirmationSummary, input) as Promise<DealConfirmationSummary>,
   selectSignedDealPdf: () => ipcRenderer.invoke(IPC_CHANNELS.selectSignedDealPdf) as Promise<{ token: string; fileName: string; sizeBytes: number } | null>
