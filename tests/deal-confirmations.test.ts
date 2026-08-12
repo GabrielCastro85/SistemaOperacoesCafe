@@ -5,7 +5,9 @@ import { PDFDocument } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../electron/main/database/database";
 import { AppRepository } from "../electron/main/services/appRepository";
+import { formatFiscalDocumentReferences } from "../electron/main/services/dealConfirmationFiles";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
+import type { FiscalDocument } from "../src/shared/types/domain";
 
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
@@ -445,6 +447,13 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("formats the linked fiscal document numbers so the PDF references which notes are being settled", () => {
+    expect(formatFiscalDocumentReferences([])).toBe("Manual");
+    expect(formatFiscalDocumentReferences([fiscalDocument({ documentNumber: "375", series: "1" })])).toBe("375/1");
+    expect(formatFiscalDocumentReferences([fiscalDocument({ documentNumber: "375", series: "1" }), fiscalDocument({ documentNumber: "402", series: "1" })])).toBe("375/1, 402/1");
+    expect(formatFiscalDocumentReferences([fiscalDocument({ documentNumber: "900", series: null })])).toBe("900");
+  });
+
   it("manages templates and clause library with defaults", async () => {
     const { repo, db } = await setup();
     const template = repo.createDealConfirmationTemplate(templateInput());
@@ -503,6 +512,49 @@ function itemInput(dealConfirmationId: string, productId: string, label: string,
     deliveryEndDate: "2026-07-30",
     deliveryLocationSnapshot: "Armazem Sul",
     notes: null
+  };
+}
+
+function fiscalDocument(overrides: Partial<FiscalDocument>): FiscalDocument {
+  return {
+    id: "doc",
+    organizationId: villaId,
+    ownLegalEntityId,
+    responsiblePartnerId: "partner",
+    partnerLegalEntityId: null,
+    secondaryResponsiblePartnerId: null,
+    secondaryOperationType: null,
+    documentType: "MANUAL_INVOICE",
+    accessKey: null,
+    documentNumber: "1",
+    series: "1",
+    issueDate: "2026-07-17",
+    totalAmountCents: 0,
+    status: "CONFIRMED",
+    hasPendingIssues: false,
+    pendingNotes: null,
+    duplicateWarning: null,
+    notes: null,
+    confirmedAt: null,
+    canceledAt: null,
+    cancelReason: null,
+    source: "XML",
+    importJobId: null,
+    importRowId: null,
+    xmlFilePath: null,
+    xmlFileHash: null,
+    protocolNumber: null,
+    protocolDate: null,
+    authorizationStatusCode: null,
+    authorizationStatusMessage: null,
+    xmlImportJobId: null,
+    mergedFromSource: null,
+    mergedAt: null,
+    direction: "OUTBOUND",
+    fiscalSnapshotJson: null,
+    createdAt: "2026-07-17T00:00:00.000Z",
+    updatedAt: "2026-07-17T00:00:00.000Z",
+    ...overrides
   };
 }
 
