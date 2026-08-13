@@ -802,6 +802,8 @@ export function mapChargeDocumentVersion(row: DbRecord): ChargeDocumentVersion {
     excelFileHash: textOrNull(row.excel_file_hash),
     imageFilePath: textOrNull(row.image_file_path),
     imageFileHash: textOrNull(row.image_file_hash),
+    pdfStorageObjectPath: textOrNull(row.pdf_storage_object_path),
+    excelStorageObjectPath: textOrNull(row.excel_storage_object_path),
     createdAt: String(row.created_at)
   };
 }
@@ -1243,6 +1245,7 @@ export function mapDealConfirmationDocumentVersion(row: DbRecord): DealConfirmat
     generatedBySystem: bool(row.generated_by_system),
     isCurrent: bool(row.is_current),
     notes: textOrNull(row.notes),
+    storageObjectPath: textOrNull(row.storage_object_path),
     createdAt: String(row.created_at)
   };
 }

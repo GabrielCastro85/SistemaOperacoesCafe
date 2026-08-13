@@ -444,6 +444,9 @@ describe("deal confirmations", () => {
     const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
     expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE \d+\.pdf$/);
     expect(document?.storedFilePath ? basename(document.storedFilePath) : "").toBe(document?.originalFileName);
+    // Sem sharedRepository configurado (mesmo cenario de "modo somente local"),
+    // a subida pro Supabase Storage e' pulada sem quebrar a emissao local.
+    expect(document?.storageObjectPath).toBeNull();
     db.close();
   });
 

@@ -1,0 +1,250 @@
+:root {
+  color-scheme: light;
+  --ink: #241a12;
+  --brown: #3c2a1e;
+  --gold: #9c7a3c;
+  --bg: #f6f1e7;
+  --card-bg: #ffffff;
+  --border: #e3d9c6;
+  --danger: #b3261e;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.centered-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 24px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+
+.login-card h1 {
+  margin: 0 0 4px;
+  font-size: 1.4rem;
+  color: var(--brown);
+}
+
+.subtitle {
+  margin: 0 0 20px;
+  color: #7a6a56;
+  font-size: 0.9rem;
+}
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #55483a;
+}
+
+.login-card input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.login-card button[type="submit"] {
+  margin-top: 6px;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brown);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.login-card button[type="submit"]:disabled {
+  opacity: 0.6;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 8px;
+  background: var(--brown);
+  color: #fff;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #f0e4cf;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  padding: 4px;
+}
+
+.tabs {
+  display: flex;
+  background: var(--brown);
+  padding: 0 12px;
+  gap: 4px;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px 8px;
+  border: none;
+  background: transparent;
+  color: #d8c8ac;
+  font-size: 0.9rem;
+  border-bottom: 3px solid transparent;
+}
+
+.tab--active {
+  color: #fff;
+  border-bottom-color: var(--gold);
+  font-weight: 600;
+}
+
+main {
+  padding: 12px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.card-header strong {
+  font-size: 0.98rem;
+  color: var(--brown);
+}
+
+.card-line {
+  margin: 2px 0;
+  font-size: 0.85rem;
+  color: #55483a;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.card-actions button {
+  flex: 1;
+  padding: 9px;
+  border: 1px solid var(--brown);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brown);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.card-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.status {
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eee;
+  color: #555;
+  white-space: nowrap;
+}
+
+.status--paid {
+  background: #e3f3e6;
+  color: #206a2f;
+}
+
+.status--partially_paid {
+  background: #fdf1d8;
+  color: #8a6414;
+}
+
+.status--overdue {
+  background: #fbe4e2;
+  color: #a33127;
+}
+
+.status--issued,
+.status--signed {
+  background: #e6edf7;
+  color: #2c4f8f;
+}
+
+.status--cancelled,
+.status--replaced {
+  background: #eee;
+  color: #777;
+}
+
+.loading,
+.empty,
+.error {
+  padding: 20px;
+  text-align: center;
+  color: #7a6a56;
+}
+
+.error {
+  color: var(--danger);
+}

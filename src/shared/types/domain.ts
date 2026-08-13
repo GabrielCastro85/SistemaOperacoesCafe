@@ -1104,6 +1104,8 @@ export interface ChargeDocumentVersion {
   excelFileHash: string | null;
   imageFilePath: string | null;
   imageFileHash: string | null;
+  pdfStorageObjectPath: string | null;
+  excelStorageObjectPath: string | null;
   createdAt: string;
 }
 
@@ -1623,6 +1625,7 @@ export interface DealConfirmationDocumentVersion {
   generatedBySystem: boolean;
   isCurrent: boolean;
   notes: string | null;
+  storageObjectPath: string | null;
   createdAt: string;
 }
 

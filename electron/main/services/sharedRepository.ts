@@ -223,6 +223,18 @@ export class SharedRepository {
   }
 
   /**
+   * Sobe uma copia de um arquivo ja gerado localmente (PDF/planilha de
+   * confirmacao ou cobranca) pro Supabase Storage -- usado pelo app de
+   * visualizacao (celular), que nunca enxerga o HD do PC. `upsert: true`
+   * porque o mesmo caminho pode ser gerado de novo (ex: regenerateChargeDocuments
+   * chamado varias vezes pra mesma versao).
+   */
+  async uploadFile(bucket: string, path: string, data: Buffer, contentType: string): Promise<void> {
+    const { error } = await this.client.storage.from(bucket).upload(path, data, { contentType, upsert: true });
+    if (error) throw new Error(translateDbError(error.message));
+  }
+
+  /**
    * Puxa linhas alteradas desde `sinceIso` (por `timestampColumn`, tipicamente
    * updated_at ou created_at) -- base do sync poll-based que mantem o cache
    * local das tabelas "quentes" (fiscal_documents, operations, xml_import_*,
