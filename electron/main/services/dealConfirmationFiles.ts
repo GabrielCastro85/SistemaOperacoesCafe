@@ -12,6 +12,7 @@ import type {
   ConfirmationReportType,
   DealConfirmationDetail,
   DealPartySnapshot,
+  FiscalDocument,
   LegalEntity,
   Organization
 } from "../../../src/shared/types/domain.js";
@@ -124,6 +125,11 @@ function resolveBrandingLogoBytes(organization: Organization): { bytes: Buffer; 
   const candidates = [join(appRoot, "dist", "assets", "branding", variant, "logo.png"), join(appRoot, "public", "assets", "branding", variant, "logo.png")];
   const found = candidates.find((candidate) => existsSync(candidate));
   return found ? { bytes: readFileSync(found), ext: "png" } : null;
+}
+
+export function formatFiscalDocumentReferences(fiscalDocuments: FiscalDocument[]): string {
+  if (fiscalDocuments.length === 0) return "Manual";
+  return fiscalDocuments.map((doc) => (doc.series ? `${doc.documentNumber}/${doc.series}` : doc.documentNumber)).join(", ");
 }
 
 const PARTY_ROLE_LABELS: Record<string, string> = {
@@ -286,7 +292,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   [
     ["Data negociacao", formatDate(confirmation.negotiationDate ?? confirmation.confirmationDate)],
     ["Data emissao", formatDate(confirmation.confirmationDate)],
-    ["Origem", detail.fiscalDocuments.length ? `${detail.fiscalDocuments.length} NF` : "Manual"],
+    ["Origem", formatFiscalDocumentReferences(detail.fiscalDocuments)],
     ["Corretagem", confirmation.brokeragePercentageBasisPoints != null ? `${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "Nao informada"]
   ].forEach(([label, value], index) => {
     const x = margin + index * metaCol;
@@ -552,13 +558,16 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   [
     ["Data da negociacao", formatDate(confirmation.negotiationDate ?? confirmation.confirmationDate)],
     ["Data da emissao", formatDate(confirmation.confirmationDate)],
-    ["Origem", detail.fiscalDocuments.length ? `${detail.fiscalDocuments.length} nota(s) fiscal(is)` : "Manual"],
+    ["Origem", formatFiscalDocumentReferences(detail.fiscalDocuments)],
     ["Corretagem", confirmation.brokeragePercentageBasisPoints != null ? `${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "Nao informada"]
   ].forEach(([label, value], index) => {
     const x = margin + index * metaCol;
     page.drawRectangle({ x, y: metaTop - 27, width: metaCol - 6, height: 27, color: soft, borderColor: border, borderWidth: 0.5 });
     page.drawText(label, { x: x + 6, y: metaTop - 11, size: 5.9, font: bold, color: gold });
-    page.drawText(value, { x: x + 6, y: metaTop - 22, size: 7.4, font: bold, color: ink });
+    // drawTextBox (com truncamento) em vez de drawText direto -- "Origem" pode
+    // listar varios numeros de nota (nota triangulada com mais de uma NF-e),
+    // e drawText nao quebra/corta, so' vazaria pra fora da celula.
+    drawTextBox(page, value, x + 6, metaTop - 19, metaCol - 12, 8, { font: bold, size: 7.4, minSize: 5.6, lineHeight: 1, maxLines: 1, color: ink });
   });
   y = metaTop - 35;
 
