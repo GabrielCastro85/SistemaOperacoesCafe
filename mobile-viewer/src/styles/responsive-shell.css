@@ -60,6 +60,25 @@
     display: none;
   }
 
+  /* O CSS original esconde os rotulos do menu (modo so-icone) a partir de
+     760px, pensado pra uma janela do Electron estreita -- nao pra um
+     drawer de celular, onde ha espaco de sobra pra mostrar o texto. */
+  .app-sidebar__brand div:not(.brand-mark) {
+    display: block;
+  }
+
+  .nav-label {
+    display: inline;
+  }
+
+  .nav-group-title {
+    display: block;
+  }
+
+  .app-sidebar__footer {
+    display: grid;
+  }
+
   .mobile-nav-backdrop {
     display: block;
     position: fixed;
