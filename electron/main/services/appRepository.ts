@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { deterministicUuid } from "./deterministicId.js";
 import {
   legalEntityInputSchema,
@@ -1599,6 +1599,33 @@ export class AppRepository {
       await action();
     } catch (error) {
       log.warn("Falha ao sincronizar cadastro com o Supabase (gravacao local prossegue mesmo assim)", error instanceof Error ? error.message : error);
+    }
+  }
+
+  /**
+   * Sobe uma copia de um PDF/planilha ja gerado localmente pro bucket
+   * confirmation-files (app de visualizacao pelo celular) -- nunca bloqueia
+   * nem derruba a geracao/emissao local; se falhar, so' loga e o app de
+   * visualizacao fica sem o botao de download dessa versao especifica ate' a
+   * proxima geracao ter sucesso.
+   */
+  private async uploadDocumentToShared(
+    organizationId: string,
+    ownLegalEntityId: string,
+    kind: "confirmations" | "charges",
+    fileName: string,
+    localFilePath: string,
+    contentType: string
+  ): Promise<string | null> {
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return null;
+    const objectPath = `${organizationId}/${ownLegalEntityId}/${kind}/${fileName}`;
+    try {
+      const bytes = readFileSync(localFilePath);
+      await this.sharedRepository.uploadFile("confirmation-files", objectPath, bytes, contentType);
+      return objectPath;
+    } catch (error) {
+      log.warn("Falha ao subir arquivo pro Supabase Storage (app de visualizacao nao vai conseguir baixar esta versao)", error instanceof Error ? error.message : error);
+      return null;
     }
   }
 
@@ -4133,9 +4160,29 @@ export class AppRepository {
     const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, clientLegalEntity, detail, relatedOpenChargeDetails });
     const version = detail.documents.length + 1;
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO charge_document_versions (id, client_charge_id, version, pdf_file_path, pdf_file_hash, excel_file_path, excel_file_hash, image_file_path, image_file_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), id, version, result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.excelFileHash, result.imageFilePath, result.imageFileHash, now);
+    const documentVersionId = randomUUID();
+    const pdfStorageObjectPath = await this.uploadDocumentToShared(
+      detail.charge.organizationId,
+      detail.charge.ownLegalEntityId,
+      "charges",
+      `${documentVersionId}-cobranca.pdf`,
+      result.pdfFilePath,
+      "application/pdf"
+    );
+    const excelStorageObjectPath = await this.uploadDocumentToShared(
+      detail.charge.organizationId,
+      detail.charge.ownLegalEntityId,
+      "charges",
+      `${documentVersionId}-cobranca.xlsx`,
+      result.excelFilePath,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    this.db.prepare("INSERT INTO charge_document_versions (id, client_charge_id, version, pdf_file_path, pdf_file_hash, excel_file_path, excel_file_hash, image_file_path, image_file_hash, pdf_storage_object_path, excel_storage_object_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(documentVersionId, id, version, result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.excelFileHash, result.imageFilePath, result.imageFileHash, pdfStorageObjectPath, excelStorageObjectPath, now);
     this.db.prepare("UPDATE client_charges SET pdf_file_path = ?, pdf_file_hash = ?, excel_file_path = ?, image_file_path = ?, updated_at = ? WHERE id = ?").run(result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.imageFilePath, now, id);
+    if (pdfStorageObjectPath || excelStorageObjectPath) {
+      await this.pushClientChargeToShared(id).catch((error) => log.warn("Falha ao sincronizar cobranca apos subir documento pro Storage", error instanceof Error ? error.message : error));
+    }
     return this.getClientCharge(id);
   }
 
@@ -7659,12 +7706,27 @@ export class AppRepository {
     const stored = await generateDealConfirmationPdf({ directories: this.directories, organization, ownLegalEntity, detail, versionId, draft });
     const version = this.nextDealDocumentVersion(id);
     const now = new Date().toISOString();
+    // Previa com marca d'agua (draft) nunca sobe pro app de visualizacao --
+    // so' o documento final emitido interessa por la'.
+    const storageObjectPath = draft
+      ? null
+      : await this.uploadDocumentToShared(
+          detail.confirmation.organizationId,
+          detail.confirmation.ownLegalEntityId,
+          "confirmations",
+          `${versionId}-${stored.originalFileName}`,
+          stored.storedFilePath,
+          stored.mimeType
+        );
     this.db.prepare("UPDATE deal_confirmation_document_versions SET is_current = 0 WHERE deal_confirmation_id = ? AND document_type = ?").run(id, documentType);
     this.db.prepare(`INSERT INTO deal_confirmation_document_versions (
       id, deal_confirmation_id, version_number, document_type, original_file_name, stored_file_path,
-      mime_type, file_size, file_hash, generated_by_system, is_current, notes, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`)
-      .run(versionId, id, version, documentType, stored.originalFileName, stored.storedFilePath, stored.mimeType, stored.fileSize, stored.fileHash, notes, now);
+      mime_type, file_size, file_hash, generated_by_system, is_current, notes, storage_object_path, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)`)
+      .run(versionId, id, version, documentType, stored.originalFileName, stored.storedFilePath, stored.mimeType, stored.fileSize, stored.fileHash, notes, storageObjectPath, now);
+    if (storageObjectPath) {
+      await this.pushDealConfirmationToShared(id).catch((error) => log.warn("Falha ao sincronizar confirmacao apos subir documento pro Storage", error instanceof Error ? error.message : error));
+    }
     return this.getDealDocumentVersion(versionId);
   }
 

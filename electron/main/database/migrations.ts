@@ -3136,6 +3136,26 @@ export const migrations: Migration[] = [
       for (const [column, type] of legalEntityColumns) if (!hasColumn("legal_entities", column)) db.exec(`ALTER TABLE legal_entities ADD COLUMN ${column} ${type}`);
       for (const [column, type] of confirmationColumns) if (!hasColumn("deal_confirmations", column)) db.exec(`ALTER TABLE deal_confirmations ADD COLUMN ${column} ${type}`);
     }
+  },
+  {
+    // Caminho do objeto no Supabase Storage (bucket confirmation-files, ver
+    // migration Supabase 0019_mobile_viewer_storage) -- nulo ate' o PC subir
+    // a copia. stored_file_path/pdf_file_path/excel_file_path continuam sendo
+    // o caminho LOCAL no HD deste PC, sem sentido pro app de visualizacao.
+    name: "042_mobile_viewer_storage_paths",
+    up: (db) => {
+      const hasColumn = (table: string, column: string): boolean =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((item) => item.name === column);
+      if (!hasColumn("deal_confirmation_document_versions", "storage_object_path")) {
+        db.exec(`ALTER TABLE deal_confirmation_document_versions ADD COLUMN storage_object_path TEXT`);
+      }
+      if (!hasColumn("charge_document_versions", "pdf_storage_object_path")) {
+        db.exec(`ALTER TABLE charge_document_versions ADD COLUMN pdf_storage_object_path TEXT`);
+      }
+      if (!hasColumn("charge_document_versions", "excel_storage_object_path")) {
+        db.exec(`ALTER TABLE charge_document_versions ADD COLUMN excel_storage_object_path TEXT`);
+      }
+    }
   }
 
 ];
