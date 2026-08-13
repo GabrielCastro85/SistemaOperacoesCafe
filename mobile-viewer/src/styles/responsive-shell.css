@@ -71,30 +71,74 @@
   .app-topbar {
     display: flex;
     flex-wrap: wrap;
-    row-gap: var(--space-3);
-    column-gap: var(--space-3);
+    row-gap: var(--space-2);
+    column-gap: var(--space-2);
     min-height: 0;
-    padding: 12px 16px;
+    padding: 10px 14px;
   }
 
   .app-topbar__brandline {
     flex: 1 1 100%;
+    gap: var(--space-2);
+  }
+
+  .app-topbar__brandline img,
+  .app-topbar__brandline .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .page-context {
+    gap: 0;
+  }
+
+  .page-context span,
+  .page-context small {
+    display: none;
+  }
+
+  .page-context strong {
+    font-size: 16px;
   }
 
   .app-topbar .context-select,
   .app-topbar .context-pill--user {
     flex: 1 1 auto;
-    min-width: 140px;
+    min-width: 0;
   }
 
   .context-pill--user {
-    padding-left: var(--space-3);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding-left: 0;
     border-left: none;
+  }
+
+  .context-pill--user span,
+  .context-pill--user small {
+    display: none;
+  }
+
+  .context-pill--user strong {
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-muted);
   }
 
   .topbar-actions {
     flex: none;
     margin-left: auto;
+  }
+
+  .topbar-actions button {
+    padding: 6px 14px;
+    min-height: 30px;
+    font-size: 12.5px;
   }
 
   .app-main {
