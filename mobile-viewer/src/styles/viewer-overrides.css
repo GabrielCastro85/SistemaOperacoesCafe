@@ -1,0 +1,41 @@
+.viewer-card-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.viewer-card-line {
+  font-size: 13px;
+}
+
+.viewer-card-line--muted {
+  font-style: italic;
+}
+
+.viewer-card-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.viewer-card-actions .ui-button {
+  flex: 1 1 auto;
+}
+
+.viewer-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.viewer-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-5);
+}
+
+@media (min-width: 760px) {
+  .viewer-card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    align-items: start;
+  }
+}

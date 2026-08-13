@@ -1,23 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { formatCurrencyBr, formatDateBr, openStorageFile } from "./storage";
+import { PageHeader } from "./renderer/design-system/components/PageHeader";
+import { FilterBar } from "./renderer/design-system/components/FilterBar";
+import { Card } from "./renderer/design-system/components/Card";
+import { Button } from "./renderer/design-system/components/Button";
+import { StatusBadge } from "./renderer/design-system/components/Badge";
+import { EmptyState } from "./renderer/design-system/components/EmptyState";
+import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { Alert } from "./renderer/design-system/components/Alert";
 import type { ClientCharge, ClientChargeStatus } from "./types";
-
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: "Rascunho",
-  PENDING_REVIEW: "Em conferencia",
-  ISSUED: "Emitida",
-  PARTIALLY_PAID: "Parcialmente paga",
-  PAID: "Paga",
-  OVERDUE: "Vencida",
-  CANCELLED: "Cancelada",
-  REPLACED: "Substituida"
-};
 
 const OPEN_STATUSES: ClientChargeStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
 const PAGE_SIZE = 200;
 
 type FilterMode = "OPEN" | "PAID" | "ALL";
+
+const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", PAID: "Pagas", ALL: "Todas" };
 
 export function ChargesTab(): JSX.Element {
   const [charges, setCharges] = useState<ClientCharge[] | null>(null);
@@ -35,7 +34,7 @@ export function ChargesTab(): JSX.Element {
     setError(null);
     if (offset === 0) setCharges(null);
     else setLoadingMore(true);
-    const { data, error } = await supabase
+    const { data, error: loadError } = await supabase
       .from("client_charges")
       .select(
         `id, charge_number, reference_code, period_start, period_end, due_date, status,
@@ -46,8 +45,8 @@ export function ChargesTab(): JSX.Element {
       .order("period_start", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
     setLoadingMore(false);
-    if (error) {
-      setError(error.message);
+    if (loadError) {
+      setError(loadError.message);
       return;
     }
     const page = (data ?? []) as unknown as ClientCharge[];
@@ -66,80 +65,78 @@ export function ChargesTab(): JSX.Element {
     });
   }, [charges, search, filter]);
 
-  if (error) return <p className="error">Falha ao carregar cobrancas: {error}</p>;
-  if (!charges) return <p className="loading">Carregando cobrancas...</p>;
-
   return (
     <>
-      <div className="filter-bar">
-        <input
-          type="search"
-          className="search-input"
-          placeholder="Buscar cliente..."
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <div className="filter-chips">
-          <button className={filter === "OPEN" ? "chip chip--active" : "chip"} onClick={() => setFilter("OPEN")}>
-            Em aberto
-          </button>
-          <button className={filter === "PAID" ? "chip chip--active" : "chip"} onClick={() => setFilter("PAID")}>
-            Pagas
-          </button>
-          <button className={filter === "ALL" ? "chip chip--active" : "chip"} onClick={() => setFilter("ALL")}>
-            Todas
-          </button>
-        </div>
-      </div>
-      {filtered.length === 0 ? (
-        <p className="empty">Nenhuma cobranca encontrada.</p>
-      ) : (
-        <ul className="card-list">
-          {filtered.map((charge) => {
-            const latestDocument =
-              charge.documents.length > 0 ? charge.documents.reduce((a, b) => (a.version > b.version ? a : b)) : null;
-            return (
-              <li key={charge.id} className="card">
-                <div className="card-header">
-                  <strong>{charge.client?.display_name ?? "Cliente"}</strong>
-                  <span className={`status status--${charge.status.toLowerCase()}`}>
-                    {STATUS_LABELS[charge.status] ?? charge.status}
-                  </span>
-                </div>
-                <p className="card-line">
-                  {charge.charge_number ? `Cobranca ${charge.charge_number}` : "Sem numero"} · {formatDateBr(charge.period_start)} a{" "}
-                  {formatDateBr(charge.period_end)}
-                </p>
-                <p className="card-line">
-                  Total: {formatCurrencyBr(charge.final_amount_cents)}
-                  {charge.open_amount_cents > 0 ? ` · Em aberto: ${formatCurrencyBr(charge.open_amount_cents)}` : ""}
-                </p>
-                {!latestDocument ? <p className="card-line card-line--muted">Planilha ainda nao gerada</p> : null}
-                <div className="card-actions">
-                  <button
-                    disabled={!latestDocument?.pdf_storage_object_path}
-                    onClick={() => latestDocument?.pdf_storage_object_path && void openStorageFile(latestDocument.pdf_storage_object_path)}
-                  >
-                    Baixar PDF
-                  </button>
-                  <button
-                    disabled={!latestDocument?.excel_storage_object_path}
-                    onClick={() =>
-                      latestDocument?.excel_storage_object_path && void openStorageFile(latestDocument.excel_storage_object_path)
-                    }
-                  >
-                    Baixar planilha
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {hasMore ? (
-        <button className="load-more" disabled={loadingMore} onClick={() => void load(charges.length)}>
-          {loadingMore ? "Carregando..." : "Carregar mais"}
-        </button>
+      <PageHeader eyebrow="Recebimentos" title="Cobranças" description="Planilhas e PDFs de cobrança gerados pelo PC principal, incluindo as ainda em aberto." />
+      {error ? <Alert tone="danger" title="Falha ao carregar cobranças">{error}</Alert> : null}
+      {!error && !charges ? <LoadingState label="Carregando cobranças..." /> : null}
+      {charges ? (
+        <>
+          <FilterBar
+            activeCount={(filter !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
+            onClear={() => {
+              setSearch("");
+              setFilter("ALL");
+            }}
+          >
+            <input type="search" className="ui-input" placeholder="Buscar cliente..." value={search} onChange={(event) => setSearch(event.target.value)} />
+            <div className="viewer-chip-row">
+              {(Object.keys(FILTER_LABELS) as FilterMode[]).map((mode) => (
+                <Button key={mode} variant={filter === mode ? "primary" : "secondary"} onClick={() => setFilter(mode)}>
+                  {FILTER_LABELS[mode]}
+                </Button>
+              ))}
+            </div>
+          </FilterBar>
+          {filtered.length === 0 ? (
+            <EmptyState title="Nenhuma cobrança encontrada" description="Ajuste a busca ou o filtro para ver outros resultados." />
+          ) : (
+            <div className="viewer-card-grid">
+              {filtered.map((charge) => {
+                const latestDocument =
+                  charge.documents.length > 0 ? charge.documents.reduce((a, b) => (a.version > b.version ? a : b)) : null;
+                return (
+                  <Card key={charge.id} title={charge.client?.display_name ?? "Cliente"} actions={<StatusBadge status={charge.status} />}>
+                    <p className="viewer-card-line">
+                      {charge.charge_number ? `Cobrança ${charge.charge_number}` : "Sem número"} · {formatDateBr(charge.period_start)} a{" "}
+                      {formatDateBr(charge.period_end)}
+                    </p>
+                    <p className="viewer-card-line">
+                      Total: {formatCurrencyBr(charge.final_amount_cents)}
+                      {charge.open_amount_cents > 0 ? ` · Em aberto: ${formatCurrencyBr(charge.open_amount_cents)}` : ""}
+                    </p>
+                    {!latestDocument ? <p className="viewer-card-line viewer-card-line--muted">Planilha ainda não gerada</p> : null}
+                    <div className="viewer-card-actions">
+                      <Button
+                        variant="secondary"
+                        disabled={!latestDocument?.pdf_storage_object_path}
+                        onClick={() => latestDocument?.pdf_storage_object_path && void openStorageFile(latestDocument.pdf_storage_object_path)}
+                      >
+                        Baixar PDF
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        disabled={!latestDocument?.excel_storage_object_path}
+                        onClick={() =>
+                          latestDocument?.excel_storage_object_path && void openStorageFile(latestDocument.excel_storage_object_path)
+                        }
+                      >
+                        Baixar planilha
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+          {hasMore ? (
+            <div className="viewer-load-more">
+              <Button variant="ghost" loading={loadingMore} onClick={() => void load(charges.length)}>
+                Carregar mais
+              </Button>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </>
   );

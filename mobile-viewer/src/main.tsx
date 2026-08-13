@@ -1,7 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import "./style.css";
+import "./styles/index.css";
+import "./styles/responsive-shell.css";
+import "./styles/viewer-overrides.css";
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
