@@ -1,3 +1,14 @@
+export interface OrganizationLite {
+  id: string;
+  slug: string;
+  displayName: string;
+  appDisplayName: string;
+  logoPath: string | null;
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+}
+
 export type ClientChargeStatus =
   | "DRAFT"
   | "PENDING_REVIEW"

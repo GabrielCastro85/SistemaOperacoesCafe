@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { formatDateBr, openStorageFile } from "./storage";
+import { PageHeader } from "./renderer/design-system/components/PageHeader";
+import { FilterBar } from "./renderer/design-system/components/FilterBar";
+import { Card } from "./renderer/design-system/components/Card";
+import { Button } from "./renderer/design-system/components/Button";
+import { StatusBadge } from "./renderer/design-system/components/Badge";
+import { EmptyState } from "./renderer/design-system/components/EmptyState";
+import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { Alert } from "./renderer/design-system/components/Alert";
 import type { DealConfirmation, DealConfirmationStatus } from "./types";
-
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: "Rascunho",
-  PENDING_REVIEW: "Em conferencia",
-  ISSUED: "Emitida",
-  SENT_FOR_SIGNATURE: "Enviada para assinatura",
-  SIGNED: "Assinada",
-  CANCELLED: "Cancelada",
-  REPLACED: "Substituida"
-};
 
 const OPEN_STATUSES: DealConfirmationStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "SENT_FOR_SIGNATURE"];
 const PAGE_SIZE = 200;
 
 type FilterMode = "OPEN" | "SIGNED" | "ALL";
+
+const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", SIGNED: "Assinadas", ALL: "Todas" };
 
 export function ConfirmationsTab(): JSX.Element {
   const [confirmations, setConfirmations] = useState<DealConfirmation[] | null>(null);
@@ -34,7 +34,7 @@ export function ConfirmationsTab(): JSX.Element {
     setError(null);
     if (offset === 0) setConfirmations(null);
     else setLoadingMore(true);
-    const { data, error } = await supabase
+    const { data, error: loadError } = await supabase
       .from("deal_confirmations")
       .select(
         `id, confirmation_number, temporary_reference, confirmation_date, status,
@@ -45,8 +45,8 @@ export function ConfirmationsTab(): JSX.Element {
       .order("confirmation_date", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
     setLoadingMore(false);
-    if (error) {
-      setError(error.message);
+    if (loadError) {
+      setError(loadError.message);
       return;
     }
     const page = (data ?? []) as unknown as DealConfirmation[];
@@ -70,68 +70,75 @@ export function ConfirmationsTab(): JSX.Element {
     });
   }, [confirmations, search, filter]);
 
-  if (error) return <p className="error">Falha ao carregar confirmacoes: {error}</p>;
-  if (!confirmations) return <p className="loading">Carregando confirmacoes...</p>;
-
   return (
     <>
-      <div className="filter-bar">
-        <input
-          type="search"
-          className="search-input"
-          placeholder="Buscar numero ou empresa..."
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <div className="filter-chips">
-          <button className={filter === "OPEN" ? "chip chip--active" : "chip"} onClick={() => setFilter("OPEN")}>
-            Em aberto
-          </button>
-          <button className={filter === "SIGNED" ? "chip chip--active" : "chip"} onClick={() => setFilter("SIGNED")}>
-            Assinadas
-          </button>
-          <button className={filter === "ALL" ? "chip chip--active" : "chip"} onClick={() => setFilter("ALL")}>
-            Todas
-          </button>
-        </div>
-      </div>
-      {filtered.length === 0 ? (
-        <p className="empty">Nenhuma confirmacao encontrada.</p>
-      ) : (
-        <ul className="card-list">
-          {filtered.map((confirmation) => {
-            const issuedDocument =
-              confirmation.documents.find((doc) => doc.document_type === "ISSUED_ORIGINAL" && doc.is_current) ?? null;
-            return (
-              <li key={confirmation.id} className="card">
-                <div className="card-header">
-                  <strong>{confirmation.confirmation_number ?? confirmation.temporary_reference}</strong>
-                  <span className={`status status--${confirmation.status.toLowerCase()}`}>
-                    {STATUS_LABELS[confirmation.status] ?? confirmation.status}
-                  </span>
-                </div>
-                <p className="card-line">
-                  {confirmation.own_legal_entity?.trade_name ?? ""} · {formatDateBr(confirmation.confirmation_date)}
-                </p>
-                <p className="card-line">{confirmation.total_quantity_sacks_decimal} sacas</p>
-                {!issuedDocument ? <p className="card-line card-line--muted">PDF ainda nao emitido</p> : null}
-                <div className="card-actions">
-                  <button
-                    disabled={!issuedDocument?.storage_object_path}
-                    onClick={() => issuedDocument?.storage_object_path && void openStorageFile(issuedDocument.storage_object_path)}
+      <PageHeader eyebrow="Comercial" title="Confirmações" description="Confirmações de negócio emitidas pelo PC principal, incluindo as ainda em aberto." />
+      {error ? <Alert tone="danger" title="Falha ao carregar confirmações">{error}</Alert> : null}
+      {!error && !confirmations ? <LoadingState label="Carregando confirmações..." /> : null}
+      {confirmations ? (
+        <>
+          <FilterBar
+            activeCount={(filter !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
+            onClear={() => {
+              setSearch("");
+              setFilter("ALL");
+            }}
+          >
+            <input
+              type="search"
+              className="ui-input"
+              placeholder="Buscar número ou empresa..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <div className="viewer-chip-row">
+              {(Object.keys(FILTER_LABELS) as FilterMode[]).map((mode) => (
+                <Button key={mode} variant={filter === mode ? "primary" : "secondary"} onClick={() => setFilter(mode)}>
+                  {FILTER_LABELS[mode]}
+                </Button>
+              ))}
+            </div>
+          </FilterBar>
+          {filtered.length === 0 ? (
+            <EmptyState title="Nenhuma confirmação encontrada" description="Ajuste a busca ou o filtro para ver outros resultados." />
+          ) : (
+            <div className="viewer-card-grid">
+              {filtered.map((confirmation) => {
+                const issuedDocument =
+                  confirmation.documents.find((doc) => doc.document_type === "ISSUED_ORIGINAL" && doc.is_current) ?? null;
+                return (
+                  <Card
+                    key={confirmation.id}
+                    title={confirmation.confirmation_number ?? confirmation.temporary_reference}
+                    actions={<StatusBadge status={confirmation.status} />}
                   >
-                    Baixar PDF
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {hasMore ? (
-        <button className="load-more" disabled={loadingMore} onClick={() => void load(confirmations.length)}>
-          {loadingMore ? "Carregando..." : "Carregar mais"}
-        </button>
+                    <p className="viewer-card-line">
+                      {confirmation.own_legal_entity?.trade_name ?? ""} · {formatDateBr(confirmation.confirmation_date)}
+                    </p>
+                    <p className="viewer-card-line">{confirmation.total_quantity_sacks_decimal} sacas</p>
+                    {!issuedDocument ? <p className="viewer-card-line viewer-card-line--muted">PDF ainda não emitido</p> : null}
+                    <div className="viewer-card-actions">
+                      <Button
+                        variant="secondary"
+                        disabled={!issuedDocument?.storage_object_path}
+                        onClick={() => issuedDocument?.storage_object_path && void openStorageFile(issuedDocument.storage_object_path)}
+                      >
+                        Baixar PDF
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+          {hasMore ? (
+            <div className="viewer-load-more">
+              <Button variant="ghost" loading={loadingMore} onClick={() => void load(confirmations.length)}>
+                Carregar mais
+              </Button>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </>
   );

@@ -1,0 +1,113 @@
+.mobile-nav-toggle {
+  display: none;
+}
+
+.mobile-nav-backdrop {
+  display: none;
+}
+
+@media (max-width: 880px) {
+  .app-shell.professional-shell,
+  .app-shell.professional-shell.is-collapsed {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .mobile-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid color-mix(in srgb, var(--color-text) 20%, transparent);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    font-size: 18px;
+    line-height: 1;
+    margin-right: var(--space-3);
+    flex: none;
+  }
+
+  .app-topbar__brandline {
+    display: flex;
+    align-items: center;
+  }
+
+  .app-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 60;
+    width: min(84vw, 300px);
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.32);
+  }
+
+  .mobile-nav-open .app-sidebar {
+    transform: translateX(0);
+  }
+
+  .app-sidebar__nav {
+    grid-auto-flow: row;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .sidebar-collapse {
+    display: none;
+  }
+
+  .mobile-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 8, 5, 0.45);
+    z-index: 55;
+  }
+
+  .app-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: var(--space-3);
+    column-gap: var(--space-3);
+    min-height: 0;
+    padding: 12px 16px;
+  }
+
+  .app-topbar__brandline {
+    flex: 1 1 100%;
+  }
+
+  .app-topbar .context-select,
+  .app-topbar .context-pill--user {
+    flex: 1 1 auto;
+    min-width: 140px;
+  }
+
+  .context-pill--user {
+    padding-left: var(--space-3);
+    border-left: none;
+  }
+
+  .topbar-actions {
+    flex: none;
+    margin-left: auto;
+  }
+
+  .app-main {
+    overflow: visible;
+  }
+
+  .main-area {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-topbar .context-select {
+    display: none;
+  }
+}
