@@ -232,7 +232,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     return entity?.legalName || entity?.tradeName || id;
   }
 
-  function chargeCompanyClass(value: string | null | undefined): string {
+  // Nota triangulada de verdade fica azul (mesma cor de nota terceirizada),
+  // mesmo a cobranca pertencendo a empresa ativa -- e' o mesmo aviso visual
+  // de "o papel fisico dessa nota nao e' nosso", independente de quem esta
+  // sendo cobrado por ela.
+  function chargeCompanyClass(value: string | null | undefined, isTriangulated = false): string {
+    if (isTriangulated) return "charge-row--third-party";
     const normalized = (value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     if (normalized.includes("grao")) return "charge-row--grao";
     if (normalized.includes("villa")) return "charge-row--villa";
@@ -785,7 +790,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                   const issuerLabel = triangulatedIssuerLabel(op);
                   return (
-                    <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel)}`}>
+                    <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
                       <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
                       <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
@@ -812,7 +817,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                     const issuerLabel = triangulatedIssuerLabel(op);
                     return (
-                      <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel)}`}>
+                      <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
                         <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
                         <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
                         <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
