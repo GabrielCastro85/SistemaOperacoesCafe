@@ -10,7 +10,7 @@ import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { companyColorClass } from "./companyColor";
-import type { ClientCharge, ClientChargeStatus, PendingBillingGroup, UnbilledOperationRow } from "./types";
+import type { ClientCharge, ClientChargeStatus, UnbilledOperationRow } from "./types";
 
 const OPEN_STATUSES: ClientChargeStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
 const PAGE_SIZE = 200;
@@ -19,38 +19,6 @@ const UNBILLED_LIMIT = 3000;
 type FilterMode = "OPEN" | "PAID" | "ALL";
 
 const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", PAID: "Pagas", ALL: "Todas" };
-
-function groupUnbilledOperations(rows: UnbilledOperationRow[]): PendingBillingGroup[] {
-  const groups = new Map<string, PendingBillingGroup>();
-  for (const row of rows) {
-    const clientName = row.responsible_partner?.display_name ?? "Cliente não identificado";
-    const legalEntityName = row.own_legal_entity?.trade_name ?? "";
-    const key = `${clientName}__${legalEntityName}`;
-    const existing = groups.get(key);
-    const sacks = Number(row.quantity_sacks_decimal) || 0;
-    if (existing) {
-      existing.operationCount += 1;
-      existing.amountCents += row.service_amount_cents ?? 0;
-      existing.sacks += sacks;
-      existing.operations.push(row);
-      if (row.operation_date < existing.periodStart) existing.periodStart = row.operation_date;
-      if (row.operation_date > existing.periodEnd) existing.periodEnd = row.operation_date;
-    } else {
-      groups.set(key, {
-        key,
-        clientName,
-        legalEntityName,
-        operationCount: 1,
-        amountCents: row.service_amount_cents ?? 0,
-        sacks,
-        periodStart: row.operation_date,
-        periodEnd: row.operation_date,
-        operations: [row]
-      });
-    }
-  }
-  return Array.from(groups.values()).sort((a, b) => b.amountCents - a.amountCents);
-}
 
 function sameStateLabel(row: UnbilledOperationRow): string {
   const partnerState = row.responsible_partner?.state?.trim().toUpperCase();
@@ -66,10 +34,9 @@ export function ChargesTab(): JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("OPEN");
-  const [pendingGroups, setPendingGroups] = useState<PendingBillingGroup[] | null>(null);
+  const [pendingRows, setPendingRows] = useState<UnbilledOperationRow[] | null>(null);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [pendingSearch, setPendingSearch] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void load(0);
@@ -94,24 +61,20 @@ export function ChargesTab(): JSX.Element {
       setPendingError(loadError.message);
       return;
     }
-    setPendingGroups(groupUnbilledOperations((data ?? []) as unknown as UnbilledOperationRow[]));
+    setPendingRows((data ?? []) as unknown as UnbilledOperationRow[]);
   }
 
-  function toggleGroup(key: string): void {
-    setExpandedGroups((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
+  const pendingTotalCents = useMemo(() => {
+    if (!pendingRows) return 0;
+    return pendingRows.reduce((sum, row) => sum + (row.service_amount_cents ?? 0), 0);
+  }, [pendingRows]);
 
-  const filteredPendingGroups = useMemo(() => {
-    if (!pendingGroups) return [];
+  const filteredPendingRows = useMemo(() => {
+    if (!pendingRows) return [];
     const term = pendingSearch.trim().toLowerCase();
-    if (!term) return pendingGroups;
-    return pendingGroups.filter((group) => group.clientName.toLowerCase().includes(term));
-  }, [pendingGroups, pendingSearch]);
+    if (!term) return pendingRows;
+    return pendingRows.filter((row) => (row.responsible_partner?.display_name ?? "").toLowerCase().includes(term));
+  }, [pendingRows, pendingSearch]);
 
   async function load(offset: number): Promise<void> {
     setError(null);
@@ -155,71 +118,52 @@ export function ChargesTab(): JSX.Element {
 
       <Card eyebrow="Ainda não cobrado" title="Em andamento">
         {pendingError ? <Alert tone="danger" title="Falha ao carregar operações em andamento">{pendingError}</Alert> : null}
-        {!pendingError && !pendingGroups ? <LoadingState label="Carregando operações em andamento..." /> : null}
-        {pendingGroups && pendingGroups.length === 0 ? (
+        {!pendingError && !pendingRows ? <LoadingState label="Carregando operações em andamento..." /> : null}
+        {pendingRows && pendingRows.length === 0 ? (
           <p className="viewer-card-line viewer-card-line--muted">Nenhuma nota pendente de cobrança no momento — tudo já foi agrupado numa cobrança.</p>
         ) : null}
-        {pendingGroups && pendingGroups.length > 0 ? (
+        {pendingRows && pendingRows.length > 0 ? (
           <>
+            <p className="viewer-pending-total">
+              Total a receber (ainda não cobrado): <strong>{formatCurrencyBr(pendingTotalCents)}</strong>
+              <span className="viewer-card-line viewer-card-line--muted"> · {pendingRows.length} nota(s)</span>
+            </p>
             <input
               type="search"
               className="ui-input"
-              placeholder="Buscar cliente para ver as notas..."
+              placeholder="Buscar cliente..."
               value={pendingSearch}
               onChange={(event) => setPendingSearch(event.target.value)}
             />
-            {filteredPendingGroups.length === 0 ? (
-              <p className="viewer-card-line viewer-card-line--muted">Nenhum cliente com notas pendentes encontrado para essa busca.</p>
+            {filteredPendingRows.length === 0 ? (
+              <p className="viewer-card-line viewer-card-line--muted">Nenhuma nota pendente encontrada para essa busca.</p>
             ) : (
-              <div className="viewer-card-grid">
-                {filteredPendingGroups.map((group) => {
-                  const expanded = expandedGroups.has(group.key);
-                  return (
-                    <Card key={group.key} title={group.clientName} className={companyColorClass(group.legalEntityName)}>
-                      <p className="viewer-card-line">{group.legalEntityName}</p>
-                      <p className="viewer-card-line">
-                        {formatDateBr(group.periodStart)} a {formatDateBr(group.periodEnd)} · {group.operationCount} nota(s) ·{" "}
-                        {group.sacks.toLocaleString("pt-BR")} sacas
-                      </p>
-                      <p className="viewer-card-line">
-                        <strong>{formatCurrencyBr(group.amountCents)}</strong> acumulado até agora
-                      </p>
-                      <div className="viewer-card-actions">
-                        <Button variant="secondary" onClick={() => toggleGroup(group.key)}>
-                          {expanded ? "Ocultar notas" : "Ver notas"}
-                        </Button>
+              <ul className="viewer-nf-list">
+                {filteredPendingRows
+                  .slice()
+                  .sort((a, b) => a.operation_date.localeCompare(b.operation_date))
+                  .map((operation) => (
+                    <li key={operation.id} className={`viewer-nf-row ${companyColorClass(operation.own_legal_entity?.trade_name)}`}>
+                      <div className="viewer-nf-row__main">
+                        <strong>
+                          {operation.fiscal_document
+                            ? `NF ${operation.fiscal_document.document_number}${operation.fiscal_document.series ? `/${operation.fiscal_document.series}` : ""}`
+                            : "Sem número"}
+                        </strong>
+                        <span>{formatDateBr(operation.operation_date)}</span>
                       </div>
-                      {expanded ? (
-                        <ul className="viewer-nf-list">
-                          {group.operations
-                            .slice()
-                            .sort((a, b) => a.operation_date.localeCompare(b.operation_date))
-                            .map((operation) => (
-                              <li key={operation.id} className={`viewer-nf-row ${companyColorClass(operation.own_legal_entity?.trade_name)}`}>
-                                <div className="viewer-nf-row__main">
-                                  <strong>
-                                    {operation.fiscal_document
-                                      ? `NF ${operation.fiscal_document.document_number}${operation.fiscal_document.series ? `/${operation.fiscal_document.series}` : ""}`
-                                      : "Sem número"}
-                                  </strong>
-                                  <span>{formatDateBr(operation.operation_date)}</span>
-                                </div>
-                                <div className="viewer-nf-row__meta">
-                                  <span>{sameStateLabel(operation)}</span>
-                                  <span>
-                                    {Number(operation.quantity_sacks_decimal).toLocaleString("pt-BR")} sacas ·{" "}
-                                    {formatCurrencyBr(operation.applied_rate_value_cents)}/saca
-                                  </span>
-                                </div>
-                                <strong className="viewer-nf-row__amount">{formatCurrencyBr(operation.service_amount_cents)}</strong>
-                              </li>
-                            ))}
-                        </ul>
-                      ) : null}
-                    </Card>
-                  );
-                })}
-              </div>
+                      <p className="viewer-nf-row__client">{operation.responsible_partner?.display_name ?? "Cliente não identificado"}</p>
+                      <div className="viewer-nf-row__meta">
+                        <span>{sameStateLabel(operation)}</span>
+                        <span>
+                          {Number(operation.quantity_sacks_decimal).toLocaleString("pt-BR")} sacas ·{" "}
+                          {formatCurrencyBr(operation.applied_rate_value_cents)}/saca
+                        </span>
+                      </div>
+                      <strong className="viewer-nf-row__amount">{formatCurrencyBr(operation.service_amount_cents)}</strong>
+                    </li>
+                  ))}
+              </ul>
             )}
           </>
         ) : null}
