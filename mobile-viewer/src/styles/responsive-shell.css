@@ -7,11 +7,26 @@
 }
 
 @media (max-width: 880px) {
+  /* O CSS original deixa a rolagem so' dentro de .content-section, com
+     body{overflow:hidden} e .app-shell fixo em 100vh -- funciona porque no
+     PC a janela do Electron sempre preenche a tela toda. No celular a gente
+     deixa o app-shell crescer com o conteudo (ver overrides abaixo), entao
+     precisa devolver a rolagem pra pagina inteira, senao o conteudo que
+     passa da tela fica inacessivel (nem a pagina rola, nem .content-section
+     tem uma altura fixa pra rolar sozinho). */
+  body {
+    overflow-y: auto;
+  }
+
   .app-shell.professional-shell,
   .app-shell.professional-shell.is-collapsed {
     grid-template-columns: 1fr;
     height: auto;
     min-height: 100vh;
+    overflow: visible;
+  }
+
+  .content-section {
     overflow: visible;
   }
 
