@@ -280,9 +280,19 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   // mostra, sem mudar a quem a cobranca pertence.
   function triangulatedIssuerLabel(operation: Operation): string | null {
     const document = operationDocument(operation);
-    if (!document?.secondaryResponsiblePartnerId || !document.partnerLegalEntityId) return null;
-    const entity = partnerLegalEntities.find((item) => item.id === document.partnerLegalEntityId);
-    return entity ? (entity.legalName || entity.tradeName) : null;
+    if (!document?.secondaryResponsiblePartnerId) return null;
+    // partnerLegalEntities aqui so' cobre empresas ligadas a parceiros com
+    // papel CLIENTE (ver load() acima) -- o emissor real de uma triangulada
+    // costuma ser o lado FORNECEDOR, que nao esta nessa lista. Por isso cai
+    // pro mesmo fallback via snapshot do XML que counterpartyLabel ja usa,
+    // em vez de so' desistir quando o id nao bate com essa lista restrita.
+    const entityId = document.partnerLegalEntityId;
+    if (entityId) {
+      const entity = partnerLegalEntities.find((item) => item.id === entityId);
+      if (entity) return entity.legalName || entity.tradeName;
+    }
+    const ownCnpj = legalEntities.find((item) => item.id === operation.ownLegalEntityId)?.cnpj ?? null;
+    return fiscalDocumentCounterpartyNameFromSnapshot(document, ownCnpj);
   }
 
   function chargeDetailCompanyLabel(operation: ClientChargeOperation): string {
