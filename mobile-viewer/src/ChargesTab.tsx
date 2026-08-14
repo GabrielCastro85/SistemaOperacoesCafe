@@ -9,14 +9,45 @@ import { StatusBadge } from "./renderer/design-system/components/Badge";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
-import type { ClientCharge, ClientChargeStatus } from "./types";
+import type { ClientCharge, ClientChargeStatus, PendingBillingGroup, UnbilledOperationRow } from "./types";
 
 const OPEN_STATUSES: ClientChargeStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
 const PAGE_SIZE = 200;
+const UNBILLED_LIMIT = 3000;
 
 type FilterMode = "OPEN" | "PAID" | "ALL";
 
 const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", PAID: "Pagas", ALL: "Todas" };
+
+function groupUnbilledOperations(rows: UnbilledOperationRow[]): PendingBillingGroup[] {
+  const groups = new Map<string, PendingBillingGroup>();
+  for (const row of rows) {
+    const clientName = row.responsible_partner?.display_name ?? "Cliente não identificado";
+    const legalEntityName = row.own_legal_entity?.trade_name ?? "";
+    const key = `${clientName}__${legalEntityName}`;
+    const existing = groups.get(key);
+    const sacks = Number(row.quantity_sacks) || 0;
+    if (existing) {
+      existing.operationCount += 1;
+      existing.amountCents += row.service_amount_cents ?? 0;
+      existing.sacks += sacks;
+      if (row.operation_date < existing.periodStart) existing.periodStart = row.operation_date;
+      if (row.operation_date > existing.periodEnd) existing.periodEnd = row.operation_date;
+    } else {
+      groups.set(key, {
+        key,
+        clientName,
+        legalEntityName,
+        operationCount: 1,
+        amountCents: row.service_amount_cents ?? 0,
+        sacks,
+        periodStart: row.operation_date,
+        periodEnd: row.operation_date
+      });
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => b.amountCents - a.amountCents);
+}
 
 export function ChargesTab(): JSX.Element {
   const [charges, setCharges] = useState<ClientCharge[] | null>(null);
@@ -25,10 +56,32 @@ export function ChargesTab(): JSX.Element {
   const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("OPEN");
+  const [pendingGroups, setPendingGroups] = useState<PendingBillingGroup[] | null>(null);
+  const [pendingError, setPendingError] = useState<string | null>(null);
 
   useEffect(() => {
     void load(0);
+    void loadPendingBilling();
   }, []);
+
+  async function loadPendingBilling(): Promise<void> {
+    setPendingError(null);
+    const { data, error: loadError } = await supabase
+      .from("operations")
+      .select(
+        `id, operation_date, service_amount_cents, quantity_sacks,
+         responsible_partner:business_partners(display_name),
+         own_legal_entity:legal_entities(trade_name)`
+      )
+      .eq("billing_status", "UNBILLED")
+      .order("operation_date")
+      .limit(UNBILLED_LIMIT);
+    if (loadError) {
+      setPendingError(loadError.message);
+      return;
+    }
+    setPendingGroups(groupUnbilledOperations((data ?? []) as unknown as UnbilledOperationRow[]));
+  }
 
   async function load(offset: number): Promise<void> {
     setError(null);
@@ -68,6 +121,30 @@ export function ChargesTab(): JSX.Element {
   return (
     <>
       <PageHeader eyebrow="Recebimentos" title="Cobranças" description="Planilhas e PDFs de cobrança gerados pelo PC principal, incluindo as ainda em aberto." />
+
+      <Card eyebrow="Ainda não cobrado" title="Em andamento">
+        {pendingError ? <Alert tone="danger" title="Falha ao carregar operações em andamento">{pendingError}</Alert> : null}
+        {!pendingError && !pendingGroups ? <LoadingState label="Carregando operações em andamento..." /> : null}
+        {pendingGroups && pendingGroups.length === 0 ? (
+          <p className="viewer-card-line viewer-card-line--muted">Nenhuma nota pendente de cobrança no momento — tudo já foi agrupado numa cobrança.</p>
+        ) : null}
+        {pendingGroups && pendingGroups.length > 0 ? (
+          <div className="viewer-card-grid">
+            {pendingGroups.map((group) => (
+              <Card key={group.key} title={group.clientName}>
+                <p className="viewer-card-line">{group.legalEntityName}</p>
+                <p className="viewer-card-line">
+                  {formatDateBr(group.periodStart)} a {formatDateBr(group.periodEnd)} · {group.operationCount} nota(s) · {group.sacks.toLocaleString("pt-BR")} sacas
+                </p>
+                <p className="viewer-card-line">
+                  <strong>{formatCurrencyBr(group.amountCents)}</strong> acumulado até agora
+                </p>
+              </Card>
+            ))}
+          </div>
+        ) : null}
+      </Card>
+
       {error ? <Alert tone="danger" title="Falha ao carregar cobranças">{error}</Alert> : null}
       {!error && !charges ? <LoadingState label="Carregando cobranças..." /> : null}
       {charges ? (

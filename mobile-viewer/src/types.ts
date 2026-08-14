@@ -17,6 +17,26 @@ export interface LegalEntityLite {
   state: string | null;
 }
 
+export interface UnbilledOperationRow {
+  id: string;
+  operation_date: string;
+  service_amount_cents: number;
+  quantity_sacks: string;
+  responsible_partner: { display_name: string } | null;
+  own_legal_entity: { trade_name: string } | null;
+}
+
+export interface PendingBillingGroup {
+  key: string;
+  clientName: string;
+  legalEntityName: string;
+  operationCount: number;
+  amountCents: number;
+  sacks: number;
+  periodStart: string;
+  periodEnd: string;
+}
+
 export type ClientChargeStatus =
   | "DRAFT"
   | "PENDING_REVIEW"
