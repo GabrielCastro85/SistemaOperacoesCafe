@@ -13,6 +13,7 @@ import {
   WalletIcon
 } from "./renderer/design-system/components/Icons";
 import { formatCnpj } from "./shared/utils/format";
+import { assetUrl } from "./assetUrl";
 import { navigationGroups, pageTitleById, type NavigationItem, type PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 import flagEspiritoSanto from "./renderer/assets/flags/bandeira-espirito-santo.svg";
@@ -94,9 +95,9 @@ export function AppShell({
   const theme = useMemo(() => buildUiTheme("multiempresa", activeOrganization), [activeOrganization]);
   const logoSrc =
     activeOrganization?.slug === "villa" || activeOrganization?.displayName.toLowerCase().includes("villa")
-      ? "/assets/branding/villa/logo.svg"
+      ? assetUrl("assets/branding/villa/logo.svg")
       : activeOrganization?.slug === "grao" || activeOrganization?.displayName.toLowerCase().includes("gr")
-        ? "/assets/branding/grao/logo.svg"
+        ? assetUrl("assets/branding/grao/logo.svg")
         : null;
   const activeStateFlagSrc = stateFlagSrc(activeLegalEntity?.state);
 
