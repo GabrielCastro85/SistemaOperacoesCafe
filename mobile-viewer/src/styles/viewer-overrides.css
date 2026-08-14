@@ -53,6 +53,20 @@
   background: var(--color-surface);
 }
 
+/* Cor por empresa emissora: verde = Grao & Grao, marrom = Villa Coffee,
+   azul = terceiros (nao identificada como uma das duas). */
+.viewer-company-accent--grao {
+  border-left: 4px solid #2f7d4f;
+}
+
+.viewer-company-accent--villa {
+  border-left: 4px solid #6b4226;
+}
+
+.viewer-company-accent--other {
+  border-left: 4px solid #2f6598;
+}
+
 .viewer-nf-row__main {
   display: flex;
   justify-content: space-between;
