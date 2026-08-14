@@ -4,12 +4,19 @@ import { supabase } from "./supabaseClient";
 import { AppShell } from "./AppShell";
 import { ChargesTab } from "./ChargesTab";
 import { ConfirmationsTab } from "./ConfirmationsTab";
+import { PartnersTab } from "./PartnersTab";
+import { ProductsTab } from "./ProductsTab";
+import { RateRulesTab } from "./RateRulesTab";
+import { LedgerTab } from "./LedgerTab";
+import { PurchaseSettlementsTab } from "./PurchaseSettlementsTab";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import type { PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 
-const PLACEHOLDER_PAGES: Record<Exclude<PageId, "charges" | "confirmations">, { title: string; description: string }> = {
+type PlaceholderPageId = "dashboard" | "invoices" | "finance" | "reports";
+
+const PLACEHOLDER_PAGES: Record<PlaceholderPageId, { title: string; description: string }> = {
   dashboard: {
     title: "Dashboard em construção",
     description: "Os indicadores gerais (recebimentos, sacas, confirmações do período) chegam aqui numa próxima atualização."
@@ -17,30 +24,6 @@ const PLACEHOLDER_PAGES: Record<Exclude<PageId, "charges" | "confirmations">, { 
   invoices: {
     title: "Notas e operações em construção",
     description: "A consulta das notas fiscais e operações lançadas no PC chega aqui numa próxima atualização."
-  },
-  partners: {
-    title: "Cadastros comerciais em construção",
-    description: "A lista de clientes e fornecedores cadastrados chega aqui numa próxima atualização."
-  },
-  products: {
-    title: "Produtos em construção",
-    description: "A lista de produtos cadastrados chega aqui numa próxima atualização."
-  },
-  rates: {
-    title: "Regras por saca em construção",
-    description: "A consulta das regras de cobrança por saca chega aqui numa próxima atualização."
-  },
-  ledger: {
-    title: "Conta-corrente em construção",
-    description: "O extrato de conta-corrente dos clientes chega aqui numa próxima atualização."
-  },
-  purchaseSettlements: {
-    title: "Acertos de entrada em construção",
-    description: "A consulta dos acertos de entrada chega aqui numa próxima atualização."
-  },
-  purchaseRates: {
-    title: "Regras de entrada em construção",
-    description: "A consulta das regras de entrada chega aqui numa próxima atualização."
   },
   finance: {
     title: "Visão financeira em construção",
@@ -51,6 +34,10 @@ const PLACEHOLDER_PAGES: Record<Exclude<PageId, "charges" | "confirmations">, { 
     description: "Os relatórios do sistema chegam aqui numa próxima atualização."
   }
 };
+
+function isPlaceholderPage(page: PageId): page is PlaceholderPageId {
+  return page === "dashboard" || page === "invoices" || page === "finance" || page === "reports";
+}
 
 function mapOrganization(row: Record<string, unknown>): OrganizationLite {
   return {
@@ -158,9 +145,27 @@ export function App(): JSX.Element {
       <div className="content-section">
         {page === "charges" ? <ChargesTab /> : null}
         {page === "confirmations" ? <ConfirmationsTab /> : null}
-        {page !== "charges" && page !== "confirmations" ? (
-          <EmptyState title={PLACEHOLDER_PAGES[page].title} description={PLACEHOLDER_PAGES[page].description} />
+        {page === "partners" ? <PartnersTab /> : null}
+        {page === "products" ? <ProductsTab /> : null}
+        {page === "rates" ? (
+          <RateRulesTab
+            table="service_rate_rules"
+            eyebrow="Comercial"
+            title="Regras por saca"
+            description="Regras de cobrança de serviço por saca, cadastradas no PC principal."
+          />
         ) : null}
+        {page === "purchaseRates" ? (
+          <RateRulesTab
+            table="purchase_rate_rules"
+            eyebrow="Pagamentos"
+            title="Regras de entrada"
+            description="Regras de valor pago por saca na entrada, cadastradas no PC principal."
+          />
+        ) : null}
+        {page === "ledger" ? <LedgerTab /> : null}
+        {page === "purchaseSettlements" ? <PurchaseSettlementsTab /> : null}
+        {isPlaceholderPage(page) ? <EmptyState title={PLACEHOLDER_PAGES[page].title} description={PLACEHOLDER_PAGES[page].description} /> : null}
       </div>
     </AppShell>
   );
