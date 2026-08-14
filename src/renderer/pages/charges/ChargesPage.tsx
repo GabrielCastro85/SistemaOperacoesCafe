@@ -271,6 +271,20 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     return "Nao identificado";
   }
 
+  // Numa nota triangulada de verdade (secondaryResponsiblePartnerId
+  // preenchido), tanto a ponta de compra quanto a de venda pertencem mesmo a
+  // empresa ativa pra fins de cobranca -- isso e' proposital, e' assim que a
+  // gente intermedia o negocio. Mas o papel fisico da NF nunca passou pelo
+  // nosso CNPJ, entao aqui indica quem emitiu de verdade (o fornecedor do
+  // lado da compra), do mesmo jeito que a lista de Notas e operacoes ja
+  // mostra, sem mudar a quem a cobranca pertence.
+  function triangulatedIssuerLabel(operation: Operation): string | null {
+    const document = operationDocument(operation);
+    if (!document?.secondaryResponsiblePartnerId || !document.partnerLegalEntityId) return null;
+    const entity = partnerLegalEntities.find((item) => item.id === document.partnerLegalEntityId);
+    return entity ? (entity.legalName || entity.tradeName) : null;
+  }
+
   function chargeDetailCompanyLabel(operation: ClientChargeOperation): string {
     return operation.destinationNameSnapshot?.trim()
       || operation.issuerNameSnapshot?.trim()
@@ -759,9 +773,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 <div className="table-head charge-operation-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status</span><span>Acoes</span></div>
                 {eligible.map((op) => {
                   const companyLabel = legalEntityLabel(op.ownLegalEntityId);
+                  const issuerLabel = triangulatedIssuerLabel(op);
                   return (
                     <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel)}`}>
-                      <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
+                      <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
                       <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
@@ -785,9 +800,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div className="table-head charge-diagnostic-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status</span><span>Motivo</span></div>
                   {diagnosticOperations.map((op) => {
                     const companyLabel = legalEntityLabel(op.ownLegalEntityId);
+                    const issuerLabel = triangulatedIssuerLabel(op);
                     return (
                       <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel)}`}>
-                        <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
+                        <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
                         <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
                         <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
                         <span>
