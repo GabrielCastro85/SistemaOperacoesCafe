@@ -139,6 +139,21 @@ export interface ClientLedgerEntryRow {
 
 export type AccountPayableStatus = "DRAFT" | "SCHEDULED" | "OPEN" | "PARTIALLY_PAID" | "PAID" | "OVERDUE" | "CONTESTED" | "CANCELLED";
 
+export type FiscalDocumentStatus = "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED";
+export type FiscalDocumentDirection = "INBOUND" | "OUTBOUND" | "UNKNOWN";
+
+export interface FiscalDocumentRow {
+  id: string;
+  document_number: string;
+  series: string | null;
+  issue_date: string;
+  total_amount_cents: number;
+  status: FiscalDocumentStatus;
+  direction: FiscalDocumentDirection;
+  own_legal_entity: { trade_name: string } | null;
+  responsible_partner: { display_name: string } | null;
+}
+
 export interface AccountPayableRow {
   id: string;
   payee_name_snapshot: string;
