@@ -14,6 +14,7 @@ import { DashboardTab } from "./DashboardTab";
 import { FinanceTab } from "./FinanceTab";
 import { ReportsTab } from "./ReportsTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { assetUrl } from "./assetUrl";
 import type { PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 
@@ -176,8 +177,8 @@ function LoginScreen(): JSX.Element {
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={(event) => void handleSubmit(event)}>
         <div className="auth-brand-row">
-          <img src="/assets/branding/villa/logo.svg" alt="Villa Coffee" />
-          <img src="/assets/branding/grao/logo.svg" alt="Grão e Grão" />
+          <img src={assetUrl("assets/branding/villa/logo.svg")} alt="Villa Coffee" />
+          <img src={assetUrl("assets/branding/grao/logo.svg")} alt="Grão e Grão" />
         </div>
         <span className="auth-eyebrow">Sistema de Operações de Café</span>
         <h1>Consulta</h1>
