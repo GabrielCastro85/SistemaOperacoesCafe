@@ -109,10 +109,12 @@ export function App(): JSX.Element {
       });
     void supabase
       .from("legal_entities")
-      .select("id, organization_id, trade_name, cnpj, state")
+      .select("id, organization_id, trade_name, cnpj, state, is_active, document_prefix")
+      .eq("is_active", true)
       .order("trade_name")
       .then(({ data }) => {
-        setLegalEntities((data ?? []).map(mapLegalEntity));
+        const ownEntities = (data ?? []).filter((row) => row.document_prefix !== "TERC-XML");
+        setLegalEntities(ownEntities.map(mapLegalEntity));
       });
   }, [session]);
 
