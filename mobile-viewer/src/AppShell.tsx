@@ -90,7 +90,6 @@ export function AppShell({
 }: AppShellProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(false);
   const activeOrganization = organizations.find((org) => org.id === activeOrganizationId) ?? null;
   const activeLegalEntity = legalEntities.find((entity) => entity.id === activeLegalEntityId) ?? null;
   const theme = useMemo(() => buildUiTheme("multiempresa", activeOrganization), [activeOrganization]);
@@ -158,15 +157,7 @@ export function AppShell({
       <section className="main-area app-main">
         <header className="topbar app-topbar">
           <div className="app-topbar__brandline">
-            <button
-              className="mobile-nav-toggle"
-              type="button"
-              aria-label="Abrir menu"
-              onClick={() => {
-                setContextOpen(false);
-                setMobileNavOpen(true);
-              }}
-            >
+            <button className="mobile-nav-toggle" type="button" aria-label="Abrir menu" onClick={() => setMobileNavOpen(true)}>
               ☰
             </button>
             {logoSrc ? <img src={logoSrc} alt="" /> : <div className="brand-mark">{theme.organizationName.slice(0, 2).toUpperCase()}</div>}
@@ -176,56 +167,43 @@ export function AppShell({
               <small>Início / {pageTitleById[activePage]}</small>
             </div>
           </div>
-          <div className="topbar-actions">
-            <button type="button" onClick={onLogout}>
-              Sair
-            </button>
-          </div>
-          <button
-            type="button"
-            className="app-topbar__context-toggle"
-            aria-expanded={contextOpen}
-            onClick={() => setContextOpen((value) => !value)}
-          >
-            <span className="app-topbar__context-toggle-label">
-              {activeLegalEntity?.tradeName ?? activeOrganization?.displayName ?? "Empresa"}
-            </span>
-            <span aria-hidden="true">{contextOpen ? "▲" : "▾"}</span>
-          </button>
-          <div className={`app-topbar__context${contextOpen ? " is-open" : ""}`}>
+          <label className="context-select">
+            <span>Grupo</span>
+            <select value={activeOrganizationId} onChange={(event) => onOrganizationChange(event.target.value)}>
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          {legalEntities.length > 1 ? (
             <label className="context-select">
-              <span>Grupo</span>
-              <select value={activeOrganizationId} onChange={(event) => onOrganizationChange(event.target.value)}>
-                {organizations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.displayName}
+              <span>Empresa/CNPJ</span>
+              <select value={activeLegalEntityId} onChange={(event) => onLegalEntityChange(event.target.value)}>
+                {legalEntities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.tradeName}
                   </option>
                 ))}
               </select>
             </label>
-            {legalEntities.length > 1 ? (
-              <label className="context-select">
-                <span>Empresa/CNPJ</span>
-                <select value={activeLegalEntityId} onChange={(event) => onLegalEntityChange(event.target.value)}>
-                  {legalEntities.map((entity) => (
-                    <option key={entity.id} value={entity.id}>
-                      {entity.tradeName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <div className={`context-pill context-pill--active-company ${stateFlagClass(activeLegalEntity?.state)}`}>
-              {activeStateFlagSrc ? <img className="context-pill__state-flag" src={activeStateFlagSrc} alt="" aria-hidden="true" /> : null}
-              <span>Vendo</span>
-              <strong>{activeLegalEntity?.tradeName ?? activeOrganization?.displayName ?? "Empresa não selecionada"}</strong>
-              <small>{activeLegalEntity ? formatCnpj(activeLegalEntity.cnpj) : "CNPJ pendente"}</small>
-            </div>
-            <div className="context-pill context-pill--user">
-              <span>Usuário</span>
-              <strong>{userDisplayName}</strong>
-              <small>Somente visualização</small>
-            </div>
+          ) : null}
+          <div className={`context-pill context-pill--active-company ${stateFlagClass(activeLegalEntity?.state)}`}>
+            {activeStateFlagSrc ? <img className="context-pill__state-flag" src={activeStateFlagSrc} alt="" aria-hidden="true" /> : null}
+            <span>Vendo</span>
+            <strong>{activeLegalEntity?.tradeName ?? activeOrganization?.displayName ?? "Empresa não selecionada"}</strong>
+            <small>{activeLegalEntity ? formatCnpj(activeLegalEntity.cnpj) : "CNPJ pendente"}</small>
+          </div>
+          <div className="context-pill context-pill--user">
+            <span>Usuário</span>
+            <strong>{userDisplayName}</strong>
+            <small>Somente visualização</small>
+          </div>
+          <div className="topbar-actions">
+            <button type="button" onClick={onLogout}>
+              Sair
+            </button>
           </div>
         </header>
         {children}
