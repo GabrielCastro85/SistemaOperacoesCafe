@@ -37,6 +37,7 @@
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
     "rebuild:node": "npm rebuild better-sqlite3",
     "reset:admin": "npm run rebuild:node && node scripts/reset-admin-password.mjs",
+    "repair:triangulated-notes": "npm run rebuild:node && tsx scripts/repair-triangulated-notes.ts",
     "pretest": "npm run rebuild:node",
     "pretest:run": "npm run rebuild:node"
   },
@@ -75,6 +76,7 @@
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "pg": "^8.22.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.64.0",
     "vite": "^6.0.7",

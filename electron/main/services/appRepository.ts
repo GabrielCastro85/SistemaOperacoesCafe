@@ -4900,6 +4900,68 @@ export class AppRepository {
     return { partnerId: secondaryCandidate.businessPartnerId, operationType: secondaryOperationType };
   }
 
+  /**
+   * Conserto retroativo pra nota triangulada importada ANTES do fix de
+   * reconhecimento de parceiro entre empresas (findSupplierPartnerIdByCnpj /
+   * findLinkedPartnerRolesByCnpj deixaram de filtrar por organization_id).
+   * O fix so' vale pra importacoes novas -- nota que ja ficou salva sem a
+   * segunda perna continua faltando ate alguem completar manualmente ou
+   * rodar isso.
+   *
+   * Escopo deliberadamente limitado: so' repara nota cujo own_legal_entity_id
+   * JA e' uma empresa propria de verdade (Villa/Grao & Grao), so' faltando a
+   * segunda perna (secondary_responsible_partner_id nulo). Nao mexe em nota
+   * cujo own_legal_entity_id ficou apontando pra empresa terceirizada
+   * fabricada -- reatribuir isso e' uma correcao diferente e mais arriscada
+   * (pode ja ter cobranca/acerto feito em cima da operacao errada), fora do
+   * escopo desse reparo.
+   */
+  repairMissingTriangulatedSecondaryLegs(options: { apply: boolean }): {
+    scanned: number;
+    repaired: Array<{ documentId: string; documentNumber: string; organizationId: string; ownLegalEntityName: string; secondaryPartnerName: string; secondaryOperationType: "PURCHASE" | "SALE" }>;
+  } {
+    const ownEntityById = new Map(this.listLegalEntities({ status: "all" }).map((entity) => [entity.id, entity]));
+    const rows = this.db.prepare(`
+      SELECT id FROM fiscal_documents
+      WHERE source = 'XML' AND fiscal_snapshot_json IS NOT NULL AND secondary_responsible_partner_id IS NULL AND status != 'CANCELED'
+    `).all() as Array<{ id: string }>;
+    const repaired: Array<{ documentId: string; documentNumber: string; organizationId: string; ownLegalEntityName: string; secondaryPartnerName: string; secondaryOperationType: "PURCHASE" | "SALE" }> = [];
+    for (const row of rows) {
+      let detail: FiscalDocumentDetail;
+      try {
+        detail = this.getFiscalDocument(row.id);
+      } catch {
+        continue;
+      }
+      const ownEntity = ownEntityById.get(detail.document.ownLegalEntityId);
+      if (!ownEntity || this.isThirdPartyLegalEntity(ownEntity)) continue;
+      if (!detail.document.fiscalSnapshotJson) continue;
+      const primaryOperation = detail.operations.find((operation) => operation.status !== "CANCELED");
+      if (!primaryOperation) continue;
+      let extracted: Record<string, unknown>;
+      try {
+        extracted = JSON.parse(detail.document.fiscalSnapshotJson) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const secondary = this.resolveTriangulatedSecondaryPartner(extracted, detail.document.responsiblePartnerId, primaryOperation.operationType);
+      if (!secondary) continue;
+      const secondaryPartner = this.getBusinessPartner(secondary.partnerId);
+      repaired.push({
+        documentId: detail.document.id,
+        documentNumber: detail.document.documentNumber,
+        organizationId: detail.document.organizationId,
+        ownLegalEntityName: ownEntity.tradeName || ownEntity.legalName,
+        secondaryPartnerName: secondaryPartner.displayName,
+        secondaryOperationType: secondary.operationType
+      });
+      if (options.apply) {
+        this.completeFiscalDocumentTriangulation(detail.document.id, { secondaryResponsiblePartnerId: secondary.partnerId });
+      }
+    }
+    return { scanned: rows.length, repaired };
+  }
+
   private isThirdPartyLegalEntity(entity: Pick<LegalEntity, "documentPrefix" | "tradeName" | "legalName">): boolean {
     return entity.documentPrefix === "TERC-XML" || this.normalizeName(`${entity.tradeName} ${entity.legalName}`).includes("TERCEIRIZAD");
   }
