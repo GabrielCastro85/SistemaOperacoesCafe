@@ -33,6 +33,18 @@
   margin-top: var(--space-5);
 }
 
+.viewer-year-row {
+  margin-bottom: var(--space-4);
+}
+
+.viewer-amount-positive {
+  color: #2f7d4f;
+}
+
+.viewer-amount-negative {
+  color: #b3261e;
+}
+
 .viewer-pending-total {
   margin: 0 0 var(--space-3);
   font-size: 14px;

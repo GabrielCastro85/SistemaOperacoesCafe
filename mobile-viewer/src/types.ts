@@ -177,4 +177,17 @@ export interface AccountPayableRow {
   open_amount_cents: number | null;
   status: AccountPayableStatus;
   supplier: { display_name: string } | null;
+  own_legal_entity?: { trade_name: string } | null;
+}
+
+export interface MonthlyOperationSummary {
+  month: number;
+  operationCount: number;
+  sacks: number;
+  amountCents: number;
+}
+
+export interface MonthlyConfirmationSummary {
+  month: number;
+  confirmationCount: number;
 }

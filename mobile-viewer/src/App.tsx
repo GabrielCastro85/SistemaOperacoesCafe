@@ -11,27 +11,11 @@ import { LedgerTab } from "./LedgerTab";
 import { PurchaseSettlementsTab } from "./PurchaseSettlementsTab";
 import { InvoicesTab } from "./InvoicesTab";
 import { DashboardTab } from "./DashboardTab";
-import { EmptyState } from "./renderer/design-system/components/EmptyState";
+import { FinanceTab } from "./FinanceTab";
+import { ReportsTab } from "./ReportsTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import type { PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
-
-type PlaceholderPageId = "finance" | "reports";
-
-const PLACEHOLDER_PAGES: Record<PlaceholderPageId, { title: string; description: string }> = {
-  finance: {
-    title: "Visão financeira em construção",
-    description: "O resumo financeiro geral chega aqui numa próxima atualização."
-  },
-  reports: {
-    title: "Relatórios em construção",
-    description: "Os relatórios do sistema chegam aqui numa próxima atualização."
-  }
-};
-
-function isPlaceholderPage(page: PageId): page is PlaceholderPageId {
-  return page === "finance" || page === "reports";
-}
 
 function mapOrganization(row: Record<string, unknown>): OrganizationLite {
   return {
@@ -161,7 +145,8 @@ export function App(): JSX.Element {
         {page === "ledger" ? <LedgerTab /> : null}
         {page === "purchaseSettlements" ? <PurchaseSettlementsTab /> : null}
         {page === "invoices" ? <InvoicesTab /> : null}
-        {isPlaceholderPage(page) ? <EmptyState title={PLACEHOLDER_PAGES[page].title} description={PLACEHOLDER_PAGES[page].description} /> : null}
+        {page === "finance" ? <FinanceTab /> : null}
+        {page === "reports" ? <ReportsTab /> : null}
       </div>
     </AppShell>
   );
