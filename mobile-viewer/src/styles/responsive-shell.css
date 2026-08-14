@@ -6,6 +6,18 @@
   display: none;
 }
 
+/* display:contents por padrao (desktop) faz o wrapper "sumir" da caixa,
+   entao os filhos (grupo, empresa/CNPJ, "vendo", usuario) continuam
+   participando do grid da .app-topbar exatamente como se o wrapper nao
+   existisse -- zero mudanca visual fora do celular. */
+.app-topbar__context {
+  display: contents;
+}
+
+.app-topbar__context-toggle {
+  display: none;
+}
+
 @media (max-width: 880px) {
   /* O CSS original deixa a rolagem so' dentro de .content-section, com
      body{overflow:hidden} e .app-shell fixo em 100vh -- funciona porque no
@@ -102,6 +114,11 @@
     z-index: 55;
   }
 
+  /* O header original (pensado pro Electron) empilha grupo, empresa/CNPJ,
+     o card "vendo" e o usuario direto na topbar -- no celular isso tomava
+     quase a tela toda. Aqui so' fica sempre visivel uma linha compacta
+     (logo + titulo + Sair); o resto vira um resumo que abre/fecha ao
+     tocar (.app-topbar__context-toggle / .app-topbar__context.is-open). */
   .app-topbar {
     display: flex;
     flex-wrap: wrap;
@@ -112,7 +129,9 @@
   }
 
   .app-topbar__brandline {
-    flex: 1 1 100%;
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     gap: var(--space-2);
   }
 
@@ -135,7 +154,52 @@
     font-size: 16px;
   }
 
+  .topbar-actions {
+    order: 2;
+    flex: none;
+    margin-left: auto;
+  }
+
+  .topbar-actions button {
+    padding: 6px 14px;
+    min-height: 30px;
+    font-size: 12.5px;
+  }
+
+  .app-topbar__context-toggle {
+    order: 3;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    flex: 1 1 100%;
+    width: 100%;
+    padding: 7px 12px;
+    border: 1px solid color-mix(in srgb, var(--brand-secondary) 36%, transparent);
+    border-radius: var(--radius-md);
+    background: rgb(0 0 0 / 22%);
+    color: #fff7ea;
+    font-size: 12.5px;
+    font-weight: 700;
+  }
+
+  .app-topbar__context-toggle-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-topbar__context {
+    display: none;
+  }
+
+  .app-topbar__context.is-open {
+    display: contents;
+  }
+
   .app-topbar .context-select {
+    order: 4;
     flex: 1 1 0;
     min-width: 0;
   }
@@ -146,6 +210,7 @@
   }
 
   .context-pill--active-company {
+    order: 4;
     flex: 1 1 100%;
     min-height: 0;
     padding: 6px 10px;
@@ -156,6 +221,7 @@
   }
 
   .app-topbar .context-pill--user {
+    order: 4;
     flex: 1 1 auto;
     min-width: 0;
   }
@@ -181,17 +247,6 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--color-text-muted);
-  }
-
-  .topbar-actions {
-    flex: none;
-    margin-left: auto;
-  }
-
-  .topbar-actions button {
-    padding: 6px 14px;
-    min-height: 30px;
-    font-size: 12.5px;
   }
 
   .app-main {
