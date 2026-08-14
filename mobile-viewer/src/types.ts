@@ -21,7 +21,7 @@ export interface UnbilledOperationRow {
   id: string;
   operation_date: string;
   service_amount_cents: number;
-  quantity_sacks: string;
+  quantity_sacks_decimal: string;
   responsible_partner: { display_name: string } | null;
   own_legal_entity: { trade_name: string } | null;
 }

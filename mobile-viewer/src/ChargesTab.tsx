@@ -26,7 +26,7 @@ function groupUnbilledOperations(rows: UnbilledOperationRow[]): PendingBillingGr
     const legalEntityName = row.own_legal_entity?.trade_name ?? "";
     const key = `${clientName}__${legalEntityName}`;
     const existing = groups.get(key);
-    const sacks = Number(row.quantity_sacks) || 0;
+    const sacks = Number(row.quantity_sacks_decimal) || 0;
     if (existing) {
       existing.operationCount += 1;
       existing.amountCents += row.service_amount_cents ?? 0;
@@ -69,11 +69,12 @@ export function ChargesTab(): JSX.Element {
     const { data, error: loadError } = await supabase
       .from("operations")
       .select(
-        `id, operation_date, service_amount_cents, quantity_sacks,
+        `id, operation_date, service_amount_cents, quantity_sacks_decimal,
          responsible_partner:business_partners(display_name),
          own_legal_entity:legal_entities(trade_name)`
       )
       .eq("billing_status", "UNBILLED")
+      .neq("status", "CANCELED")
       .order("operation_date")
       .limit(UNBILLED_LIMIT);
     if (loadError) {
