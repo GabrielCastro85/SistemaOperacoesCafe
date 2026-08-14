@@ -12,8 +12,12 @@ import {
   ReportIcon,
   WalletIcon
 } from "./renderer/design-system/components/Icons";
+import { formatCnpj } from "./shared/utils/format";
 import { navigationGroups, pageTitleById, type NavigationItem, type PageId } from "./navigation";
-import type { OrganizationLite } from "./types";
+import type { LegalEntityLite, OrganizationLite } from "./types";
+import flagEspiritoSanto from "./renderer/assets/flags/bandeira-espirito-santo.svg";
+import flagMinasGerais from "./renderer/assets/flags/bandeira-minas-gerais.svg";
+import flagSaoPaulo from "./renderer/assets/flags/bandeira-sao-paulo.svg";
 
 function renderNavigationIcon(item: NavigationItem): JSX.Element {
   switch (item.id) {
@@ -44,13 +48,28 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
   }
 }
 
+function stateFlagClass(state: string | null | undefined): string {
+  const normalized = (state ?? "").trim().toUpperCase();
+  if (["MG", "ES", "SP"].includes(normalized)) return `context-pill--state-${normalized.toLowerCase()}`;
+  return "context-pill--state-generic";
+}
+
+function stateFlagSrc(state: string | null | undefined): string | null {
+  const normalized = (state ?? "").trim().toUpperCase();
+  const flags: Record<string, string> = { ES: flagEspiritoSanto, MG: flagMinasGerais, SP: flagSaoPaulo };
+  return flags[normalized] ?? null;
+}
+
 export interface AppShellProps {
   organizations: OrganizationLite[];
   activeOrganizationId: string;
   onOrganizationChange: (organizationId: string) => void;
+  legalEntities: LegalEntityLite[];
+  activeLegalEntityId: string;
+  onLegalEntityChange: (legalEntityId: string) => void;
   activePage: PageId;
   onNavigate: (page: PageId) => void;
-  userEmail: string;
+  userDisplayName: string;
   onLogout: () => void;
   children: React.ReactNode;
 }
@@ -59,15 +78,19 @@ export function AppShell({
   organizations,
   activeOrganizationId,
   onOrganizationChange,
+  legalEntities,
+  activeLegalEntityId,
+  onLegalEntityChange,
   activePage,
   onNavigate,
-  userEmail,
+  userDisplayName,
   onLogout,
   children
 }: AppShellProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const activeOrganization = organizations.find((org) => org.id === activeOrganizationId) ?? null;
+  const activeLegalEntity = legalEntities.find((entity) => entity.id === activeLegalEntityId) ?? null;
   const theme = useMemo(() => buildUiTheme("multiempresa", activeOrganization), [activeOrganization]);
   const logoSrc =
     activeOrganization?.slug === "villa" || activeOrganization?.displayName.toLowerCase().includes("villa")
@@ -75,6 +98,7 @@ export function AppShell({
       : activeOrganization?.slug === "grao" || activeOrganization?.displayName.toLowerCase().includes("gr")
         ? "/assets/branding/grao/logo.svg"
         : null;
+  const activeStateFlagSrc = stateFlagSrc(activeLegalEntity?.state);
 
   function navigate(page: PageId): void {
     onNavigate(page);
@@ -152,9 +176,27 @@ export function AppShell({
               ))}
             </select>
           </label>
+          {legalEntities.length > 1 ? (
+            <label className="context-select">
+              <span>Empresa/CNPJ</span>
+              <select value={activeLegalEntityId} onChange={(event) => onLegalEntityChange(event.target.value)}>
+                {legalEntities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.tradeName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <div className={`context-pill context-pill--active-company ${stateFlagClass(activeLegalEntity?.state)}`}>
+            {activeStateFlagSrc ? <img className="context-pill__state-flag" src={activeStateFlagSrc} alt="" aria-hidden="true" /> : null}
+            <span>Vendo</span>
+            <strong>{activeLegalEntity?.tradeName ?? activeOrganization?.displayName ?? "Empresa não selecionada"}</strong>
+            <small>{activeLegalEntity ? formatCnpj(activeLegalEntity.cnpj) : "CNPJ pendente"}</small>
+          </div>
           <div className="context-pill context-pill--user">
             <span>Usuário</span>
-            <strong>{userEmail}</strong>
+            <strong>{userDisplayName}</strong>
             <small>Somente visualização</small>
           </div>
           <div className="topbar-actions">

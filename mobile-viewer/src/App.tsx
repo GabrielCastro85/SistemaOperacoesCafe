@@ -7,7 +7,7 @@ import { ConfirmationsTab } from "./ConfirmationsTab";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import type { PageId } from "./navigation";
-import type { OrganizationLite } from "./types";
+import type { LegalEntityLite, OrganizationLite } from "./types";
 
 const PLACEHOLDER_PAGES: Record<Exclude<PageId, "charges" | "confirmations">, { title: string; description: string }> = {
   dashboard: {
@@ -65,11 +65,29 @@ function mapOrganization(row: Record<string, unknown>): OrganizationLite {
   };
 }
 
+function mapLegalEntity(row: Record<string, unknown>): LegalEntityLite {
+  return {
+    id: row.id as string,
+    organizationId: row.organization_id as string,
+    tradeName: (row.trade_name as string) ?? "",
+    cnpj: (row.cnpj as string | null) ?? null,
+    state: (row.state as string | null) ?? null
+  };
+}
+
+function resolveDisplayName(session: Session): string {
+  const metadata = session.user.user_metadata as Record<string, unknown> | undefined;
+  const fullName = (metadata?.full_name as string | undefined) ?? (metadata?.name as string | undefined);
+  return fullName && fullName.trim() ? fullName : (session.user.email ?? "");
+}
+
 export function App(): JSX.Element {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [page, setPage] = useState<PageId>("charges");
   const [organizations, setOrganizations] = useState<OrganizationLite[] | null>(null);
   const [activeOrganizationId, setActiveOrganizationId] = useState<string>("");
+  const [legalEntities, setLegalEntities] = useState<LegalEntityLite[]>([]);
+  const [activeLegalEntityId, setActiveLegalEntityId] = useState<string>("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -89,7 +107,20 @@ export function App(): JSX.Element {
         setOrganizations(mapped);
         setActiveOrganizationId((current) => current || mapped[0]?.id || "");
       });
+    void supabase
+      .from("legal_entities")
+      .select("id, organization_id, trade_name, cnpj, state")
+      .order("trade_name")
+      .then(({ data }) => {
+        setLegalEntities((data ?? []).map(mapLegalEntity));
+      });
   }, [session]);
+
+  useEffect(() => {
+    const entitiesInOrg = legalEntities.filter((entity) => entity.organizationId === activeOrganizationId);
+    if (entitiesInOrg.length === 0) return;
+    setActiveLegalEntityId((current) => (entitiesInOrg.some((entity) => entity.id === current) ? current : entitiesInOrg[0].id));
+  }, [legalEntities, activeOrganizationId]);
 
   if (session === undefined) {
     return (
@@ -114,9 +145,12 @@ export function App(): JSX.Element {
       organizations={organizations}
       activeOrganizationId={activeOrganizationId}
       onOrganizationChange={setActiveOrganizationId}
+      legalEntities={legalEntities.filter((entity) => entity.organizationId === activeOrganizationId)}
+      activeLegalEntityId={activeLegalEntityId}
+      onLegalEntityChange={setActiveLegalEntityId}
       activePage={page}
       onNavigate={setPage}
-      userEmail={session.user.email ?? ""}
+      userDisplayName={resolveDisplayName(session)}
       onLogout={() => void supabase.auth.signOut()}
     >
       <div className="content-section">

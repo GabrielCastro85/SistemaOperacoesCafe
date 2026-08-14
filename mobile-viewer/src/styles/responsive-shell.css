@@ -120,7 +120,26 @@
     font-size: 16px;
   }
 
-  .app-topbar .context-select,
+  .app-topbar .context-select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .app-topbar .context-select select {
+    min-height: 34px;
+    font-size: 12.5px;
+  }
+
+  .context-pill--active-company {
+    flex: 1 1 100%;
+    min-height: 0;
+    padding: 6px 10px;
+  }
+
+  .context-pill--active-company strong {
+    font-size: 13px;
+  }
+
   .app-topbar .context-pill--user {
     flex: 1 1 auto;
     min-width: 0;
@@ -169,8 +188,8 @@
   }
 }
 
-@media (max-width: 560px) {
-  .app-topbar .context-select {
-    display: none;
+@media (max-width: 420px) {
+  .app-topbar .context-select:first-of-type {
+    flex: 1 1 100%;
   }
 }
