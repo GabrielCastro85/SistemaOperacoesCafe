@@ -22,8 +22,10 @@ export interface UnbilledOperationRow {
   operation_date: string;
   service_amount_cents: number;
   quantity_sacks_decimal: string;
-  responsible_partner: { display_name: string } | null;
-  own_legal_entity: { trade_name: string } | null;
+  applied_rate_value_cents: number;
+  fiscal_document: { document_number: string; series: string | null } | null;
+  responsible_partner: { display_name: string; state: string | null } | null;
+  own_legal_entity: { trade_name: string; state: string | null } | null;
 }
 
 export interface PendingBillingGroup {
@@ -35,6 +37,7 @@ export interface PendingBillingGroup {
   sacks: number;
   periodStart: string;
   periodEnd: string;
+  operations: UnbilledOperationRow[];
 }
 
 export type ClientChargeStatus =
