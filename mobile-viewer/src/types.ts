@@ -9,6 +9,14 @@ export interface OrganizationLite {
   accentColor: string;
 }
 
+export interface LegalEntityLite {
+  id: string;
+  organizationId: string;
+  tradeName: string;
+  cnpj: string | null;
+  state: string | null;
+}
+
 export type ClientChargeStatus =
   | "DRAFT"
   | "PENDING_REVIEW"
