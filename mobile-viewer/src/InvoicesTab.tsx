@@ -9,6 +9,7 @@ import { StatusBadge } from "./renderer/design-system/components/Badge";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
+import { companyColorClass } from "./companyColor";
 import type { FiscalDocumentDirection, FiscalDocumentRow } from "./types";
 
 const PAGE_SIZE = 200;
@@ -114,6 +115,7 @@ export function InvoicesTab(): JSX.Element {
                   key={document.id}
                   title={document.document_number ? `NF ${document.document_number}${document.series ? `/${document.series}` : ""}` : "Sem número"}
                   actions={<StatusBadge status={document.status} />}
+                  className={companyColorClass(document.own_legal_entity?.trade_name)}
                 >
                   <p className="viewer-card-line">{document.responsible_partner?.display_name ?? "Parceiro não identificado"}</p>
                   <p className="viewer-card-line">

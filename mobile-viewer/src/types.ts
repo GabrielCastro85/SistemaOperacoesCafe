@@ -62,6 +62,7 @@ export interface ClientCharge {
   paid_amount_cents: number;
   open_amount_cents: number;
   client: { display_name: string } | null;
+  own_legal_entity: { trade_name: string } | null;
   documents: Array<{
     id: string;
     version: number;

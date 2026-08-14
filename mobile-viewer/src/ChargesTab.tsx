@@ -9,6 +9,7 @@ import { StatusBadge } from "./renderer/design-system/components/Badge";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
+import { companyColorClass } from "./companyColor";
 import type { ClientCharge, ClientChargeStatus, PendingBillingGroup, UnbilledOperationRow } from "./types";
 
 const OPEN_STATUSES: ClientChargeStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
@@ -122,6 +123,7 @@ export function ChargesTab(): JSX.Element {
         `id, charge_number, reference_code, period_start, period_end, due_date, status,
          final_amount_cents, paid_amount_cents, open_amount_cents,
          client:business_partners(display_name),
+         own_legal_entity:legal_entities(trade_name),
          documents:charge_document_versions(id, version, pdf_storage_object_path, excel_storage_object_path)`
       )
       .order("period_start", { ascending: false })
@@ -173,7 +175,7 @@ export function ChargesTab(): JSX.Element {
                 {filteredPendingGroups.map((group) => {
                   const expanded = expandedGroups.has(group.key);
                   return (
-                    <Card key={group.key} title={group.clientName}>
+                    <Card key={group.key} title={group.clientName} className={companyColorClass(group.legalEntityName)}>
                       <p className="viewer-card-line">{group.legalEntityName}</p>
                       <p className="viewer-card-line">
                         {formatDateBr(group.periodStart)} a {formatDateBr(group.periodEnd)} · {group.operationCount} nota(s) ·{" "}
@@ -193,7 +195,7 @@ export function ChargesTab(): JSX.Element {
                             .slice()
                             .sort((a, b) => a.operation_date.localeCompare(b.operation_date))
                             .map((operation) => (
-                              <li key={operation.id} className="viewer-nf-row">
+                              <li key={operation.id} className={`viewer-nf-row ${companyColorClass(operation.own_legal_entity?.trade_name)}`}>
                                 <div className="viewer-nf-row__main">
                                   <strong>
                                     {operation.fiscal_document
@@ -251,7 +253,13 @@ export function ChargesTab(): JSX.Element {
                 const latestDocument =
                   charge.documents.length > 0 ? charge.documents.reduce((a, b) => (a.version > b.version ? a : b)) : null;
                 return (
-                  <Card key={charge.id} title={charge.client?.display_name ?? "Cliente"} actions={<StatusBadge status={charge.status} />}>
+                  <Card
+                    key={charge.id}
+                    title={charge.client?.display_name ?? "Cliente"}
+                    actions={<StatusBadge status={charge.status} />}
+                    className={companyColorClass(charge.own_legal_entity?.trade_name)}
+                  >
+                    <p className="viewer-card-line">{charge.own_legal_entity?.trade_name ?? ""}</p>
                     <p className="viewer-card-line">
                       {charge.charge_number ? `Cobrança ${charge.charge_number}` : "Sem número"} · {formatDateBr(charge.period_start)} a{" "}
                       {formatDateBr(charge.period_end)}

@@ -1,8 +1,20 @@
 import type { ReactNode } from "react";
 
-export function Card({ title, eyebrow, children, actions }: { title?: string; eyebrow?: string; children: ReactNode; actions?: ReactNode }): JSX.Element {
+export function Card({
+  title,
+  eyebrow,
+  children,
+  actions,
+  className
+}: {
+  title?: string;
+  eyebrow?: string;
+  children: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+}): JSX.Element {
   return (
-    <section className="ui-card">
+    <section className={`ui-card${className ? ` ${className}` : ""}`}>
       {title || eyebrow || actions ? (
         <header className="ui-card__header">
           <div>

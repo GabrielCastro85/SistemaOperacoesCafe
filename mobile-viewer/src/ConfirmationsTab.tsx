@@ -9,6 +9,7 @@ import { StatusBadge } from "./renderer/design-system/components/Badge";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
+import { companyColorClass } from "./companyColor";
 import type { DealConfirmation, DealConfirmationStatus } from "./types";
 
 const OPEN_STATUSES: DealConfirmationStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "SENT_FOR_SIGNATURE"];
@@ -111,6 +112,7 @@ export function ConfirmationsTab(): JSX.Element {
                     key={confirmation.id}
                     title={confirmation.confirmation_number ?? confirmation.temporary_reference}
                     actions={<StatusBadge status={confirmation.status} />}
+                    className={companyColorClass(confirmation.own_legal_entity?.trade_name)}
                   >
                     <p className="viewer-card-line">
                       {confirmation.own_legal_entity?.trade_name ?? ""} · {formatDateBr(confirmation.confirmation_date)}
