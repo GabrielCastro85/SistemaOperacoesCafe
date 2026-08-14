@@ -4600,7 +4600,7 @@ export class AppRepository {
         const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
         const autoSecondary = explicitSecondaryPartnerId || !primaryOperation || existingDetail.document.secondaryResponsiblePartnerId
           ? null
-          : this.resolveTriangulatedSecondaryPartner(existingDetail.document.organizationId, extracted, existingDetail.document.responsiblePartnerId, primaryOperation.operationType);
+          : this.resolveTriangulatedSecondaryPartner(extracted, existingDetail.document.responsiblePartnerId, primaryOperation.operationType);
         const secondaryPartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
         if (secondaryPartnerId && !existingDetail.document.secondaryResponsiblePartnerId) {
           this.completeFiscalDocumentTriangulation(existing.id, { secondaryResponsiblePartnerId: secondaryPartnerId });
@@ -4633,7 +4633,7 @@ export class AppRepository {
     // Se o revisor manual ja indicou o parceiro secundario (resolution.secondaryPartnerId),
     // usa esse em vez de tentar detectar de novo.
     const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
-    const autoSecondary = explicitSecondaryPartnerId ? null : this.resolveTriangulatedSecondaryPartner(documentOrganizationId, extracted, responsiblePartnerId, operationType);
+    const autoSecondary = explicitSecondaryPartnerId ? null : this.resolveTriangulatedSecondaryPartner(extracted, responsiblePartnerId, operationType);
     const secondaryResponsiblePartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
     const secondaryOperationType: "PURCHASE" | "SALE" | null = secondaryResponsiblePartnerId ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null;
     const pending: string[] = [];
@@ -4788,7 +4788,7 @@ export class AppRepository {
         const ownRecipientMatch = allEntities.find((entity) => entity.cnpj === recipientDoc && !this.isThirdPartyLegalEntity(entity));
         if (ownIssuerMatch) return { ownLegalEntityId: ownIssuerMatch.id, direction: "OUTBOUND", operationType: "SALE" };
         if (ownRecipientMatch) return { ownLegalEntityId: ownRecipientMatch.id, direction: "INBOUND", operationType: "PURCHASE" };
-        if (this.findSupplierPartnerIdByCnpj(organizationId, issuerDoc)) {
+        if (this.findSupplierPartnerIdByCnpj(issuerDoc)) {
           return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
         }
         const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
@@ -4818,7 +4818,7 @@ export class AppRepository {
         errorMessage: `CNPJ proprio nao identificado. Cadastre o CNPJ proprio da empresa ou selecione a empresa/CNPJ correto. Emitente: ${issuerLabel || "-"}; Destinatario: ${recipientLabel || "-"}.`
       };
     }
-    if (this.findSupplierPartnerIdByCnpj(organizationId, issuerDoc)) {
+    if (this.findSupplierPartnerIdByCnpj(issuerDoc)) {
       return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
     }
     const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
@@ -4834,28 +4834,35 @@ export class AppRepository {
    * venda) em vez de reconhecer como uma compra nossa do Leo, que e' o que
    * realmente aconteceu comercialmente.
    */
-  private findSupplierPartnerIdByCnpj(organizationId: string, cnpj: string): string | null {
+  // Nao filtra por organization_id: parceiros sao cadastrados uma vez e
+  // usados nas duas empresas (Villa e Grao & Grao) -- e' assim que a propria
+  // tela de Cadastros ja lista parceiros (listBusinessPartners sem filtro de
+  // organizationId). Filtrar aqui por organizationId fazia essa busca falhar
+  // sempre que o parceiro foi criado com a OUTRA empresa ativa, mesmo
+  // aparecendo normalmente em Cadastros -- daí o CNPJ proprio escolhido na
+  // importacao (ex: Grao & Grao) era descartado e a nota virava "terceirizada".
+  private findSupplierPartnerIdByCnpj(cnpj: string): string | null {
     if (!cnpj || cnpj.length !== 14) return null;
     const row = this.db.prepare(`
       SELECT bp.id AS id
       FROM partner_legal_entities ple
       JOIN business_partners bp ON bp.id = ple.business_partner_id
       JOIN business_partner_roles bpr ON bpr.business_partner_id = bp.id AND bpr.role = 'SUPPLIER'
-      WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
       LIMIT 1
-    `).get(cnpj, organizationId) as { id: string } | undefined;
+    `).get(cnpj) as { id: string } | undefined;
     return row?.id ?? null;
   }
 
-  private findLinkedPartnerRolesByCnpj(organizationId: string, cnpj: string): { businessPartnerId: string; roles: string[] } | null {
+  private findLinkedPartnerRolesByCnpj(cnpj: string): { businessPartnerId: string; roles: string[] } | null {
     if (!cnpj || cnpj.length !== 14) return null;
     const row = this.db.prepare(`
       SELECT bp.id AS id
       FROM partner_legal_entities ple
       JOIN business_partners bp ON bp.id = ple.business_partner_id
-      WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
       LIMIT 1
-    `).get(cnpj, organizationId) as { id: string } | undefined;
+    `).get(cnpj) as { id: string } | undefined;
     if (!row) return null;
     const roles = (this.db.prepare("SELECT role FROM business_partner_roles WHERE business_partner_id = ?").all(row.id) as Array<{ role: string }>).map((item) => item.role);
     return { businessPartnerId: row.id, roles };
@@ -4872,7 +4879,6 @@ export class AppRepository {
    * venda com o corretor/cliente, ambas sobre a mesma remessa.
    */
   private resolveTriangulatedSecondaryPartner(
-    organizationId: string,
     extracted: Record<string, unknown>,
     primaryPartnerId: string,
     primaryOperationType: "PURCHASE" | "SALE"
@@ -4887,7 +4893,7 @@ export class AppRepository {
 
     const secondaryOperationType: "PURCHASE" | "SALE" = primaryOperationType === "PURCHASE" ? "SALE" : "PURCHASE";
     const secondaryRole = secondaryOperationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
-    const candidates = [this.findLinkedPartnerRolesByCnpj(organizationId, issuerDoc), this.findLinkedPartnerRolesByCnpj(organizationId, recipientDoc)]
+    const candidates = [this.findLinkedPartnerRolesByCnpj(issuerDoc), this.findLinkedPartnerRolesByCnpj(recipientDoc)]
       .filter((item): item is { businessPartnerId: string; roles: string[] } => item !== null);
     const secondaryCandidate = candidates.find((item) => item.businessPartnerId !== primaryPartnerId && item.roles.includes(secondaryRole));
     if (!secondaryCandidate) return null;
@@ -5009,12 +5015,14 @@ export class AppRepository {
     const counterpartyLegalName = this.stringOrNull(counterpartyParty?.legalName);
 
     if (counterpartyDoc && counterpartyDoc.length === 14) {
+      // Sem filtro de organization_id, mesmo motivo do findSupplierPartnerIdByCnpj:
+      // parceiros sao cadastrados uma vez e valem pras duas empresas.
       const row = this.db.prepare(`
         SELECT ple.business_partner_id AS id
         FROM partner_legal_entities ple
         JOIN business_partners bp ON bp.id = ple.business_partner_id
-        WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
-      `).get(counterpartyDoc, organizationId) as { id: string } | undefined;
+        WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
+      `).get(counterpartyDoc) as { id: string } | undefined;
       if (row) return row.id;
     }
     if (counterpartyTradeName) {
