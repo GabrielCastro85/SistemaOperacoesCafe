@@ -64,17 +64,17 @@ export function ChargesTab(): JSX.Element {
     setPendingRows((data ?? []) as unknown as UnbilledOperationRow[]);
   }
 
-  const pendingTotalCents = useMemo(() => {
-    if (!pendingRows) return 0;
-    return pendingRows.reduce((sum, row) => sum + (row.service_amount_cents ?? 0), 0);
-  }, [pendingRows]);
-
   const filteredPendingRows = useMemo(() => {
     if (!pendingRows) return [];
     const term = pendingSearch.trim().toLowerCase();
     if (!term) return pendingRows;
     return pendingRows.filter((row) => (row.responsible_partner?.display_name ?? "").toLowerCase().includes(term));
   }, [pendingRows, pendingSearch]);
+
+  const pendingTotalCents = useMemo(
+    () => filteredPendingRows.reduce((sum, row) => sum + (row.service_amount_cents ?? 0), 0),
+    [filteredPendingRows]
+  );
 
   async function load(offset: number): Promise<void> {
     setError(null);
@@ -124,10 +124,6 @@ export function ChargesTab(): JSX.Element {
         ) : null}
         {pendingRows && pendingRows.length > 0 ? (
           <>
-            <p className="viewer-pending-total">
-              Total a receber (ainda não cobrado): <strong>{formatCurrencyBr(pendingTotalCents)}</strong>
-              <span className="viewer-card-line viewer-card-line--muted"> · {pendingRows.length} nota(s)</span>
-            </p>
             <input
               type="search"
               className="ui-input"
@@ -135,6 +131,11 @@ export function ChargesTab(): JSX.Element {
               value={pendingSearch}
               onChange={(event) => setPendingSearch(event.target.value)}
             />
+            <p className="viewer-pending-total">
+              {pendingSearch.trim() ? "Total do cliente (ainda não cobrado)" : "Total a receber (ainda não cobrado)"}:{" "}
+              <strong>{formatCurrencyBr(pendingTotalCents)}</strong>
+              <span className="viewer-card-line viewer-card-line--muted"> · {filteredPendingRows.length} nota(s)</span>
+            </p>
             {filteredPendingRows.length === 0 ? (
               <p className="viewer-card-line viewer-card-line--muted">Nenhuma nota pendente encontrada para essa busca.</p>
             ) : (
