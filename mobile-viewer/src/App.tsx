@@ -9,22 +9,16 @@ import { ProductsTab } from "./ProductsTab";
 import { RateRulesTab } from "./RateRulesTab";
 import { LedgerTab } from "./LedgerTab";
 import { PurchaseSettlementsTab } from "./PurchaseSettlementsTab";
+import { InvoicesTab } from "./InvoicesTab";
+import { DashboardTab } from "./DashboardTab";
 import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import type { PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 
-type PlaceholderPageId = "dashboard" | "invoices" | "finance" | "reports";
+type PlaceholderPageId = "finance" | "reports";
 
 const PLACEHOLDER_PAGES: Record<PlaceholderPageId, { title: string; description: string }> = {
-  dashboard: {
-    title: "Dashboard em construção",
-    description: "Os indicadores gerais (recebimentos, sacas, confirmações do período) chegam aqui numa próxima atualização."
-  },
-  invoices: {
-    title: "Notas e operações em construção",
-    description: "A consulta das notas fiscais e operações lançadas no PC chega aqui numa próxima atualização."
-  },
   finance: {
     title: "Visão financeira em construção",
     description: "O resumo financeiro geral chega aqui numa próxima atualização."
@@ -36,7 +30,7 @@ const PLACEHOLDER_PAGES: Record<PlaceholderPageId, { title: string; description:
 };
 
 function isPlaceholderPage(page: PageId): page is PlaceholderPageId {
-  return page === "dashboard" || page === "invoices" || page === "finance" || page === "reports";
+  return page === "finance" || page === "reports";
 }
 
 function mapOrganization(row: Record<string, unknown>): OrganizationLite {
@@ -70,7 +64,7 @@ function resolveDisplayName(session: Session): string {
 
 export function App(): JSX.Element {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const [page, setPage] = useState<PageId>("charges");
+  const [page, setPage] = useState<PageId>("dashboard");
   const [organizations, setOrganizations] = useState<OrganizationLite[] | null>(null);
   const [activeOrganizationId, setActiveOrganizationId] = useState<string>("");
   const [legalEntities, setLegalEntities] = useState<LegalEntityLite[]>([]);
@@ -143,6 +137,7 @@ export function App(): JSX.Element {
       onLogout={() => void supabase.auth.signOut()}
     >
       <div className="content-section">
+        {page === "dashboard" ? <DashboardTab /> : null}
         {page === "charges" ? <ChargesTab /> : null}
         {page === "confirmations" ? <ConfirmationsTab /> : null}
         {page === "partners" ? <PartnersTab /> : null}
@@ -165,6 +160,7 @@ export function App(): JSX.Element {
         ) : null}
         {page === "ledger" ? <LedgerTab /> : null}
         {page === "purchaseSettlements" ? <PurchaseSettlementsTab /> : null}
+        {page === "invoices" ? <InvoicesTab /> : null}
         {isPlaceholderPage(page) ? <EmptyState title={PLACEHOLDER_PAGES[page].title} description={PLACEHOLDER_PAGES[page].description} /> : null}
       </div>
     </AppShell>
