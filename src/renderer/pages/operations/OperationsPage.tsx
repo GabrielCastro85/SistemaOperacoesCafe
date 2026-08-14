@@ -957,7 +957,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           // emissora real pra nao parecer que a nota e' do CNPJ ativo.
           const isThirdPartyRow = doc.ownLegalEntityId !== ownLegalEntityId;
           const docOwnEntity = isThirdPartyRow ? data.legalEntities.find((entity) => entity.id === doc.ownLegalEntityId) : null;
-          const docOwnEntityName = docOwnEntity ? (docOwnEntity.legalName || docOwnEntity.tradeName) : null;
+          // Nota triangulada de verdade (secondaryResponsiblePartnerId
+          // preenchido): a compra e a venda pertencem mesmo a nossa empresa
+          // ativa (e' assim que ela entra na cobranca certinho), mas o papel
+          // fisico da NF nunca passou pelo nosso CNPJ -- entao mesmo sem cair
+          // no caso "terceirizada" acima, ainda mostra quem emitiu de
+          // verdade (o fornecedor por tras da ponta de compra).
+          const triangulatedIssuer = !isThirdPartyRow && doc.secondaryResponsiblePartnerId
+            ? partnerLegalEntities.find((entity) => entity.id === doc.partnerLegalEntityId)
+            : null;
+          const docOwnEntityName = docOwnEntity
+            ? (docOwnEntity.legalName || docOwnEntity.tradeName)
+            : triangulatedIssuer
+              ? (triangulatedIssuer.legalName || triangulatedIssuer.tradeName)
+              : null;
           return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span>{documentClientName(doc)}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}
         {sortedDocuments.length === 0 ? (
