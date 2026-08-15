@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatCurrencyBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { Card } from "./renderer/design-system/components/Card";
@@ -36,13 +37,15 @@ function currentYear(): number {
 }
 
 export function ReportsTab(): JSX.Element {
+  const { legalEntityId } = useActiveContext();
   const [year, setYear] = useState(currentYear());
   const [rows, setRows] = useState<MonthRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!legalEntityId) return;
     void load(year);
-  }, [year]);
+  }, [year, legalEntityId]);
 
   async function load(targetYear: number): Promise<void> {
     setError(null);
@@ -53,6 +56,7 @@ export function ReportsTab(): JSX.Element {
       supabase
         .from("operations")
         .select("operation_date, quantity_sacks_decimal, service_amount_cents")
+        .eq("own_legal_entity_id", legalEntityId)
         .neq("status", "CANCELED")
         .gte("operation_date", yearStart)
         .lt("operation_date", yearEnd)
@@ -60,6 +64,7 @@ export function ReportsTab(): JSX.Element {
       supabase
         .from("deal_confirmations")
         .select("confirmation_date")
+        .eq("own_legal_entity_id", legalEntityId)
         .not("status", "in", "(CANCELLED,REPLACED)")
         .gte("confirmation_date", yearStart)
         .lt("confirmation_date", yearEnd)

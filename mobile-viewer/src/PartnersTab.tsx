@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
 import { Card } from "./renderer/design-system/components/Card";
@@ -28,20 +29,23 @@ type FilterMode = "ALL" | "CLIENT" | "SUPPLIER";
 const FILTER_LABELS: Record<FilterMode, string> = { ALL: "Todos", CLIENT: "Clientes", SUPPLIER: "Fornecedores" };
 
 export function PartnersTab(): JSX.Element {
+  const { organizationId } = useActiveContext();
   const [partners, setPartners] = useState<BusinessPartnerRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("ALL");
 
   useEffect(() => {
+    if (!organizationId) return;
     void load();
-  }, []);
+  }, [organizationId]);
 
   async function load(): Promise<void> {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("business_partners")
       .select("id, display_name, document_number, email, phone, city, state, is_active, roles:business_partner_roles(role)")
+      .eq("organization_id", organizationId)
       .eq("is_active", true)
       .order("display_name")
       .limit(PAGE_SIZE);

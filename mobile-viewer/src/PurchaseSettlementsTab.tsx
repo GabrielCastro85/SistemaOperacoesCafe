@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatCurrencyBr, formatDateBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -20,14 +21,16 @@ type FilterMode = "OPEN" | "PAID" | "ALL";
 const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", PAID: "Pagos", ALL: "Todos" };
 
 export function PurchaseSettlementsTab(): JSX.Element {
+  const { legalEntityId } = useActiveContext();
   const [payables, setPayables] = useState<AccountPayableRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("OPEN");
 
   useEffect(() => {
+    if (!legalEntityId) return;
     void load();
-  }, []);
+  }, [legalEntityId]);
 
   async function load(): Promise<void> {
     setError(null);
@@ -37,6 +40,7 @@ export function PurchaseSettlementsTab(): JSX.Element {
         `id, payee_name_snapshot, description, document_number, due_date, final_amount_cents, paid_amount_cents, open_amount_cents, status,
          supplier:business_partners(display_name)`
       )
+      .eq("own_legal_entity_id", legalEntityId)
       .order("due_date", { ascending: false })
       .limit(PAGE_SIZE);
     if (loadError) {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
 import { Card } from "./renderer/design-system/components/Card";
@@ -26,19 +27,22 @@ const UNIT_LABELS: Record<ProductUnit, string> = {
 };
 
 export function ProductsTab(): JSX.Element {
+  const { organizationId } = useActiveContext();
   const [products, setProducts] = useState<ProductRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
+    if (!organizationId) return;
     void load();
-  }, []);
+  }, [organizationId]);
 
   async function load(): Promise<void> {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("products")
       .select("id, name, code, category, default_unit, default_sack_weight_kg, is_active")
+      .eq("organization_id", organizationId)
       .eq("is_active", true)
       .order("name")
       .limit(PAGE_SIZE);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatCurrencyBr, formatDateBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -20,17 +21,22 @@ export interface RateRulesTabProps {
 }
 
 export function RateRulesTab({ table, eyebrow, title, description }: RateRulesTabProps): JSX.Element {
+  const { organizationId, legalEntityId } = useActiveContext();
   const [rules, setRules] = useState<RateRuleRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
+    if (!legalEntityId) return;
     setRules(null);
     void load();
-  }, [table]);
+  }, [table, organizationId, legalEntityId]);
 
   async function load(): Promise<void> {
     setError(null);
+    // own_legal_entity_id e' opcional nessas tabelas: regra sem empresa
+    // definida vale pra qualquer CNPJ da organizacao, entao entra tanto
+    // quando bate com a empresa ativa quanto quando fica em branco.
     const { data, error: loadError } = await supabase
       .from(table)
       .select(
@@ -38,6 +44,8 @@ export function RateRulesTab({ table, eyebrow, title, description }: RateRulesTa
          business_partner:business_partners(display_name),
          product:products(name)`
       )
+      .eq("organization_id", organizationId)
+      .or(`own_legal_entity_id.eq.${legalEntityId},own_legal_entity_id.is.null`)
       .eq("is_active", true)
       .order("effective_from", { ascending: false })
       .limit(PAGE_SIZE);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatCurrencyBr, formatDateBr, openStorageFile } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -28,6 +29,7 @@ function sameStateLabel(row: UnbilledOperationRow): string {
 }
 
 export function ChargesTab(): JSX.Element {
+  const { legalEntityId } = useActiveContext();
   const [charges, setCharges] = useState<ClientCharge[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -39,9 +41,10 @@ export function ChargesTab(): JSX.Element {
   const [pendingSearch, setPendingSearch] = useState("");
 
   useEffect(() => {
+    if (!legalEntityId) return;
     void load(0);
     void loadPendingBilling();
-  }, []);
+  }, [legalEntityId]);
 
   async function loadPendingBilling(): Promise<void> {
     setPendingError(null);
@@ -53,6 +56,7 @@ export function ChargesTab(): JSX.Element {
          responsible_partner:business_partners(display_name, state),
          own_legal_entity:legal_entities(trade_name, state)`
       )
+      .eq("own_legal_entity_id", legalEntityId)
       .eq("billing_status", "UNBILLED")
       .neq("status", "CANCELED")
       .order("operation_date")
@@ -89,6 +93,7 @@ export function ChargesTab(): JSX.Element {
          own_legal_entity:legal_entities(trade_name),
          documents:charge_document_versions(id, version, pdf_storage_object_path, excel_storage_object_path)`
       )
+      .eq("own_legal_entity_id", legalEntityId)
       .order("period_start", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
     setLoadingMore(false);
