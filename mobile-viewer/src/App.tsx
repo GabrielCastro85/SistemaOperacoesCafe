@@ -15,6 +15,7 @@ import { FinanceTab } from "./FinanceTab";
 import { ReportsTab } from "./ReportsTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { assetUrl } from "./assetUrl";
+import { ActiveContext } from "./activeContext";
 import type { PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 
@@ -122,32 +123,34 @@ export function App(): JSX.Element {
       onLogout={() => void supabase.auth.signOut()}
     >
       <div className="content-section">
-        {page === "dashboard" ? <DashboardTab /> : null}
-        {page === "charges" ? <ChargesTab /> : null}
-        {page === "confirmations" ? <ConfirmationsTab /> : null}
-        {page === "partners" ? <PartnersTab /> : null}
-        {page === "products" ? <ProductsTab /> : null}
-        {page === "rates" ? (
-          <RateRulesTab
-            table="service_rate_rules"
-            eyebrow="Comercial"
-            title="Regras por saca"
-            description="Regras de cobrança de serviço por saca, cadastradas no PC principal."
-          />
-        ) : null}
-        {page === "purchaseRates" ? (
-          <RateRulesTab
-            table="purchase_rate_rules"
-            eyebrow="Pagamentos"
-            title="Regras de entrada"
-            description="Regras de valor pago por saca na entrada, cadastradas no PC principal."
-          />
-        ) : null}
-        {page === "ledger" ? <LedgerTab /> : null}
-        {page === "purchaseSettlements" ? <PurchaseSettlementsTab /> : null}
-        {page === "invoices" ? <InvoicesTab /> : null}
-        {page === "finance" ? <FinanceTab /> : null}
-        {page === "reports" ? <ReportsTab /> : null}
+        <ActiveContext.Provider value={{ organizationId: activeOrganizationId, legalEntityId: activeLegalEntityId }}>
+          {page === "dashboard" ? <DashboardTab /> : null}
+          {page === "charges" ? <ChargesTab /> : null}
+          {page === "confirmations" ? <ConfirmationsTab /> : null}
+          {page === "partners" ? <PartnersTab /> : null}
+          {page === "products" ? <ProductsTab /> : null}
+          {page === "rates" ? (
+            <RateRulesTab
+              table="service_rate_rules"
+              eyebrow="Comercial"
+              title="Regras por saca"
+              description="Regras de cobrança de serviço por saca, cadastradas no PC principal."
+            />
+          ) : null}
+          {page === "purchaseRates" ? (
+            <RateRulesTab
+              table="purchase_rate_rules"
+              eyebrow="Pagamentos"
+              title="Regras de entrada"
+              description="Regras de valor pago por saca na entrada, cadastradas no PC principal."
+            />
+          ) : null}
+          {page === "ledger" ? <LedgerTab /> : null}
+          {page === "purchaseSettlements" ? <PurchaseSettlementsTab /> : null}
+          {page === "invoices" ? <InvoicesTab /> : null}
+          {page === "finance" ? <FinanceTab /> : null}
+          {page === "reports" ? <ReportsTab /> : null}
+        </ActiveContext.Provider>
       </div>
     </AppShell>
   );

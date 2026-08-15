@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatCurrencyBr, formatDateBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -23,6 +24,7 @@ const DIRECTION_LABELS: Record<FiscalDocumentDirection, string> = {
 type FilterMode = "ALL" | FiscalDocumentDirection;
 
 export function InvoicesTab(): JSX.Element {
+  const { legalEntityId } = useActiveContext();
   const [documents, setDocuments] = useState<FiscalDocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -31,8 +33,9 @@ export function InvoicesTab(): JSX.Element {
   const [filter, setFilter] = useState<FilterMode>("ALL");
 
   useEffect(() => {
+    if (!legalEntityId) return;
     void load(0);
-  }, []);
+  }, [legalEntityId]);
 
   async function load(offset: number): Promise<void> {
     setError(null);
@@ -45,6 +48,7 @@ export function InvoicesTab(): JSX.Element {
          own_legal_entity:legal_entities(trade_name),
          responsible_partner:business_partners(display_name)`
       )
+      .eq("own_legal_entity_id", legalEntityId)
       .neq("status", "CANCELED")
       .order("issue_date", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);

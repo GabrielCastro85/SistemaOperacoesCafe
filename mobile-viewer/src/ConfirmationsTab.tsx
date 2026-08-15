@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatDateBr, openStorageFile } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -20,6 +21,7 @@ type FilterMode = "OPEN" | "SIGNED" | "ALL";
 const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", SIGNED: "Assinadas", ALL: "Todas" };
 
 export function ConfirmationsTab(): JSX.Element {
+  const { legalEntityId } = useActiveContext();
   const [confirmations, setConfirmations] = useState<DealConfirmation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -28,8 +30,9 @@ export function ConfirmationsTab(): JSX.Element {
   const [filter, setFilter] = useState<FilterMode>("OPEN");
 
   useEffect(() => {
+    if (!legalEntityId) return;
     void load(0);
-  }, []);
+  }, [legalEntityId]);
 
   async function load(offset: number): Promise<void> {
     setError(null);
@@ -43,6 +46,7 @@ export function ConfirmationsTab(): JSX.Element {
          own_legal_entity:legal_entities(trade_name),
          documents:deal_confirmation_document_versions(id, document_type, is_current, storage_object_path)`
       )
+      .eq("own_legal_entity_id", legalEntityId)
       .order("confirmation_date", { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
     setLoadingMore(false);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
+import { useActiveContext } from "./activeContext";
 import { formatCurrencyBr, formatDateBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -32,20 +33,23 @@ type FilterMode = "ALL" | "INCREASE_RECEIVABLE" | "REDUCE_RECEIVABLE";
 const FILTER_LABELS: Record<FilterMode, string> = { ALL: "Todos", INCREASE_RECEIVABLE: "Aumentam saldo", REDUCE_RECEIVABLE: "Reduzem saldo" };
 
 export function LedgerTab(): JSX.Element {
+  const { legalEntityId } = useActiveContext();
   const [entries, setEntries] = useState<ClientLedgerEntryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("ALL");
 
   useEffect(() => {
+    if (!legalEntityId) return;
     void load();
-  }, []);
+  }, [legalEntityId]);
 
   async function load(): Promise<void> {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("client_ledger_entries")
       .select("id, entry_type, effect, amount_cents, entry_date, description, status, client:business_partners(display_name)")
+      .eq("own_legal_entity_id", legalEntityId)
       .neq("status", "CANCELLED")
       .order("entry_date", { ascending: false })
       .limit(PAGE_SIZE);
