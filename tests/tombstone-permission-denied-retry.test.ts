@@ -108,7 +108,7 @@ describe("reenvio de tabelas append-only depois que a linha ja existe no servido
   });
 
   it("pushAccountPayableToShared: reenviar a conta a pagar uma segunda vez (historico ja existe no servidor) nao trava", async () => {
-    const { repo, db, cloud } = await setup();
+    const { repo, db } = await setup();
     try {
       const supplier = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Fornecedor Historico", notes: null, roles: ["SUPPLIER"], isActive: true });
       const category = (await repo.listExpenseCategories(villaId))[0];

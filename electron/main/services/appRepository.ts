@@ -721,12 +721,12 @@ export class AppRepository {
       throw new Error("Conexao compartilhada com o Supabase nao foi inicializada.");
     }
     try {
-      let confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
+      const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
       if (!confirmation) {
         this.outbox.discard("deal_confirmation", dealConfirmationId);
         return;
       }
-      let confirmationNumber = typeof confirmation.confirmation_number === "string" && confirmation.confirmation_number.trim()
+      const confirmationNumber = typeof confirmation.confirmation_number === "string" && confirmation.confirmation_number.trim()
         ? confirmation.confirmation_number.trim()
         : null;
       let existing = confirmationNumber
@@ -765,7 +765,7 @@ export class AppRepository {
         );
       }
 
-      let remoteDealConfirmationId = existing?.id ? String(existing.id) : dealConfirmationId;
+      const remoteDealConfirmationId = existing?.id ? String(existing.id) : dealConfirmationId;
       const sharedConfirmation = toSharedRow(confirmation, "deal_confirmations");
 
       try {

@@ -235,6 +235,10 @@ export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (
   if (data.legalEntities.length === 0) {
     return <NewCompanySetupWizard onSaved={onSaved} />;
   }
+  return <ExistingCompanySetupWizard data={data} onSaved={onSaved} />;
+}
+
+function ExistingCompanySetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (profile: InstallationProfile) => void }): JSX.Element {
   const variant = "multiempresa";
   const activeLegalEntities = data.legalEntities.filter((entity) => entity.isActive && isOperationalLegalEntity(entity));
   const firstLegalEntity = activeLegalEntities[0] ?? data.legalEntities[0] ?? null;

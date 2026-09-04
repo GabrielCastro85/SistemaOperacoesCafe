@@ -1494,12 +1494,6 @@ function copyGeneratedFileToPath(sourcePath: string | null | undefined, targetPa
   return targetPath;
 }
 
-function copyCurrentDealDocumentToDirectory(repository: AppRepository, documentVersionId: string | null | undefined, destinationDir: string): void {
-  if (!documentVersionId) throw new Error("Documento gerado nao encontrado.");
-  const document = repository.getDealDocumentVersion(documentVersionId);
-  copyGeneratedFileToDirectory(document.storedFilePath, destinationDir, document.originalFileName);
-}
-
 function copyCurrentDealDocumentToPath(repository: AppRepository, documentVersionId: string | null | undefined, targetPath: string): void {
   if (!documentVersionId) throw new Error("Documento gerado nao encontrado.");
   const document = repository.getDealDocumentVersion(documentVersionId);

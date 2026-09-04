@@ -12,10 +12,14 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "@typescript-eslint/no-explicit-any": "error"
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true }
+      ]
     }
   },
   {
-    ignores: ["dist", "dist-electron", "release", "node_modules", ".claude", "_tmp-*.mjs", ".codex-*.txt"]
+    ignores: ["dist", "dist-electron", "release", "node_modules", ".claude", ".codex", "_tmp-*.mjs", ".codex-*.txt"]
   }
 );

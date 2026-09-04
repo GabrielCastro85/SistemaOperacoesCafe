@@ -135,7 +135,7 @@ describe("push*ToShared empurra a nota vinculada antes do vinculo (nunca sincron
   });
 
   it("pushAccountPayableToShared: nota nunca empurrada antes nao trava a conta a pagar", async () => {
-    const { repo, db, cloud, product } = await setup();
+    const { repo, db, cloud } = await setup();
     const supplier = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Fornecedor Compra", notes: null, roles: ["SUPPLIER"], isActive: true });
     const category = (await repo.listExpenseCategories(villaId))[0];
     await repo.createPurchaseRateRule({ organizationId: villaId, businessPartnerId: supplier.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId: null, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 1, notes: null, isActive: true });
