@@ -635,6 +635,66 @@ describe("xml imports", () => {
     expect(repo.listFiscalDocumentEvents(villaId)[0].eventType).toBe("CANCELLATION");
     db.close();
   });
+
+  it("leaves the item unrecognized without an alias, then auto-recognizes it via product alias on the next import (reproduces the 'CAFE EM GRAOS CRU CONILON' bug)", async () => {
+    // Bug real reportado em producao: resolveProductAlias casa por igualdade
+    // EXATA do texto normalizado (ver appRepository.ts), nunca substring --
+    // "CAFE EM GRAOS CRU CONILON" nao reconhecido deixava a nota presa em
+    // "Rascunho" com "produto nao identificado", mesmo existindo um Product
+    // "Cafe Conilon" no catalogo. A tela de Aliases de produto (antes so' um
+    // esqueleto sem nenhuma chamada de IPC real) resolve isso.
+    const { repo, db, partnerId, dir } = await setup();
+    const conilon = repo.listProducts({ organizationId: villaId }).find((item) => item.category === "COFFEE_CONILON");
+    if (!conilon) throw new Error("Produto Cafe Conilon nao encontrado no seed padrao.");
+
+    // Sem alias: o item nao e reconhecido mesmo com um produto padrao
+    // (Arabica) selecionado na tela de importacao -- prova que hoje nao
+    // existe nenhum fallback por NCM/substring, so' alias exato.
+    const arabica = repo.listProducts({ organizationId: villaId }).find((item) => item.category === "COFFEE_ARABICA");
+    const keyWithoutAlias = makeAccessKey(9301);
+    const pathWithoutAlias = join(dir, "nfe-conilon-sem-alias.xml");
+    writeFileSync(pathWithoutAlias, nfeXmlWithDescription(keyWithoutAlias, "8657", "CAFE EM GRAOS CRU CONILON"), "utf8");
+    const inspectionA = inspectXmlFile(pathWithoutAlias, "11111111-1111-4111-8111-111111111117");
+    const jobA = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", createOperations: true } });
+    const fileA = repo.addXmlImportFile({ importJobId: jobA.id, originalFileName: inspectionA.originalFileName, fileHash: inspectionA.fileHash, fileSize: inspectionA.fileSize, xmlType: inspectionA.xmlType, accessKey: inspectionA.accessKey, status: inspectionA.status, errorCode: null, errorMessage: null, warningCodes: inspectionA.warnings, extractedData: inspectionA.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(fileA.id, pathWithoutAlias);
+    const resultA = await repo.executeXmlImportJob(jobA.id);
+    expect(resultA.job.createdOperations).toBe(0);
+    const detailA = repo.getFiscalDocument(resultA.files[0].fiscalDocumentId as string);
+    expect(detailA.document.status).toBe("DRAFT");
+    expect(detailA.document.hasPendingIssues).toBe(true);
+    expect(detailA.document.pendingNotes).toMatch(/produto nao identificado/);
+    expect(detailA.operations).toHaveLength(0);
+
+    // Cadastra o alias (o que a tela de Configuracoes -> Aliases de produto
+    // agora permite fazer de verdade) e reimporta uma segunda nota com o
+    // MESMO texto de produto -- desta vez reconhece automaticamente.
+    repo.createProductAlias({
+      organizationId: villaId,
+      productId: conilon.id,
+      issuerPartnerLegalEntityId: null,
+      sourceProductCode: null,
+      sourceDescription: "CAFE EM GRAOS CRU CONILON",
+      ncm: null,
+      isActive: true
+    });
+    const keyWithAlias = makeAccessKey(9302);
+    const pathWithAlias = join(dir, "nfe-conilon-com-alias.xml");
+    writeFileSync(pathWithAlias, nfeXmlWithDescription(keyWithAlias, "8658", "CAFE EM GRAOS CRU CONILON"), "utf8");
+    const inspectionB = inspectXmlFile(pathWithAlias, "11111111-1111-4111-8111-111111111118");
+    const jobB = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId: arabica?.id, createOperations: true } });
+    const fileB = repo.addXmlImportFile({ importJobId: jobB.id, originalFileName: inspectionB.originalFileName, fileHash: inspectionB.fileHash, fileSize: inspectionB.fileSize, xmlType: inspectionB.xmlType, accessKey: inspectionB.accessKey, status: inspectionB.status, errorCode: null, errorMessage: null, warningCodes: inspectionB.warnings, extractedData: inspectionB.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(fileB.id, pathWithAlias);
+    const resultB = await repo.executeXmlImportJob(jobB.id);
+    expect(resultB.job.createdOperations).toBe(1);
+    const detailB = repo.getFiscalDocument(resultB.files[0].fiscalDocumentId as string);
+    // O alias vence o produto padrao (Arabica) selecionado na tela -- prova
+    // a ordem de prioridade real (alias > XML referenciado > padrao da tela).
+    expect(detailB.items[0].productId).toBe(conilon.id);
+    expect(detailB.document.status).toBe("CONFIRMED");
+    expect(detailB.document.hasPendingIssues).toBe(false);
+    db.close();
+  });
 });
 
 function makeAccessKey(sequence = 9001): string {
@@ -664,6 +724,24 @@ function nfeXml(key: string): string {
       <total><ICMSTot><vProd>12962.95</vProd><vNF>12962.95</vNF><vDesc>0.00</vDesc><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vOutro>0.00</vOutro><vTotTrib>0.00</vTotTrib></ICMSTot></total>
       <transp><transporta><CNPJ>12345678000195</CNPJ><xNome>Transportadora</xNome></transporta><veicTransp><placa>ABC1234</placa><UF>MG</UF></veicTransp><vol><qVol>10</qVol><esp>Sacas</esp><pesoB>630.000</pesoB><pesoL>600.000</pesoL></vol></transp>
       <infAdic><infCpl>Informacao complementar</infCpl><infAdFisco>Info fisco</infAdFisco></infAdic>
+    </infNFe>
+  </NFe>
+  <protNFe><infProt><chNFe>${key}</chNFe><dhRecbto>2026-07-16T10:05:00-03:00</dhRecbto><nProt>131260000000001</nProt><cStat>100</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo></infProt></protNFe>
+</nfeProc>`;
+}
+
+function nfeXmlWithDescription(key: string, nNF: string, description: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe">
+  <NFe>
+    <infNFe Id="NFe${key}" versao="4.00">
+      <ide><cUF>31</cUF><natOp>Venda de cafe</natOp><mod>55</mod><serie>1</serie><nNF>${nNF}</nNF><dhEmi>2026-07-16T10:00:00-03:00</dhEmi><tpNF>1</tpNF><cMunFG>3170701</cMunFG><tpEmis>1</tpEmis><tpAmb>1</tpAmb><finNFe>1</finNFe></ide>
+      <emit><CNPJ>${ownCnpj}</CNPJ><xNome>Villa Coffee MG</xNome><IE>123</IE><enderEmit><xLgr>Rua A</xLgr><nro>1</nro><xBairro>Centro</xBairro><cMun>3170701</cMun><xMun>Varginha</xMun><UF>MG</UF><CEP>37000000</CEP><fone>3533333333</fone></enderEmit></emit>
+      <dest><CNPJ>${partnerCnpj}</CNPJ><xNome>Cliente XML Ltda</xNome><IE>456</IE><email>cliente@example.com</email><enderDest><xLgr>Rua B</xLgr><nro>2</nro><xBairro>Centro</xBairro><cMun>3550308</cMun><xMun>Sao Paulo</xMun><UF>SP</UF><CEP>01000000</CEP><fone>1133333333</fone></enderDest></dest>
+      <det nItem="1"><prod><cProd>15</cProd><cEAN>SEM GTIN</cEAN><xProd>${description}</xProd><NCM>09011110</NCM><CFOP>5102</CFOP><uCom>SCS</uCom><qCom>500</qCom><vUnCom>1000</vUnCom><vProd>500000.00</vProd><uTrib>SCS</uTrib><qTrib>500</qTrib><vUnTrib>1000</vUnTrib></prod></det>
+      <total><ICMSTot><vProd>500000.00</vProd><vNF>500000.00</vNF><vDesc>0.00</vDesc><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vOutro>0.00</vOutro><vTotTrib>0.00</vTotTrib></ICMSTot></total>
+      <transp><transporta><CNPJ>12345678000195</CNPJ><xNome>Transportadora</xNome></transporta><veicTransp><placa>ABC1234</placa><UF>MG</UF></veicTransp><vol><qVol>500</qVol><esp>Sacas</esp><pesoB>30250.000</pesoB><pesoL>30000.000</pesoL></vol></transp>
+      <infAdic><infCpl>Informacao complementar</infCpl></infAdic>
     </infNFe>
   </NFe>
   <protNFe><infProt><chNFe>${key}</chNFe><dhRecbto>2026-07-16T10:05:00-03:00</dhRecbto><nProt>131260000000001</nProt><cStat>100</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo></infProt></protNFe>

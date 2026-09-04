@@ -26,7 +26,12 @@ afterEach(() => {
 });
 
 describe("admin services", () => {
-  it("normalizes installation profile to the single multiempresa app and allows organizations", async () => {
+  it("saves the installation profile as given, without forcing multiempresa/switch-enabled (needed for single-company installs)", async () => {
+    // Ate' 1.0.43, saveInstallationProfile forcava incondicionalmente
+    // appVariant="multiempresa" + os dois switches em true, ignorando o que
+    // a tela mandasse -- isso bloqueava qualquer instalacao "empresa unica"
+    // (cliente sem grupo Villa/Grao, ver NewCompanySetupWizard). Corrigido
+    // pra respeitar o input validado pelo schema.
     const { repo, db } = setup();
     const profile = repo.saveInstallationProfile({
       installationName: "Villa",
@@ -37,8 +42,8 @@ describe("admin services", () => {
       allowLegalEntitySwitch: true,
       completedSetup: true
     });
-    expect(profile.appVariant).toBe("multiempresa");
-    expect(profile.allowOrganizationSwitch).toBe(true);
+    expect(profile.appVariant).toBe("villa");
+    expect(profile.allowOrganizationSwitch).toBe(false);
     expect((await repo.createOrganization(sampleOrganization("nova"))).slug).toBe("nova");
     await expect(repo.createOrganization(sampleOrganization("nova"))).rejects.toThrow(/Slug/);
     db.close();

@@ -1,8 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import log from "electron-log/main.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { getBuildVariantConfig } from "../../src/shared/buildVariants.js";
+import type { AppDirectories } from "../../src/shared/types/domain.js";
 import { initializeDatabase } from "./database/database.js";
 import { registerIpcHandlers } from "./ipc/handlers.js";
 import { AppRepository } from "./services/appRepository.js";
@@ -16,6 +18,44 @@ import { createSplashWindow, showSplashError } from "./windows/createSplashWindo
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 const buildVariant = getBuildVariantConfig(resolveRuntimeVariant());
+
+// Precisa ser registrado ANTES de app.whenReady() (exigencia do Electron pra
+// protocolos privilegiados). Serve a logo/icone que o cliente enviou pela
+// tela de Identidade Visual (ver brandingAssets.ts) pras telas React -- sem
+// isso a logo customizada so aparecia nos PDFs (gerados no processo main,
+// que le arquivo local direto), nunca na tela, porque o renderer roda
+// sandboxed e nao pode abrir um caminho de disco arbitrario como <img src>.
+protocol.registerSchemesAsPrivileged([
+  { scheme: "branding-asset", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false, bypassCSP: false } }
+]);
+
+// Escopo estrito de proposito: so serve exatamente
+// <settingsDir>/branding/<organizationId>/<nome-de-arquivo-sem-barra> --
+// nunca um caminho arbitrario do disco do cliente, mesmo que o main process
+// tenha acesso total ao sistema de arquivos.
+function registerBrandingAssetProtocol(directories: AppDirectories): void {
+  const brandingRoot = join(directories.settingsDir, "branding");
+  protocol.handle("branding-asset", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const organizationId = url.hostname;
+      const fileName = decodeURIComponent(url.pathname.replace(/^\//, ""));
+      const safeSegment = /^[a-zA-Z0-9._-]+$/;
+      if (!safeSegment.test(organizationId) || !safeSegment.test(fileName)) {
+        return new Response(null, { status: 400 });
+      }
+      const resolvedPath = join(brandingRoot, organizationId, fileName);
+      if (!resolvedPath.startsWith(join(brandingRoot, organizationId))) {
+        return new Response(null, { status: 400 });
+      }
+      if (!existsSync(resolvedPath)) return new Response(null, { status: 404 });
+      return net.fetch(pathToFileURL(resolvedPath).toString());
+    } catch (error) {
+      log.warn("Falha ao servir branding-asset://", error instanceof Error ? error.message : String(error));
+      return new Response(null, { status: 500 });
+    }
+  });
+}
 
 // Ao rodar contra o servidor de dev do Vite, isola completamente os dados numa pasta separada
 // da instalacao real, para que testes manuais nunca leiam/escrevam no banco de producao.
@@ -32,6 +72,7 @@ function bootstrap(): void {
   log.initialize();
   log.transports.file.resolvePathFn = () => join(directories.logsDir, "main.log");
   log.info("Starting application", { variant: buildVariant.variant, appId: buildVariant.appId, userData: directories.userData });
+  registerBrandingAssetProtocol(directories);
   const db = initializeDatabase(directories);
   const sharedRepository = new SharedRepository(directories);
   const context = { version: app.getVersion(), directories, db, buildVariant, sharedRepository };
@@ -48,10 +89,11 @@ function startSharedDataSync(repository: AppRepository): void {
   const SYNC_INTERVAL_MS = 20_000;
   const run = (): void => {
     repository.syncSharedDataDown()
-      .then((results) => {
+      .then(async (results) => {
         const withChanges = results.filter((entry) => entry.pulled > 0);
         if (withChanges.length > 0) log.info("Shared data sync pulled changes", { withChanges });
-        recordSyncResult(results);
+        const connected = await repository.isSharedConnected().catch(() => false);
+        recordSyncResult(results, repository.getSharedPushOutboxPendingCount(), connected);
       })
       .catch((error) => log.warn("Shared data sync failed", { error: error instanceof Error ? error.message : String(error) }));
   };

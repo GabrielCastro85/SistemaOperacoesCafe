@@ -213,8 +213,13 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     if (!latest) { setPreviewBase64(null); return; }
     try {
       setPreviewBase64(await window.operationsCafe.getDealDocumentBytes(latest.id));
-    } catch {
+    } catch (errorValue) {
+      // Antes isso ficava mudo -- "sem previa gerada" sem explicacao nenhuma,
+      // mesmo quando o motivo real era "este PC nao tem o arquivo local e a
+      // tentativa de baixar da nuvem falhou" (ver ensureDealDocumentLocalPath
+      // em appRepository.ts). Mostra o motivo de verdade.
       setPreviewBase64(null);
+      setMessage(errorValue instanceof Error ? errorValue.message : "Nao foi possivel carregar a previa deste documento.");
     }
   }
 
@@ -426,108 +431,149 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   async function generatePreview(): Promise<void> {
     if (!detail) return;
-    const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id);
-    if (!updated) {
-      setMessage("Geracao cancelada. Nenhuma pasta foi escolhida.");
-      return;
+    // Sem try/catch aqui, uma falha (ex: nota ja reivindicada por outra
+    // confirmacao, sessao Supabase caida, timeout de rede) virava uma
+    // promise rejeitada sem tratamento nenhum -- o dialogo de "salvar como"
+    // fechava normalmente e depois NADA acontecia, sem nenhum erro visivel
+    // (bug real reportado em producao: "clico em salvar e nao acontece nada").
+    try {
+      const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id);
+      if (!updated) {
+        setMessage("Geracao cancelada. Nenhuma pasta foi escolhida.");
+        return;
+      }
+      setDetail(updated);
+      await refreshPreview(updated);
+      setMessage("Previa gerada e salva na pasta escolhida.");
+      scrollTo(detailRef);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar a previa."}`);
     }
-    setDetail(updated);
-    await refreshPreview(updated);
-    setMessage("Previa gerada e salva na pasta escolhida.");
-    scrollTo(detailRef);
   }
 
   async function issue(): Promise<void> {
     if (!detail) return;
-    const updated = await window.operationsCafe.issueDealConfirmation(detail.confirmation.id);
-    if (!updated) {
-      setMessage("Emissao cancelada. Nenhuma pasta foi escolhida.");
-      return;
+    try {
+      const updated = await window.operationsCafe.issueDealConfirmation(detail.confirmation.id);
+      if (!updated) {
+        setMessage("Emissao cancelada. Nenhuma pasta foi escolhida.");
+        return;
+      }
+      setDetail(updated);
+      await refreshPreview(updated);
+      setMessage("Confirmacao emitida e salva na pasta escolhida.");
+      await load();
+      scrollTo(detailRef);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao emitir a confirmacao."}`);
     }
-    setDetail(updated);
-    await refreshPreview(updated);
-    setMessage("Confirmacao emitida e salva na pasta escolhida.");
-    await load();
-    scrollTo(detailRef);
   }
 
   async function saveBankDetails(): Promise<void> {
     if (!detail) return;
-    const basisPoints = brokerageInput.trim() ? Math.round(Number(brokerageInput.replace(",", ".")) * 100) : null;
-    const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
-      brokeragePercentageBasisPoints: basisPoints,
-      bankName: bankName || null,
-      bankCode: bankCode || null,
-      bankAgency: bankAgency || null,
-      bankAccount: bankAccount || null,
-      bankAccountType: bankAccountType || null,
-      bankHolderName: bankHolderName || null,
-      bankHolderDocument: bankHolderDocument || null,
-      pixKey: pixKey || null,
-      pixKeyType: pixKeyType || null
-    });
-    setDetail(updated);
-    setMessage("Dados de corretagem e banco atualizados.");
+    try {
+      const basisPoints = brokerageInput.trim() ? Math.round(Number(brokerageInput.replace(",", ".")) * 100) : null;
+      const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
+        brokeragePercentageBasisPoints: basisPoints,
+        bankName: bankName || null,
+        bankCode: bankCode || null,
+        bankAgency: bankAgency || null,
+        bankAccount: bankAccount || null,
+        bankAccountType: bankAccountType || null,
+        bankHolderName: bankHolderName || null,
+        bankHolderDocument: bankHolderDocument || null,
+        pixKey: pixKey || null,
+        pixKeyType: pixKeyType || null
+      });
+      setDetail(updated);
+      setMessage("Dados de corretagem e banco atualizados.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar dados bancarios."}`);
+    }
   }
 
   async function saveDocumentDetails(): Promise<void> {
     if (!detail) return;
-    const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
-      deliveryLocationSnapshot: deliveryText.trim() || null,
-      paymentTermsSnapshot: paymentTerms.trim() || null,
-      qualityTermsSnapshot: qualityTerms.trim() || null,
-      generalTermsSnapshot: generalTerms.trim() || null,
-      publicNotes: publicNotes.trim() || null
-    });
-    setDetail(updated);
-    loadBankFieldsFromDetail(updated);
-    setMessage("Dados manuais da confirmacao atualizados.");
+    try {
+      const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
+        deliveryLocationSnapshot: deliveryText.trim() || null,
+        paymentTermsSnapshot: paymentTerms.trim() || null,
+        qualityTermsSnapshot: qualityTerms.trim() || null,
+        generalTermsSnapshot: generalTerms.trim() || null,
+        publicNotes: publicNotes.trim() || null
+      });
+      setDetail(updated);
+      loadBankFieldsFromDetail(updated);
+      setMessage("Dados manuais da confirmacao atualizados.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar dados do documento."}`);
+    }
   }
 
   async function setDeliveryRecipient(): Promise<void> {
     if (!detail || !deliveryRecipientId) return;
     const target = partnerTargetFromLegalEntityId(deliveryRecipientId);
     if (!target) return;
-    const existing = detail.parties.filter((party) => party.partyRole === "DELIVERY_RECIPIENT");
-    await Promise.all(existing.map((party) => window.operationsCafe.removeDealConfirmationParty(party.id)));
-    const updated = await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: detail.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: target.businessPartnerId, partnerLegalEntityId: target.partnerLegalEntityId, ownLegalEntityId: null, manualName: target.manualName, representativeName: null, sortOrder: 3 }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
-    setDetail(updated);
-    setMessage("Local de descarga definido.");
+    try {
+      const existing = detail.parties.filter((party) => party.partyRole === "DELIVERY_RECIPIENT");
+      await Promise.all(existing.map((party) => window.operationsCafe.removeDealConfirmationParty(party.id)));
+      const updated = await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: detail.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: target.businessPartnerId, partnerLegalEntityId: target.partnerLegalEntityId, ownLegalEntityId: null, manualName: target.manualName, representativeName: null, sortOrder: 3 }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
+      setDetail(updated);
+      setMessage("Local de descarga definido.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao definir local de descarga."}`);
+    }
   }
 
   async function addClauseFromTemplate(): Promise<void> {
     if (!detail || !clauseTemplateId) return;
     const template = clauses.find((item) => item.id === clauseTemplateId);
     if (!template) return;
-    const nextSortOrder = detail.clauses.length;
-    const updated = await window.operationsCafe.addDealConfirmationClause({ dealConfirmationId: detail.confirmation.id, clauseNumber: String(nextSortOrder + 1), title: template.title, clauseText: template.clauseText, sortOrder: nextSortOrder, isVisible: true }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
-    setDetail(updated);
-    setMessage("Clausula adicionada.");
+    try {
+      const nextSortOrder = detail.clauses.length;
+      const updated = await window.operationsCafe.addDealConfirmationClause({ dealConfirmationId: detail.confirmation.id, clauseNumber: String(nextSortOrder + 1), title: template.title, clauseText: template.clauseText, sortOrder: nextSortOrder, isVisible: true }).then(() => window.operationsCafe.getDealConfirmation(detail.confirmation.id));
+      setDetail(updated);
+      setMessage("Clausula adicionada.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao adicionar clausula."}`);
+    }
   }
 
   async function importSigned(): Promise<void> {
     if (!detail) return;
-    const selected = await window.operationsCafe.selectSignedDealPdf();
-    if (!selected) return;
-    setDetail(await window.operationsCafe.importSignedDealConfirmationDocument(detail.confirmation.id, { token: selected.token, notes: "Assinatura externa registrada pelo usuario" }));
-    setMessage("PDF assinado importado. O sistema nao valida criptograficamente a assinatura nesta etapa.");
-    await load();
+    try {
+      const selected = await window.operationsCafe.selectSignedDealPdf();
+      if (!selected) return;
+      setDetail(await window.operationsCafe.importSignedDealConfirmationDocument(detail.confirmation.id, { token: selected.token, notes: "Assinatura externa registrada pelo usuario" }));
+      setMessage("PDF assinado importado. O sistema nao valida criptograficamente a assinatura nesta etapa.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao importar PDF assinado."}`);
+    }
   }
 
   async function cancelDeal(): Promise<void> {
     if (!detail) return;
     const reason = await requestTextInput({ title: "Cancelar confirmação", label: "Motivo formal do cancelamento" }) ?? "";
     if (!reason) return;
-    setDetail(await window.operationsCafe.cancelDealConfirmation(detail.confirmation.id, reason));
-    await load();
+    try {
+      setDetail(await window.operationsCafe.cancelDealConfirmation(detail.confirmation.id, reason));
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cancelar confirmacao."}`);
+    }
   }
 
   async function replaceDeal(): Promise<void> {
     if (!detail) return;
     const reason = await requestTextInput({ title: "Substituir confirmação", label: "Motivo formal da substituição" }) ?? "";
     if (!reason) return;
-    setDetail(await window.operationsCafe.replaceDealConfirmation(detail.confirmation.id, reason));
-    await load();
+    try {
+      setDetail(await window.operationsCafe.replaceDealConfirmation(detail.confirmation.id, reason));
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao substituir confirmacao."}`);
+    }
   }
 
   async function deleteDeal(id = detail?.confirmation.id): Promise<void> {
@@ -558,9 +604,13 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     if (!name) return;
     const clauseText = await requestTextInput({ title: "Nova clausula", label: "Texto da clausula (aparece no PDF)" });
     if (!clauseText) return;
-    await window.operationsCafe.createDealClauseTemplate({ organizationId, name, title: null, clauseText, category: "GENERAL", isActive: true });
-    setMessage("Clausula cadastrada na biblioteca.");
-    await load();
+    try {
+      await window.operationsCafe.createDealClauseTemplate({ organizationId, name, title: null, clauseText, category: "GENERAL", isActive: true });
+      setMessage("Clausula cadastrada na biblioteca.");
+      await load();
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cadastrar clausula."}`);
+    }
   }
 
   function dealPartyName(role: string): string {
@@ -574,6 +624,14 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       return party.manualName ?? "Participante";
     }
   }
+
+  const detailStatus = detail?.confirmation.status ?? null;
+  const detailIsEditable = detailStatus === "DRAFT" || detailStatus === "PENDING_REVIEW";
+  const detailCanBeSentForSignature = detailStatus === "ISSUED" || detailStatus === "SENT_FOR_SIGNATURE";
+  const detailCanImportSigned = detailStatus === "ISSUED" || detailStatus === "SENT_FOR_SIGNATURE" || detailStatus === "SIGNED";
+  const detailCanCancel = detailStatus !== null && !["CANCELLED", "REPLACED"].includes(detailStatus);
+  const detailCanReplace = detailStatus !== null && ["ISSUED", "SENT_FOR_SIGNATURE", "SIGNED"].includes(detailStatus);
+  const detailCanDelete = detailStatus === "DRAFT" && !detail?.confirmation.confirmationNumber;
 
   return (
     <section className="content-section settings">
@@ -612,7 +670,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           </div>
           <div className="table">
             <div className="table-head confirmation-grid"><span>Numero</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
-            {confirmations.map((item) => <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button><button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button></span></div>)}
+            {confirmations.map((item) => {
+              const canDelete = item.status === "DRAFT" && !item.confirmationNumber;
+              return <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
+            })}
           </div>
         </>
       )}
@@ -862,13 +923,13 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   {detail.pendingIssues.length ? <p className="charge-blocked-note">Existem pendencias nesta confirmacao. Revise antes de emitir definitivamente.</p> : null}
                 </div>
                 <div className="actions">
-                  <button onClick={() => void generatePreview()}>Gerar previa</button>
-                  <button className="primary" onClick={() => void issue()}>Emitir</button>
-                  <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button>
-                  <button onClick={() => void importSigned()}>Importar assinada</button>
-                  <button onClick={() => void cancelDeal()}>Cancelar</button>
-                  <button onClick={() => void replaceDeal()}>Substituir</button>
-                  <button className="danger-action" onClick={() => void deleteDeal()}>Excluir definitivamente</button>
+                  {detailIsEditable ? <button onClick={() => void generatePreview()}>Gerar previa</button> : null}
+                  {detailIsEditable ? <button className="primary" onClick={() => void issue()}>Emitir</button> : null}
+                  {detailCanBeSentForSignature ? <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button> : null}
+                  {detailCanImportSigned ? <button onClick={() => void importSigned()}>Importar assinada</button> : null}
+                  {detailCanCancel ? <button onClick={() => void cancelDeal()}>Cancelar</button> : null}
+                  {detailCanReplace ? <button onClick={() => void replaceDeal()}>Substituir</button> : null}
+                  {detailCanDelete ? <button className="danger-action" onClick={() => void deleteDeal()}>Excluir definitivamente</button> : null}
                 </div>
                 <div className="table">
                   <div className="table-head document-grid"><span>Versao</span><span>Tipo</span><span>Hash</span><span>Arquivo</span><span>Acoes</span></div>

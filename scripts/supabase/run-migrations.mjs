@@ -14,7 +14,12 @@ const projectRoot = join(__dirname, "..", "..");
 const migrationsDir = join(projectRoot, "supabase", "migrations");
 
 function loadEnv() {
-  const text = readFileSync(join(projectRoot, ".env"), "utf8");
+  // OPERACOES_CAFE_ENV_FILE permite apontar pra um projeto Supabase separado
+  // (ex: .env.test, ver ambiente-de-teste na conversa) sem NUNCA tocar no
+  // .env real -- elimina o risco de rodar migration/seed no projeto errado
+  // por engano.
+  const envFile = process.env.OPERACOES_CAFE_ENV_FILE || ".env";
+  const text = readFileSync(join(projectRoot, envFile), "utf8");
   const env = {};
   text.split("\n").forEach((line) => {
     const idx = line.indexOf("=");

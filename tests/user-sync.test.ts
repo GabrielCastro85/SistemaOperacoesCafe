@@ -22,6 +22,7 @@ class FakeCloud implements Pick<SharedRepository, "upsertRow" | "pullChangesSinc
   private tables = new Map<string, Map<string, Record<string, unknown>>>();
 
   checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  attemptSessionRecovery = async () => true;
 
   async upsertRow(table: string, row: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (!this.tables.has(table)) this.tables.set(table, new Map());

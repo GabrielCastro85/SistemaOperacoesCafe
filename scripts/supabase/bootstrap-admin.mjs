@@ -5,8 +5,12 @@ import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import WebSocket from "ws";
 
+// OPERACOES_CAFE_ENV_FILE permite apontar pra um projeto Supabase separado
+// (ex: .env.test) sem NUNCA tocar no .env real -- mesmo mecanismo de
+// run-migrations.mjs.
+const envFile = process.env.OPERACOES_CAFE_ENV_FILE || ".env";
 const env = Object.fromEntries(
-  readFileSync(new URL("../../.env", import.meta.url), "utf8")
+  readFileSync(new URL(`../../${envFile}`, import.meta.url), "utf8")
     .split("\n")
     .filter((l) => l.includes("="))
     .map((l) => {

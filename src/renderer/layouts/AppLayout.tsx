@@ -107,6 +107,7 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
 function SharedSyncIndicator({ onDataSynced }: { onDataSynced: () => void }): JSX.Element | null {
   const [connected, setConnected] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [outboxPendingCount, setOutboxPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
@@ -115,10 +116,20 @@ function SharedSyncIndicator({ onDataSynced }: { onDataSynced: () => void }): JS
       if (!cancelled) setConnected(status.connected);
     });
     void window.operationsCafe.getSharedSyncStatus().then((status) => {
-      if (!cancelled) setPendingCount(status.pendingCount);
+      if (!cancelled) {
+        setPendingCount(status.pendingCount);
+        setOutboxPendingCount(status.outboxPendingCount);
+      }
     });
     const unsubscribe = window.operationsCafe.onSharedSyncStatusChanged((status) => {
       setPendingCount(status.pendingCount);
+      setOutboxPendingCount(status.outboxPendingCount);
+      // Reflete uma reconexao automatica (ver attemptSessionRecovery em
+      // sharedRepository.ts) sem precisar remontar a tela -- antes disso,
+      // "connected" so' era lido uma vez no mount e nunca mais atualizava,
+      // entao uma sessao recuperada minutos depois de uma atualizacao
+      // continuava aparecendo como desconectada pro resto da sessao.
+      setConnected(status.connected);
     });
     return () => {
       cancelled = true;
@@ -131,17 +142,28 @@ function SharedSyncIndicator({ onDataSynced }: { onDataSynced: () => void }): JS
   async function syncNow(): Promise<void> {
     setSyncing(true);
     try {
+      // acknowledgeSyncUpdates() no main process transmite o outboxPendingCount
+      // atualizado via onSharedSyncStatusChanged assim que o push/pull terminar.
       await window.operationsCafe.syncSharedData();
-      setPendingCount(0);
       onDataSynced();
     } finally {
       setSyncing(false);
     }
   }
 
+  // Nunca mostra "Sincronizado" enquanto houver algo que so' existe neste PC
+  // (fila de reenvio pendente) -- ver Req 7 da correcao de numeracao de
+  // confirmacoes: o indicador nao pode mentir que os outros PCs ja tem o dado.
+  const hasPendingWork = pendingCount > 0 || outboxPendingCount > 0;
+  const label = outboxPendingCount > 0
+    ? `${outboxPendingCount} pendente${outboxPendingCount > 1 ? "s" : ""} de envio`
+    : pendingCount > 0
+      ? `${pendingCount} atualizacao${pendingCount > 1 ? "es" : ""} pendente${pendingCount > 1 ? "s" : ""}`
+      : "Sincronizado com os outros PCs";
+
   return (
-    <div className={`shared-sync-indicator${pendingCount > 0 ? " shared-sync-indicator--pending" : ""}`}>
-      <span>{pendingCount > 0 ? `${pendingCount} atualizacao${pendingCount > 1 ? "es" : ""} pendente${pendingCount > 1 ? "s" : ""}` : "Sincronizado com os outros PCs"}</span>
+    <div className={`shared-sync-indicator${hasPendingWork ? " shared-sync-indicator--pending" : ""}`}>
+      <span>{label}</span>
       <button type="button" onClick={() => void syncNow()} disabled={syncing}>{syncing ? "Sincronizando..." : "Sincronizar agora"}</button>
     </div>
   );
@@ -246,7 +268,10 @@ export function AppLayout({
           <label className="context-select">
             <span>Grupo</span>
             <select value={organization?.id ?? ""} disabled={!canSwitchOrganization} onChange={(event) => onOrganizationChange(event.target.value)}>
-              {organizations.map((item) => (
+              {/* Instalacao "empresa unica" (allowOrganizationSwitch: false) nunca lista
+                  outras organizacoes -- so' o campo travado com a atual, mesmo que
+                  existam outras linhas no banco local (ex: dado de migracao/teste). */}
+              {(canSwitchOrganization ? organizations : organizations.filter((item) => item.id === organization?.id)).map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.displayName}
                 </option>

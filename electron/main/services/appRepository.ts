@@ -1,7 +1,8 @@
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { deterministicUuid } from "./deterministicId.js";
 import {
   legalEntityInputSchema,
@@ -308,6 +309,7 @@ const HOT_SYNC_TABLES: Array<{ table: string; timestampColumn: string }> = [
 const BULK_PUSH_MANAGED_TABLES = new Set([
   "document_sequences",
   "charge_status_history",
+  "payable_status_history",
   "app_users",
   "user_credentials",
   "user_role_assignments",
@@ -339,6 +341,22 @@ const BULK_PUSH_MANAGED_TABLES = new Set([
 // fiscal_documents/client_charges/deal_confirmations/xml_import_jobs tem
 // filhas e por isso tem sua propria funcao de cascata (ver applyTombstone).
 const TOMBSTONE_APPLY_TABLES = new Set(HOT_SYNC_TABLES.map((entry) => entry.table));
+
+// Mesma lista usada por flushSharedPushOutbox() e getSharedPushOutboxPendingCount()
+// -- um so' lugar pra manter os "tipos" de push que passam pela fila de reenvio.
+const OUTBOX_PUSH_KINDS = [
+  "fiscal_document",
+  "xml_import_job",
+  "client_charge",
+  "deal_confirmation",
+  "account_payable",
+  "payable_payment",
+  "client_payment",
+  "client_ledger_entry",
+  "user",
+  "user_deletion",
+  "tombstone"
+];
 
 // Colunas boolean no Postgres (as mesmas colunas sao INTEGER 0/1 no SQLite
 // local) -- ao empurrar uma linha lida direto do SQLite pro Supabase, essas
@@ -409,20 +427,24 @@ export class AppRepository {
    */
   async flushSharedPushOutbox(): Promise<{ retried: number; stillPending: number }> {
     if (!this.sharedRepository || this.isLocalOnlyMode()) return { retried: 0, stillPending: 0 };
-    const kinds = [
-      "fiscal_document",
-      "xml_import_job",
-      "client_charge",
-      "deal_confirmation",
-      "account_payable",
-      "payable_payment",
-      "client_payment",
-      "client_ledger_entry",
-      "user",
-      "user_deletion",
-      "tombstone"
-    ];
-    return this.outbox.flush(kinds, (kind, id) => this.replayOutboxPush(kind, id));
+    return this.outbox.flush(OUTBOX_PUSH_KINDS, (kind, id) => this.replayOutboxPush(kind, id));
+  }
+
+  /**
+   * Quantidade real de gravacoes que ainda nao chegaram no Supabase (fila de
+   * reenvio). Usado pelo indicador de sincronizacao no rodape -- "Sincronizado
+   * com os outros PCs" nunca pode aparecer enquanto isso for maior que zero,
+   * senao o usuario acha que os outros PCs ja tem o dado quando na verdade so'
+   * existe neste PC (ver Req 7 da correcao de numeracao de confirmacoes).
+   */
+  getSharedPushOutboxPendingCount(): number {
+    return this.outbox.list(OUTBOX_PUSH_KINDS).length;
+  }
+
+  /** Usado pelo poll de 20s (main/index.ts) pra alimentar o badge de conexao com o estado real apos cada ciclo, inclusive uma reconexao automatica. */
+  async isSharedConnected(): Promise<boolean> {
+    if (!this.sharedRepository || this.isLocalOnlyMode()) return false;
+    return Boolean(await this.sharedRepository.getSession().catch(() => null));
   }
 
   private async replayOutboxPush(kind: string, id: string): Promise<void> {
@@ -464,10 +486,15 @@ export class AppRepository {
    * tabelas "quentes" (ver HOT_SYNC_TABLES) -- e' assim que um PC fica
    * sabendo do que outro PC lancou. Chamado periodicamente (ver main/index.ts)
    * e sob demanda (ex: ao abrir a tela de Notas Fiscais). Sem sessao
-   * autenticada, e' um no-op silencioso (RLS bloquearia a leitura mesmo).
+   * autenticada, tenta recuperar a sessao primeiro (ver
+   * SharedRepository.attemptSessionRecovery -- cobre o caso de uma
+   * atualizacao do app ter relancado o processo bem no instante em que a
+   * rede ainda nao estava pronta); se mesmo assim continuar sem sessao, e'
+   * um no-op silencioso (RLS bloquearia a leitura mesmo).
    */
   async syncSharedDataDown(): Promise<Array<{ table: string; pulled: number }>> {
     if (!this.sharedRepository || this.isLocalOnlyMode()) return [];
+    await this.sharedRepository.attemptSessionRecovery().catch(() => false);
     // Reenvia pushes pendentes ANTES de puxar -- assim, se a rede voltou
     // desde o ultimo ciclo, o que so' existia neste PC ja chega no Supabase
     // antes deste PC puxar (evita puxar um estado velho por cima do que
@@ -648,7 +675,19 @@ export class AppRepository {
       if (!charge) return;
       await this.sharedRepository.upsertRow("client_charges", toSharedRow(charge, "client_charges"));
       const operations = this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      for (const row of operations) await this.sharedRepository.upsertRow("client_charge_operations", toSharedRow(row, "client_charge_operations"));
+      // client_charge_operations.operation_id referencia operations(id) --
+      // garante que a nota da operacao ja foi empurrada (mesma logica de
+      // pushDealConfirmationToShared) antes do vinculo, senao a FK falha se a
+      // nota nunca tiver sido sincronizada antes desta cobranca.
+      const pushedFiscalDocumentIds = new Set<string>();
+      for (const row of operations) {
+        const operation = this.db.prepare("SELECT fiscal_document_id FROM operations WHERE id = ?").get(String(row.operation_id)) as { fiscal_document_id: string | null } | undefined;
+        if (operation?.fiscal_document_id && !pushedFiscalDocumentIds.has(operation.fiscal_document_id)) {
+          await this.pushFiscalDocumentToShared(operation.fiscal_document_id);
+          pushedFiscalDocumentIds.add(operation.fiscal_document_id);
+        }
+        await this.sharedRepository.upsertRow("client_charge_operations", toSharedRow(row, "client_charge_operations"));
+      }
       const adjustments = this.db.prepare("SELECT * FROM client_charge_adjustments WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
       for (const row of adjustments) await this.sharedRepository.upsertRow("client_charge_adjustments", toSharedRow(row, "client_charge_adjustments"));
       const paymentAllocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
@@ -677,14 +716,17 @@ export class AppRepository {
    * escrita local ja comitou.
    */
   async pushDealConfirmationToShared(dealConfirmationId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
+    if (this.isLocalOnlyMode()) return;
+    if (!this.sharedRepository) {
+      throw new Error("Conexao compartilhada com o Supabase nao foi inicializada.");
+    }
     try {
-      const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
+      let confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
       if (!confirmation) {
         this.outbox.discard("deal_confirmation", dealConfirmationId);
         return;
       }
-      const confirmationNumber = typeof confirmation.confirmation_number === "string" && confirmation.confirmation_number.trim()
+      let confirmationNumber = typeof confirmation.confirmation_number === "string" && confirmation.confirmation_number.trim()
         ? confirmation.confirmation_number.trim()
         : null;
       let existing = confirmationNumber
@@ -696,10 +738,14 @@ export class AppRepository {
         : null;
 
       const normalize = (value: unknown): string => String(value ?? "").trim().toUpperCase();
-      const sameNaturalKey = (row: DbRecord): boolean =>
-        normalize(row.organization_id) === normalize(confirmation.organization_id) &&
-        normalize(row.own_legal_entity_id) === normalize(confirmation.own_legal_entity_id) &&
-        normalize(row.confirmation_number) === normalize(confirmationNumber);
+      const sameNaturalKey = (row: DbRecord): boolean => {
+        if (!confirmation) return false;
+        return (
+          normalize(row.organization_id) === normalize(confirmation.organization_id) &&
+          normalize(row.own_legal_entity_id) === normalize(confirmation.own_legal_entity_id) &&
+          normalize(row.confirmation_number) === normalize(confirmationNumber)
+        );
+      };
 
       // PostgREST pode nao devolver a linha no findOne quando ha pequenas
       // diferencas de espaco/caixa em dados antigos. O indice unico do banco,
@@ -707,6 +753,16 @@ export class AppRepository {
       if (!existing && confirmationNumber) {
         const candidates = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number");
         existing = candidates.find((row) => sameNaturalKey(row)) ?? null;
+      }
+
+      // Conflito de número nunca é resolvido automaticamente. Renumerar um
+      // rascunho durante o push ou redirecionar UUID pode fazer um fechamento
+      // desaparecer e reutilizar números. Preserva o registro local e bloqueia.
+      if (existing?.id && String(existing.id) !== dealConfirmationId) {
+        throw new Error(
+          `Conflito de numeração: ${confirmationNumber} já pertence à confirmação ${String(existing.id)} no servidor. ` +
+          "O registro local foi preservado e nenhuma alteração remota foi feita."
+        );
       }
 
       let remoteDealConfirmationId = existing?.id ? String(existing.id) : dealConfirmationId;
@@ -722,16 +778,13 @@ export class AppRepository {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/Ja existe um registro com esses dados/i.test(message) || !confirmationNumber) throw error;
-
-        const candidates = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number");
-        const canonical = candidates.find((row) => sameNaturalKey(row));
-        if (!canonical?.id) throw error;
-
-        remoteDealConfirmationId = String(canonical.id);
-        const { id: _ignoredId, ...patch } = sharedConfirmation;
-        await this.sharedRepository.updateRow("deal_confirmations", remoteDealConfirmationId, patch);
-        this.outbox.remap("deal_confirmation", dealConfirmationId, remoteDealConfirmationId);
+        if (/Ja existe um registro com esses dados/i.test(message) && confirmationNumber) {
+          throw new Error(
+            `Conflito de numeração ao sincronizar ${confirmationNumber}. ` +
+            "O registro local foi preservado; o sistema não redirecionou nem sobrescreveu outra confirmação."
+          );
+        }
+        throw error;
       }
       const parties = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
       for (const source of parties) {
@@ -745,16 +798,36 @@ export class AppRepository {
         row.deal_confirmation_id = remoteDealConfirmationId;
         await this.sharedRepository.upsertRow("deal_confirmation_items", row);
       }
+      // Garante que toda nota vinculada (e as operacoes dela, empurradas junto
+      // por pushFiscalDocumentToShared) ja existe no servidor -- com o id
+      // correto, mesmo se a nota tiver sido redirecionada por access_key --
+      // ANTES de gravar qualquer vinculo (deal_confirmation_operations e
+      // deal_confirmation_fiscal_documents apontam pra essas linhas). Sem
+      // isso a FK falha e a confirmacao inteira trava sem sincronizar nada
+      // (reproduz o erro real visto em producao: "violates foreign key
+      // constraint deal_confirmation_fiscal_documents_fiscal_document_id_fkey").
+      const linkedFiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
+      const remoteFiscalDocumentIdByLocalId = new Map<string, string>();
+      for (const source of linkedFiscalDocuments) {
+        const localFiscalDocumentId = String(source.fiscal_document_id);
+        await this.pushFiscalDocumentToShared(localFiscalDocumentId);
+        const localDoc = this.db.prepare("SELECT access_key FROM fiscal_documents WHERE id = ?").get(localFiscalDocumentId) as { access_key: string | null } | undefined;
+        const accessKey = localDoc?.access_key?.trim() || null;
+        const existingRemoteDoc = accessKey ? await this.sharedRepository.findOne("fiscal_documents", { access_key: accessKey }) : null;
+        remoteFiscalDocumentIdByLocalId.set(localFiscalDocumentId, existingRemoteDoc?.id ? String(existingRemoteDoc.id) : localFiscalDocumentId);
+      }
+
       const operations = this.db.prepare("SELECT * FROM deal_confirmation_operations WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
       for (const source of operations) {
         const row = toSharedRow(source, "deal_confirmation_operations");
         row.deal_confirmation_id = remoteDealConfirmationId;
         await this.sharedRepository.upsertRow("deal_confirmation_operations", row);
       }
-      const fiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of fiscalDocuments) {
+      for (const source of linkedFiscalDocuments) {
+        const localFiscalDocumentId = String(source.fiscal_document_id);
         const row = toSharedRow(source, "deal_confirmation_fiscal_documents");
         row.deal_confirmation_id = remoteDealConfirmationId;
+        row.fiscal_document_id = remoteFiscalDocumentIdByLocalId.get(localFiscalDocumentId) ?? localFiscalDocumentId;
         await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", row);
       }
       const clauses = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
@@ -818,9 +891,26 @@ export class AppRepository {
       if (!payable) return;
       await this.sharedRepository.upsertRow("accounts_payable", toSharedRow(payable, "accounts_payable"));
       const operations = this.db.prepare("SELECT * FROM account_payable_operations WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-      for (const row of operations) await this.sharedRepository.upsertRow("account_payable_operations", toSharedRow(row, "account_payable_operations"));
+      // account_payable_operations.operation_id referencia operations(id) --
+      // mesma garantia de pushClientChargeToShared: empurra a nota da
+      // operacao antes do vinculo, senao a FK falha se a nota nunca tiver
+      // sido sincronizada antes desta conta a pagar.
+      const pushedFiscalDocumentIds = new Set<string>();
+      for (const row of operations) {
+        const operation = this.db.prepare("SELECT fiscal_document_id FROM operations WHERE id = ?").get(String(row.operation_id)) as { fiscal_document_id: string | null } | undefined;
+        if (operation?.fiscal_document_id && !pushedFiscalDocumentIds.has(operation.fiscal_document_id)) {
+          await this.pushFiscalDocumentToShared(operation.fiscal_document_id);
+          pushedFiscalDocumentIds.add(operation.fiscal_document_id);
+        }
+        await this.sharedRepository.upsertRow("account_payable_operations", toSharedRow(row, "account_payable_operations"));
+      }
+      // payable_status_history e' append-only no Postgres (so' tem RLS policy
+      // de INSERT, ver migration 0010) -- reenviar com upsertRow reenviaria
+      // TODAS as linhas antigas de novo a cada mudanca nesta conta a pagar,
+      // e as que ja existem cairiam no caminho de UPDATE, sem policy pra
+      // autorizar (mesmo bug corrigido em pushTombstone).
       const statusHistory = this.db.prepare("SELECT * FROM payable_status_history WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-      for (const row of statusHistory) await this.sharedRepository.upsertRow("payable_status_history", toSharedRow(row, "payable_status_history"));
+      for (const row of statusHistory) await this.sharedRepository.insertIfMissing("payable_status_history", toSharedRow(row, "payable_status_history"));
       const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
       for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
     } catch (error) {
@@ -1054,29 +1144,45 @@ export class AppRepository {
     ).all() as Array<{ id: string; organization_id: string; own_legal_entity_id: string; confirmation_number: string }>;
     if (localRows.length === 0) return;
 
-    const sharedRows = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number") as Array<{
+    const sharedRows = await this.sharedRepository.listAll(
+      "deal_confirmations",
+      "confirmation_number"
+    ) as Array<{
       id: string;
       organization_id: string;
       own_legal_entity_id: string;
       confirmation_number: string | null;
     }>;
 
-    const normalize = (value: unknown): string => String(value ?? "").trim().toUpperCase();
-    const key = (organizationId: unknown, legalEntityId: unknown, number: unknown): string =>
+    const normalize = (value: unknown): string =>
+      String(value ?? "").trim().toUpperCase();
+    const key = (
+      organizationId: unknown,
+      legalEntityId: unknown,
+      number: unknown
+    ): string =>
       `${normalize(organizationId)}::${normalize(legalEntityId)}::${normalize(number)}`;
 
     const sharedByKey = new Map(
       sharedRows
         .filter((row) => row.confirmation_number)
-        .map((row) => [key(row.organization_id, row.own_legal_entity_id, row.confirmation_number), row.id])
+        .map((row) => [
+          key(row.organization_id, row.own_legal_entity_id, row.confirmation_number),
+          row.id
+        ])
     );
 
     for (const local of localRows) {
-      const sharedId = sharedByKey.get(key(local.organization_id, local.own_legal_entity_id, local.confirmation_number));
+      const sharedId = sharedByKey.get(
+        key(local.organization_id, local.own_legal_entity_id, local.confirmation_number)
+      );
       if (!sharedId || sharedId === local.id) continue;
 
-      this.redirectLocalPrimaryKey("deal_confirmations", local.id, sharedId, ["confirmation_number"]);
-      this.outbox.remap("deal_confirmation", local.id, sharedId);
+      log.error("Conflito de número em confirmação; registro local preservado sem renumeração automática", {
+        localId: local.id,
+        sharedId,
+        confirmationNumber: local.confirmation_number
+      });
     }
   }
 
@@ -1337,12 +1443,49 @@ export class AppRepository {
    * depois tenta a rede). Falha de rede vai pra fila de reenvio (ver
    * sharedPushOutbox.ts) exatamente como qualquer outro push.
    */
+  /**
+   * So' usado no fluxo de deleteDealConfirmation (rascunho sem numero -- ver
+   * regra em deleteDealConfirmation): a confirmacao em si nunca e' de fato
+   * apagada no Postgres, so' um tombstone (ver pushTombstone abaixo, mesmo
+   * padrao append-only usado em toda exclusao deste app). Sem isto, os
+   * vinculos com nota fiscal continuariam "reivindicando" o documento pra
+   * sempre no indice unico parcial de deal_confirmation_fiscal_documents (ver
+   * migration da corrida de confirmacao duplicada), mesmo com o rascunho ja
+   * tendo sumido daqui -- bloqueando pra sempre um novo rascunho reusar
+   * aquela mesma nota. Best-effort, mesmo padrao de trySharedReferenceWrite.
+   */
+  async releaseDealConfirmationFiscalDocumentClaims(dealConfirmationId: string): Promise<void> {
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("deal_confirmation_fiscal_documents", { deal_confirmation_id: dealConfirmationId }));
+  }
+
+  /**
+   * Usado so' pra melhorar a mensagem de erro do indice unico parcial (ver
+   * 0027_fiscal_document_claim_uniqueness.sql): "esta nota ja foi usada"
+   * sozinho obrigava o usuario a adivinhar/procurar em qual confirmacao --
+   * relatado como confuso ("abro outra confirmacao e nao encontro"). Busca
+   * direto no Supabase qual confirmacao ativa hoje reivindica esta nota, pra
+   * citar o numero dela na mensagem. Best-effort: se a busca falhar (ex: sem
+   * rede), devolve null e o chamador cai de volta na mensagem generica.
+   */
+  async findConflictingDealConfirmationLabel(fiscalDocumentId: string): Promise<string | null> {
+    if (!this.sharedRepository) return null;
+    try {
+      const link = await this.sharedRepository.findOne("deal_confirmation_fiscal_documents", { fiscal_document_id: fiscalDocumentId, is_active: true });
+      if (!link?.deal_confirmation_id) return null;
+      const confirmation = await this.sharedRepository.findOne("deal_confirmations", { id: String(link.deal_confirmation_id) });
+      if (!confirmation) return null;
+      return String(confirmation.confirmation_number ?? confirmation.temporary_reference ?? link.deal_confirmation_id);
+    } catch {
+      return null;
+    }
+  }
+
   async pushTombstone(tableName: string, rowId: string): Promise<void> {
     const now = new Date().toISOString();
     this.recordLocalTombstone(tableName, rowId, now);
     if (!this.sharedRepository || this.isLocalOnlyMode()) return;
     try {
-      await this.sharedRepository.upsertRow("sync_tombstones", { table_name: tableName, row_id: rowId, deleted_at: now });
+      await this.sharedRepository.insertIfMissing("sync_tombstones", { table_name: tableName, row_id: rowId, deleted_at: now });
     } catch (error) {
       this.outbox.enqueue("tombstone", `${tableName}:${rowId}`, error);
       throw error;
@@ -1429,6 +1572,23 @@ export class AppRepository {
       logo_path: paths.logoPath ?? organization.logoPath,
       compact_logo_path: paths.compactLogoPath ?? organization.compactLogoPath,
       icon_path: paths.iconPath ?? organization.iconPath,
+      updated_at: new Date().toISOString()
+    };
+    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
+    this.patchLocalRow("organizations", id, patch);
+    return this.getOrganization(id);
+  }
+
+  async updateOrganizationColors(id: string, colors: Partial<Pick<Organization, "primaryColor" | "secondaryColor" | "accentColor">>): Promise<Organization> {
+    const organization = this.getOrganization(id);
+    const hex = /^#[0-9A-Fa-f]{6}$/;
+    for (const [key, value] of Object.entries(colors)) {
+      if (value !== undefined && !hex.test(value)) throw new Error(`Cor invalida em ${key}: use o formato #RRGGBB.`);
+    }
+    const patch: DbRecord = {
+      primary_color: colors.primaryColor ?? organization.primaryColor,
+      secondary_color: colors.secondaryColor ?? organization.secondaryColor,
+      accent_color: colors.accentColor ?? organization.accentColor,
       updated_at: new Date().toISOString()
     };
     await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
@@ -4458,13 +4618,12 @@ export class AppRepository {
   }
 
   saveInstallationProfile(input: unknown): InstallationProfile {
-    const parsedProfile = saveInstallationProfileSchema.parse(input);
-    const profile = {
-      ...parsedProfile,
-      appVariant: "multiempresa" as const,
-      allowOrganizationSwitch: true,
-      allowLegalEntitySwitch: true
-    };
+    // ateh' 1.0.43 isto forcava incondicionalmente appVariant "multiempresa" +
+    // os dois switches em true, ignorando o que a tela mandasse -- bloqueava
+    // qualquer instalacao "empresa unica" (cliente novo, sem grupo Villa/Grao).
+    // O fluxo atual da Villa/Grao ja manda esses 3 campos assim mesmo (ver
+    // SetupWizard), entao remover o override nao muda nada pra eles.
+    const profile = saveInstallationProfileSchema.parse(input);
     this.validateProfileInput(profile);
     const now = new Date().toISOString();
     const existing = this.getInstallationProfile();
@@ -4600,7 +4759,7 @@ export class AppRepository {
         const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
         const autoSecondary = explicitSecondaryPartnerId || !primaryOperation || existingDetail.document.secondaryResponsiblePartnerId
           ? null
-          : this.resolveTriangulatedSecondaryPartner(existingDetail.document.organizationId, extracted, existingDetail.document.responsiblePartnerId, primaryOperation.operationType);
+          : this.resolveTriangulatedSecondaryPartner(extracted, existingDetail.document.responsiblePartnerId, primaryOperation.operationType);
         const secondaryPartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
         if (secondaryPartnerId && !existingDetail.document.secondaryResponsiblePartnerId) {
           this.completeFiscalDocumentTriangulation(existing.id, { secondaryResponsiblePartnerId: secondaryPartnerId });
@@ -4633,7 +4792,7 @@ export class AppRepository {
     // Se o revisor manual ja indicou o parceiro secundario (resolution.secondaryPartnerId),
     // usa esse em vez de tentar detectar de novo.
     const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
-    const autoSecondary = explicitSecondaryPartnerId ? null : this.resolveTriangulatedSecondaryPartner(documentOrganizationId, extracted, responsiblePartnerId, operationType);
+    const autoSecondary = explicitSecondaryPartnerId ? null : this.resolveTriangulatedSecondaryPartner(extracted, responsiblePartnerId, operationType);
     const secondaryResponsiblePartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
     const secondaryOperationType: "PURCHASE" | "SALE" | null = secondaryResponsiblePartnerId ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null;
     const pending: string[] = [];
@@ -4788,7 +4947,7 @@ export class AppRepository {
         const ownRecipientMatch = allEntities.find((entity) => entity.cnpj === recipientDoc && !this.isThirdPartyLegalEntity(entity));
         if (ownIssuerMatch) return { ownLegalEntityId: ownIssuerMatch.id, direction: "OUTBOUND", operationType: "SALE" };
         if (ownRecipientMatch) return { ownLegalEntityId: ownRecipientMatch.id, direction: "INBOUND", operationType: "PURCHASE" };
-        if (this.findSupplierPartnerIdByCnpj(organizationId, issuerDoc)) {
+        if (this.findSupplierPartnerIdByCnpj(issuerDoc)) {
           return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
         }
         const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
@@ -4818,7 +4977,7 @@ export class AppRepository {
         errorMessage: `CNPJ proprio nao identificado. Cadastre o CNPJ proprio da empresa ou selecione a empresa/CNPJ correto. Emitente: ${issuerLabel || "-"}; Destinatario: ${recipientLabel || "-"}.`
       };
     }
-    if (this.findSupplierPartnerIdByCnpj(organizationId, issuerDoc)) {
+    if (this.findSupplierPartnerIdByCnpj(issuerDoc)) {
       return { ownLegalEntityId: selectedOwn.id, direction: "INBOUND", operationType: "PURCHASE" };
     }
     const thirdParty = this.getOrCreateThirdPartyLegalEntityFromXml(organizationId, issuer ?? recipient, selectedOwn);
@@ -4834,28 +4993,35 @@ export class AppRepository {
    * venda) em vez de reconhecer como uma compra nossa do Leo, que e' o que
    * realmente aconteceu comercialmente.
    */
-  private findSupplierPartnerIdByCnpj(organizationId: string, cnpj: string): string | null {
+  // Nao filtra por organization_id: parceiros sao cadastrados uma vez e
+  // usados nas duas empresas (Villa e Grao & Grao) -- e' assim que a propria
+  // tela de Cadastros ja lista parceiros (listBusinessPartners sem filtro de
+  // organizationId). Filtrar aqui por organizationId fazia essa busca falhar
+  // sempre que o parceiro foi criado com a OUTRA empresa ativa, mesmo
+  // aparecendo normalmente em Cadastros -- daí o CNPJ proprio escolhido na
+  // importacao (ex: Grao & Grao) era descartado e a nota virava "terceirizada".
+  private findSupplierPartnerIdByCnpj(cnpj: string): string | null {
     if (!cnpj || cnpj.length !== 14) return null;
     const row = this.db.prepare(`
       SELECT bp.id AS id
       FROM partner_legal_entities ple
       JOIN business_partners bp ON bp.id = ple.business_partner_id
       JOIN business_partner_roles bpr ON bpr.business_partner_id = bp.id AND bpr.role = 'SUPPLIER'
-      WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
       LIMIT 1
-    `).get(cnpj, organizationId) as { id: string } | undefined;
+    `).get(cnpj) as { id: string } | undefined;
     return row?.id ?? null;
   }
 
-  private findLinkedPartnerRolesByCnpj(organizationId: string, cnpj: string): { businessPartnerId: string; roles: string[] } | null {
+  private findLinkedPartnerRolesByCnpj(cnpj: string): { businessPartnerId: string; roles: string[] } | null {
     if (!cnpj || cnpj.length !== 14) return null;
     const row = this.db.prepare(`
       SELECT bp.id AS id
       FROM partner_legal_entities ple
       JOIN business_partners bp ON bp.id = ple.business_partner_id
-      WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
+      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
       LIMIT 1
-    `).get(cnpj, organizationId) as { id: string } | undefined;
+    `).get(cnpj) as { id: string } | undefined;
     if (!row) return null;
     const roles = (this.db.prepare("SELECT role FROM business_partner_roles WHERE business_partner_id = ?").all(row.id) as Array<{ role: string }>).map((item) => item.role);
     return { businessPartnerId: row.id, roles };
@@ -4872,7 +5038,6 @@ export class AppRepository {
    * venda com o corretor/cliente, ambas sobre a mesma remessa.
    */
   private resolveTriangulatedSecondaryPartner(
-    organizationId: string,
     extracted: Record<string, unknown>,
     primaryPartnerId: string,
     primaryOperationType: "PURCHASE" | "SALE"
@@ -4887,7 +5052,7 @@ export class AppRepository {
 
     const secondaryOperationType: "PURCHASE" | "SALE" = primaryOperationType === "PURCHASE" ? "SALE" : "PURCHASE";
     const secondaryRole = secondaryOperationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
-    const candidates = [this.findLinkedPartnerRolesByCnpj(organizationId, issuerDoc), this.findLinkedPartnerRolesByCnpj(organizationId, recipientDoc)]
+    const candidates = [this.findLinkedPartnerRolesByCnpj(issuerDoc), this.findLinkedPartnerRolesByCnpj(recipientDoc)]
       .filter((item): item is { businessPartnerId: string; roles: string[] } => item !== null);
     const secondaryCandidate = candidates.find((item) => item.businessPartnerId !== primaryPartnerId && item.roles.includes(secondaryRole));
     if (!secondaryCandidate) return null;
@@ -5009,12 +5174,14 @@ export class AppRepository {
     const counterpartyLegalName = this.stringOrNull(counterpartyParty?.legalName);
 
     if (counterpartyDoc && counterpartyDoc.length === 14) {
+      // Sem filtro de organization_id, mesmo motivo do findSupplierPartnerIdByCnpj:
+      // parceiros sao cadastrados uma vez e valem pras duas empresas.
       const row = this.db.prepare(`
         SELECT ple.business_partner_id AS id
         FROM partner_legal_entities ple
         JOIN business_partners bp ON bp.id = ple.business_partner_id
-        WHERE ple.cnpj = ? AND bp.organization_id = ? AND ple.is_active = 1 AND bp.is_active = 1
-      `).get(counterpartyDoc, organizationId) as { id: string } | undefined;
+        WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
+      `).get(counterpartyDoc) as { id: string } | undefined;
       if (row) return row.id;
     }
     if (counterpartyTradeName) {
@@ -6287,7 +6454,13 @@ export class AppRepository {
       // (e mesma correcao) do seed de clientes, ver deterministicId.ts.
       const id = deterministicUuid("expenseCategory", organizationId, item.code);
       const row: DbRecord = { id, organization_id: organizationId, parent_category_id: null, name: item.name, code: item.code, expense_nature: item.nature, description: null, is_active: true, created_at: now, updated_at: now };
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("expense_categories", row));
+      // upsertRow (nao insertRow): o id deterministico so' evita ids
+      // diferentes pra' mesma categoria, mas nao evita a linha ja existir do
+      // lado do servidor (outro PC criou primeiro, ou um pull anterior nao
+      // refletiu localmente ainda) -- um insertRow puro colide no unique
+      // (organization_id, code) com "Ja existe um registro com esses dados"
+      // (achado ao testar geracao de acerto de compra: 11 falhas seguidas).
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.upsertRow("expense_categories", row));
       this.upsertLocalRow("expense_categories", row);
     }
   }
@@ -6535,7 +6708,10 @@ export class AppRepository {
     const now = new Date().toISOString();
     const template = data.templateId ? this.getDealConfirmationTemplate(data.templateId) : this.getDefaultDealTemplate(data.organizationId, data.ownLegalEntityId);
     const bankDefaults = this.resolveDealBankDefaults(own, data);
-    const draftNumber = this.reserveNextDealConfirmationNumber(data.organizationId, data.ownLegalEntityId, now.slice(0, 4));
+    // Rascunhos nascem sem numero oficial. O numero e reservado exclusivamente
+    // no Supabase antes da primeira previa/emissao, evitando que a sequencia
+    // local reutilize um numero que ja existe no servidor.
+    const temporaryReference = `RASCUNHO-${id.slice(0, 8).toUpperCase()}`;
     const trx = this.db.transaction(() => {
       this.db.prepare(`INSERT INTO deal_confirmations (
         id, organization_id, own_legal_entity_id, template_id, confirmation_number, temporary_reference,
@@ -6546,7 +6722,7 @@ export class AppRepository {
         bank_holder_name, bank_holder_document, pix_key, pix_key_type,
         template_snapshot_json, pending_issues_json, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', 'NOT_SENT', 'BRL', '0', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`)
-        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, draftNumber, draftNumber, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? own.defaultDeliveryTerms ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? own.defaultPaymentTerms ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? own.defaultConfirmationNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.bankAccountType, bankDefaults.bankHolderName, bankDefaults.bankHolderDocument, bankDefaults.pixKey, bankDefaults.pixKeyType, template ? JSON.stringify(template) : null, now, now);
+        .run(id, data.organizationId, data.ownLegalEntityId, data.templateId ?? template?.id ?? null, null, temporaryReference, data.confirmationDate, data.negotiationDate ?? null, data.deliveryLocationSnapshot ?? own.defaultDeliveryTerms ?? template?.defaultDeliveryTerms ?? null, data.deliveryStartDate ?? null, data.deliveryEndDate ?? null, data.paymentTermsSnapshot ?? own.defaultPaymentTerms ?? template?.defaultPaymentTerms ?? null, data.qualityTermsSnapshot ?? template?.defaultQualityTerms ?? null, data.generalTermsSnapshot ?? template?.defaultGeneralTerms ?? null, data.publicNotes ?? own.defaultConfirmationNotes ?? null, data.internalNotes ?? null, data.brokeragePercentageBasisPoints ?? null, bankDefaults.bankName, bankDefaults.bankCode, bankDefaults.bankAgency, bankDefaults.bankAccount, bankDefaults.bankAccountType, bankDefaults.bankHolderName, bankDefaults.bankHolderDocument, bankDefaults.pixKey, bankDefaults.pixKeyType, template ? JSON.stringify(template) : null, now, now);
       this.addDealPartyInternal({ dealConfirmationId: id, partyRole: "ISSUER", ownLegalEntityId: own.id, businessPartnerId: null, partnerLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 0 });
       this.recordDealStatus(id, null, "DRAFT", "Rascunho criado");
     });
@@ -6681,6 +6857,9 @@ export class AppRepository {
   deleteDealConfirmation(id: string): boolean {
     const detail = this.getDealConfirmation(id);
     this.assertOrganizationWritable(detail.confirmation.organizationId);
+    if (detail.confirmation.confirmationNumber || detail.confirmation.status !== "DRAFT") {
+      throw new Error("Confirmação numerada ou fora de rascunho não pode ser excluída. Use Cancelar confirmação para preservar o histórico e a numeração.");
+    }
     const documentPaths = detail.documents.map((document) => document.storedFilePath).filter(Boolean);
     const trx = this.db.transaction(() => {
       this.db.prepare("UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL, updated_at = ? WHERE replaced_by_confirmation_id = ?").run(new Date().toISOString(), id);
@@ -6831,9 +7010,20 @@ export class AppRepository {
     return this.getDealConfirmation(dealConfirmationId);
   }
 
-  unlinkDealFiscalDocument(dealConfirmationId: string, fiscalDocumentId: string): DealConfirmationDetail {
+  async unlinkDealFiscalDocument(dealConfirmationId: string, fiscalDocumentId: string): Promise<DealConfirmationDetail> {
     this.assertDealEditable(dealConfirmationId);
+    const existing = this.db.prepare("SELECT id FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? AND fiscal_document_id = ?").get(dealConfirmationId, fiscalDocumentId) as { id: string } | undefined;
     this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? AND fiscal_document_id = ?").run(dealConfirmationId, fiscalDocumentId);
+    // Precisa apagar tambem do lado do servidor -- pushDealConfirmationToShared
+    // so' faz upsert do que existe localmente AGORA pra essa confirmacao, nunca
+    // remove uma linha que sumiu daqui. Sem isto, o indice unico parcial de
+    // deal_confirmation_fiscal_documents (ver migration da corrida de
+    // confirmacao duplicada) continuaria vendo o documento como "reivindicado"
+    // por esta confirmacao pra sempre, bloqueando ate' um simples "tirei a
+    // nota errada, coloquei a certa" na MESMA confirmacao.
+    if (existing) {
+      await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("deal_confirmation_fiscal_documents", { id: existing.id }));
+    }
     return this.getDealConfirmation(dealConfirmationId);
   }
 
@@ -6938,18 +7128,20 @@ export class AppRepository {
   }
 
   async generateDealConfirmationPreview(id: string): Promise<DealConfirmationDetail> {
+    this.assertDealEditable(id);
     return this.generateDealDocument(id, true);
   }
 
   async issueDealConfirmation(id: string): Promise<DealConfirmationDetail> {
     const issues = this.validateDealForIssue(id);
     if (issues.some((issue) => issue.severity === "critical")) throw new Error(`Pendencias criticas impedem emissao: ${issues.map((issue) => issue.message).join("; ")}`);
+    const initial = this.getDealConfirmation(id);
+    if (!["DRAFT", "PENDING_REVIEW"].includes(initial.confirmation.status)) throw new Error("Confirmacao ja emitida ou encerrada.");
+    const number = await this.ensureDealConfirmationNumberOnServer(id, false);
     const before = this.getDealConfirmation(id);
-    if (!["DRAFT", "PENDING_REVIEW"].includes(before.confirmation.status)) throw new Error("Confirmacao ja emitida ou encerrada.");
     const now = new Date().toISOString();
     let versionId = "";
     const trx = this.db.transaction(() => {
-      const number = before.confirmation.confirmationNumber ?? this.reserveNextDealConfirmationNumber(before.confirmation.organizationId, before.confirmation.ownLegalEntityId, now.slice(0, 4));
       this.refreshDealTotals(id);
       this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, status = 'ISSUED', signature_status = 'NOT_SENT', issued_at = ?, updated_at = ?, pending_issues_json = ?, template_snapshot_json = COALESCE(template_snapshot_json, ?) WHERE id = ?")
         .run(number, now, now, JSON.stringify(issues), JSON.stringify(this.getDefaultDealTemplate(before.confirmation.organizationId, before.confirmation.ownLegalEntityId)), id);
@@ -6957,6 +7149,13 @@ export class AppRepository {
       versionId = randomUUID();
     });
     trx();
+    // Confirma no servidor o mesmo UUID, número e status antes de gerar o PDF.
+    // Se falhar, não há documento emitido com estado apenas local.
+    await this.withTimeout(
+      this.pushDealConfirmationToShared(id),
+      45_000,
+      "Tempo esgotado ao confirmar a emissao no servidor. Verifique a conexao e tente novamente."
+    );
     const generated = await this.generateDealDocumentVersion(id, "ISSUED_ORIGINAL", versionId, false, "Documento original emitido");
     this.db.prepare("UPDATE deal_confirmations SET issued_document_version_id = ?, updated_at = ? WHERE id = ?").run(generated.id, new Date().toISOString(), id);
     return this.getDealConfirmation(id);
@@ -7019,8 +7218,11 @@ export class AppRepository {
 
   replaceDealConfirmation(id: string, reason: string): DealConfirmationDetail {
     if (!reason.trim()) throw new Error("Motivo de substituicao obrigatorio.");
-    const replacement = this.duplicateDealConfirmationAsDraft(id);
     const detail = this.getDealConfirmation(id);
+    if (!["ISSUED", "SENT_FOR_SIGNATURE", "SIGNED"].includes(detail.confirmation.status)) {
+      throw new Error("Somente confirmacao emitida ou em processo de assinatura pode ser substituida.");
+    }
+    const replacement = this.duplicateDealConfirmationAsDraft(id);
     const now = new Date().toISOString();
     this.db.prepare("UPDATE deal_confirmations SET status = 'REPLACED', replaced_by_confirmation_id = ?, updated_at = ? WHERE id = ?").run(replacement.confirmation.id, now, id);
     this.recordDealStatus(id, detail.confirmation.status, "REPLACED", reason);
@@ -7232,6 +7434,34 @@ export class AppRepository {
 
   getDealDocumentPath(versionId: string): string {
     return this.getDealDocumentVersion(versionId).storedFilePath;
+  }
+
+  /**
+   * stored_file_path e' um caminho ABSOLUTO no HD do PC que gerou o
+   * documento -- so' faz sentido naquele PC. Quando outro PC (que so'
+   * recebeu a LINHA via sync, nunca o arquivo) tenta abrir/baixar, o
+   * arquivo simplesmente nao existe ali, e o app mostrava "sem previa
+   * gerada" sem nenhuma explicacao (bug real reportado em producao).
+   * storage_object_path e' o unico caminho de fato compartilhado (bucket
+   * privado "confirmation-files", ja usado pelo app de visualizacao) --
+   * baixa de la' na primeira vez que faltar localmente, guarda uma copia
+   * neste PC (pasta propria, nunca reescreve o caminho original de quem
+   * gerou) e atualiza o proprio registro local pra nao rebaixar de novo.
+   */
+  async ensureDealDocumentLocalPath(versionId: string): Promise<string> {
+    const version = this.getDealDocumentVersion(versionId);
+    if (existsSync(version.storedFilePath)) return version.storedFilePath;
+    if (!version.storageObjectPath || !this.sharedRepository) {
+      throw new Error("Este documento ainda nao esta disponivel neste computador -- o PC que gerou provavelmente nao terminou de sincronizar. Tente novamente em instantes ou gere uma nova previa/emissao.");
+    }
+    const bytes = await this.sharedRepository.downloadFile("confirmation-files", version.storageObjectPath);
+    if (!this.directories) throw new Error("Diretorios locais nao configurados.");
+    const targetDir = join(this.directories.documentsDir, "confirmations", "downloaded", version.dealConfirmationId, versionId);
+    mkdirSync(targetDir, { recursive: true });
+    const localPath = join(targetDir, version.originalFileName);
+    writeFileSync(localPath, bytes);
+    this.db.prepare("UPDATE deal_confirmation_document_versions SET stored_file_path = ? WHERE id = ?").run(localPath, versionId);
+    return localPath;
   }
 
   calculateDealDocumentHash(versionId: string): string {
@@ -7463,11 +7693,17 @@ export class AppRepository {
     const year = Number(yearText);
     const now = new Date().toISOString();
     const prefix = this.defaultDealConfirmationPrefix(organizationId, ownLegalEntityId);
-    let row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, prefix) as DbRecord | undefined;
+    let row = this.db.prepare(
+      "SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1"
+    ).get(organizationId, ownLegalEntityId, year, prefix) as DbRecord | undefined;
+
     if (!row) {
-      this.db.prepare("INSERT INTO document_sequences (id, organization_id, own_legal_entity_id, document_type, year, prefix, current_number, padding, is_active, created_at, updated_at) VALUES (?, ?, ?, 'DEAL_CONFIRMATION', ?, ?, 0, 4, 1, ?, ?)")
-        .run(randomUUID(), organizationId, ownLegalEntityId, year, prefix, now, now);
-      row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year, prefix) as DbRecord;
+      this.db.prepare(
+        "INSERT INTO document_sequences (id, organization_id, own_legal_entity_id, document_type, year, prefix, current_number, padding, is_active, created_at, updated_at) VALUES (?, ?, ?, 'DEAL_CONFIRMATION', ?, ?, 0, 4, 1, ?, ?)"
+      ).run(randomUUID(), organizationId, ownLegalEntityId, year, prefix, now, now);
+      row = this.db.prepare(
+        "SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1"
+      ).get(organizationId, ownLegalEntityId, year, prefix) as DbRecord;
     }
     // current_number e' so' o piso manual (ver setDealConfirmationSequenceFloor) --
     // nao ratcheia a cada emissao, senao o piso "vaza" pra cima com o numero mais
@@ -7502,6 +7738,63 @@ export class AppRepository {
     let next = floor + 1;
     while (used.has(next)) next += 1;
     return next;
+  }
+
+  private async reserveDealConfirmationNumberOnServer(
+    confirmationId: string,
+    organizationId: string,
+    ownLegalEntityId: string,
+    year: number
+  ): Promise<string> {
+    if (!this.sharedRepository) {
+      throw new Error("Sem conexão com o servidor. A emissão foi bloqueada para evitar número duplicado.");
+    }
+    const prefix = this.defaultDealConfirmationPrefix(organizationId, ownLegalEntityId);
+    // Piso manual (ver setDealConfirmationSequenceFloor) fica em document_sequences
+    // local -- precisa ser mandado explicitamente pra RPC, senao a reserva atomica
+    // no servidor ignora o piso e reaproveita numeros que deveriam ficar bloqueados.
+    const floorRow = this.db.prepare(
+      "SELECT current_number FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1"
+    ).get(organizationId, ownLegalEntityId, year, prefix) as { current_number: number } | undefined;
+    const floor = Number(floorRow?.current_number ?? 0);
+    const result = await this.withTimeout(
+      this.sharedRepository.rpc<Array<{ confirmation_number: string }>>(
+        "ensure_deal_confirmation_number",
+        {
+          p_confirmation_id: confirmationId,
+          p_organization_id: organizationId,
+          p_own_legal_entity_id: ownLegalEntityId,
+          p_year: year,
+          p_prefix: prefix,
+          p_padding: 4,
+          p_floor: floor
+        }
+      ),
+      20_000,
+      "Tempo esgotado ao reservar o numero no servidor. Verifique a conexao e tente novamente."
+    );
+    const number = result?.[0]?.confirmation_number;
+    if (!number) throw new Error("O servidor não devolveu o número reservado da confirmação.");
+
+    // Defesa em profundidade: o número devolvido só é aceito quando o próprio
+    // Supabase confirma que ele pertence ao mesmo UUID. Nunca gere PDF apenas
+    // confiando no valor local ou na resposta isolada da RPC.
+    const remoteOwner = await this.withTimeout(
+      this.sharedRepository.findOne("deal_confirmations", {
+        organization_id: organizationId,
+        own_legal_entity_id: ownLegalEntityId,
+        confirmation_number: number
+      }),
+      15_000,
+      "Tempo esgotado ao confirmar a reserva do numero no servidor."
+    );
+    if (!remoteOwner?.id || String(remoteOwner.id) !== confirmationId) {
+      throw new Error(
+        `Reserva inválida: ${number} não pertence a esta confirmação no servidor. ` +
+        "A prévia foi bloqueada e nenhum PDF novo foi gerado."
+      );
+    }
+    return number;
   }
 
   listDealConfirmationSequenceStatus(): DealConfirmationSequenceStatus[] {
@@ -7627,75 +7920,135 @@ export class AppRepository {
   }
 
   private async generateDealDocument(id: string, draft: boolean): Promise<DealConfirmationDetail> {
-    if (draft) this.ensureDealConfirmationNumber(id);
+    if (draft) await this.ensureDealConfirmationNumberOnServer(id, true);
     const versionId = randomUUID();
     const documentType = draft ? "GENERATED_DRAFT" : "ISSUED_ORIGINAL";
     await this.generateDealDocumentVersion(id, documentType, versionId, draft, draft ? "Previa com marca d'agua" : "Documento emitido");
     return this.getDealConfirmation(id);
   }
 
-  private ensureDealConfirmationNumber(id: string): void {
+  // allowProvisional so' pode ser true pra previa (generateDealDocument),
+  // nunca pra emissao real -- um numero provisorio virando numero oficial
+  // "por acidente" seria um documento juridico com numeracao inventada.
+  private async ensureDealConfirmationNumberOnServer(id: string, allowProvisional: boolean): Promise<string> {
     const detail = this.getDealConfirmation(id);
     const confirmation = detail.confirmation;
-    const desiredPrefix = this.defaultDealConfirmationPrefix(
-      confirmation.organizationId,
-      confirmation.ownLegalEntityId
-    );
-
-    if (confirmation.confirmationNumber) {
-      // Mantém documentos já emitidos imutáveis. Em rascunhos, corrige prefixos
-      // antigos (ex.: VC 0001) quando o CNPJ passa a usar VCMG/VCES.
-      if (confirmation.status !== "DRAFT" && confirmation.status !== "PENDING_REVIEW") return;
-      if (confirmation.confirmationNumber.startsWith(desiredPrefix)) return;
-
-      const suffixMatch = confirmation.confirmationNumber.match(/(\d+)\s*$/);
-      const suffix = suffixMatch?.[1] ?? null;
-      const padding = Math.max(4, suffix?.length ?? 0);
-      let candidate = suffix
-        ? `${desiredPrefix}${suffix.padStart(padding, "0")}`
-        : this.reserveNextDealConfirmationNumber(
-            confirmation.organizationId,
-            confirmation.ownLegalEntityId,
-            new Date().toISOString().slice(0, 4)
-          );
-
-      const collision = this.db.prepare(`
-        SELECT id
-        FROM deal_confirmations
-        WHERE organization_id = ?
-          AND own_legal_entity_id = ?
-          AND confirmation_number = ?
-          AND id <> ?
-        LIMIT 1
-      `).get(
-        confirmation.organizationId,
-        confirmation.ownLegalEntityId,
-        candidate,
-        id
-      ) as { id: string } | undefined;
-
-      if (collision) {
-        candidate = this.reserveNextDealConfirmationNumber(
-          confirmation.organizationId,
-          confirmation.ownLegalEntityId,
-          new Date().toISOString().slice(0, 4)
-        );
-      }
-
-      this.db.prepare(
-        "UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ?"
-      ).run(candidate, new Date().toISOString(), id);
-      return;
+    if (!["DRAFT", "PENDING_REVIEW"].includes(confirmation.status)) {
+      if (!confirmation.confirmationNumber) throw new Error("Confirmacao encerrada sem numero oficial.");
+      return confirmation.confirmationNumber;
     }
 
-    const number = this.reserveNextDealConfirmationNumber(
-      confirmation.organizationId,
-      confirmation.ownLegalEntityId,
-      new Date().toISOString().slice(0, 4)
+    // Modo somente local e' uma escolha deliberada do operador (Configuracoes) --
+    // "este PC opera sozinho, sem sincronizar". Nesse caso numerar localmente e'
+    // seguro (nao ha outro PC disputando a mesma sequencia), entao a numeracao
+    // definitiva funciona pra previa E pra emissao final, nao so' provisoria.
+    // Diferente de uma queda de rede pontual num PC que normalmente sincroniza,
+    // onde continua sendo arriscado inventar um numero oficial local.
+    if (this.isLocalOnlyMode()) {
+      return this.reserveDealConfirmationNumberLocally(id, confirmation.organizationId, confirmation.ownLegalEntityId, Number(confirmation.confirmationDate.slice(0, 4)) || new Date().getFullYear());
+    }
+
+    const connected = await this.isSharedConnected();
+    if (!connected) {
+      if (allowProvisional) return this.assignProvisionalDealConfirmationNumber(id, confirmation.temporaryReference);
+      throw new Error("Sem conexao com o servidor. A emissao foi bloqueada para evitar numero duplicado.");
+    }
+    if (!this.sharedRepository) throw new Error("Sem conexao com o servidor. A emissao foi bloqueada para evitar numero duplicado.");
+
+    // Remove qualquer numero criado por versoes antigas antes do primeiro push.
+    // Uma reserva valida existente e recuperada de forma idempotente pela RPC.
+    this.db.prepare(
+      "UPDATE deal_confirmations SET confirmation_number = NULL, updated_at = ? WHERE id = ? AND status IN ('DRAFT','PENDING_REVIEW')"
+    ).run(new Date().toISOString(), id);
+
+    await this.withTimeout(
+      this.pushDealConfirmationToShared(id),
+      45_000,
+      "Tempo esgotado ao enviar o rascunho pro servidor. Verifique a conexao e tente novamente."
+    );
+
+    // Valida persistencia antes de reservar: nao basta o push nao ter
+    // lancado erro, o mesmo UUID precisa existir de fato no Supabase. Tenta
+    // algumas vezes com um pequeno intervalo -- uma inconsistencia de leitura
+    // logo apos a escrita (rede instavel, latencia momentanea do Supabase)
+    // nao pode bloquear a previa se o dado realmente foi gravado.
+    let remote: DbRecord | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000));
+      remote = await this.withTimeout(
+        this.sharedRepository.findOne("deal_confirmations", { id }),
+        15_000,
+        "Tempo esgotado ao confirmar o rascunho no servidor."
+      );
+      if (remote?.id && String(remote.id) === id) break;
+    }
+    if (!remote?.id || String(remote.id) !== id) {
+      throw new Error(
+        "Nao foi possivel confirmar o rascunho no servidor antes de reservar o numero. " +
+        "Nenhum numero foi reservado e nenhuma previa foi gerada."
+      );
+    }
+
+    const current = this.getDealConfirmation(id).confirmation;
+    const number = await this.reserveDealConfirmationNumberOnServer(
+      id,
+      current.organizationId,
+      current.ownLegalEntityId,
+      Number(current.confirmationDate.slice(0, 4) || new Date().getFullYear())
     );
     this.db.prepare(
-      "UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ?"
-    ).run(number, new Date().toISOString(), id);
+      "UPDATE deal_confirmations SET confirmation_number = ?, temporary_reference = ?, updated_at = ? WHERE id = ?"
+    ).run(number, number, new Date().toISOString(), id);
+    await this.withTimeout(
+      this.pushDealConfirmationToShared(id),
+      45_000,
+      "Tempo esgotado ao confirmar o numero reservado no servidor."
+    );
+    return number;
+  }
+
+  /**
+   * Usado quando um PC que normalmente sincroniza fica temporariamente sem
+   * sessao/conexao (NAO em modo somente local -- esse caso tem numeracao
+   * definitiva propria, ver reserveDealConfirmationNumberLocally): gera a
+   * previa mesmo assim, usando a referencia RASCUNHO-XXXXXXXX (ja criada
+   * junto com o rascunho) como numero provisorio -- nunca grava em
+   * confirmation_number um numero "oficial" inventado. Ao reconectar, a
+   * proxima chamada com sessao ativa (aqui ou em issueDealConfirmation)
+   * sempre limpa e reserva o numero real antes de qualquer emissao
+   * definitiva.
+   */
+  private assignProvisionalDealConfirmationNumber(id: string, temporaryReference: string): string {
+    this.db.prepare(
+      "UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ? AND status IN ('DRAFT','PENDING_REVIEW')"
+    ).run(temporaryReference, new Date().toISOString(), id);
+    return temporaryReference;
+  }
+
+  /**
+   * Numeracao definitiva local pro modo somente local (ver isLocalOnlyMode):
+   * o operador declarou explicitamente que este PC opera sozinho, entao nao
+   * ha outro PC disputando a mesma sequencia -- seguro usar aqui a mesma
+   * logica de reaproveitamento de buracos/piso manual que ja existia antes
+   * da numeracao virar server-only (reserveNextDealConfirmationNumber).
+   * Funciona tanto pra previa quanto pra emissao final.
+   */
+  private reserveDealConfirmationNumberLocally(id: string, organizationId: string, ownLegalEntityId: string, year: number): string {
+    // Idempotente por confirmation_id (mesma garantia da RPC do servidor): se
+    // este rascunho ja tem um numero local definitivo (ex: reservado numa
+    // previa anterior), reusa em vez de avancar pro proximo -- senao gerar a
+    // previa duas vezes, ou gerar a previa e depois emitir, pularia numeros.
+    // RASCUNHO-xxxxxxxx (provisorio de PC normalmente conectado, nunca deste
+    // fluxo) nunca conta como reserva local ja' feita.
+    const current = this.db.prepare("SELECT confirmation_number FROM deal_confirmations WHERE id = ?").get(id) as { confirmation_number: string | null } | undefined;
+    if (current?.confirmation_number && !current.confirmation_number.startsWith("RASCUNHO-")) {
+      return current.confirmation_number;
+    }
+    const number = this.reserveNextDealConfirmationNumber(organizationId, ownLegalEntityId, String(year));
+    this.db.prepare(
+      "UPDATE deal_confirmations SET confirmation_number = ?, temporary_reference = ?, updated_at = ? WHERE id = ? AND status IN ('DRAFT','PENDING_REVIEW')"
+    ).run(number, number, new Date().toISOString(), id);
+    return number;
   }
 
   private async generateDealDocumentVersion(id: string, documentType: DealConfirmationDocumentVersion["documentType"], versionId: string, draft: boolean, notes: string): Promise<DealConfirmationDocumentVersion> {
@@ -8116,7 +8469,10 @@ function normalizeXmlUnit(value: string): string {
 }
 
 function isXmlSackUnit(value: string): boolean {
-  return ["SC", "SAC", "SACA", "SACAS", "SACK", "SACKS"].includes(normalizeXmlUnit(value));
+  // "SCS" (abreviacao real vista em NFe de verdade, confirmado com uma nota
+  // autorizada pela SEFAZ -- "500 SCS" de cafe) faltava aqui, deixando a
+  // operacao sem ser criada mesmo com o produto corretamente reconhecido.
+  return ["SC", "SCS", "SAC", "SACA", "SACAS", "SACK", "SACKS"].includes(normalizeXmlUnit(value));
 }
 
 function isXmlKgUnit(value: string): boolean {

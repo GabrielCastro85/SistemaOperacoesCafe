@@ -23,6 +23,7 @@ class FlakyFakeCloud implements Pick<SharedRepository, "upsertRow" | "pullChange
   private failuresRemaining: Map<string, number> = new Map();
 
   checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  attemptSessionRecovery = async () => true;
 
   failNextWritesFor(table: string, count: number): void {
     this.failuresRemaining.set(table, count);
@@ -97,7 +98,12 @@ describe("fila de reenvio de pushes pro Supabase", () => {
       expect(pending).toContainEqual({ push_kind: "user", entity_id: user.id, attempts: 1 });
 
       // Ciclo de sincronizacao seguinte (poll de 20s ou "Sincronizar agora")
-      // -- agora a rede "voltou", o reenvio deve funcionar sozinho.
+      // -- agora a rede "voltou", o reenvio deve funcionar sozinho. Simula o
+      // intervalo real entre ciclos (a fila tem backoff exponencial pra nao
+      // martelar uma linha com falha permanente dentro do mesmo ciclo -- ver
+      // sharedPushOutbox.ts list()).
+      pc.db.prepare("UPDATE shared_push_outbox SET last_attempted_at = ? WHERE entity_id = ?")
+        .run(new Date(Date.now() - 30_000).toISOString(), user.id);
       await pc.repo.syncSharedDataDown();
 
       expect(cloud.has("app_users", user.id)).toBe(true);
@@ -119,11 +125,22 @@ describe("fila de reenvio de pushes pro Supabase", () => {
       cloud.failNextWritesFor("app_users", 2);
       const user = await pc.auth.createUser({ displayName: "Ainda Falhando", username: "aindafalhando", email: null, password: "Trocar@123", mustChangePassword: true });
 
+      // Simula o intervalo real entre ciclos (backoff exponencial, ver
+      // sharedPushOutbox.ts list()) antes de cada ciclo tentar de novo --
+      // senao o proprio backoff filtraria a linha como "ainda nao devida" e
+      // o reenvio nem seria tentado.
+      const backdate = (): void => {
+        pc.db.prepare("UPDATE shared_push_outbox SET last_attempted_at = ? WHERE entity_id = ?")
+          .run(new Date(Date.now() - 30_000).toISOString(), user.id);
+      };
+
+      backdate();
       await pc.repo.syncSharedDataDown();
       expect(cloud.has("app_users", user.id)).toBe(false);
       let rows = pc.db.prepare("SELECT * FROM shared_push_outbox WHERE entity_id = ?").all(user.id);
       expect(rows).toHaveLength(1);
 
+      backdate();
       await pc.repo.syncSharedDataDown();
       expect(cloud.has("app_users", user.id)).toBe(true);
       rows = pc.db.prepare("SELECT * FROM shared_push_outbox WHERE entity_id = ?").all(user.id);

@@ -1,6 +1,7 @@
 import { createClient, type Session, type SupabaseClient, type SupportedStorage } from "@supabase/supabase-js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import log from "electron-log/main.js";
 import WebSocket from "ws";
 import type { AppDirectories } from "../../../src/shared/types/domain.js";
 
@@ -11,8 +12,14 @@ import type { AppDirectories } from "../../../src/shared/types/domain.js";
 // publico da chave, protegido inteiramente por RLS -- ver migration 0004);
 // a secret key NUNCA deve aparecer aqui, so' e' usada manualmente nos scripts
 // de migracao em scripts/supabase/.
-const SUPABASE_URL = "https://nughallusfqshtnrerha.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_oougmIpGXTX5Ws5EiFKiJg_LC0KqTn7";
+//
+// As variaveis OPERACOES_CAFE_TEST_SUPABASE_URL/_KEY existem so' pra testar
+// em modo dev contra um projeto Supabase separado, dedicado a teste, sem
+// nenhuma chance de escrever no projeto de producao -- nunca setadas num
+// build empacotado (npm run dist), entao o instalador distribuido pro
+// escritorio sempre usa producao, sem excecao.
+const SUPABASE_URL = process.env.OPERACOES_CAFE_TEST_SUPABASE_URL || "https://nughallusfqshtnrerha.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = process.env.OPERACOES_CAFE_TEST_SUPABASE_KEY || "sb_publishable_oougmIpGXTX5Ws5EiFKiJg_LC0KqTn7";
 
 /**
  * Adaptador de storage para a sessao do Supabase Auth rodando no processo
@@ -77,6 +84,14 @@ function translateDbError(message: string): string {
   if (/JWT|not authenticated|auth session missing/i.test(message)) return "Sessao expirada. Faca login novamente.";
   if (/fetch failed|network|ENOTFOUND|ETIMEDOUT/i.test(message)) return "Sem conexao com o servidor. Tente novamente.";
   if (/new row violates row-level security policy/i.test(message)) return "Sem permissao para esta operacao.";
+  // Indice unico parcial (0027_fiscal_document_claim_uniqueness.sql) -- outra
+  // confirmacao (deste PC ha' segundos, ou de outro PC) ja reivindicou essa
+  // nota fiscal primeiro. Mensagem especifica ANTES do fallback generico de
+  // chave duplicada, senao o usuario so' veria "ja existe um registro com
+  // esses dados" sem entender o que fazer.
+  if (/deal_confirmation_fiscal_documents_active_claim_uq/i.test(message)) {
+    return "Esta nota fiscal ja foi usada em outra confirmacao de negocio (gerada aqui ha pouco ou em outro PC). Nao e possivel vincular a mesma nota a duas confirmacoes diferentes -- procure a confirmacao existente na lista.";
+  }
   if (/duplicate key value violates unique constraint/i.test(message)) return "Ja existe um registro com esses dados.";
   return message;
 }
@@ -115,6 +130,40 @@ export class SharedRepository {
         transport: WebSocket as any
       }
     });
+    // So' log, nenhum efeito colateral -- existe pra dar visibilidade real
+    // (ver main.log) na proxima vez que alguem reportar "desconectou depois
+    // de atualizar": antes disso nao havia nenhum rastro de quando/por que
+    // uma sessao caia, so' o sintoma na tela de Configuracoes.
+    this.client.auth.onAuthStateChange((event, session) => {
+      log.info("Supabase auth state changed", { event, hasSession: Boolean(session), email: session?.user.email ?? null });
+    });
+  }
+
+  /**
+   * Tenta recuperar uma sessao que caiu por um motivo transitorio (ex: rede
+   * ainda nao pronta no instante em que o processo relanca logo apos uma
+   * atualizacao via quitAndInstall). getSession() ja aciona o refresh interno
+   * do SDK se a sessao persistida em disco estiver perto de expirar, mas se
+   * essa tentativa falhar uma vez (ex: DNS indisponivel por um segundo), o
+   * SDK nao tenta de novo ate' seu proximo ciclo interno -- chamado a cada
+   * 20s pelo poll de sync (ver startSharedDataSync em main/index.ts), isso
+   * garante uma nova tentativa real a cada ciclo em vez de ficar preso
+   * silenciosamente "deslogado" pelo resto do processo.
+   */
+  async attemptSessionRecovery(): Promise<boolean> {
+    const initial = await this.getSession().catch(() => null);
+    if (initial) return true;
+    const { data, error } = await this.client.auth.refreshSession().catch((refreshError: unknown) => ({ data: { session: null }, error: refreshError instanceof Error ? refreshError : new Error(String(refreshError)) }));
+    if (error) {
+      // "Auth session missing" e' o caso normal de um PC que nunca conectou
+      // ainda (ou que fez logout de proposito) -- so' loga o que e' de fato
+      // inesperado (rede, token invalido apos uma sessao que ja existiu).
+      if (!/session missing/i.test(error.message)) {
+        log.warn("Falha ao tentar recuperar sessao Supabase automaticamente", error.message);
+      }
+      return false;
+    }
+    return Boolean(data.session);
   }
 
   async signInWithPassword(email: string, password: string): Promise<Session> {
@@ -231,6 +280,41 @@ export class SharedRepository {
    */
   async uploadFile(bucket: string, path: string, data: Buffer, contentType: string): Promise<void> {
     const { error } = await this.client.storage.from(bucket).upload(path, data, { contentType, upsert: true });
+    if (error) throw new Error(translateDbError(error.message));
+  }
+
+  /**
+   * Baixa de volta um arquivo subido por uploadFile -- usado quando um PC
+   * abre um documento (PDF de confirmacao/cobranca) que foi gerado em OUTRO
+   * PC: stored_file_path e' um caminho local daquele outro PC (nunca existe
+   * neste), so' storage_object_path e' de fato compartilhado entre todos.
+   */
+  async downloadFile(bucket: string, path: string): Promise<Buffer> {
+    const { data, error } = await this.client.storage.from(bucket).download(path);
+    if (error) throw new Error(translateDbError(error.message));
+    return Buffer.from(await data.arrayBuffer());
+  }
+
+  /**
+   * Insere uma linha se ainda nao existir -- pra tabelas de historico
+   * append-only (sync_tombstones, payable_status_history, ...) que por design
+   * so' tem RLS policy de INSERT, nunca de UPDATE (ver migration 0017 e
+   * 0010: "sem policy de update/delete: historico e' append-only"). Um
+   * upsert comum (upsertRow/upsertRows) vira "INSERT ... ON CONFLICT DO
+   * UPDATE" quando a linha ja existe -- reenvio apos falha de rede, outro PC
+   * que ja empurrou a mesma linha primeiro, ou (caso do historico) reenviar
+   * TODAS as linhas antigas de novo a cada nova mudanca na conta/cobranca --
+   * sem policy de UPDATE, o Postgres rejeita com "new row violates
+   * row-level security policy", e o outbox reenvia pra sempre porque o erro
+   * parece transitorio mas nunca resolve (achado em producao: tombstones
+   * presos ha' mais de 30h, ate' 1911 tentativas, mesma causa em
+   * payable_status_history). ignoreDuplicates vira ON CONFLICT DO NOTHING --
+   * nunca toca o caminho de UPDATE, entao a RLS nem entra em jogo quando a
+   * linha ja existe (o objetivo, registrar o evento, ja' foi alcancado por
+   * quem chegou primeiro).
+   */
+  async insertIfMissing(table: string, row: SharedRow): Promise<void> {
+    const { error } = await this.client.from(table).upsert(row, { ignoreDuplicates: true });
     if (error) throw new Error(translateDbError(error.message));
   }
 

@@ -188,12 +188,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     // que falhou silenciosamente), depois puxa o que mudou nos outros PCs.
     const pushed = await repository.pushAllLocalReferenceDataToShared();
     const pulled = await repository.syncSharedDataDown();
-    acknowledgeSyncUpdates();
+    acknowledgeSyncUpdates(repository.getSharedPushOutboxPendingCount());
     return { pushed, pulled };
   });
   handle(IPC_CHANNELS.resetSyncCursorsAndResync, async () => {
     const pulled = await repository.resetSyncCursorsAndResync();
-    acknowledgeSyncUpdates();
+    acknowledgeSyncUpdates(repository.getSharedPushOutboxPendingCount());
     return pulled;
   });
   handle(IPC_CHANNELS.getSharedSyncStatus, () => getSyncStatus());
@@ -271,6 +271,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const copiedPath = copyBrandingAssetFromPath(context.directories, data.organizationId, data.kind as BrandingAssetKind, result.filePaths[0]);
     const field = data.kind === "logo" ? "logoPath" : data.kind === "compactLogo" ? "compactLogoPath" : "iconPath";
     return repository.updateOrganizationBranding(data.organizationId, { [field]: copiedPath });
+  });
+  handle(IPC_CHANNELS.updateOrganizationColors, async (_event, payload: unknown) => {
+    const hex = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
+    const data = z.object({
+      organizationId: z.string().uuid(),
+      primaryColor: hex.optional(),
+      secondaryColor: hex.optional(),
+      accentColor: hex.optional()
+    }).parse(payload);
+    const { organizationId, ...colors } = data;
+    return repository.updateOrganizationColors(organizationId, colors);
   });
   handle(IPC_CHANNELS.listLegalEntities, (_event, payload: unknown) =>
     repository.listLegalEntities(
@@ -995,6 +1006,20 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   const pushConfirmationTemplate = (id: string, context: string): Promise<void> => repository.pushDealConfirmationTemplateToShared(id).catch((error) => logPushFailure(context, error));
   const pushClauseTemplate = (id: string, context: string): Promise<void> => repository.pushDealClauseTemplateToShared(id).catch((error) => logPushFailure(context, error));
 
+  // Relatado como confuso (0027_fiscal_document_claim_uniqueness.sql): a
+  // mensagem generica "esta nota ja foi usada em outra confirmacao" nao dizia
+  // QUAL confirmacao, entao o usuario tinha que adivinhar e procurar --
+  // acrescenta o numero real assim que a falha bate nesse indice unico.
+  async function withConflictingConfirmationLabel(error: unknown, candidateFiscalDocumentIds: string[]): Promise<Error> {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/ja foi usada em outra confirmacao/i.test(message)) return error instanceof Error ? error : new Error(message);
+    for (const fiscalDocumentId of candidateFiscalDocumentIds) {
+      const label = await repository.findConflictingDealConfirmationLabel(fiscalDocumentId).catch(() => null);
+      if (label) return new Error(`Esta nota fiscal ja foi usada na confirmacao ${label}. Abra "${label}" na lista de confirmacoes pra ver ou editar.`);
+    }
+    return error instanceof Error ? error : new Error(message);
+  }
+
   handle(IPC_CHANNELS.listDealConfirmations, (_event, payload: unknown) => repository.listDealConfirmations(payload));
   handle(IPC_CHANNELS.getDealConfirmation, (_event, payload: unknown) => repository.getDealConfirmation(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createDealConfirmationDraft, async (_event, payload: unknown) => {
@@ -1009,7 +1034,20 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.createDealConfirmationFromFiscalDocuments, async (_event, payload: unknown) => {
     const result = repository.createDealConfirmationFromFiscalDocuments(payload);
-    await pushConfirmation(result.confirmation.id, "createDealConfirmationFromFiscalDocuments");
+    try {
+      await repository.pushDealConfirmationToShared(result.confirmation.id);
+    } catch (error) {
+      // Ver 0027_fiscal_document_claim_uniqueness.sql -- outra confirmacao ja
+      // reivindicou uma das notas antes deste push chegar (corrida entre PCs,
+      // ou dois cliques rapidos no mesmo PC). O rascunho criado aqui em cima
+      // nunca vai conseguir sincronizar, entao e' desfeito na hora em vez de
+      // ficar preso local pra sempre -- mesmo espirito do Req 1 (nenhuma
+      // falha silenciosa em operacao critica de confirmacao).
+      repository.deleteDealConfirmation(result.confirmation.id);
+      await repository.releaseDealConfirmationFiscalDocumentClaims(result.confirmation.id);
+      await repository.pushTombstone("deal_confirmations", result.confirmation.id).catch((tombstoneError) => logPushFailure("createDealConfirmationFromFiscalDocuments (rollback)", tombstoneError));
+      throw await withConflictingConfirmationLabel(error, result.fiscalDocuments.map((doc) => doc.id));
+    }
     return result;
   });
   handle(IPC_CHANNELS.duplicateDealConfirmationAsDraft, async (_event, payload: unknown) => {
@@ -1020,6 +1058,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.deleteDealConfirmation, async (_event, payload: unknown) => {
     const id = z.string().uuid().parse(payload);
     const result = repository.deleteDealConfirmation(id);
+    await repository.releaseDealConfirmationFiscalDocumentClaims(id);
     await repository.pushTombstone("deal_confirmations", id).catch((error) => logPushFailure("deleteDealConfirmation", error));
     return result;
   });
@@ -1075,13 +1114,22 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.linkDealFiscalDocument, async (_event, payload: unknown) => {
     const data = z.object({ dealConfirmationId: z.string().uuid(), fiscalDocumentId: z.string().uuid() }).parse(payload);
-    const result = repository.linkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
-    await pushConfirmation(data.dealConfirmationId, "linkDealFiscalDocument");
-    return result;
+    repository.linkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
+    try {
+      await repository.pushDealConfirmationToShared(data.dealConfirmationId);
+    } catch (error) {
+      // Mesma protecao de 0027_fiscal_document_claim_uniqueness.sql -- desfaz
+      // so' o vinculo que acabou de ser criado, a confirmacao em si continua
+      // intacta (diferente de createDealConfirmationFromFiscalDocuments, aqui
+      // a confirmacao ja existia antes desta chamada).
+      await repository.unlinkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
+      throw await withConflictingConfirmationLabel(error, [data.fiscalDocumentId]);
+    }
+    return repository.getDealConfirmation(data.dealConfirmationId);
   });
   handle(IPC_CHANNELS.unlinkDealFiscalDocument, async (_event, payload: unknown) => {
     const data = z.object({ dealConfirmationId: z.string().uuid(), fiscalDocumentId: z.string().uuid() }).parse(payload);
-    const result = repository.unlinkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
+    const result = await repository.unlinkDealFiscalDocument(data.dealConfirmationId, data.fiscalDocumentId);
     await pushConfirmation(data.dealConfirmationId, "unlinkDealFiscalDocument");
     return result;
   });
@@ -1196,14 +1244,20 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.cancelDealConfirmation, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
     const result = repository.cancelDealConfirmation(data.id, data.reason);
-    await pushConfirmation(data.id, "cancelDealConfirmation");
+    // Cancelamento e' uma das operacoes criticas listadas no Req 1: nao pode
+    // ficar so' local sem avisar. Se o Supabase estiver fora do ar, o erro
+    // sobe pro usuario em vez de ser engolido por logPushFailure.
+    await repository.pushDealConfirmationToShared(data.id);
     return result;
   });
   handle(IPC_CHANNELS.replaceDealConfirmation, async (_event, payload: unknown) => {
     const data = z.object({ id: z.string().uuid(), reason: z.string().min(1) }).parse(payload);
     const result = repository.replaceDealConfirmation(data.id, data.reason);
-    await pushConfirmation(data.id, "replaceDealConfirmation");
-    await pushConfirmation(result.confirmation.id, "replaceDealConfirmation");
+    // Substituicao tambem e' critica (Req 1): a confirmacao original marcada
+    // como REPLACED e o novo rascunho precisam chegar no servidor, senao
+    // outro PC continua vendo a confirmacao antiga como ISSUED.
+    await repository.pushDealConfirmationToShared(data.id);
+    await repository.pushDealConfirmationToShared(result.confirmation.id);
     return result;
   });
   handle(IPC_CHANNELS.listDealPendingIssues, (_event, payload: unknown) => repository.listDealPendingIssues(z.string().uuid().parse(payload)));
@@ -1274,13 +1328,16 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.listDealDocumentVersions, (_event, payload: unknown) => repository.listDealDocumentVersions(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.getDealDocumentVersion, (_event, payload: unknown) => repository.getDealDocumentVersion(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.openDealDocument, async (_event, payload: unknown) => {
-    const result = await shell.openPath(repository.getDealDocumentPath(z.string().uuid().parse(payload)));
+    const localPath = await repository.ensureDealDocumentLocalPath(z.string().uuid().parse(payload));
+    const result = await shell.openPath(localPath);
     if (result) throw new Error(result);
     return true;
   });
-  handle(IPC_CHANNELS.getDealDocumentBytes, (_event, payload: unknown) => readFileSync(repository.getDealDocumentPath(z.string().uuid().parse(payload))).toString("base64"));
-  handle(IPC_CHANNELS.revealDealDocumentFolder, (_event, payload: unknown) => {
-    shell.showItemInFolder(repository.getDealDocumentPath(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.getDealDocumentBytes, async (_event, payload: unknown) =>
+    readFileSync(await repository.ensureDealDocumentLocalPath(z.string().uuid().parse(payload))).toString("base64")
+  );
+  handle(IPC_CHANNELS.revealDealDocumentFolder, async (_event, payload: unknown) => {
+    shell.showItemInFolder(await repository.ensureDealDocumentLocalPath(z.string().uuid().parse(payload)));
     return true;
   });
   handle(IPC_CHANNELS.validateSignedDealPdf, (_event, payload: unknown) => repository.validateSignedDealPdf(z.string().uuid().parse(payload)));

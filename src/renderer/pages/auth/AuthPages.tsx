@@ -1,10 +1,34 @@
 import { useState } from "react";
 import type { KeyboardEvent } from "react";
-import type { AuthSession } from "../../../shared/types/domain";
+import { resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
+import type { AppVariant, AuthSession, Organization } from "../../../shared/types/domain";
 import { EmptyState } from "../../design-system";
 
 interface AuthPageProps {
   onSession: (session: AuthSession | null) => void;
+  organization?: Organization | null;
+  variant?: AppVariant;
+}
+
+// Tenta a logo real da organizacao primeiro (cliente que subiu a propria
+// marca pela tela de Identidade Visual); sem isso, cai no par fixo
+// Villa/Grao que ja existia -- entao Villa/Grao continuam identicos a antes
+// enquanto nao configurarem uma logo propria.
+function BrandLogoRow({ organization, variant }: { organization?: Organization | null; variant?: AppVariant }): JSX.Element {
+  const customLogo = organization ? resolveOrganizationLogoSrc(organization, variant) : null;
+  if (customLogo && organization?.logoPath) {
+    return (
+      <div className="auth-brand-row">
+        <img src={customLogo} alt={organization.displayName} />
+      </div>
+    );
+  }
+  return (
+    <div className="auth-brand-row">
+      <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
+      <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
+    </div>
+  );
 }
 
 export function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: { label: string; value: string; onChange: (value: string) => void; autoFocus?: boolean; onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void }): JSX.Element {
@@ -38,7 +62,7 @@ export function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: 
   );
 }
 
-export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
+export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPageProps): JSX.Element {
   const [displayName, setDisplayName] = useState("Administrador");
   const [username, setUsername] = useState("admin");
   const [email, setEmail] = useState("");
@@ -57,10 +81,7 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
   return (
     <main className="auth-shell">
       <section className="auth-panel">
-        <div className="auth-brand-row">
-          <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
-          <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
-        </div>
+        <BrandLogoRow organization={organization} variant={variant} />
         <span className="auth-eyebrow">Primeiro acesso</span>
         <h1>Criar administrador local</h1>
         <p>Defina o usuario inicial desta instalacao. Nenhuma senha padrao sera criada.</p>
@@ -75,7 +96,7 @@ export function FirstAdminSetupPage({ onSession }: AuthPageProps): JSX.Element {
   );
 }
 
-export function LoginPage({ onSession }: AuthPageProps): JSX.Element {
+export function LoginPage({ onSession, organization, variant }: AuthPageProps): JSX.Element {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -92,10 +113,7 @@ export function LoginPage({ onSession }: AuthPageProps): JSX.Element {
   return (
     <main className="auth-shell">
       <section className="auth-panel">
-        <div className="auth-brand-row">
-          <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
-          <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
-        </div>
+        <BrandLogoRow organization={organization} variant={variant} />
         <span className="auth-eyebrow">Sistema de Operacoes de Cafe</span>
         <h1>Entrar</h1>
         <label>Usuario<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} /></label>
@@ -107,7 +125,7 @@ export function LoginPage({ onSession }: AuthPageProps): JSX.Element {
   );
 }
 
-export function LockScreen({ session, onSession }: AuthPageProps & { session: AuthSession }): JSX.Element {
+export function LockScreen({ session, onSession, organization, variant }: AuthPageProps & { session: AuthSession }): JSX.Element {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -128,10 +146,7 @@ export function LockScreen({ session, onSession }: AuthPageProps & { session: Au
   return (
     <div className="lock-screen">
       <section className="auth-panel">
-        <div className="auth-brand-row">
-          <img src="assets/branding/villa/logo.svg" alt="Villa Coffee" />
-          <img src="assets/branding/grao/logo.svg" alt="Grao e Grao" />
-        </div>
+        <BrandLogoRow organization={organization} variant={variant} />
         <span className="auth-eyebrow">Sessao bloqueada</span>
         <h1>{session.user.displayName}</h1>
         <PasswordField label="Senha" value={password} onChange={setPassword} autoFocus onKeyDown={(event) => { if (event.key === "Enter") void unlock(); }} />

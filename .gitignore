@@ -4,6 +4,7 @@ dist-electron/
 /release/
 *.log
 .env
+.env.*
 .vite/
 coverage/
 _backups_pre_consolidacao_*/

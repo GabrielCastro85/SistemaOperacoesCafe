@@ -93,11 +93,24 @@ function RoutedApp(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    // authNeedsBootstrap/authCurrentSession decidem qual tela aparece
+    // (Splash -> login/primeiro-admin) e NUNCA podem ficar reves de mais
+    // nada -- ate' 1.0.44 estavam dentro do mesmo Promise.all() que
+    // refresh(), entao uma falha em getBootstrapData (ex: erro carregando
+    // organizations/legalEntities) derrubava o Promise.all inteiro e o app
+    // ficava preso na tela de carregamento pra sempre, sem sequer chegar no
+    // login (bug real reportado em producao logo apos a 1.0.44 sair).
     void Promise.all([window.operationsCafe.authNeedsBootstrap(), window.operationsCafe.authCurrentSession()]).then(([bootstrapRequired, currentSession]) => {
       setNeedsBootstrap(bootstrapRequired);
       setSession(currentSession);
-      if (!bootstrapRequired && currentSession?.status === "ACTIVE") void refresh();
     });
+    // getBootstrapData() nao exige sessao (le so' organizations/legalEntities
+    // locais) -- busca em paralelo, mesmo antes do login, pra telas de
+    // login/bloqueio/primeiro-admin poderem mostrar a logo/cor reais da
+    // organizacao (ver AuthPages.tsx) -- mas so' de forma best-effort: se
+    // falhar, essas telas simplesmente caem no fallback Villa/Grao, nunca
+    // travam o app.
+    void refresh().catch((error) => console.warn("Falha ao carregar dados iniciais (organizacoes/CNPJs) -- telas de login usarao a marca padrao", error));
   }, [refresh]);
 
   useEffect(() => {
@@ -110,9 +123,12 @@ function RoutedApp(): JSX.Element {
     };
   }, []);
 
+  const brandingOrganization = data?.organizations.find((item) => item.id === profile?.defaultOrganizationId) ?? data?.organizations[0] ?? null;
+  const brandingVariant = profile?.appVariant ?? "multiempresa";
+
   if (needsBootstrap === null) return <Splash />;
-  if (needsBootstrap) return <FirstAdminSetupPage onSession={(nextSession) => { setNeedsBootstrap(false); setSession(nextSession); void refresh(); }} />;
-  if (!session) return <LoginPage onSession={(nextSession) => { setSession(nextSession); void refresh(); }} />;
+  if (needsBootstrap) return <FirstAdminSetupPage organization={brandingOrganization} variant={brandingVariant} onSession={(nextSession) => { setNeedsBootstrap(false); setSession(nextSession); void refresh(); }} />;
+  if (!session) return <LoginPage organization={brandingOrganization} variant={brandingVariant} onSession={(nextSession) => { setSession(nextSession); void refresh(); }} />;
   if (session.user.mustChangePassword) return <ChangePasswordPage session={session} onSession={setSession} mandatory />;
   if (!data) return <Splash />;
   if (!profile?.completedSetup) return <SetupWizard data={data} onSaved={setProfile} />;
@@ -184,7 +200,7 @@ function RoutedApp(): JSX.Element {
       onLogout={() => void window.operationsCafe.authLogout().then(() => { setSession(null); setOrgPickerDismissed(false); })}
     >
       {page}
-      {session.status === "LOCKED" ? <LockScreen session={session} onSession={setSession} /> : null}
+      {session.status === "LOCKED" ? <LockScreen session={session} onSession={setSession} organization={organization} variant={profile.appVariant} /> : null}
     </AppLayout>
   );
 }
@@ -204,7 +220,7 @@ function renderRoute(
   if (path.startsWith("/imports/spreadsheets/templates")) return <SpreadsheetMappingTemplatesPage />;
   if (path.startsWith("/imports/spreadsheets")) return <SpreadsheetImportPage data={data} />;
   if (path.startsWith("/imports/xml/classification-rules")) return <ClassificationRulesPage />;
-  if (path.startsWith("/imports/xml/product-aliases")) return <ProductAliasesPage />;
+  if (path.startsWith("/imports/xml/product-aliases")) return <ProductAliasesPage data={data} />;
   if (path.startsWith("/imports/xml/history")) return <XmlImportHistoryPage />;
   if (path.startsWith("/imports/xml")) return <XmlImportPage data={data} />;
   if (path.startsWith("/confirmations/templates")) return <ConfirmationTemplatesPage templates={[]} />;

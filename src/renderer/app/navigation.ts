@@ -17,7 +17,10 @@ export const navigationGroups: NavigationGroup[] = [
   { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard", legacyMenu: "Dashboard", path: "/dashboard", icon: "⌂" }] },
   {
     title: "Operações",
-    items: [{ id: "invoices", label: "Notas e operações", legacyMenu: "Notas e operacoes", path: "/operations", icon: "▦" }]
+    items: [
+      { id: "invoices", label: "Notas e operações", legacyMenu: "Notas e operacoes", path: "/operations", icon: "▦" },
+      { id: "productAliases", label: "Aliases de produto", legacyMenu: "Aliases de produto", path: "/imports/xml/product-aliases", icon: "≈" }
+    ]
   },
   {
     title: "Comercial",
@@ -76,6 +79,7 @@ export function legacyMenuFromPath(path: string): string {
   if (normalized.startsWith("/products")) return "Produtos";
   if (normalized.startsWith("/billing/rates")) return "Regras por saca";
   if (normalized.startsWith("/imports/spreadsheets")) return "Notas e operacoes";
+  if (normalized.startsWith("/imports/xml/product-aliases")) return "Aliases de produto";
   if (normalized.startsWith("/imports/xml")) return "Notas e operacoes";
   if (normalized.startsWith("/confirmations")) return "Confirmacoes";
   if (normalized.startsWith("/charges")) return "Cobrancas";

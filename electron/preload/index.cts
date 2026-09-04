@@ -157,6 +157,7 @@ const IPC_CHANNELS = {
   deactivateOrganization: "organizations:deactivate",
   deleteOrganization: "organizations:delete",
   selectOrganizationBrandingAsset: "organizations:selectBrandingAsset",
+  updateOrganizationColors: "organizations:updateColors",
   listLegalEntities: "legalEntities:list",
   getLegalEntity: "legalEntities:get",
   createLegalEntity: "legalEntities:create",
@@ -519,6 +520,7 @@ export interface OperationsCafeApi {
   deactivateOrganization: (id: string, replacementOrganizationId?: string) => Promise<Organization>;
   deleteOrganization: (id: string) => Promise<null>;
   selectOrganizationBrandingAsset: (organizationId: string, kind: BrandingAssetKind) => Promise<Organization>;
+  updateOrganizationColors: (organizationId: string, colors: { primaryColor?: string; secondaryColor?: string; accentColor?: string }) => Promise<Organization>;
   listLegalEntities: (filters?: { search?: string; organizationId?: string; state?: string; status?: "active" | "inactive" | "all" }) => Promise<LegalEntity[]>;
   getLegalEntity: (id: string) => Promise<LegalEntity>;
   createLegalEntity: (input: unknown) => Promise<LegalEntity>;
@@ -895,6 +897,8 @@ const api: OperationsCafeApi = {
   deleteOrganization: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteOrganization, id) as Promise<null>,
   selectOrganizationBrandingAsset: (organizationId, kind) =>
     ipcRenderer.invoke(IPC_CHANNELS.selectOrganizationBrandingAsset, { organizationId, kind }) as Promise<Organization>,
+  updateOrganizationColors: (organizationId, colors) =>
+    ipcRenderer.invoke(IPC_CHANNELS.updateOrganizationColors, { organizationId, ...colors }) as Promise<Organization>,
   listLegalEntities: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLegalEntities, filters) as Promise<LegalEntity[]>,
   getLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.getLegalEntity, id) as Promise<LegalEntity>,
   createLegalEntity: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLegalEntity, input) as Promise<LegalEntity>,
@@ -1193,4 +1197,54 @@ const api: OperationsCafeApi = {
   selectSignedDealPdf: () => ipcRenderer.invoke(IPC_CHANNELS.selectSignedDealPdf) as Promise<{ token: string; fileName: string; sizeBytes: number } | null>
 };
 
-contextBridge.exposeInMainWorld("operationsCafe", api);
+// Loading global: qualquer chamada de window.operationsCafe que demora
+// (rede/disco) conta aqui -- o renderer usa isso pra acender um overlay na
+// tela e bloquear clique duplo enquanto uma acao ainda esta em andamento (ver
+// GlobalLoadingOverlay). So' Promises sao rastreadas -- os poucos metodos
+// on* (assinatura de evento, ex: onSharedSyncStatusChanged) devolvem uma
+// funcao de cancelamento na hora, nao uma Promise, entao passam direto.
+export interface OperationsCafeLoadingApi {
+  subscribe: (listener: (pendingCount: number) => void) => () => void;
+}
+
+let pendingCallCount = 0;
+const loadingListeners = new Set<(pendingCount: number) => void>();
+
+function notifyLoadingListeners(): void {
+  for (const listener of loadingListeners) listener(pendingCallCount);
+}
+
+function withLoadingTracking(target: OperationsCafeApi): OperationsCafeApi {
+  const wrapped: Record<string, unknown> = {};
+  for (const key of Object.keys(target)) {
+    const value = (target as unknown as Record<string, unknown>)[key];
+    if (typeof value !== "function") {
+      wrapped[key] = value;
+      continue;
+    }
+    wrapped[key] = (...args: unknown[]) => {
+      const result = (value as (...fnArgs: unknown[]) => unknown)(...args);
+      if (result instanceof Promise) {
+        pendingCallCount += 1;
+        notifyLoadingListeners();
+        result.finally(() => {
+          pendingCallCount = Math.max(0, pendingCallCount - 1);
+          notifyLoadingListeners();
+        });
+      }
+      return result;
+    };
+  }
+  return wrapped as unknown as OperationsCafeApi;
+}
+
+const loadingApi: OperationsCafeLoadingApi = {
+  subscribe: (listener) => {
+    loadingListeners.add(listener);
+    listener(pendingCallCount);
+    return () => loadingListeners.delete(listener);
+  }
+};
+
+contextBridge.exposeInMainWorld("operationsCafe", withLoadingTracking(api));
+contextBridge.exposeInMainWorld("operationsCafeLoading", loadingApi);

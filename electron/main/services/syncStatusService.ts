@@ -3,7 +3,7 @@ import type { SharedSyncStatus } from "../../../src/shared/types/sync.js";
 
 const SYNC_STATUS_CHANGED_CHANNEL = "app:sharedSyncStatusChanged";
 
-let status: SharedSyncStatus = { pendingCount: 0, lastSyncedAt: null };
+let status: SharedSyncStatus = { pendingCount: 0, outboxPendingCount: 0, lastSyncedAt: null, connected: false };
 let mainWindowRef: BrowserWindow | null = null;
 
 export function setSyncStatusWindow(mainWindow: BrowserWindow): void {
@@ -26,14 +26,14 @@ function broadcast(): void {
 // fazia o badge crescer indefinidamente mesmo com o app em dia. Sempre
 // notifica (inclusive quando zera) pra o badge sumir assim que um ciclo nao
 // trouxer nada de novo, sem esperar um "Sincronizar agora" manual.
-export function recordSyncResult(pulled: Array<{ table: string; pulled: number }>): void {
+export function recordSyncResult(pulled: Array<{ table: string; pulled: number }>, outboxPendingCount: number, connected: boolean): void {
   const total = pulled.reduce((sum, entry) => sum + entry.pulled, 0);
-  status = { pendingCount: total, lastSyncedAt: new Date().toISOString() };
+  status = { pendingCount: total, outboxPendingCount, lastSyncedAt: new Date().toISOString(), connected };
   broadcast();
 }
 
-export function acknowledgeSyncUpdates(): void {
-  status = { ...status, pendingCount: 0 };
+export function acknowledgeSyncUpdates(outboxPendingCount: number): void {
+  status = { ...status, pendingCount: 0, outboxPendingCount };
   broadcast();
 }
 

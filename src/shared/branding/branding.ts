@@ -86,6 +86,14 @@ export function getAllBrandingConfigs(): BrandingConfig[] {
 
 export function resolveOrganizationLogoSrc(organization: Organization | null, variant: AppVariant = "multiempresa"): string | null {
   if (organization?.logoPath?.startsWith("data:")) return organization.logoPath;
+  // Logo enviada pelo cliente (BrandingSettingsPage -> copyBrandingAssetFromPath)
+  // fica num arquivo local, servido pro renderer pelo protocolo customizado
+  // branding-asset:// (ver registerBrandingAssetProtocol em main/index.ts) --
+  // um caminho de disco cru nao funciona como <img src> num renderer sandboxed.
+  if (organization?.logoPath && organization.id) {
+    const fileName = organization.logoPath.split(/[\\/]/).pop();
+    if (fileName) return `branding-asset://${organization.id}/${encodeURIComponent(fileName)}`;
+  }
   const name = `${organization?.displayName ?? ""} ${organization?.appDisplayName ?? ""}`.toLowerCase();
   if (variant === "villa" || name.includes("villa")) return "assets/branding/villa/logo.svg";
   if (variant === "grao" || name.includes("grao") || name.includes("grão")) return "assets/branding/grao/logo.svg";

@@ -34,7 +34,12 @@ describe("diagnostics IPC handler logic", () => {
     });
     const diagnostics = createDiagnostics({ version: "1.0.0-rc.1", directories, db, buildVariant: buildVariantConfigs.multiempresa, sharedRepository: new SharedRepository(directories) }, repo);
     expect(diagnostics.databaseStatus).toBe("ok");
-    expect(diagnostics.activeVariant).toBe("multiempresa");
+    // activeVariant reflete o perfil de instalacao SALVO (profile.appVariant),
+    // nao o buildVariant do context -- ate' 1.0.43, saveInstallationProfile
+    // forcava incondicionalmente "multiempresa" mesmo com "villa" enviado
+    // (bloqueava o modo "empresa unica"), entao esta asserção testava esse
+    // bug por acidente. Corrigido: agora reflete o que foi salvo de fato.
+    expect(diagnostics.activeVariant).toBe("villa");
     expect(diagnostics.productName).toBe("Operações Café");
     expect(diagnostics.appId).toBe("br.com.operacoescafe.multiempresa");
     expect(diagnostics.executableName).toBe("SistemaOperacoesCafe");

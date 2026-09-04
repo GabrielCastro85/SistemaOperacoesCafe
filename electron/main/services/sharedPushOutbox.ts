@@ -76,14 +76,21 @@ export class SharedPushOutbox {
     this.remove(pushKind, oldEntityId);
   }
 
-  list(kinds: string[]): OutboxRow[] {
+  list(kinds: string[], onlyDue = false): OutboxRow[] {
     if (kinds.length === 0) return [];
     const placeholders = kinds.map(() => "?").join(",");
-    return this.db.prepare(`SELECT * FROM shared_push_outbox WHERE push_kind IN (${placeholders}) ORDER BY created_at ASC`).all(...kinds) as OutboxRow[];
+    const rows = this.db.prepare(`SELECT * FROM shared_push_outbox WHERE push_kind IN (${placeholders}) ORDER BY created_at ASC`).all(...kinds) as OutboxRow[];
+    if (!onlyDue) return rows;
+    const now = Date.now();
+    return rows.filter((row) => {
+      if (!row.last_attempted_at) return true;
+      const delaySeconds = Math.min(300, Math.max(2, 2 ** Math.min(row.attempts, 8)));
+      return Date.parse(row.last_attempted_at) + delaySeconds * 1000 <= now;
+    });
   }
 
   async flush(kinds: string[], replay: (pushKind: string, entityId: string) => Promise<void>): Promise<{ retried: number; stillPending: number }> {
-    const entries = this.list(kinds);
+    const entries = this.list(kinds, true);
     let retried = 0;
     for (const entry of entries) {
       try {

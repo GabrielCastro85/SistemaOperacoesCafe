@@ -21,6 +21,7 @@ class FakeSharedRepository {
   callsSince: string[] = [];
   rowsToReturn: Array<Record<string, unknown>> = [];
   checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  attemptSessionRecovery = async () => true;
   async pullChangesSince(table: string, _timestampColumn: string, since: string): Promise<Array<Record<string, unknown>>> {
     if (table !== "business_partner_roles") return [];
     this.callsSince.push(since);
@@ -140,6 +141,7 @@ describe("cursor de sincronizacao (syncTableDown) nao pula linha que falhou no m
 class GenericFakeSharedRepository {
   rowsByTable: Record<string, Array<Record<string, unknown>>> = {};
   checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  attemptSessionRecovery = async () => true;
   async pullChangesSince(table: string, _timestampColumn: string, since: string): Promise<Array<Record<string, unknown>>> {
     return (this.rowsByTable[table] ?? []).filter((row) => String(row.updated_at) > since);
   }

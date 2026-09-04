@@ -70,6 +70,7 @@ export const IPC_CHANNELS = {
   deactivateOrganization: "organizations:deactivate",
   deleteOrganization: "organizations:delete",
   selectOrganizationBrandingAsset: "organizations:selectBrandingAsset",
+  updateOrganizationColors: "organizations:updateColors",
   listLegalEntities: "legalEntities:list",
   getLegalEntity: "legalEntities:get",
   createLegalEntity: "legalEntities:create",

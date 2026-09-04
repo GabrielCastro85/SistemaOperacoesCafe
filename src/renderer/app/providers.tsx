@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../design-system";
 import { registerDialogListener, type DialogRequest } from "../utils/dialogs";
 
@@ -6,7 +6,45 @@ export function AppProviders({ children }: { children: ReactNode }): JSX.Element
   return (
     <DialogProvider>
       {children}
+      <LoadingOverlay />
     </DialogProvider>
+  );
+}
+
+// Acende sozinho sempre que alguma chamada de window.operationsCafe demora --
+// nao precisa marcar botao por botao. So' aparece depois de 250ms (chamadas
+// rapidas nao piscam a tela a toa) e bloqueia clique na janela inteira
+// enquanto estiver visivel, pra impedir clique duplo duplicando o que o
+// botao faz (ver withLoadingTracking em electron/preload/index.ts[.cts]).
+function LoadingOverlay(): JSX.Element | null {
+  const [pendingCount, setPendingCount] = useState(0);
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => window.operationsCafeLoading.subscribe(setPendingCount), []);
+
+  useEffect(() => {
+    if (pendingCount > 0) {
+      if (timerRef.current) return;
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setVisible(true);
+      }, 250);
+      return;
+    }
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setVisible(false);
+  }, [pendingCount]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="ui-loading-overlay" role="status" aria-live="polite" aria-label="Carregando, aguarde">
+      <div className="ui-loading-overlay__spinner" aria-hidden="true" />
+    </div>
   );
 }
 

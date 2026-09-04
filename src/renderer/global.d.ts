@@ -1,4 +1,4 @@
-import type { OperationsCafeApi } from "../../electron/preload/index";
+import type { OperationsCafeApi, OperationsCafeLoadingApi } from "../../electron/preload/index";
 
 declare module "*.svg" {
   const src: string;
@@ -8,6 +8,7 @@ declare module "*.svg" {
 declare global {
   interface Window {
     operationsCafe: OperationsCafeApi;
+    operationsCafeLoading: OperationsCafeLoadingApi;
   }
 }
 

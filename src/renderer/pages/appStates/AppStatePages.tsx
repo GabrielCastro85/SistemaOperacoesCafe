@@ -2,9 +2,204 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 import type { BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import type { UpdateStatus } from "../../../shared/types/updater";
-import { formatCnpj, formatCurrencyFromCents } from "../../../shared/utils/format";
+import { formatCnpj, formatCurrencyFromCents, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
 import { Alert, Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, Input, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
+
+const NEW_COMPANY_DEFAULT_COLORS = { primaryColor: "#1F6F4A", secondaryColor: "#0B3D26", accentColor: "#E0A94A" };
+
+// So aparece quando NAO ha nenhum CNPJ pre-cadastrado no banco (nunca e' o
+// caso da Villa/Grao, que sempre nascem com a semeadura de demonstracao) --
+// e' o fluxo de "empresa unica" pra quem instala este programa do zero
+// (cliente novo, instalador generico). Cria a organizacao + o primeiro CNPJ
+// e ja deixa o app travado sem opcao de trocar de empresa (allowOrganizationSwitch:
+// false), exatamente o pedido de "o programa cuida so de uma empresa".
+function NewCompanySetupWizard({ onSaved }: { onSaved: (profile: InstallationProfile) => void }): JSX.Element {
+  const [step, setStep] = useState<"empresa" | "marca">("empresa");
+  const [cnpjInput, setCnpjInput] = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [tradeName, setTradeName] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [address, setAddress] = useState({ addressLine: "", addressNumber: "", addressComplement: "", district: "", city: "", state: "", postalCode: "" });
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [colors, setColors] = useState(NEW_COMPANY_DEFAULT_COLORS);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function lookupCnpj(): Promise<void> {
+    const digits = onlyDigits(cnpjInput) ?? "";
+    if (!isValidCnpj(digits)) {
+      setError("Informe um CNPJ valido com 14 digitos.");
+      return;
+    }
+    setError(null);
+    setLookupLoading(true);
+    try {
+      const result = await window.operationsCafe.lookupCnpj(digits);
+      setTradeName(result.tradeName || result.legalName);
+      setLegalName(result.legalName);
+      setAddress({
+        addressLine: result.addressLine ?? "",
+        addressNumber: result.addressNumber ?? "",
+        addressComplement: result.addressComplement ?? "",
+        district: result.district ?? "",
+        city: result.city ?? "",
+        state: result.state ?? "",
+        postalCode: result.postalCode ?? ""
+      });
+      setMessage(`CNPJ encontrado: ${result.tradeName || result.legalName}.`);
+    } catch (errorValue) {
+      setMessage(null);
+      setError(errorValue instanceof Error ? errorValue.message : "Falha ao consultar o CNPJ.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  async function createCompany(): Promise<void> {
+    const digits = onlyDigits(cnpjInput) ?? "";
+    if (!isValidCnpj(digits)) { setError("Informe um CNPJ valido com 14 digitos."); return; }
+    if (!tradeName.trim()) { setError("Informe o nome da empresa."); return; }
+    if (!address.addressLine.trim() || !address.city.trim() || !address.state.trim() || !address.postalCode.trim()) {
+      setError("Complete o endereco (rua, cidade, UF e CEP) -- use \"Buscar CNPJ\" pra preencher automaticamente.");
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      const slug = tradeName.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || `empresa-${Date.now()}`;
+      const createdOrganization = await window.operationsCafe.createOrganization({
+        name: tradeName.trim(),
+        slug,
+        displayName: tradeName.trim(),
+        appDisplayName: tradeName.trim(),
+        description: null,
+        logoPath: null,
+        compactLogoPath: null,
+        iconPath: null,
+        ...NEW_COMPANY_DEFAULT_COLORS,
+        themeMode: "light",
+        isActive: true
+      });
+      await window.operationsCafe.createLegalEntity({
+        organizationId: createdOrganization.id,
+        legalName: legalName.trim() || tradeName.trim(),
+        tradeName: tradeName.trim(),
+        cnpj: digits,
+        stateRegistration: null,
+        municipalRegistration: null,
+        email: null,
+        phone: null,
+        addressLine: address.addressLine.trim(),
+        addressNumber: address.addressNumber.trim() || "S/N",
+        addressComplement: address.addressComplement.trim() || null,
+        district: address.district.trim(),
+        city: address.city.trim(),
+        state: address.state.trim(),
+        postalCode: onlyDigits(address.postalCode) ?? "",
+        documentPrefix: null,
+        isDraft: false,
+        isActive: true
+      });
+      setOrganization(createdOrganization);
+      setStep("marca");
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : "Nao foi possivel criar a empresa.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function selectLogo(): Promise<void> {
+    if (!organization) return;
+    const updated = await window.operationsCafe.selectOrganizationBrandingAsset(organization.id, "logo");
+    setOrganization(updated);
+  }
+
+  async function finish(): Promise<void> {
+    if (!organization) return;
+    setError(null);
+    setSaving(true);
+    try {
+      await window.operationsCafe.updateOrganizationColors(organization.id, colors);
+      const entities = await window.operationsCafe.listLegalEntities({ organizationId: organization.id, status: "active" });
+      const profile = await window.operationsCafe.saveInstallationProfile({
+        installationName: `${organization.displayName} - Windows`,
+        appVariant: "multiempresa",
+        defaultOrganizationId: organization.id,
+        defaultLegalEntityId: entities[0]?.id ?? null,
+        allowOrganizationSwitch: false,
+        allowLegalEntitySwitch: false,
+        completedSetup: true
+      });
+      onSaved(profile);
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : "Nao foi possivel concluir a configuracao.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (step === "marca" && organization) {
+    return (
+      <main className="setup setup--branded">
+        <section className="setup-panel">
+          <span className="eyebrow">Configuracao inicial</span>
+          <h1>Identidade visual de {organization.displayName}</h1>
+          <p>Envie a logo e escolha as cores -- valem pra tela e pros PDFs gerados. Da pra ajustar depois em Configuracoes.</p>
+          {error ? <Alert variant="danger">{error}</Alert> : null}
+          <div className="field">
+            <label>Logo</label>
+            <p>{organization.logoPath ? "Logo enviada" : "Nenhuma logo enviada ainda (opcional)"}</p>
+            <Button onClick={() => void selectLogo()}>Selecionar arquivo</Button>
+          </div>
+          <div className="color-field-grid">
+            {(["primaryColor", "secondaryColor", "accentColor"] as const).map((key) => (
+              <label key={key} className="color-field">
+                <span>{key === "primaryColor" ? "Cor primaria" : key === "secondaryColor" ? "Cor secundaria" : "Cor de destaque"}</span>
+                <div className="color-field__row">
+                  <input type="color" value={colors[key]} onChange={(event) => setColors((prev) => ({ ...prev, [key]: event.target.value }))} />
+                  <span className="color-field__hex">{colors[key]}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+          <Button variant="primary" onClick={() => void finish()} loading={saving}>Concluir configuracao</Button>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="setup setup--branded">
+      <section className="setup-panel">
+        <span className="eyebrow">Configuracao inicial</span>
+        <h1>Cadastre sua empresa</h1>
+        <p>Este programa cuida de uma empresa por instalacao. Se voce tiver mais de uma empresa, instale o programa separadamente pra cada uma.</p>
+        {error ? <Alert variant="danger">{error}</Alert> : null}
+        {message ? <Alert variant="success">{message}</Alert> : null}
+        <div className="inline-actions">
+          <Input label="CNPJ" value={cnpjInput} onChange={(event) => setCnpjInput(event.target.value)} placeholder="00.000.000/0000-00" />
+          <Button onClick={() => void lookupCnpj()} loading={lookupLoading}>Buscar CNPJ</Button>
+        </div>
+        <Input label="Nome da empresa" value={tradeName} onChange={(event) => setTradeName(event.target.value)} />
+        <Input label="Razao social" value={legalName} onChange={(event) => setLegalName(event.target.value)} />
+        <Input label="Endereco" value={address.addressLine} onChange={(event) => setAddress((prev) => ({ ...prev, addressLine: event.target.value }))} />
+        <div className="inline-actions">
+          <Input label="Numero" value={address.addressNumber} onChange={(event) => setAddress((prev) => ({ ...prev, addressNumber: event.target.value }))} />
+          <Input label="Bairro" value={address.district} onChange={(event) => setAddress((prev) => ({ ...prev, district: event.target.value }))} />
+        </div>
+        <div className="inline-actions">
+          <Input label="Cidade" value={address.city} onChange={(event) => setAddress((prev) => ({ ...prev, city: event.target.value }))} />
+          <Input label="UF" value={address.state} onChange={(event) => setAddress((prev) => ({ ...prev, state: event.target.value.toUpperCase() }))} maxLength={2} />
+          <Input label="CEP" value={address.postalCode} onChange={(event) => setAddress((prev) => ({ ...prev, postalCode: event.target.value }))} />
+        </div>
+        <Button variant="primary" onClick={() => void createCompany()} loading={saving}>Continuar</Button>
+      </section>
+    </main>
+  );
+}
 
 function isOperationalLegalEntity(entity: LegalEntity): boolean {
   return entity.documentPrefix !== "TERC-XML";
@@ -34,6 +229,12 @@ export function Splash(): JSX.Element {
 }
 
 export function SetupWizard({ data, onSaved }: { data: BootstrapData; onSaved: (profile: InstallationProfile) => void }): JSX.Element {
+  // Instalacao nova, sem nenhuma empresa pre-cadastrada (nunca e' o caso da
+  // Villa/Grao, que ja nascem com a semeadura de demonstracao) -- pede pra
+  // cadastrar a empresa do zero em vez de listar CNPJs que nao existem.
+  if (data.legalEntities.length === 0) {
+    return <NewCompanySetupWizard onSaved={onSaved} />;
+  }
   const variant = "multiempresa";
   const activeLegalEntities = data.legalEntities.filter((entity) => entity.isActive && isOperationalLegalEntity(entity));
   const firstLegalEntity = activeLegalEntities[0] ?? data.legalEntities[0] ?? null;

@@ -24,12 +24,20 @@ class TwoPcFakeCloud {
   bulkCalls: Array<{ table: string; rows: Array<Record<string, unknown>> }> = [];
 
   checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  attemptSessionRecovery = async () => true;
 
   async upsertRow(table: string, row: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (!this.tables.has(table)) this.tables.set(table, new Map());
     const key = table === "sync_tombstones" ? `${row.table_name}:${row.row_id}` : String(row.id);
     this.tables.get(table)!.set(key, row);
     return row;
+  }
+
+  async insertIfMissing(table: string, row: Record<string, unknown>): Promise<void> {
+    if (!this.tables.has(table)) this.tables.set(table, new Map());
+    const key = table === "sync_tombstones" ? `${row.table_name}:${row.row_id}` : String(row.id);
+    const map = this.tables.get(table)!;
+    if (!map.has(key)) map.set(key, row);
   }
 
   async upsertRows(table: string, rows: Array<Record<string, unknown>>): Promise<void> {
@@ -42,6 +50,10 @@ class TwoPcFakeCloud {
     return rows
       .filter((row) => String(row[timestampColumn]) > since)
       .sort((a, b) => String(a[timestampColumn]).localeCompare(String(b[timestampColumn])));
+  }
+
+  async listAll(table: string): Promise<Array<Record<string, unknown>>> {
+    return [...(this.tables.get(table)?.values() ?? [])];
   }
 }
 

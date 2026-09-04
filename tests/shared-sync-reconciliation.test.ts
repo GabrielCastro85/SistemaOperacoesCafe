@@ -263,11 +263,13 @@ describe("shared sync reconciliation", () => {
     db.close();
   });
 
-  it("sends a large table in chunks of 100 rows instead of one giant request, so one slow/oversized request can't fail the whole table", async () => {
-    // xml_import_files guarda o XML extraido inteiro por arquivo -- com
-    // centenas de notas, um unico upsertRows com a tabela inteira arrisca
-    // estourar tempo/tamanho e falhar tudo de uma vez ("Sem conexao com o
-    // servidor", visto em producao com ~630 arquivos numa rodada so).
+  it("pushes fiscal_documents one row at a time (via pushFiscalDocumentToShared), so one slow/failing document can't fail the whole table", async () => {
+    // fiscal_documents entrou em BULK_PUSH_MANAGED_TABLES (ver appRepository.ts) --
+    // tem tabelas filhas (itens, operacoes) e por isso e' empurrada linha a
+    // linha por pushFiscalDocumentToShared/pushManagedHierarchiesToShared, nunca
+    // pelo lote generico chunked de ate' 100 linhas usado pelas tabelas planas.
+    // Ainda assim a mesma garantia vale: um documento com problema nao derruba
+    // os outros, ja que cada um e' isolado no proprio try/catch (ver pushEach).
     const userData = mkdtempSync(join(tmpdir(), "operacoes-sync-reconcile-chunks-"));
     tempDirs.push(userData);
     const directories = resolveAppDirectories(userData);
@@ -303,9 +305,11 @@ describe("shared sync reconciliation", () => {
 
     const fiscalDocsResult = results.find((r) => r.table === "fiscal_documents");
     expect(fiscalDocsResult?.pushed).toBe(total);
-    const fiscalDocsCalls = fake.bulkCalls.filter((call) => call.table === "fiscal_documents");
-    expect(fiscalDocsCalls.length).toBe(Math.ceil(total / 100));
-    for (const call of fiscalDocsCalls) expect(call.rows.length).toBeLessThanOrEqual(100);
+    const fiscalDocsUpserts = fake.upserted.filter((entry) => entry.table === "fiscal_documents");
+    expect(fiscalDocsUpserts.length).toBe(total);
+    // Nenhum upsertRows (lote generico) foi usado pra essa tabela -- confirma
+    // que o caminho e' mesmo o hierarquico, linha a linha.
+    expect(fake.bulkCalls.some((call) => call.table === "fiscal_documents")).toBe(false);
 
     db.close();
   });

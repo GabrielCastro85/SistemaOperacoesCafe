@@ -3157,5 +3157,45 @@ export const migrations: Migration[] = [
       }
     }
   }
+  ,{
+    name: "042_invalidate_unnumbered_deal_confirmation_previews",
+    up: (db) => {
+      // Antes da correcao de numeracao atomica (ver ensureDealConfirmationNumberOnServer
+      // em appRepository.ts), uma previa podia ser gerada com um numero local
+      // ainda nao validado pelo servidor. Qualquer previa dessas que ainda
+      // esteja marcada como "atual" num rascunho sem numero reservado nao
+      // representa mais o numero oficial e nao pode continuar parecendo
+      // valida -- ver Req 4 da correcao de numeracao de confirmacoes.
+      db.exec(`
+        UPDATE deal_confirmation_document_versions
+        SET is_current = 0
+        WHERE document_type = 'GENERATED_DRAFT'
+          AND is_current = 1
+          AND deal_confirmation_id IN (
+            SELECT id FROM deal_confirmations
+            WHERE status IN ('DRAFT', 'PENDING_REVIEW')
+              AND confirmation_number IS NULL
+          );
+      `);
+    }
+  }
+  ,{
+    // A migration Supabase 0027_fiscal_document_claim_uniqueness.sql
+    // adicionou is_active em deal_confirmation_fiscal_documents (indice
+    // unico parcial contra nota fiscal duplicada entre confirmacoes) --
+    // esqueci de espelhar a coluna aqui tambem. Resultado: TODA linha
+    // sincronizada dessa tabela (em qualquer sentido) falhava com "table
+    // deal_confirmation_fiscal_documents has no column named is_active",
+    // silenciosamente (so' warn no log), bug real em producao logo apos a
+    // 0027/1.0.44 saírem. Mesmo default/semantica do lado Postgres.
+    name: "043_deal_confirmation_fiscal_documents_is_active",
+    up: (db) => {
+      const hasColumn = (table: string, column: string): boolean =>
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((item) => item.name === column);
+      if (!hasColumn("deal_confirmation_fiscal_documents", "is_active")) {
+        db.exec(`ALTER TABLE deal_confirmation_fiscal_documents ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))`);
+      }
+    }
+  }
 
 ];

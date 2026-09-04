@@ -80,6 +80,12 @@ export type IpcPolicy =
 
 export const CHANNEL_PERMISSION_RULES: Array<{ pattern: RegExp; policy: IpcPolicy }> = [
   { pattern: /^auth:(needsBootstrap|bootstrapAdmin|login|currentSession|unlock|logout)$/, policy: { mode: "public" } },
+  // Le so' organizations/legalEntities/locations ativos (sem dados de
+  // usuario/credencial) -- precisa funcionar ANTES do login pra tela de
+  // login/bloqueio/primeiro-admin mostrar a logo/cor reais da organizacao
+  // (ver App.tsx). Sem essa regra cai no default "authenticated" e falha
+  // sempre que nao ha sessao local ativa (ex: logo apos abrir o app).
+  { pattern: /^app:getBootstrapData$/, policy: { mode: "public" } },
   { pattern: /^auth:/, policy: { mode: "authenticated" } },
   { pattern: /^users:create/, policy: { mode: "permission", permission: "users.manage" } },
   { pattern: /^users:/, policy: { mode: "permission", permission: "users.manage" } },

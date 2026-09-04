@@ -129,6 +129,69 @@ describe("nota triangulada (compra de um fornecedor + venda pra outro corretor n
     db.close();
   });
 
+  it("bug real: fornecedor e cliente cadastrados com a Villa ativa continuam reconhecidos ao importar pela Grao & Grao (parceiros valem pras duas empresas)", async () => {
+    const { repo, db, dir } = await setup();
+    const graoId = "22222222-2222-4222-8222-222222222222";
+    const graoLegalEntityId = "44444444-4444-4444-8444-444444444441";
+    const graoProductId = repo.listProducts({ organizationId: graoId })[0].id;
+
+    // Leo e Valani sao cadastrados com a Villa ativa -- a tela de Cadastros
+    // nao pergunta "isso vale so' pra Villa ou pras duas", e a listagem de
+    // parceiros ja mostra os dois independente da empresa ativa.
+    const leo = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo ES", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const leoCnpj = "33947549000228";
+    await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: leo.id, legalName: "Leo ES Comercio Ltda", tradeName: "Leo ES Comercio Ltda", cnpj: leoCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createPurchaseRateRule({ organizationId: graoId, businessPartnerId: leo.id, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId: graoProductId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 150, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    const valani = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Valani", notes: null, roles: ["CLIENT"], isActive: true });
+    const primaveraCnpj = "12826691000247";
+    await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: valani.id, legalName: "Primavera Cafe Ltda", tradeName: "Primavera Cafe Ltda", cnpj: primaveraCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: null, postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    await repo.createServiceRateRule({ organizationId: graoId, businessPartnerId: valani.id, ownLegalEntityId: null, productId: graoProductId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 400, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+
+    // Leo emite direto pra Primavera; a importacao acontece com a Grao & Grao
+    // ativa (nao a Villa, onde Leo e Valani foram cadastrados).
+    const key = makeAccessKey(9050);
+    const xml = nfeXml(key)
+      .replace(`<CNPJ>${ownCnpj}</CNPJ>`, `<CNPJ>${leoCnpj}</CNPJ>`)
+      .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${primaveraCnpj}</CNPJ>`);
+    const filePath = join(dir, "nfe-triangulada-outra-empresa.xml");
+    writeFileSync(filePath, xml, "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111150");
+    const job = repo.createXmlImportDraft({
+      organizationId: graoId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId: graoLegalEntityId, operationScope: "EXTERNAL", operationType: "PURCHASE", productId: graoProductId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = await repo.executeXmlImportJob(job.id);
+
+    expect(result.files[0].errorMessage).toBeNull();
+    expect(result.job.importedNotes).toBe(1);
+    expect(result.job.createdOperations).toBe(2);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    // Antes do fix, isso virava uma "empresa terceirizada" fabricada em vez
+    // da Grao & Grao, porque o CNPJ do Leo so' era reconhecido como
+    // fornecedor quando a organizacao ativa era a Villa (onde ele foi
+    // cadastrado).
+    expect(detail.document.ownLegalEntityId).toBe(graoLegalEntityId);
+    expect(detail.document.organizationId).toBe(graoId);
+    expect(detail.document.responsiblePartnerId).toBe(leo.id);
+    expect(detail.document.secondaryResponsiblePartnerId).toBe(valani.id);
+    expect(detail.operations).toHaveLength(2);
+    db.close();
+  });
+
   it("resolve a regra de preco da segunda perna contra a empresa do parceiro SECUNDARIO, nao contra a contraparte original da nota", async () => {
     // Bug real reportado: com uma regra generica "mesma UF" (R$5/saca) e uma
     // regra especifica pra empresa da Primavera (R$4/saca), a segunda perna

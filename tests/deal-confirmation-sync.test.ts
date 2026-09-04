@@ -21,10 +21,27 @@ afterEach(() => {
 // baixo) pra criar vendedor/comprador que a confirmacao referencia.
 class FakeCloud implements Pick<SharedRepository, "upsertRow" | "pullChangesSince" | "checkConnectivity" | "rpc"> {
   private tables = new Map<string, Map<string, Record<string, unknown>>>();
+  // Espelha o indice unico parcial de
+  // 0027_fiscal_document_claim_uniqueness.sql: so' UMA confirmacao ativa por
+  // vez pode reivindicar uma nota fiscal. is_active nao existe nas linhas
+  // locais (coluna so' de producao), entao aqui basta checar se ja existe
+  // outra confirmacao dona daquela nota -- suficiente pra testar a corrida,
+  // ja que nenhum teste deste arquivo cancela/exclui confirmacao.
+  private fiscalDocumentClaimByConfirmation = new Map<string, string>();
 
   checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
+  attemptSessionRecovery = async () => true;
 
   async upsertRow(table: string, row: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (table === "deal_confirmation_fiscal_documents") {
+      const fiscalDocumentId = String(row.fiscal_document_id);
+      const dealConfirmationId = String(row.deal_confirmation_id);
+      const claimedBy = this.fiscalDocumentClaimByConfirmation.get(fiscalDocumentId);
+      if (claimedBy && claimedBy !== dealConfirmationId) {
+        throw new Error(`duplicate key value violates unique constraint "deal_confirmation_fiscal_documents_active_claim_uq"`);
+      }
+      this.fiscalDocumentClaimByConfirmation.set(fiscalDocumentId, dealConfirmationId);
+    }
     if (!this.tables.has(table)) this.tables.set(table, new Map());
     this.tables.get(table)!.set(String(row.id), row);
     return row;
@@ -115,6 +132,45 @@ describe("sincronizacao de confirmacoes de negocio entre PCs", () => {
     expect(detailOnB.items[0].quantitySacksDecimal).toBe("100");
     expect(detailOnB.clauses).toHaveLength(1);
     expect(detailOnB.signers).toHaveLength(1);
+
+    pcA.db.close();
+    pcB.db.close();
+  });
+
+  it("bloqueia a corrida de duas confirmacoes geradas da mesma nota fiscal em PCs diferentes", async () => {
+    // Reproduz o cenario que findActiveDealConfirmationForFiscalDocuments (a
+    // dedup local, SELECT-then-INSERT) nao consegue cobrir sozinha: dois PCs
+    // geram confirmacao a partir da MESMA nota antes de qualquer sincronizacao
+    // acontecer entre eles -- cada um so' enxerga o proprio banco local, entao
+    // os dois criam um rascunho novo. So' o indice unico parcial no Postgres
+    // (0027_fiscal_document_claim_uniqueness.sql, simulado aqui em FakeCloud)
+    // consegue detectar e bloquear isso de verdade.
+    const cloud = new FakeCloud();
+    const pcA = setupPc(cloud);
+    const pcB = setupPc(cloud);
+    pcA.repo.saveInstallationProfile({ installationName: "Villa A", appVariant: "multiempresa", defaultOrganizationId: villaId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+    pcB.repo.saveInstallationProfile({ installationName: "Villa B", appVariant: "multiempresa", defaultOrganizationId: villaId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+    const product = pcA.repo.listProducts({ organizationId: villaId })[0];
+
+    const buyer = await pcA.repo.createBusinessPartner({ organizationId: villaId, displayName: "Compradora Corrida", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const doc = pcA.repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "NF-RACE-1", series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
+    const item = pcA.repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 500000, sacksQuantity: "5" });
+    pcA.repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: buyer.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-17", quantitySacks: "5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    pcA.repo.confirmFiscalDocument(doc.document.id);
+    await pcA.repo.pushFiscalDocumentToShared(doc.document.id);
+
+    // Sincroniza a nota (e a compradora) pro PC B ANTES da corrida -- os dois
+    // PCs ja' enxergam a mesma nota, so' nao sabem ainda que o outro vai gerar
+    // uma confirmacao a partir dela ao mesmo tempo.
+    await pcB.repo.syncSharedDataDown();
+    expect(pcB.repo.getFiscalDocument(doc.document.id).document.id).toBe(doc.document.id);
+
+    const confirmationA = pcA.repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    const confirmationB = pcB.repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    expect(confirmationA.confirmation.id).not.toBe(confirmationB.confirmation.id);
+
+    await pcA.repo.pushDealConfirmationToShared(confirmationA.confirmation.id);
+    await expect(pcB.repo.pushDealConfirmationToShared(confirmationB.confirmation.id)).rejects.toThrow(/deal_confirmation_fiscal_documents_active_claim_uq/);
 
     pcA.db.close();
     pcB.db.close();
