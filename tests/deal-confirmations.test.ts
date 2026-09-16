@@ -8,7 +8,6 @@ import { AppRepository } from "../electron/main/services/appRepository";
 import { formatFiscalDocumentReferences } from "../electron/main/services/dealConfirmationFiles";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
 import type { FiscalDocument } from "../src/shared/types/domain";
-import type { SharedRepository } from "../electron/main/services/sharedRepository";
 
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
@@ -16,125 +15,13 @@ const graoId = "22222222-2222-4222-8222-222222222222";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
 const graoLegalEntityId = "44444444-4444-4444-8444-444444444441";
 
-// Simulacao minima do Supabase pra cobrir a numeracao atomica (ver
-// ensureDealConfirmationNumberOnServer/reserveDealConfirmationNumberOnServer
-// em appRepository.ts): a previa/emissao agora exige conexao remota de
-// verdade, entao os testes de confirmacao nao podem mais rodar 100% offline.
-// A RPC "ensure_deal_confirmation_number" espelha a logica da migracao
-// 0021_confirmation_number_owner_validation.sql -- mesma sequencia por
-// (org, empresa, ano, prefixo), mesma limpeza de numero conflitante.
-class FakeSharedRepository {
-  private tables = new Map<string, Map<string, Record<string, unknown>>>();
-  private sequences = new Map<string, number>();
-  private reservations = new Map<string, { number: string; sequence: number }>();
-  private storage = new Map<string, Buffer>();
-
-  checkConnectivity = async () => ({ online: true, authenticated: true, error: null });
-  attemptSessionRecovery = async () => true;
-  getSession = async () => ({ user: { email: "teste@operacoescafe.com" } }) as never;
-
-  async uploadFile(bucket: string, path: string, data: Buffer): Promise<void> {
-    this.storage.set(`${bucket}/${path}`, data);
-  }
-
-  async downloadFile(bucket: string, path: string): Promise<Buffer> {
-    const bytes = this.storage.get(`${bucket}/${path}`);
-    if (!bytes) throw new Error(`Object not found: ${bucket}/${path}`);
-    return bytes;
-  }
-
-  async findOne(table: string, match: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-    const rows = [...(this.tables.get(table)?.values() ?? [])];
-    return rows.find((row) => Object.entries(match).every(([key, value]) => String(row[key] ?? "") === String(value ?? ""))) ?? null;
-  }
-
-  async listAll(table: string): Promise<Array<Record<string, unknown>>> {
-    return [...(this.tables.get(table)?.values() ?? [])];
-  }
-
-  async upsertRow(table: string, row: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (!this.tables.has(table)) this.tables.set(table, new Map());
-    const stored = { ...row };
-    this.tables.get(table)!.set(String(row.id), stored);
-    return stored;
-  }
-
-  async upsertRows(table: string, rows: Array<Record<string, unknown>>): Promise<void> {
-    for (const row of rows) await this.upsertRow(table, row);
-  }
-
-  async updateRow(table: string, id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const existing = this.tables.get(table)?.get(id) ?? { id };
-    const updated = { ...existing, ...patch, id };
-    if (!this.tables.has(table)) this.tables.set(table, new Map());
-    this.tables.get(table)!.set(id, updated);
-    return updated;
-  }
-
-  async deleteWhere(table: string, match: Record<string, unknown>): Promise<void> {
-    const rows = this.tables.get(table);
-    if (!rows) return;
-    const [key, value] = Object.entries(match)[0];
-    for (const [id, row] of [...rows.entries()]) if (row[key] === value) rows.delete(id);
-  }
-
-  async pullChangesSince(table: string, timestampColumn: string, since: string): Promise<Array<Record<string, unknown>>> {
-    const rows = [...(this.tables.get(table)?.values() ?? [])];
-    return rows.filter((row) => String(row[timestampColumn]) > since);
-  }
-
-  async rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
-    if (name !== "ensure_deal_confirmation_number") throw new Error(`RPC nao simulada no teste: ${name}`);
-    const confirmationId = String(args.p_confirmation_id);
-    const organizationId = String(args.p_organization_id);
-    const ownLegalEntityId = String(args.p_own_legal_entity_id);
-    const year = Number(args.p_year);
-    const prefix = String(args.p_prefix);
-    const padding = Number(args.p_padding ?? 4);
-    const floor = Number(args.p_floor ?? 0);
-    const confirmations = this.tables.get("deal_confirmations") ?? new Map();
-    const current = confirmations.get(confirmationId);
-    if (!current) throw new Error(`Confirmation ${confirmationId} is missing, belongs to another company, or is no longer editable`);
-
-    const conflictsWith = (number: string): boolean =>
-      [...confirmations.values()].some((row) => String(row.id) !== confirmationId && String(row.confirmation_number ?? "") === number);
-
-    if (typeof current.confirmation_number === "string" && current.confirmation_number && conflictsWith(current.confirmation_number)) {
-      current.confirmation_number = null;
-    }
-
-    const existingReservation = this.reservations.get(confirmationId);
-    if (existingReservation && !conflictsWith(existingReservation.number)) {
-      current.confirmation_number = existingReservation.number;
-      current.temporary_reference = existingReservation.number;
-      return [{ confirmation_number: existingReservation.number, sequence_number: existingReservation.sequence }] as unknown as T;
-    }
-    if (existingReservation) this.reservations.delete(confirmationId);
-
-    const seqKey = `${organizationId}|${ownLegalEntityId}|${year}|${prefix}`;
-    const highestFromConfirmations = [...confirmations.values()].reduce((max, row) => {
-      const match = typeof row.confirmation_number === "string" ? row.confirmation_number.match(/(\d+)\s*$/) : null;
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 0);
-    const highestFromReservations = [...this.reservations.values()].reduce((max, entry) => Math.max(max, entry.sequence), 0);
-    const next = Math.max(this.sequences.get(seqKey) ?? 0, highestFromConfirmations, highestFromReservations, floor) + 1;
-    this.sequences.set(seqKey, next);
-    const number = `${prefix}${String(next).padStart(padding, "0")}`;
-    this.reservations.set(confirmationId, { number, sequence: next });
-    current.confirmation_number = number;
-    current.temporary_reference = number;
-    return [{ confirmation_number: number, sequence_number: next }] as unknown as T;
-  }
-}
-
 async function setup() {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-deals-"));
   tempDirs.push(userData);
   const dirs = resolveAppDirectories(userData);
   ensureAppDirectories(dirs);
   const db = initializeDatabase(dirs);
-  const cloud = new FakeSharedRepository();
-  const repo = new AppRepository(db, dirs, cloud as unknown as SharedRepository);
+  const repo = new AppRepository(db, dirs);
   repo.saveInstallationProfile({ installationName: "Villa", appVariant: "multiempresa", defaultOrganizationId: villaId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
   const seller = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Villa Coffee Vendedora", notes: null, roles: ["SELLER"], isActive: true });
   const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Empresa IF Compradora", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
@@ -148,6 +35,21 @@ afterEach(() => {
 });
 
 describe("deal confirmations", () => {
+  it("creates a confirmation from a Villa note classified with a Grao product", async () => {
+    const { repo, db, buyer, product } = await setup();
+    try {
+      const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "1193", series: "1", issueDate: "2026-09-08", totalAmountCents: 109780000, hasPendingIssues: false, pendingNotes: null, notes: null });
+      const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe arabica da NF", quantity: "550", unit: "SACK", unitPriceDecimal: "1996", totalAmountCents: 109780000, sacksQuantity: "550" });
+      const otherProduct = repo.listProducts({ organizationId: graoId })[0];
+      db.prepare("UPDATE fiscal_document_items SET product_id = ? WHERE id = ?").run(otherProduct.id, item.id);
+      const result = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({ productId: null, productNameSnapshot: "Cafe arabica da NF", quantitySacksDecimal: "550", totalAmountCents: 109780000 });
+      expect(repo.getFiscalDocument(doc.document.id).items[0].productId).toBe(otherProduct.id);
+      expect(repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] }).confirmation.id).toBe(result.confirmation.id);
+    } finally { db.close(); }
+  });
+
   it("creates manual confirmation with exact 685 + 426 sacks and issues immutable PDF", async () => {
     const { repo, db, seller, buyer, product } = await setup();
     const template = repo.createDealConfirmationTemplate(templateInput());
@@ -581,44 +483,18 @@ describe("deal confirmations", () => {
     const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
     expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE \d+\.pdf$/);
     expect(document?.storedFilePath ? basename(document.storedFilePath) : "").toBe(document?.originalFileName);
-    // Versao emitida (nao-draft) sobe pro Supabase Storage -- e' o que
-    // permite outro PC abrir este PDF depois (ver ensureDealDocumentLocalPath).
-    expect(document?.storageObjectPath).not.toBeNull();
     db.close();
   });
 
-  it("recupera o PDF pelo Supabase Storage quando o arquivo local nao existe neste PC (confirmacao sincronizada de outro PC)", async () => {
-    // Reproduz o bug relatado em producao: stored_file_path e' um caminho
-    // absoluto do PC que gerou o documento -- so' a LINHA sincroniza pros
-    // outros PCs, nunca o arquivo. Ate' esta correcao, abrir/baixar em outro
-    // PC mostrava "sem previa gerada" sem nenhuma explicacao.
-    const { repo, db, seller, buyer, product } = await setup();
-    const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);
-    const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
-    expect(document?.storedFilePath && existsSync(document.storedFilePath)).toBe(true);
-    expect(document?.storageObjectPath).not.toBeNull();
-
-    // Simula "outro PC": o arquivo local nunca existiu aqui.
-    rmSync(document!.storedFilePath, { force: true });
-    expect(existsSync(document!.storedFilePath)).toBe(false);
-
-    const recoveredPath = await repo.ensureDealDocumentLocalPath(document!.id);
-    expect(existsSync(recoveredPath)).toBe(true);
-    expect(readFileSync(recoveredPath).length).toBeGreaterThan(0);
-    // A confirmacao continua abrindo normalmente depois da recuperacao.
-    expect(repo.getDealDocumentPath(document!.id)).toBe(recoveredPath);
-    db.close();
-  });
-
-  it("mensagem clara (nao mais 'sem previa gerada' silencioso) quando o documento nao existe nem localmente nem na nuvem", async () => {
+  it("mensagem clara (nao mais 'sem previa gerada' silencioso) quando o documento nao existe mais localmente", async () => {
+    // Aplicativo single-PC: sem nenhum armazenamento compartilhado, um arquivo
+    // apagado do disco (ou uma linha vinda de um banco restaurado de outro PC)
+    // e' irrecuperavel -- a mensagem precisa orientar a gerar uma nova previa.
     const { repo, db, seller, buyer, product } = await setup();
     const issued = await issueMinimal(repo, seller.id, buyer.id, product.id);
     const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
     rmSync(document!.storedFilePath, { force: true });
-    // Sem storage_object_path (ex: previa em rascunho, nunca sobe pro Storage) --
-    // simula isolando o campo direto no banco pra nao depender de outro fluxo.
-    db.prepare("UPDATE deal_confirmation_document_versions SET storage_object_path = NULL WHERE id = ?").run(document!.id);
-    await expect(repo.ensureDealDocumentLocalPath(document!.id)).rejects.toThrow(/ainda nao esta disponivel neste computador/);
+    await expect(repo.ensureDealDocumentLocalPath(document!.id)).rejects.toThrow(/nao esta mais disponivel neste computador/);
     db.close();
   });
 

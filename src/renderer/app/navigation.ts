@@ -14,18 +14,18 @@ export interface NavigationGroup {
 }
 
 export const navigationGroups: NavigationGroup[] = [
-  { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard", legacyMenu: "Dashboard", path: "/dashboard", icon: "⌂" }] },
+  { title: "Visão geral", items: [{ id: "dashboard", label: "Resumo", legacyMenu: "Dashboard", path: "/dashboard", icon: "⌂" }] },
   {
     title: "Operações",
     items: [
       { id: "invoices", label: "Notas e operações", legacyMenu: "Notas e operacoes", path: "/operations", icon: "▦" },
-      { id: "productAliases", label: "Aliases de produto", legacyMenu: "Aliases de produto", path: "/imports/xml/product-aliases", icon: "≈" }
+      { id: "productAliases", label: "Reconhecimento de produtos", legacyMenu: "Aliases de produto", path: "/imports/xml/product-aliases", icon: "≈" }
     ]
   },
   {
     title: "Comercial",
     items: [
-      { id: "partners", label: "Cadastros comerciais", legacyMenu: "Clientes", path: "/partners", icon: "◉" },
+      { id: "partners", label: "Clientes e empresas", legacyMenu: "Clientes", path: "/partners", icon: "◉" },
       { id: "products", label: "Produtos", legacyMenu: "Produtos", path: "/products", icon: "□" },
       { id: "rates", label: "Regras por saca", legacyMenu: "Regras por saca", path: "/billing/rates", icon: "◇" },
       { id: "confirmations", label: "Confirmações", legacyMenu: "Confirmacoes", path: "/confirmations", icon: "✓" }
@@ -56,7 +56,7 @@ export const navigationGroups: NavigationGroup[] = [
     title: "Administração",
     items: [
       { id: "users", label: "Usuarios", legacyMenu: "Usuarios", path: "/settings/users", icon: "◐" },
-      { id: "roles", label: "Roles", legacyMenu: "Roles", path: "/settings/roles", icon: "◎" },
+      { id: "roles", label: "Perfis de acesso", legacyMenu: "Roles", path: "/settings/roles", icon: "◎" },
       { id: "audit", label: "Auditoria", legacyMenu: "Auditoria", path: "/audit", icon: "▧" },
       { id: "backups", label: "Backups", legacyMenu: "Backups", path: "/settings/backups", icon: "▣" },
       { id: "integrity", label: "Integridade", legacyMenu: "Integridade", path: "/settings/integrity", icon: "◈" },

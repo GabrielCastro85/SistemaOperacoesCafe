@@ -104,6 +104,8 @@ describe("xml imports", () => {
     const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
     const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
     repo.setXmlImportFileStoredPath(file.id, filePath);
+    repo.updateXmlImportFileResolution(file.id, { contractNumber: "CONTRATO-NF-1", billingObservations: "Lote 42" });
+    repo.updateXmlImportFileResolution(file.id, { clientPartnerId: partnerId });
     const result = await repo.executeXmlImportJob(job.id);
     expect(result.files[0].errorMessage).toBeNull();
     expect(result.job.importedNotes).toBe(1);
@@ -114,6 +116,8 @@ describe("xml imports", () => {
     expect(detail.document.direction).toBe("OUTBOUND");
     expect(detail.items).toHaveLength(1);
     expect(detail.operations[0].serviceAmountCents).toBe(5250);
+    expect(detail.document.contractNumber).toBe("CONTRATO-NF-1");
+    expect(detail.document.billingObservations).toBe("Lote 42");
     // A clean XML import (no pending issues) auto-confirms the note and its operation,
     // so it shows up ready-to-bill without a separate manual "Confirmar" step.
     expect(detail.document.status).toBe("CONFIRMED");
@@ -661,7 +665,7 @@ describe("xml imports", () => {
     const resultA = await repo.executeXmlImportJob(jobA.id);
     expect(resultA.job.createdOperations).toBe(0);
     const detailA = repo.getFiscalDocument(resultA.files[0].fiscalDocumentId as string);
-    expect(detailA.document.status).toBe("DRAFT");
+    expect(detailA.document.status).toBe("PENDING");
     expect(detailA.document.hasPendingIssues).toBe(true);
     expect(detailA.document.pendingNotes).toMatch(/produto nao identificado/);
     expect(detailA.operations).toHaveLength(0);
@@ -694,6 +698,145 @@ describe("xml imports", () => {
     expect(detailB.document.status).toBe("CONFIRMED");
     expect(detailB.document.hasPendingIssues).toBe(false);
     db.close();
+  });
+});
+
+async function importAuditXml(context: Awaited<ReturnType<typeof setup>>, content: string, settings: Record<string, unknown> = {}) {
+  const filePath = join(context.dir, `audit-${Date.now()}-${Math.random()}.xml`);
+  writeFileSync(filePath, content, "utf8");
+  const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111111");
+  const job = context.repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: context.partnerId, productId: context.productId, createOperations: true, ...settings } });
+  const file = context.repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+  context.repo.setXmlImportFileStoredPath(file.id, filePath);
+  return context.repo.executeXmlImportJob(job.id);
+}
+
+describe("commercial import safeguards", () => {
+  it("keeps imported operations in draft when commercial review is requested", async () => {
+    const ctx = await setup();
+    try {
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()), { reviewBeforeConfirm: true });
+      const detail = ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+      expect(detail.document.status).toBe("DRAFT");
+      expect(detail.operations).toHaveLength(1);
+      expect(ctx.repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: ctx.partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(1);
+      expect(ctx.repo.confirmFiscalDocument(detail.document.id).document.status).toBe("CONFIRMED");
+    } finally { ctx.db.close(); }
+  });
+
+  it("reassigns the client atomically with the new rate and keeps an audit trail", async () => {
+    const ctx = await setup();
+    try {
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()));
+      const detail = ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+      const other = await ctx.repo.createBusinessPartner({ organizationId: villaId, displayName: "Novo responsavel", roles: ["CLIENT"], isActive: true, notes: null });
+      await ctx.repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: other.id, ownLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 700, effectiveFrom: "1900-01-01", effectiveTo: null, priority: 0, notes: null, isActive: true });
+      ctx.repo.updateOperationManualRate(detail.operations[0].id, 300, "Acordo anterior");
+      const updated = ctx.repo.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: other.id });
+      expect(updated.document.status).toBe("DRAFT");
+      expect(updated.operations[0].id).toBe(detail.operations[0].id);
+      expect(updated.operations[0].responsiblePartnerId).toBe(other.id);
+      expect(updated.operations[0].appliedRateValueCents).toBe(700);
+      expect(updated.operations[0].serviceAmountCents).toBe(7350);
+      expect(updated.operations[0].rateWasManuallyOverridden).toBe(false);
+      expect(ctx.db.prepare("SELECT reason FROM operation_rate_history WHERE operation_id = ? ORDER BY rowid DESC LIMIT 1").get(detail.operations[0].id)).toMatchObject({ reason: expect.stringContaining(other.id) });
+    } finally { ctx.db.close(); }
+  });
+
+  it("flags canceled invoices in a charge without changing the billed snapshot", async () => {
+    const ctx = await setup();
+    try {
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()));
+      const detail = ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+      const charge = ctx.repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: ctx.partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: detail.operations.map((item) => item.id) });
+      ctx.repo.cancelFiscalDocument(detail.document.id, "Cancelamento posterior");
+      const updated = ctx.repo.getClientCharge(charge.charge.id);
+      expect(updated.canceledInvoices).toEqual([{ documentId: detail.document.id, documentNumber: "9001", amountCents: detail.operations[0].serviceAmountCents }]);
+      expect(updated.operations).toEqual(charge.operations);
+      expect(() => ctx.repo.updateFiscalDocument(detail.document.id, { ...detail.document })).toThrow(/cobranca/);
+    } finally { ctx.db.close(); }
+  });
+  it("applies an accepted cancellation even when its XML arrives before the invoice", async () => {
+    const ctx = await setup();
+    try {
+      await importAuditXml(ctx, cancelXml(makeAccessKey()));
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()));
+      const id = result.files[0].fiscalDocumentId as string;
+      expect(ctx.repo.getFiscalDocument(id).document.status).toBe("CANCELED");
+      expect(() => ctx.repo.confirmFiscalDocument(id)).toThrow(/cancelada/);
+      expect(ctx.repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: ctx.partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(0);
+    } finally { ctx.db.close(); }
+  });
+
+  it("records a rejected cancellation without canceling the invoice", async () => {
+    const ctx = await setup();
+    try {
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()));
+      await importAuditXml(ctx, cancelXml(makeAccessKey()).replace("<cStat>135</cStat>", "<cStat>573</cStat>"));
+      expect(ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string).document.status).toBe("CONFIRMED");
+    } finally { ctx.db.close(); }
+  });
+
+  it("requires a customer choice when two customers use the same company, then imports the chosen one", async () => {
+    const ctx = await setup();
+    try {
+      const other = await ctx.repo.createBusinessPartner({ organizationId: villaId, displayName: "Segundo solicitante", roles: ["CLIENT"], notes: null, isActive: true });
+      const company = await ctx.repo.createPartnerLegalEntity({ organizationId: villaId, businessPartnerId: ctx.partnerId, legalName: "Destino compartilhado", tradeName: "Destino compartilhado", cnpj: partnerCnpj, stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null, district: null, city: null, state: "SP", postalCode: null, isPrimary: false, isActive: true, isDraft: true });
+      await ctx.repo.linkPartnerLegalEntityToPartner(company.id, other.id);
+      expect(ctx.repo.listPartnerLegalEntities(ctx.partnerId).map((item) => item.id)).toContain(company.id);
+      expect(ctx.repo.listPartnerLegalEntities(other.id).map((item) => item.id)).toContain(company.id);
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()), { clientPartnerId: null });
+      expect(result.files[0].status).toBe("PENDING_REVIEW");
+      expect(result.files[0].fiscalDocumentId).toBeNull();
+      ctx.repo.updateXmlImportFileResolution(result.files[0].id, { clientPartnerId: ctx.partnerId });
+      const imported = await ctx.repo.executeXmlImportJob(result.job.id);
+      expect(ctx.repo.getFiscalDocument(imported.files[0].fiscalDocumentId as string).document.responsiblePartnerId).toBe(ctx.partnerId);
+      await ctx.repo.unlinkPartnerLegalEntityFromPartner(company.id, other.id);
+      expect(ctx.repo.listPartnerLegalEntities(ctx.partnerId)).toHaveLength(1);
+      expect(ctx.repo.listPartnerLegalEntities(other.id)).toHaveLength(0);
+    } finally { ctx.db.close(); }
+  });
+
+  it("keeps a partly recognized invoice out of billing", async () => {
+    const ctx = await setup();
+    try {
+      await ctx.repo.createProductAlias({ organizationId: villaId, productId: ctx.productId, issuerPartnerLegalEntityId: null, sourceProductCode: "CAF-001", sourceDescription: "CAFE ARABICA", ncm: "09011110", isActive: true });
+      const extra = '<det nItem="2"><prod><cProd>UNKNOWN</cProd><xProd>Produto nao cadastrado</xProd><uCom>UN</uCom><qCom>1</qCom><vUnCom>1</vUnCom><vProd>1</vProd></prod></det>';
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()).replace("<total>", `${extra}<total>`), { productId: null });
+      const detail = ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+      expect(detail.operations).toHaveLength(1);
+      expect(detail.document.hasPendingIssues).toBe(true);
+      expect(detail.document.status).toBe("PENDING");
+      expect(() => ctx.repo.confirmFiscalDocument(detail.document.id)).toThrow(/pendencias/);
+      expect(ctx.repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: ctx.partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(0);
+    } finally { ctx.db.close(); }
+  });
+
+  it("requires a contract and freezes its value in the charge", async () => {
+    const ctx = await setup();
+    try {
+      await ctx.repo.updateBusinessPartner(ctx.partnerId, { ...ctx.repo.getBusinessPartner(ctx.partnerId), requiresContract: true });
+      const result = await importAuditXml(ctx, nfeXml(makeAccessKey()));
+      const detail = ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+      expect(() => ctx.repo.confirmFiscalDocument(detail.document.id)).toThrow(/contrato/);
+      ctx.repo.updateFiscalDocument(detail.document.id, { ...detail.document, contractNumber: "MCU-103265" });
+      ctx.repo.confirmFiscalDocument(detail.document.id);
+      const charge = ctx.repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: ctx.partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: detail.operations.map((item) => item.id) });
+      expect(charge.operations[0].contractNumberSnapshot).toBe("MCU-103265");
+      expect(() => ctx.repo.updateOperationManualRate(detail.operations[0].id, 900, "Alteracao posterior")).toThrow(/cobranca/);
+    } finally { ctx.db.close(); }
+  });
+
+  it("reads a labeled item contract and uses the states rather than an incorrect batch scope", async () => {
+    const ctx = await setup();
+    try {
+      const xml = nfeXml(makeAccessKey()).replace("Lote teste", "Contrato: MCU-103265");
+      expect((parseXmlContent(xml).extractedData?.items as Array<{ additionalInfo: string }>)[0].additionalInfo).toBe("Contrato: MCU-103265");
+      const result = await importAuditXml(ctx, xml, { operationScope: "INTERNAL" });
+      const detail = ctx.repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+      expect(detail.document.contractNumber).toBe("MCU-103265");
+      expect(detail.operations[0].operationScope).toBe("EXTERNAL");
+    } finally { ctx.db.close(); }
   });
 });
 

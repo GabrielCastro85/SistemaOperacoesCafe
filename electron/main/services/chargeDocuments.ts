@@ -1,3 +1,4 @@
+import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
 import ExcelJS from "exceljs";
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import { createHash } from "node:crypto";
@@ -24,10 +25,16 @@ type ChargeDocumentsInput = {
   clientLegalEntity?: BusinessPartnerLegalEntity | null;
   detail: ClientChargeDetail;
   relatedOpenChargeDetails?: ClientChargeDetail[];
+  relatedPaidChargeDetails?: ClientChargeDetail[];
 };
 
 type ChargeOperationSnapshot = ClientChargeDetail["operations"][number];
 type ChargeAdjustmentSnapshot = ClientChargeDetail["adjustments"][number];
+
+function contractLines(value?: string | null, observations?: string | null): string[] {
+  return [value ? `Contrato: ${value}` : "", observations ? `Observacoes: ${observations}` : ""].filter(Boolean)
+    .flatMap((text) => text.split(/\r?\n/).flatMap((line) => line.match(/.{1,70}/gu) ?? [""]));
+}
 
 function chargeOperationCompanyName(operation: ChargeOperationSnapshot): string {
   return operation.destinationNameSnapshot?.trim()
@@ -43,7 +50,7 @@ function chargeAdjustmentLine(adjustment: ChargeAdjustmentSnapshot): string {
 }
 
 export async function generateChargeDocuments(input: ChargeDocumentsInput): Promise<ChargeDocumentResult> {
-  const number = sanitizeSegment(input.detail.charge.chargeNumber ?? input.detail.charge.id);
+  const number = sanitizeSegment(input.detail.charge.id);
   const year = (input.detail.charge.issueDate ?? input.detail.charge.createdAt).slice(0, 4);
   const baseDir = join(input.directories.chargesDir, input.organization.id, input.ownLegalEntity.id, year, number);
   mkdirSync(baseDir, { recursive: true });
@@ -104,7 +111,7 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   page.drawText(isInternalPreview ? "PREVIA INTERNA - FECHAMENTO" : "FECHAMENTO DE SERVICOS", { x: headerX, y: pageHeight - margin - 24, size: 14, font: bold, color: headerText });
   page.drawText(ownLegalEntity.tradeName, { x: headerX, y: pageHeight - margin - 42, size: 9, font: bold, color: rgb(0.84, 0.75, 0.63) });
   drawTextBox(page, `${ownLegalEntity.legalName}\nCNPJ: ${formatTaxId(ownLegalEntity.cnpj)}${ownLegalEntity.stateRegistration ? ` | IE: ${ownLegalEntity.stateRegistration}` : ""}`, headerX, pageHeight - margin - 49, 265, 30, { font, bold, size: 7.1, minSize: 5.8, lineHeight: 1.14, maxLines: 2, color: headerText });
-  drawRightText(page, isInternalPreview ? "NAO EMITIDA" : `No ${charge.chargeNumber ?? "Rascunho"}`, pageWidth - margin - 145, pageHeight - margin - 24, 130, bold, 13, headerText);
+  drawRightText(page, isInternalPreview ? "NAO EMITIDA" : chargePeriodLabel(charge, true), pageWidth - margin - 145, pageHeight - margin - 24, 130, bold, 9, headerText);
   drawRightText(page, `Emissao: ${formatDate(charge.issueDate ?? charge.createdAt)}`, pageWidth - margin - 145, pageHeight - margin - 42, 130, font, 7, rgb(0.82, 0.76, 0.67));
   drawRightText(page, `Vencimento: ${formatDate(charge.dueDate)}`, pageWidth - margin - 145, pageHeight - margin - 56, 130, font, 7, rgb(0.82, 0.76, 0.67));
 
@@ -121,7 +128,7 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   y -= 16;
   const sections = summaryImageSections(input);
   const columns = [
-    { title: "COBRANCA", x: margin + 8, width: 68 },
+    { title: "PERIODO", x: margin + 8, width: 68 },
     { title: "NF", x: margin + 84, width: 38 },
     { title: "EMPRESA", x: margin + 130, width: 178 },
     { title: "UF", x: margin + 318, width: 60 },
@@ -140,6 +147,20 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
     green
   }));
   y -= 20;
+
+  const paidNotes = (input.relatedPaidChargeDetails ?? []).flatMap((paidDetail) =>
+    paidDetail.operations.map((operation) => ({
+      chargeNumber: chargePeriodLabel(paidDetail.charge, true),
+      operation,
+      clientName: client.displayName
+    }))
+  );
+  if (paidNotes.length > 0) {
+    ({ page, y } = drawPaidNotesPdf(doc, page, paidNotes, margin, y, contentWidth, {
+      font, bold, ink, muted, border, paper, gold, green
+    }));
+    y -= 18;
+  }
 
   if (y < 238) {
     page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
@@ -168,13 +189,13 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   return doc.save();
 }
 
-async function writeChargeWorkbook(filePath: string, input: { client: BusinessPartner; detail: ClientChargeDetail }): Promise<void> {
+async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
   const workbook = new ExcelJS.Workbook();
   const charge = input.detail.charge;
   const summary = workbook.addWorksheet("Resumo");
   summary.addRows([
-    ["Cobranca", charge.chargeNumber],
+    ["Identificacao", `${input.client.displayName} - ${chargePeriodLabel(charge)}`],
     ["Cliente", input.client.displayName],
     ["Periodo", `${charge.periodStart} a ${charge.periodEnd}`],
     ["Vencimento", charge.dueDate],
@@ -186,14 +207,24 @@ async function writeChargeWorkbook(filePath: string, input: { client: BusinessPa
     ["Aberto", charge.openAmountCents / 100]
   ]);
   const operations = workbook.addWorksheet("Operacoes");
-  operations.addRow(["Empresa", "Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total"]);
-  input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100]));
+  operations.addRow(["Empresa", "Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
+  input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
   const adjustments = workbook.addWorksheet("Ajustes");
   adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor"]);
   input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
   const payments = workbook.addWorksheet("Pagamentos");
   payments.addRow(["Pagamento", "Valor"]);
   input.detail.payments.forEach((item) => payments.addRow([item.clientPaymentId, item.amountCents / 100]));
+  const paidNotes = workbook.addWorksheet("Notas pagas");
+  paidNotes.addRow(["Periodo da cobranca", "Nota fiscal", "Cliente", "Valor"]);
+  (input.relatedPaidChargeDetails ?? []).forEach((paidDetail) => {
+    paidDetail.operations.forEach((operation) => paidNotes.addRow([
+      chargePeriodLabel(paidDetail.charge, true),
+      operation.fiscalDocumentNumberSnapshot ?? "-",
+      input.client.displayName,
+      operation.serviceAmountCentsSnapshot / 100
+    ]));
+  });
   workbook.eachSheet((sheet) => {
     sheet.columns.forEach((column) => { column.width = 18; });
   });
@@ -267,10 +298,11 @@ function drawChargeOperationSectionsPdf(
     cursorY -= 13;
 
     section.rows.forEach((row) => {
-      ensureSpace(15);
       const item = row.operation;
+      const contract = contractLines(item.contractNumberSnapshot, item.billingObservationsSnapshot);
+      ensureSpace(15 + Math.min(contract.length, 8) * 11);
       const companyName = chargeOperationCompanyName(item);
-      const brandColors = chargeBrandPdfColors(companyName);
+      const brandColors = chargeBrandPdfColors(item.issuerNameSnapshot || item.ownLegalEntityNameSnapshot);
       if (brandColors) {
         currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: brandColors.background });
         currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: brandColors.stripe });
@@ -282,6 +314,11 @@ function drawChargeOperationSectionsPdf(
       drawRightText(currentPage, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 5.8, style.ink);
       drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)} x NF ${item.fiscalDocumentNumberSnapshot ?? "-"}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
       cursorY -= 12;
+      for (const line of contract) {
+        ensureSpace(11);
+        currentPage.drawText(line, { x: margin + 10, y: cursorY, size: 6, font: style.font, color: style.ink });
+        cursorY -= 11;
+      }
     });
 
     ensureSpace(18);
@@ -292,6 +329,48 @@ function drawChargeOperationSectionsPdf(
     cursorY -= 15;
   });
   return { page: currentPage, y: cursorY };
+}
+
+function drawPaidNotesPdf(
+  doc: PDFDocument,
+  page: PDFPage,
+  rows: Array<{ chargeNumber: string; operation: ChargeOperationSnapshot; clientName: string }>,
+  margin: number,
+  startY: number,
+  contentWidth: number,
+  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; border: PdfColor; paper: PdfColor; gold: PdfColor; green: PdfColor }
+): { page: PDFPage; y: number } {
+  const pageWidth = page.getWidth();
+  const pageHeight = page.getHeight();
+  let currentPage = page;
+  let y = startY;
+  const startSection = () => {
+    drawSectionTitle(currentPage, "Notas pagas no periodo", margin, y, style.bold, style.ink, style.green);
+    y -= 16;
+    currentPage.drawRectangle({ x: margin, y: y - 18, width: contentWidth, height: 18, color: style.paper, borderColor: style.border, borderWidth: 0.45 });
+    currentPage.drawText("NF", { x: margin + 8, y: y - 12, size: 6.4, font: style.bold, color: style.muted });
+    currentPage.drawText("CLIENTE", { x: margin + 82, y: y - 12, size: 6.4, font: style.bold, color: style.muted });
+    currentPage.drawText("PERIODO", { x: margin + 335, y: y - 12, size: 6.4, font: style.bold, color: style.muted });
+    drawRightText(currentPage, "VALOR PAGO", margin + contentWidth - 110, y - 12, 100, style.bold, 6.4, style.muted);
+    y -= 26;
+  };
+  const newPage = () => {
+    currentPage = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, rgb(0.07, 0.055, 0.04), style.gold, style.bold, rgb(1, 0.96, 0.88));
+    y = pageHeight - margin - 56;
+    startSection();
+  };
+
+  if (y < 105) newPage(); else startSection();
+  for (const row of rows) {
+    if (y < 68) newPage();
+    currentPage.drawRectangle({ x: margin, y: y - 14, width: contentWidth, height: 17, color: style.paper });
+    currentPage.drawText(truncate(row.operation.fiscalDocumentNumberSnapshot ?? "-", style.font, 6.2, 62), { x: margin + 8, y: y - 8, size: 6.2, font: style.font, color: style.ink });
+    currentPage.drawText(truncate(row.clientName, style.font, 6.2, 238), { x: margin + 82, y: y - 8, size: 6.2, font: style.font, color: style.ink });
+    currentPage.drawText(truncate(row.chargeNumber, style.font, 6.2, 92), { x: margin + 335, y: y - 8, size: 6.2, font: style.font, color: style.ink });
+    drawRightText(currentPage, `R$ ${formatCents(row.operation.serviceAmountCentsSnapshot)}`, margin + contentWidth - 110, y - 8, 100, style.bold, 6.2, style.green);
+    y -= 18;
+  }
+  return { page: currentPage, y };
 }
 
 function drawInfoBox(
@@ -331,7 +410,7 @@ function drawPaymentBox(
 }
 
 function clientLines(client: BusinessPartner, entity?: BusinessPartnerLegalEntity | null): string[] {
-  return [entity?.tradeName || client.displayName];
+  return [client.displayName];
 }
 
 function drawTotalsBox(
@@ -420,7 +499,7 @@ function drawRightText(page: PDFPage, value: string, x: number, y: number, width
 function chargeBrandKey(value: string | null | undefined): "grao" | "villa" | "thirdParty" | null {
   const normalized = (value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (!normalized.trim()) return null;
-  if (normalized.includes("grao")) return "grao";
+  if (/grao\s*(?:&|e)\s*grao/.test(normalized)) return "grao";
   if (normalized.includes("villa")) return "villa";
   return "thirdParty";
 }
@@ -518,7 +597,7 @@ type SummarySection = {
 function summaryImageOperationRows(input: ChargeDocumentsInput): SummaryOperationRow[] {
   return [input.detail, ...(input.relatedOpenChargeDetails ?? [])].flatMap((detail) =>
     detail.operations.map((operation) => ({
-      chargeNumber: detail.charge.chargeNumber ?? "Rascunho",
+      chargeNumber: chargePeriodLabel(detail.charge, true),
       operation
     }))
   );
@@ -526,7 +605,7 @@ function summaryImageOperationRows(input: ChargeDocumentsInput): SummaryOperatio
 
 function summaryImageHeight(input: ChargeDocumentsInput): number {
   const sections = summaryImageSections(input);
-  const visualRows = sections.reduce((sum, section) => sum + 2 + section.rows.length, 0);
+  const visualRows = sections.reduce((sum, section) => sum + 2 + section.rows.length + section.rows.reduce((count, row) => count + contractLines(row.operation.contractNumberSnapshot, row.operation.billingObservationsSnapshot).length, 0), 0);
   return Math.max(620, 370 + Math.max(visualRows, 1) * 27 + 150);
 }
 
@@ -548,16 +627,18 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
     cursorY += 25;
     const rowsMarkup = section.rows.map((item) => {
       const y = cursorY;
-      cursorY += 25;
       const operation = item.operation;
+      const contract = contractLines(operation.contractNumberSnapshot, operation.billingObservationsSnapshot);
+      cursorY += 25 + contract.length * 19;
       const companyName = chargeOperationCompanyName(operation);
-      const brandColors = chargeBrandSvgColors(companyName);
+      const brandColors = chargeBrandSvgColors(operation.issuerNameSnapshot || operation.ownLegalEntityNameSnapshot);
       const rowBackground = brandColors
         ? `<rect x="${innerX}" y="${y - 16}" width="${innerWidth}" height="22" rx="3" fill="${brandColors.background}"/><rect x="${innerX}" y="${y - 16}" width="4" height="22" rx="2" fill="${brandColors.stripe}"/>`
         : "";
       return `
       ${rowBackground}
-      <text x="48" y="${y}" class="cell">${escapeXml(clipText(item.chargeNumber, 15))}</text>
+      ${contract.map((line, index) => `<text x="236" y="${y + 17 + index * 19}" class="cell">${escapeXml(line)}</text>`).join("")}
+      <text x="48" y="${y}" class="cell">${escapeXml(clipText(item.chargeNumber, 24))}</text>
       <text x="166" y="${y}" class="cell">${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
       <text x="236" y="${y}" class="cell">${escapeXml(clipText(companyName, 46))}</text>
       <text x="622" y="${y}" class="cell">${escapeXml(formatOperationScope(operation.operationScopeSnapshot))}</text>
@@ -591,7 +672,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
     .section{font:700 13px Arial,sans-serif;fill:#17130f}
     .subtotal{font:700 12px Arial,sans-serif;fill:#17130f}
     .subtotal-label{font:700 11px Arial,sans-serif;fill:#9a7044}
-    .charge-number{font:700 24px Arial,sans-serif;fill:#fff8ec;text-anchor:end}
+    .charge-number{font:700 16px Arial,sans-serif;fill:#fff8ec;text-anchor:end}
     .charge-date{font:700 13px Arial,sans-serif;fill:#d9c6a8;text-anchor:end}
     .right{text-anchor:end}
   </style>
@@ -600,7 +681,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
   <rect x="0" y="88" width="${width}" height="4" fill="${accent}"/>
   <text x="34" y="38" class="title">${charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA" ? "PREVIA INTERNA - FECHAMENTO" : "FECHAMENTO DE SERVICOS"}</text>
   <text x="34" y="64" class="sub">${escapeXml(clipText(input.organization.appDisplayName, 52))}</text>
-  <text x="${rightX}" y="38" class="charge-number">${charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA" ? "NAO EMITIDA" : `No ${escapeXml(charge.chargeNumber ?? "Rascunho")}`}</text>
+  <text x="${rightX}" y="38" class="charge-number">${charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA" ? "NAO EMITIDA" : escapeXml(chargePeriodLabel(charge, true))}</text>
   <text x="${rightX}" y="63" class="charge-date">Vencimento: ${escapeXml(formatDate(charge.dueDate))}</text>
 
   <rect x="34" y="118" width="486" height="58" rx="8" fill="#fffdf8" stroke="#cbb895"/>
@@ -613,7 +694,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
 
   <text x="34" y="202" class="label">${chargeCount > 1 ? `Operacoes em ${chargeCount} cobrancas abertas` : "Operacoes cobradas"}</text>
   <rect x="${innerX}" y="216" width="${innerWidth}" height="1" fill="#d8c8aa"/>
-  <text x="48" y="236" class="head">COBRANCA</text>
+  <text x="48" y="236" class="head">PERIODO</text>
   <text x="166" y="236" class="head">NF</text>
   <text x="236" y="236" class="head">EMPRESA</text>
   <text x="622" y="236" class="head">UF DA VENDA</text>
@@ -721,9 +802,13 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function formatDateTime(value: string): string {
-  const date = formatDate(value);
-  const time = /T(\d{2}):(\d{2})/.exec(value);
-  return time ? `${date} ${time[1]}:${time[2]}` : date;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return formatDate(value);
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false
+  }).format(parsed);
 }
 
 function formatTaxId(value: string | null | undefined): string {

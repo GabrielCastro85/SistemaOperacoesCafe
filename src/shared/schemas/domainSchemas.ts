@@ -177,6 +177,7 @@ export const operationScopeSchema = z.enum(["INTERNAL", "EXTERNAL", "ALL"]);
 export const rateTypeSchema = z.enum(["PER_SACK"]);
 
 export const businessPartnerInputSchema = z.object({
+  requiresContract: z.boolean().optional(),
   organizationId: z.string().uuid(),
   displayName: z.string().trim().min(1),
   notes: nullableText,
@@ -324,11 +325,19 @@ export const resolvePurchaseRateInputSchema = z.object({
   operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
 
-const decimalTextSchema = z.string().trim().regex(/^\d+(\.\d{1,6})?$/);
+// Campos numericos da interface sao digitados no padrao brasileiro. Normalize
+// a virgula antes da validacao para que valores como "950,00" atravessem o
+// IPC da mesma forma canonica usada internamente ("950.00").
+const decimalTextSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().replace(",", ".") : value),
+  z.string().regex(/^\d+(\.\d{1,6})?$/)
+);
 export const fiscalDocumentStatusSchema = z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELED"]);
 export const operationTypeSchema = z.enum(["PURCHASE", "SALE"]);
 
 export const fiscalDocumentInputSchema = z.object({
+  billingObservations: z.string().trim().max(500).nullable().optional(),
+  contractNumber: z.string().trim().max(200).nullable().optional(),
   organizationId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid(),
   responsiblePartnerId: z.string().uuid(),
@@ -381,6 +390,14 @@ export const operationInputSchema = z.object({
   // por isso esse override existe, opcional pra nao afetar nenhuma chamada
   // existente.
   counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional()
+});
+
+export const fiscalDocumentReturnInputSchema = z.object({
+  fiscalDocumentId: z.string().uuid(),
+  returnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  inputUnit: z.enum(["SACKS", "KG"]),
+  inputQuantity: decimalTextSchema.refine((value) => Number(value) > 0, "Quantidade deve ser maior que zero."),
+  reason: z.string().trim().min(2).max(500)
 });
 
 export const fiscalDocumentTriangulationInputSchema = z.object({
@@ -466,6 +483,8 @@ export const xmlImportFileInputSchema = z.object({
 });
 
 export const xmlImportResolutionSchema = z.object({
+  billingObservations: z.string().trim().max(500).nullable().optional(),
+  contractNumber: z.string().trim().max(200).nullable().optional(),
   clientPartnerId: z.string().uuid().nullable().optional(),
   ownLegalEntityId: z.string().uuid().nullable().optional(),
   operationType: operationTypeSchema.nullable().optional(),
@@ -507,7 +526,7 @@ export const operationClassificationRuleInputSchema = z.object({
 
 export const operationBillingStatusSchema = z.enum(["UNBILLED", "RESERVED", "BILLED"]);
 export const clientChargeStatusSchema = z.enum(["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "PAID", "OVERDUE", "CANCELLED", "REPLACED"]);
-export const ledgerEntryTypeSchema = z.enum(["SERVICE_CHARGE", "ADVANCE_RECEIVED", "PAYMENT_RECEIVED", "DISCOUNT", "CREDIT", "SURCHARGE", "REIMBURSEMENT", "PREVIOUS_BALANCE", "MANUAL_ADJUSTMENT", "REVERSAL", "OTHER"]);
+export const ledgerEntryTypeSchema = z.enum(["SERVICE_CHARGE", "ADVANCE_RECEIVED", "PAYMENT_RECEIVED", "DISCOUNT", "CREDIT", "SURCHARGE", "REIMBURSEMENT", "PREVIOUS_BALANCE", "MANUAL_ADJUSTMENT", "REVERSAL", "LOAN", "OTHER"]);
 export const ledgerEffectSchema = z.enum(["INCREASE_RECEIVABLE", "REDUCE_RECEIVABLE"]);
 export const chargeAdjustmentTypeSchema = z.enum(["ADVANCE", "CREDIT", "DISCOUNT", "SURCHARGE", "REIMBURSEMENT", "PREVIOUS_BALANCE", "MANUAL_ADJUSTMENT", "OTHER"]);
 export const paymentMethodSchema = z.enum(["PIX", "BANK_TRANSFER", "CASH", "CHECK", "OFFSET", "OTHER"]);
@@ -609,7 +628,10 @@ export const clientLedgerEntryInputSchema = z.object({
   // Um adiantamento/emprestimo pode ser criado como DRAFT quando o dono
   // desmarca "ja abater do saldo agora" -- fica registrado no historico mas
   // so' passa a contar no saldo quando for confirmado depois.
-  status: z.enum(["DRAFT", "CONFIRMED"]).optional().default("CONFIRMED")
+  status: z.enum(["DRAFT", "CONFIRMED"]).optional().default("CONFIRMED"),
+  // So' faz sentido em entryType 'LOAN' -- data prevista de cobranca, usada
+  // pelo alerta de dashboard (ver getDashboardAlerts).
+  collectionDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().default(null)
 });
 
 export const creditAllocationInputSchema = z.object({

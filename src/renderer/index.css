@@ -3621,19 +3621,6 @@ table tbody tr:hover {
   box-shadow: 12px 0 34px rgb(15 13 10 / 18%);
 }
 
-.app-sidebar::after {
-  content: "";
-  align-self: end;
-  width: 100%;
-  height: 96px;
-  border: 1px solid color-mix(in srgb, var(--brand-secondary) 24%, transparent);
-  border-radius: var(--radius-lg);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--brand-secondary) 9%, transparent), transparent),
-    color-mix(in srgb, var(--color-sidebar) 82%, black);
-  opacity: 0.88;
-}
-
 .app-sidebar__brand {
   padding-bottom: var(--space-3);
   border-bottom: 1px solid color-mix(in srgb, var(--brand-secondary) 28%, transparent);
@@ -4083,44 +4070,6 @@ table tbody tr:hover {
   content: "✓";
   color: var(--color-accent);
   margin-right: 6px;
-}
-
-.shared-sync-indicator {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.shared-sync-indicator span {
-  color: color-mix(in srgb, #fff7ea 74%, transparent);
-  white-space: nowrap;
-}
-
-.shared-sync-indicator--pending span {
-  color: #ffd9a8;
-  font-weight: 700;
-}
-
-.shared-sync-indicator--pending span::before {
-  content: "●";
-  color: var(--color-warning);
-  margin-right: 6px;
-}
-
-.shared-sync-indicator button {
-  min-height: 26px;
-  border-radius: 999px;
-  border-color: color-mix(in srgb, var(--brand-secondary) 40%, transparent);
-  background: color-mix(in srgb, var(--brand-secondary) 12%, #11100d);
-  padding: 4px 12px;
-  color: #fff7ea;
-  font-size: 11px;
-}
-
-.shared-sync-indicator button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 30%, #11100d);
 }
 
 .setup--branded,
@@ -4731,4 +4680,54 @@ table tbody tr:hover {
   .finance-summary-cards {
     grid-template-columns: 1fr;
   }
+}
+
+/* Keep collapsed navigation inside its narrow grid track. */
+.professional-shell.is-collapsed .app-sidebar {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.professional-shell.is-collapsed .app-sidebar__nav {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  padding-right: 0;
+}
+
+.professional-shell.is-collapsed .app-sidebar__nav section {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.professional-shell.is-collapsed .app-sidebar__nav button {
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding-inline: 0;
+}
+
+.professional-shell.is-collapsed .sidebar-collapse {
+  justify-self: center;
+}
+
+.professional-shell.is-collapsed .app-sidebar__footer {
+  display: grid;
+  min-width: 0;
+}
+
+.professional-shell.is-collapsed .app-sidebar__footer button {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0;
+  text-align: center;
+}
+
+.professional-shell.is-collapsed .app-sidebar__footer > span,
+.professional-shell.is-collapsed .app-sidebar__footer > strong,
+.professional-shell.is-collapsed .app-sidebar::after {
+  display: none;
 }

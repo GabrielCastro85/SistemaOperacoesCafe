@@ -43,7 +43,8 @@ const emptyClientForm = {
   district: "",
   city: "",
   state: "",
-  notes: ""
+  notes: "",
+  requiresContract: false
 };
 
 const emptyBrokerRuleForm = {
@@ -138,7 +139,9 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     }
     setLinkCompanySearching(true);
     try {
-      setLinkCompanyResults(await window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId, term.trim()));
+      const query = term.trim().toLocaleLowerCase("pt-BR");
+      setLinkCompanyResults(Array.from(new Map(allLegalEntities.map((entity) => [entity.id, entity])).values()).filter((entity) => entity.isActive && !legalEntities.some((linked) => linked.id === entity.id)
+        && `${entity.tradeName} ${entity.legalName} ${entity.cnpj ?? ""}`.toLocaleLowerCase("pt-BR").includes(query)));
     } finally {
       setLinkCompanySearching(false);
     }
@@ -158,10 +161,10 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     if (!selected) return;
     const confirmed = await requestDecision({
       title: "Desvincular empresa",
-      message: `Desvincular ${entity.tradeName} de ${selected.displayName}? A empresa continua cadastrada, so' fica sem cliente/corretor dono ate' ser vinculada de novo.`
+      message: `Desvincular ${entity.tradeName} de ${selected.displayName}? A empresa e os vinculos com outros clientes continuam cadastrados.`
     });
     if (!confirmed) return;
-    await window.operationsCafe.unlinkPartnerLegalEntity(entity.id);
+    await window.operationsCafe.unlinkPartnerLegalEntity(entity.id, selected.id);
     await loadDetail(selected);
     await load();
   }
@@ -243,7 +246,8 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       district: partner.district ?? "",
       city: partner.city ?? "",
       state: partner.state ?? "",
-      notes: partner.notes ?? ""
+      notes: partner.notes ?? "",
+      requiresContract: partner.requiresContract ?? false
     };
   }
 
@@ -367,6 +371,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       organizationId: targetOrganizationId,
       displayName: name,
       notes: normalizeTextInput(form.notes),
+      requiresContract: form.requiresContract,
       roles: partnerRoles,
       isActive,
       creditLimitCents: creditLimitValue.trim() ? parseCurrencyToCents(creditLimitValue) : null,
@@ -636,7 +641,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   }
 
   const companySearchTerm = companySearch.trim().toUpperCase();
-  const companyItems = allLegalEntities
+  const companyItems = Array.from(new Map(allLegalEntities.map((entity) => [entity.id, entity])).values())
     .filter((entity) => {
       const owner = allPartners.find((partner) => partner.id === entity.businessPartnerId);
       if (!companySearchTerm) return true;
@@ -690,13 +695,12 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
             <div className="table">
               <div className="table-head partner-company-grid"><span>Empresa</span><span>CNPJ</span><span>Cidade/UF</span><span>Cliente vinculado</span><span>Status</span><span>Acoes</span></div>
               {companyItems.map((entity) => {
-                const owner = allPartners.find((partner) => partner.id === entity.businessPartnerId);
                 return (
                   <div key={entity.id} className="table-row partner-company-grid">
                     <span><strong>{entity.tradeName}</strong><small>{entity.legalName}</small></span>
                     <span>{formatCnpj(entity.cnpj)}{entity.isDraft ? " - rascunho" : ""}</span>
                     <span>{[entity.city, entity.state].filter(Boolean).join("/") || "-"}</span>
-                    <span>{owner ? owner.displayName : "Sem cliente vinculado"}</span>
+                    <span>{Array.from(new Set(allLegalEntities.filter((linked) => linked.id === entity.id).map((linked) => allPartners.find((partner) => partner.id === linked.businessPartnerId)?.displayName).filter(Boolean))).join(", ") || "Sem cliente vinculado"}</span>
                     <span>{entity.isActive ? "Ativa" : "Inativa"}</span>
                     <span className="actions"><button onClick={() => void openEditCompanyModal(entity)}>Editar</button></span>
                   </div>
@@ -801,6 +805,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                       <TextField label="Bairro" value={clientForm.district} onChange={(value) => updateClientForm("district", value)} />
                       <TextField label="Cidade" value={clientForm.city} onChange={(value) => updateClientForm("city", value)} />
                       <TextField label="UF" value={clientForm.state} onChange={(value) => updateClientForm("state", value)} />
+                      <label><input type="checkbox" checked={clientForm.requiresContract} onChange={(event) => setClientForm((current) => ({ ...current, requiresContract: event.target.checked }))} /> Exigir contrato nas notas deste cliente</label>
                       <TextField label="Observacoes" value={clientForm.notes} onChange={(value) => updateClientForm("notes", value)} />
                     </div>
                     <section className="broker-rules-panel">
@@ -852,6 +857,7 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                       <TextField label="Bairro" value={editClientForm.district} onChange={(value) => updateEditClientForm("district", value)} />
                       <TextField label="Cidade" value={editClientForm.city} onChange={(value) => updateEditClientForm("city", value)} />
                       <TextField label="UF" value={editClientForm.state} onChange={(value) => updateEditClientForm("state", value)} />
+                      <label><input type="checkbox" checked={editClientForm.requiresContract} onChange={(event) => setEditClientForm((current) => ({ ...current, requiresContract: event.target.checked }))} /> Exigir contrato nas notas deste cliente</label>
                       <TextField label="Observacoes" value={editClientForm.notes} onChange={(value) => updateEditClientForm("notes", value)} />
                     </div>
                     <button className="partner-action-button partner-action-button--primary" disabled={!editPartnerName.trim() || editPartnerRoles.length === 0} onClick={() => void savePartnerEdit()}>

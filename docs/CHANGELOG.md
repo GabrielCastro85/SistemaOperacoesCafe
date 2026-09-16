@@ -170,3 +170,33 @@
 - Adicionados componentes genericos `MonthInput`, `PercentageInput`, `TreeView`, `Timeline`, `CalendarGrid`, `DefinitionList`, `CopyButton`, `PageSection` e `SplitButton`.
 - Removidos arquivo e pasta do workspace legado.
 - Adicionada `NotFoundPage` para rotas desconhecidas.
+# 1.0.78
+
+- Usa sempre o nome do cliente/corretor nos documentos de cobrança.
+- Gera recibos de recebimento em PDF e imagem, com notas e pagamentos parciais discriminados.
+
+# 1.0.77
+
+- Corrige o botão de registrar devolução no aplicativo instalado.
+
+# 1.0.76
+
+- Adiciona devoluções manuais em sacas ou quilos no detalhe da nota.
+- Recalcula a quantidade líquida e as cobranças abertas, preservando a quantidade original e o histórico.
+- Impede alterações em devoluções depois que a cobrança recebeu pagamento.
+## 1.0.79
+
+- Corrige a abertura de cobranças pelo histórico, mantendo o cliente, período, notas e valores.
+- Permite abrir novamente os recibos em PDF e imagem dos pagamentos vinculados à cobrança.
+- Gera recibos para pagamentos antigos ao abrir a cobrança e aplica o fuso `America/Sao_Paulo` aos horários exibidos e impressos.
+
+## 1.0.80
+
+- Converte a imagem do recibo diretamente para PNG, eliminando as barras de rolagem do navegador.
+- Abre a janela de escolha do local ao salvar recibos em PDF ou imagem.
+- Sugere o nome do arquivo no formato `Cliente dd-mm-aaaa.pdf` ou `.png`, usando a data de geração no horário de Brasília.
+
+## 1.0.81
+
+- Substitui o card de confirmações geradas do dashboard pelo valor recebido no período.
+- O valor recebido aparece ao lado do valor a receber e respeita as datas do filtro superior.

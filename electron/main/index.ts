@@ -9,8 +9,6 @@ import { initializeDatabase } from "./database/database.js";
 import { registerIpcHandlers } from "./ipc/handlers.js";
 import { AppRepository } from "./services/appRepository.js";
 import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js";
-import { SharedRepository } from "./services/sharedRepository.js";
-import { recordSyncResult, setSyncStatusWindow } from "./services/syncStatusService.js";
 import { initializeUpdater, startPeriodicUpdateChecks } from "./services/updaterService.js";
 import { createMainWindow } from "./windows/createMainWindow.js";
 import { createSplashWindow, showSplashError } from "./windows/createSplashWindow.js";
@@ -74,31 +72,9 @@ function bootstrap(): void {
   log.info("Starting application", { variant: buildVariant.variant, appId: buildVariant.appId, userData: directories.userData });
   registerBrandingAssetProtocol(directories);
   const db = initializeDatabase(directories);
-  const sharedRepository = new SharedRepository(directories);
-  const context = { version: app.getVersion(), directories, db, buildVariant, sharedRepository };
-  const repository = new AppRepository(db, directories, sharedRepository);
+  const context = { version: app.getVersion(), directories, db, buildVariant };
+  const repository = new AppRepository(db, directories);
   registerIpcHandlers(ipcMain, context, repository);
-  startSharedDataSync(repository);
-}
-
-// Sync poll-based (nao realtime) -- roda em segundo plano pra todo PC ir
-// enxergando o que os outros lancaram sem precisar de acao manual. 20s e' um
-// meio-termo entre "quase imediato" e nao bater na rede toda hora; sem sessao
-// Supabase autenticada, syncSharedDataDown() e' um no-op silencioso.
-function startSharedDataSync(repository: AppRepository): void {
-  const SYNC_INTERVAL_MS = 20_000;
-  const run = (): void => {
-    repository.syncSharedDataDown()
-      .then(async (results) => {
-        const withChanges = results.filter((entry) => entry.pulled > 0);
-        if (withChanges.length > 0) log.info("Shared data sync pulled changes", { withChanges });
-        const connected = await repository.isSharedConnected().catch(() => false);
-        recordSyncResult(results, repository.getSharedPushOutboxPendingCount(), connected);
-      })
-      .catch((error) => log.warn("Shared data sync failed", { error: error instanceof Error ? error.message : String(error) }));
-  };
-  run();
-  setInterval(run, SYNC_INTERVAL_MS);
 }
 
 function createWindow(minSplashVisible: Promise<void> = Promise.resolve()): void {
@@ -111,7 +87,6 @@ function createWindow(minSplashVisible: Promise<void> = Promise.resolve()): void
   });
   initializeUpdater(mainWindow);
   startPeriodicUpdateChecks();
-  setSyncStatusWindow(mainWindow);
 }
 
 async function showMainWindowWhenReady(window: BrowserWindow, minSplashVisible: Promise<void>): Promise<void> {

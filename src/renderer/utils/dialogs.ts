@@ -5,6 +5,7 @@ export type DialogRequest =
       title: string;
       label: string;
       required: boolean;
+      initialValue?: string;
       resolve: (value: string | null) => void;
     }
   | {
@@ -23,9 +24,9 @@ export function registerDialogListener(nextListener: DialogListener | null): voi
   listener = nextListener;
 }
 
-export async function requestTextInput({ title, label, required = true }: { title: string; label: string; required?: boolean }): Promise<string | null> {
+export async function requestTextInput({ title, label, required = true, initialValue }: { title: string; label: string; required?: boolean; initialValue?: string }): Promise<string | null> {
   return new Promise((resolve) => {
-    listener?.({ id: crypto.randomUUID(), kind: "text", title, label, required, resolve });
+    listener?.({ id: crypto.randomUUID(), kind: "text", title, label, required, initialValue, resolve });
   });
 }
 

@@ -136,7 +136,7 @@ async function publishGithubRelease(token, tagName) {
   const patchResponse = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${release.id}`, {
     method: "PATCH",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ draft: false, prerelease: true })
+    body: JSON.stringify({ draft: false, prerelease: version.includes("-") })
   });
   if (!patchResponse.ok) {
     console.error(`Falha ao publicar a release ${tagName} (status ${patchResponse.status}) -- ela ficou como rascunho, publique manualmente no GitHub.`);

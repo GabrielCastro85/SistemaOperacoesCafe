@@ -425,6 +425,7 @@ export type OperationScope = "INTERNAL" | "EXTERNAL" | "ALL";
 export type RateType = "PER_SACK";
 
 export interface BusinessPartner {
+  requiresContract?: boolean;
   id: string;
   organizationId: string;
   displayName: string;
@@ -625,6 +626,8 @@ export type OperationBillingStatus = "UNBILLED" | "RESERVED" | "BILLED";
 export type PurchaseSettlementStatus = "UNSETTLED" | "RESERVED" | "SETTLED";
 
 export interface FiscalDocument {
+  billingObservations?: string | null;
+  contractNumber?: string | null;
   id: string;
   organizationId: string;
   ownLegalEntityId: string;
@@ -690,6 +693,7 @@ export interface Operation {
   operationScope: Exclude<OperationScope, "ALL">;
   operationDate: string;
   quantitySacks: string;
+  grossQuantitySacks: string;
   serviceRateRuleId: string | null;
   appliedRateValueCents: number;
   serviceAmountCents: number;
@@ -712,6 +716,20 @@ export interface Operation {
   updatedAt: string;
 }
 
+export type CoffeeReturnUnit = "SACKS" | "KG";
+
+export interface FiscalDocumentReturn {
+  id: string;
+  fiscalDocumentId: string;
+  returnDate: string;
+  inputUnit: CoffeeReturnUnit;
+  inputQuantity: string;
+  quantitySacks: string;
+  reason: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FiscalDocumentDetail {
   document: FiscalDocument;
   items: FiscalDocumentItem[];
@@ -719,6 +737,7 @@ export interface FiscalDocumentDetail {
   events?: FiscalDocumentEvent[];
   mergeHistory?: FiscalDocumentMergeHistory[];
   rateHistory?: OperationRateHistoryEntry[];
+  returns: FiscalDocumentReturn[];
 }
 
 export type SpreadsheetImportType = "GENERAL_SALES" | "CLIENT_INDIVIDUAL" | "CUSTOM";
@@ -934,7 +953,7 @@ export interface FiscalDocumentMergeHistory {
 
 export type ClientChargeStatus = "DRAFT" | "PENDING_REVIEW" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "OVERDUE" | "CANCELLED" | "REPLACED";
 export type ChargePeriodicity = BillingPeriodicity;
-export type LedgerEntryType = "SERVICE_CHARGE" | "ADVANCE_RECEIVED" | "PAYMENT_RECEIVED" | "DISCOUNT" | "CREDIT" | "SURCHARGE" | "REIMBURSEMENT" | "PREVIOUS_BALANCE" | "MANUAL_ADJUSTMENT" | "REVERSAL" | "OTHER";
+export type LedgerEntryType = "SERVICE_CHARGE" | "ADVANCE_RECEIVED" | "PAYMENT_RECEIVED" | "DISCOUNT" | "CREDIT" | "SURCHARGE" | "REIMBURSEMENT" | "PREVIOUS_BALANCE" | "MANUAL_ADJUSTMENT" | "REVERSAL" | "LOAN" | "OTHER";
 export type LedgerEffect = "INCREASE_RECEIVABLE" | "REDUCE_RECEIVABLE";
 export type LedgerStatus = "DRAFT" | "CONFIRMED" | "CANCELLED";
 export type ChargeAdjustmentType = "ADVANCE" | "CREDIT" | "DISCOUNT" | "SURCHARGE" | "REIMBURSEMENT" | "PREVIOUS_BALANCE" | "MANUAL_ADJUSTMENT" | "OTHER";
@@ -977,6 +996,8 @@ export interface ClientCharge {
 }
 
 export interface ClientChargeOperation {
+  billingObservationsSnapshot?: string | null;
+  contractNumberSnapshot?: string | null;
   id: string;
   clientChargeId: string;
   operationId: string;
@@ -1026,6 +1047,11 @@ export interface ClientLedgerEntry {
   attachmentPath: string | null;
   status: LedgerStatus;
   availableAmountCents: number | null;
+  // So' preenchidos em lancamentos LOAN -- quando cobrar o emprestimo e quando
+  // (se) ja foi cobrado. `collectedAt` nulo com `collectionDueDate` vencida e'
+  // o que dispara o alerta de dashboard (ver DashboardLoanDueAlert).
+  collectionDueDate: string | null;
+  collectedAt: string | null;
   createdAt: string;
   updatedAt: string;
   cancelledAt: string | null;
@@ -1054,6 +1080,8 @@ export interface ClientPayment {
   transactionReference: string | null;
   notes: string | null;
   attachmentPath: string | null;
+  receiptPdfFilePath: string | null;
+  receiptImageFilePath: string | null;
   status: PaymentStatus;
   createdAt: string;
   updatedAt: string;
@@ -1110,6 +1138,7 @@ export interface ChargeDocumentVersion {
 }
 
 export interface ClientChargeDetail {
+  canceledInvoices?: Array<{ documentId: string; documentNumber: string; amountCents: number }>;
   charge: ClientCharge;
   operations: ClientChargeOperation[];
   adjustments: ClientChargeAdjustment[];
@@ -1692,10 +1721,20 @@ export interface DashboardCreditLimitAlert {
   percentUsed: number;
 }
 
+export interface DashboardLoanDueAlert {
+  ledgerEntryId: string;
+  partnerId: string;
+  partnerName: string;
+  amountCents: number;
+  collectionDueDate: string;
+  daysOverdue: number;
+}
+
 export interface DashboardAlerts {
   overdueCharges: DashboardOverdueChargeAlert[];
   waitingSignatureConfirmations: DashboardWaitingSignatureAlert[];
   partnersNearCreditLimit: DashboardCreditLimitAlert[];
+  loansDueForCollection: DashboardLoanDueAlert[];
 }
 
 export interface ConfirmationReportFilters {

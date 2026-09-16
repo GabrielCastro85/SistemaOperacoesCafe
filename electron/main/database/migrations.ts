@@ -3197,5 +3197,215 @@ export const migrations: Migration[] = [
       }
     }
   }
+  ,{
+    // cancelDealConfirmation/replaceDealConfirmation so' atualizavam `status`,
+    // nunca `signature_status` -- uma confirmacao cancelada/substituida que ja
+    // estava WAITING_SIGNATURE ou PARTIALLY_SIGNED ficava presa nesse estado
+    // pra sempre, e o alerta "Aguardando assinatura" do dashboard (que filtra
+    // so' por signature_status, nunca confere se a confirmacao segue ativa)
+    // continuava mostrando ela mesmo depois do cancelamento (bug real
+    // reportado em producao). Corrige o codigo (novos cancelamentos/
+    // substituicoes ja zeram signature_status) e esta migration limpa as
+    // linhas que ja ficaram presas antes da correcao.
+    name: "044_deal_confirmation_signature_status_on_close",
+    up: (db) => {
+      db.exec(`UPDATE deal_confirmations SET signature_status = 'NOT_APPLICABLE' WHERE status IN ('CANCELLED', 'REPLACED') AND signature_status <> 'NOT_APPLICABLE'`);
+    }
+  }
+  ,{
+    name: "045_third_party_operations_and_loans",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS third_party_operations (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          third_party_company_name TEXT NOT NULL,
+          responsible_partner_id TEXT NOT NULL,
+          destination_name TEXT,
+          invoice_reference TEXT,
+          operation_scope TEXT NOT NULL CHECK (operation_scope IN ('INTERNAL','EXTERNAL')),
+          operation_date TEXT NOT NULL,
+          quantity_sacks_decimal TEXT NOT NULL,
+          service_rate_rule_id TEXT,
+          applied_rate_value_cents INTEGER NOT NULL,
+          service_amount_cents INTEGER NOT NULL,
+          rate_was_manually_overridden INTEGER NOT NULL CHECK (rate_was_manually_overridden IN (0, 1)),
+          manual_rate_value_cents INTEGER,
+          manual_override_reason TEXT,
+          notes TEXT,
+          status TEXT NOT NULL CHECK (status IN ('DRAFT','CONFIRMED','CANCELED')),
+          billing_status TEXT NOT NULL DEFAULT 'UNBILLED' CHECK (billing_status IN ('UNBILLED','RESERVED','BILLED')),
+          client_charge_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (organization_id) REFERENCES organizations(id),
+          FOREIGN KEY (responsible_partner_id) REFERENCES business_partners(id),
+          FOREIGN KEY (service_rate_rule_id) REFERENCES service_rate_rules(id),
+          FOREIGN KEY (client_charge_id) REFERENCES client_charges(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_third_party_operations_organization_id ON third_party_operations(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_third_party_operations_responsible_partner_id ON third_party_operations(responsible_partner_id);
+        CREATE INDEX IF NOT EXISTS idx_third_party_operations_operation_date ON third_party_operations(operation_date);
+        CREATE INDEX IF NOT EXISTS idx_third_party_operations_status ON third_party_operations(status);
+        CREATE INDEX IF NOT EXISTS idx_third_party_operations_client_charge_id ON third_party_operations(client_charge_id);
+      `);
 
+      // client_charge_operations: operation_id precisa virar opcional pra aceitar uma
+      // linha vinda de third_party_operations (sem operacao propria por tras). SQLite
+      // nao remove NOT NULL nem acrescenta CHECK via ALTER simples, entao reconstroi a
+      // tabela -- mesmo padrao ja usado em operations_007/partner_legal_entities_031.
+      const chargeOpColumns = (db.prepare("PRAGMA table_info(client_charge_operations)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!chargeOpColumns.includes("third_party_operation_id")) {
+        db.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE client_charge_operations_045 (
+            id TEXT PRIMARY KEY,
+            client_charge_id TEXT NOT NULL,
+            operation_id TEXT,
+            third_party_operation_id TEXT,
+            own_legal_entity_id_snapshot TEXT,
+            own_legal_entity_name_snapshot TEXT,
+            operation_date_snapshot TEXT NOT NULL,
+            fiscal_document_number_snapshot TEXT,
+            fiscal_document_series_snapshot TEXT,
+            issuer_name_snapshot TEXT,
+            destination_name_snapshot TEXT,
+            product_name_snapshot TEXT,
+            operation_scope_snapshot TEXT NOT NULL CHECK (operation_scope_snapshot IN ('INTERNAL','EXTERNAL')),
+            quantity_sacks_decimal_snapshot TEXT NOT NULL,
+            service_rate_cents_snapshot INTEGER NOT NULL,
+            service_amount_cents_snapshot INTEGER NOT NULL,
+            released_at TEXT,
+            created_at TEXT NOT NULL,
+            CHECK ((operation_id IS NOT NULL AND third_party_operation_id IS NULL) OR (operation_id IS NULL AND third_party_operation_id IS NOT NULL)),
+            FOREIGN KEY (client_charge_id) REFERENCES client_charges(id),
+            FOREIGN KEY (operation_id) REFERENCES operations(id),
+            FOREIGN KEY (third_party_operation_id) REFERENCES third_party_operations(id)
+          );
+          INSERT INTO client_charge_operations_045 (
+            id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot,
+            fiscal_document_number_snapshot, fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot,
+            operation_scope_snapshot, quantity_sacks_decimal_snapshot, service_rate_cents_snapshot, service_amount_cents_snapshot, released_at, created_at
+          )
+          SELECT id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot,
+            fiscal_document_number_snapshot, fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot,
+            operation_scope_snapshot, quantity_sacks_decimal_snapshot, service_rate_cents_snapshot, service_amount_cents_snapshot, released_at, created_at
+          FROM client_charge_operations;
+          DROP TABLE client_charge_operations;
+          ALTER TABLE client_charge_operations_045 RENAME TO client_charge_operations;
+          CREATE INDEX IF NOT EXISTS idx_client_charge_operations_charge_id ON client_charge_operations(client_charge_id);
+          CREATE INDEX IF NOT EXISTS idx_client_charge_operations_operation_id ON client_charge_operations(operation_id);
+          CREATE INDEX IF NOT EXISTS idx_client_charge_operations_third_party_operation_id ON client_charge_operations(third_party_operation_id);
+          CREATE INDEX IF NOT EXISTS idx_client_charge_operations_own_legal_entity_snapshot ON client_charge_operations(own_legal_entity_id_snapshot);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_client_charge_operations_operation_active_unique ON client_charge_operations(operation_id) WHERE released_at IS NULL AND operation_id IS NOT NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_client_charge_operations_third_party_active_unique ON client_charge_operations(third_party_operation_id) WHERE released_at IS NULL AND third_party_operation_id IS NOT NULL;
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+
+      // client_ledger_entries: novo tipo 'LOAN' precisa entrar no CHECK de entry_type,
+      // que so' muda reconstruindo a tabela -- aproveita pra acrescentar as duas
+      // colunas de cobranca de emprestimo (data prevista e data em que foi cobrado).
+      const ledgerColumns = (db.prepare("PRAGMA table_info(client_ledger_entries)").all() as Array<{ name: string }>).map((column) => column.name);
+      if (!ledgerColumns.includes("collection_due_date")) {
+        db.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE client_ledger_entries_045 (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            own_legal_entity_id TEXT NOT NULL,
+            client_partner_id TEXT NOT NULL,
+            client_charge_id TEXT,
+            entry_type TEXT NOT NULL CHECK (entry_type IN ('SERVICE_CHARGE','ADVANCE_RECEIVED','PAYMENT_RECEIVED','DISCOUNT','CREDIT','SURCHARGE','REIMBURSEMENT','PREVIOUS_BALANCE','MANUAL_ADJUSTMENT','REVERSAL','LOAN','OTHER')),
+            effect TEXT NOT NULL CHECK (effect IN ('INCREASE_RECEIVABLE','REDUCE_RECEIVABLE')),
+            amount_cents INTEGER NOT NULL,
+            entry_date TEXT NOT NULL,
+            description TEXT NOT NULL,
+            reference_number TEXT,
+            notes TEXT,
+            attachment_path TEXT,
+            status TEXT NOT NULL CHECK (status IN ('DRAFT','CONFIRMED','CANCELLED')),
+            available_amount_cents INTEGER,
+            collection_due_date TEXT,
+            collected_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            cancelled_at TEXT,
+            cancellation_reason TEXT,
+            FOREIGN KEY (organization_id) REFERENCES organizations(id),
+            FOREIGN KEY (own_legal_entity_id) REFERENCES legal_entities(id),
+            FOREIGN KEY (client_partner_id) REFERENCES business_partners(id),
+            FOREIGN KEY (client_charge_id) REFERENCES client_charges(id)
+          );
+          INSERT INTO client_ledger_entries_045 (
+            id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents, entry_date,
+            description, reference_number, notes, attachment_path, status, available_amount_cents, created_at, updated_at, cancelled_at, cancellation_reason
+          )
+          SELECT id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents, entry_date,
+            description, reference_number, notes, attachment_path, status, available_amount_cents, created_at, updated_at, cancelled_at, cancellation_reason
+          FROM client_ledger_entries;
+          DROP TABLE client_ledger_entries;
+          ALTER TABLE client_ledger_entries_045 RENAME TO client_ledger_entries;
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_organization_id ON client_ledger_entries(organization_id);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_own_legal_entity_id ON client_ledger_entries(own_legal_entity_id);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_client_partner_id ON client_ledger_entries(client_partner_id);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_charge_id ON client_ledger_entries(client_charge_id);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_type ON client_ledger_entries(entry_type);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_date ON client_ledger_entries(entry_date);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_status ON client_ledger_entries(status);
+          CREATE INDEX IF NOT EXISTS idx_client_ledger_entries_collection_due_date ON client_ledger_entries(collection_due_date);
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+    }
+  }
+
+  ,{
+    name: "046_commercial_contracts_and_shared_companies",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE fiscal_documents ADD COLUMN contract_number TEXT;
+        ALTER TABLE client_charge_operations ADD COLUMN contract_number_snapshot TEXT;
+        ALTER TABLE business_partners ADD COLUMN requires_contract INTEGER NOT NULL DEFAULT 0 CHECK (requires_contract IN (0, 1));
+        CREATE TABLE partner_company_links (
+          partner_legal_entity_id TEXT NOT NULL REFERENCES partner_legal_entities(id) ON DELETE CASCADE,
+          business_partner_id TEXT NOT NULL REFERENCES business_partners(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (partner_legal_entity_id, business_partner_id)
+        );
+        CREATE INDEX idx_partner_company_links_partner ON partner_company_links(business_partner_id);
+      `);
+    }
+  }
+  ,{
+    name: "047_invoice_billing_observations",
+    up: (db) => db.exec(`ALTER TABLE fiscal_documents ADD COLUMN billing_observations TEXT;
+      ALTER TABLE client_charge_operations ADD COLUMN billing_observations_snapshot TEXT;`)
+  }
+  ,{
+    name: "048_manual_coffee_returns",
+    up: (db) => db.exec(`
+      ALTER TABLE operations ADD COLUMN gross_quantity_sacks_decimal TEXT;
+      UPDATE operations SET gross_quantity_sacks_decimal = quantity_sacks_decimal WHERE gross_quantity_sacks_decimal IS NULL;
+      CREATE TABLE fiscal_document_returns (
+        id TEXT PRIMARY KEY,
+        fiscal_document_id TEXT NOT NULL REFERENCES fiscal_documents(id) ON DELETE CASCADE,
+        return_date TEXT NOT NULL,
+        input_unit TEXT NOT NULL CHECK (input_unit IN ('SACKS', 'KG')),
+        input_quantity_decimal TEXT NOT NULL,
+        quantity_sacks_decimal TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_fiscal_document_returns_document ON fiscal_document_returns(fiscal_document_id, return_date, created_at);
+    `)
+  }
+  ,{
+    name: "049_client_payment_receipts",
+    up: (db) => db.exec(`
+      ALTER TABLE client_payments ADD COLUMN receipt_pdf_file_path TEXT;
+      ALTER TABLE client_payments ADD COLUMN receipt_image_file_path TEXT;
+    `)
+  }
 ];

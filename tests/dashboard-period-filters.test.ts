@@ -90,6 +90,25 @@ describe("filtros de periodo e cliente do Dashboard", () => {
     expect(filtered.sacksDecimal).toBe("100");
     expect(filtered.documents).toBe(1);
 
+    const juneReceivable = repo.getBillingSummary({ organizationId: villaId, includeAllCompanies: true, periodStart: "2026-06-01", periodEnd: "2026-06-30" });
+    expect(juneReceivable.openCents).toBe(50000);
+    expect(juneReceivable.unbilledOperations).toBe(1);
+    expect(repo.getBillingSummary({ organizationId: villaId }).openCents).toBe(70000);
+    const julyReceivable = repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+    expect(julyReceivable.openCents).toBe(0);
+    expect(julyReceivable.unbilledOperations).toBe(0);
+    const augustOperations = repo.getFiscalDocument(outsideDoc.document.id).operations;
+    const augustCharge = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerAId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-08-01", periodEnd: "2026-08-31", dueDate: "2026-09-05", notes: null, internalNotes: null, operationIds: augustOperations.map((op) => op.id) });
+    const augustPayment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerAId, paymentDate: "2026-09-05", amountCents: 5000, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+    repo.allocatePayment({ clientPaymentId: augustPayment.id, clientChargeId: augustCharge.charge.id, amountCents: 5000 });
+    const augustSummary = repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-08-01", periodEnd: "2026-08-31" });
+    expect(augustSummary.openCents).toBe(15000);
+    expect(augustSummary.receivedCents).toBe(5000);
+    expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-09-01", periodEnd: "2026-09-30" }).openCents).toBe(0);
+    expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-09-01", periodEnd: "2026-09-30" }).receivedCents).toBe(0);
+    db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(insideDoc.document.id);
+    expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-06-01", periodEnd: "2026-06-30" }).openCents).toBe(50000);
+
     db.close();
   });
 

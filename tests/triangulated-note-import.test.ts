@@ -115,10 +115,17 @@ describe("nota triangulada (compra de um fornecedor + venda pra outro corretor n
     expect(saleLeg?.appliedRateValueCents).toBe(400);
     expect(purchaseLeg?.quantitySacks).toBe(saleLeg?.quantitySacks);
 
+    // Simula uma nota antiga importada somente como venda, antes do vinculo do fornecedor.
+    db.prepare("DELETE FROM operations WHERE id = ?").run(purchaseLeg!.id);
+    db.prepare("UPDATE fiscal_documents SET responsible_partner_id = ?, secondary_responsible_partner_id = NULL, secondary_operation_type = NULL, status = 'DRAFT' WHERE id = ?").run(valani.id, detail.document.id);
+    db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(detail.document.id);
     // As duas pernas ficam isoladas nos fluxos de acerto/cobranca de cada lado.
     const purchaseEligible = repo.findEligiblePurchaseOperations({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: leo.id, periodStart: "2026-01-01", periodEnd: "2026-12-31" });
     expect(purchaseEligible).toHaveLength(1);
-    expect(purchaseEligible[0].id).toBe(purchaseLeg?.id);
+    expect(purchaseEligible[0].responsiblePartnerId).toBe(leo.id);
+    expect(purchaseEligible[0].appliedRateValueCents).toBe(150);
+    expect(repo.findEligiblePurchaseOperations({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: leo.id, periodStart: "2026-01-01", periodEnd: "2026-12-31" })).toHaveLength(1);
+    expect(repo.getFiscalDocument(detail.document.id).operations).toHaveLength(2);
     const chargeEligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: valani.id, periodStart: "2026-01-01", periodEnd: "2026-12-31" });
     expect(chargeEligible).toHaveLength(1);
     expect(chargeEligible[0].id).toBe(saleLeg?.id);

@@ -24,6 +24,7 @@ import type {
   ProductAlias,
   OperationClassificationRule,
   FiscalDocumentMergeHistory,
+  FiscalDocumentReturn,
   ClientCharge,
   ClientChargeOperation,
   ClientChargeAdjustment,
@@ -160,6 +161,7 @@ export function mapInstallationProfile(row: DbRecord): InstallationProfile {
 
 export function mapBusinessPartner(row: DbRecord, roles: BusinessPartner["roles"] = []): BusinessPartner {
   return {
+    requiresContract: bool(row.requires_contract),
     id: String(row.id),
     organizationId: String(row.organization_id),
     displayName: String(row.display_name),
@@ -345,6 +347,8 @@ export function mapOperationRateHistory(row: DbRecord): OperationRateHistoryEntr
 
 export function mapFiscalDocument(row: DbRecord): FiscalDocument {
   return {
+    billingObservations: textOrNull(row.billing_observations),
+    contractNumber: textOrNull(row.contract_number),
     id: String(row.id),
     organizationId: String(row.organization_id),
     ownLegalEntityId: String(row.own_legal_entity_id),
@@ -414,6 +418,7 @@ export function mapOperation(row: DbRecord): Operation {
     operationScope: String(row.operation_scope) as Operation["operationScope"],
     operationDate: String(row.operation_date),
     quantitySacks: String(row.quantity_sacks_decimal),
+    grossQuantitySacks: String(row.gross_quantity_sacks_decimal ?? row.quantity_sacks_decimal),
     serviceRateRuleId: textOrNull(row.service_rate_rule_id),
     appliedRateValueCents: Number(row.applied_rate_value_cents),
     serviceAmountCents: Number(row.service_amount_cents),
@@ -432,6 +437,20 @@ export function mapOperation(row: DbRecord): Operation {
     purchaseSettlementStatus: (textOrNull(row.purchase_settlement_status) ?? "UNSETTLED") as Operation["purchaseSettlementStatus"],
     accountPayableId: textOrNull(row.account_payable_id),
     purchaseRateRuleId: textOrNull(row.purchase_rate_rule_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+export function mapFiscalDocumentReturn(row: DbRecord): FiscalDocumentReturn {
+  return {
+    id: String(row.id),
+    fiscalDocumentId: String(row.fiscal_document_id),
+    returnDate: String(row.return_date),
+    inputUnit: String(row.input_unit) as FiscalDocumentReturn["inputUnit"],
+    inputQuantity: String(row.input_quantity_decimal),
+    quantitySacks: String(row.quantity_sacks_decimal),
+    reason: String(row.reason),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -670,6 +689,8 @@ export function mapClientCharge(row: DbRecord): ClientCharge {
 
 export function mapClientChargeOperation(row: DbRecord): ClientChargeOperation {
   return {
+    billingObservationsSnapshot: textOrNull(row.billing_observations_snapshot),
+    contractNumberSnapshot: textOrNull(row.contract_number_snapshot),
     id: String(row.id),
     clientChargeId: String(row.client_charge_id),
     operationId: String(row.operation_id),
@@ -723,6 +744,8 @@ export function mapClientLedgerEntry(row: DbRecord): ClientLedgerEntry {
     attachmentPath: textOrNull(row.attachment_path),
     status: String(row.status) as ClientLedgerEntry["status"],
     availableAmountCents: typeof row.available_amount_cents === "number" ? row.available_amount_cents : null,
+    collectionDueDate: textOrNull(row.collection_due_date),
+    collectedAt: textOrNull(row.collected_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     cancelledAt: textOrNull(row.cancelled_at),
@@ -755,6 +778,8 @@ export function mapClientPayment(row: DbRecord): ClientPayment {
     transactionReference: textOrNull(row.transaction_reference),
     notes: textOrNull(row.notes),
     attachmentPath: textOrNull(row.attachment_path),
+    receiptPdfFilePath: textOrNull(row.receipt_pdf_file_path),
+    receiptImageFilePath: textOrNull(row.receipt_image_file_path),
     status: String(row.status) as ClientPayment["status"],
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),

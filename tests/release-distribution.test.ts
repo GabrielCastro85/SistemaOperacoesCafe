@@ -33,7 +33,10 @@ describe("Windows distribution", () => {
       scripts: Record<string, string>;
       build: { appId: string; win: { icon: string; requestedExecutionLevel: string } };
     };
-    expect(pkg.version).toBe("1.0.51");
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/);
+    const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
+    expect(lock.version).toBe(pkg.version);
+    expect(lock.packages[""].version).toBe(pkg.version);
     expect(pkg.author).toBeTruthy();
     expect(pkg.license).toBe("UNLICENSED");
     expect(pkg.engines?.node).toContain(">=20.19.0");

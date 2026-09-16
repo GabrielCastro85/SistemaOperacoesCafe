@@ -215,9 +215,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       setPreviewBase64(await window.operationsCafe.getDealDocumentBytes(latest.id));
     } catch (errorValue) {
       // Antes isso ficava mudo -- "sem previa gerada" sem explicacao nenhuma,
-      // mesmo quando o motivo real era "este PC nao tem o arquivo local e a
-      // tentativa de baixar da nuvem falhou" (ver ensureDealDocumentLocalPath
-      // em appRepository.ts). Mostra o motivo de verdade.
+      // mesmo quando o motivo real era "o arquivo nao existe mais neste
+      // computador" (ver ensureDealDocumentLocalPath em appRepository.ts).
+      // Mostra o motivo de verdade -- "gerar nova previa" (botao ja existente
+      // nesta tela) resolve.
       setPreviewBase64(null);
       setMessage(errorValue instanceof Error ? errorValue.message : "Nao foi possivel carregar a previa deste documento.");
     }
@@ -432,10 +433,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function generatePreview(): Promise<void> {
     if (!detail) return;
     // Sem try/catch aqui, uma falha (ex: nota ja reivindicada por outra
-    // confirmacao, sessao Supabase caida, timeout de rede) virava uma
-    // promise rejeitada sem tratamento nenhum -- o dialogo de "salvar como"
-    // fechava normalmente e depois NADA acontecia, sem nenhum erro visivel
-    // (bug real reportado em producao: "clico em salvar e nao acontece nada").
+    // confirmacao) virava uma promise rejeitada sem tratamento nenhum -- o
+    // dialogo de "salvar como" fechava normalmente e depois NADA acontecia,
+    // sem nenhum erro visivel (bug real reportado em producao: "clico em
+    // salvar e nao acontece nada").
     try {
       const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id);
       if (!updated) {

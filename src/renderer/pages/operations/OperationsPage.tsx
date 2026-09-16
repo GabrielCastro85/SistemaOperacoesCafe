@@ -94,10 +94,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     direction: "asc"
   });
   const [documentServiceInfo, setDocumentServiceInfo] = useState<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>({});
+  const [replacementPartnerId, setReplacementPartnerId] = useState("");
+  const [reviewBeforeConfirm, setReviewBeforeConfirm] = useState(false);
+  const [billingObservations, setBillingObservations] = useState("");
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState("");
   const [number, setNumber] = useState("");
+  const [contractNumber, setContractNumber] = useState("");
   const [accessKey, setAccessKey] = useState("");
   const [total, setTotal] = useState("0,00");
   const [issueDate, setIssueDate] = useState(() => brazilDateValue());
@@ -123,9 +127,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
   const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
+  const [xmlContractNumbers, setXmlContractNumbers] = useState<Record<string, string>>({});
+  const [xmlBillingObservations, setXmlBillingObservations] = useState<Record<string, string>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
   const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
+  const [returnDate, setReturnDate] = useState(() => brazilDateValue());
+  const [returnUnit, setReturnUnit] = useState<"SACKS" | "KG">("SACKS");
+  const [returnQuantity, setReturnQuantity] = useState("");
+  const [returnReason, setReturnReason] = useState("");
   // Nota terceirizada lancada manualmente: nem emitente nem destinatario e' a
   // empresa propria ativa no topo -- ver resolveIssuerLegalEntityFromPartner.
   // Vazio = comportamento de sempre (emissora = CNPJ proprio ativo).
@@ -141,6 +151,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlDataRef = useRef<HTMLDivElement | null>(null);
   const xmlResultRef = useRef<HTMLDivElement | null>(null);
   const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => { setXmlJob(null); }, [partnerId, operationType, scope, productId, ownLegalEntityId]);
+  useEffect(() => { setReplacementPartnerId(""); }, [detail?.document.id]);
+  useEffect(() => { setReturnDate(brazilDateValue()); setReturnUnit("SACKS"); setReturnQuantity(""); setReturnReason(""); }, [detail?.document.id]);
 
   const load = useCallback(async () => {
     const roleForOperationType = operationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
@@ -220,6 +234,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         secondaryOperationType: isTriangulated ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null,
         accessKey: onlyDigits(accessKey),
         documentNumber: number,
+        billingObservations: billingObservations.trim() || null,
+        contractNumber: contractNumber.trim() || null,
         series: null,
         issueDate,
         totalAmountCents: parseCurrency(total),
@@ -228,6 +244,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         notes
       });
       setDetail(created);
+      setBillingObservations("");
       setMessage(created.document.duplicateWarning ?? (isTriangulated ? "Nota triangulada criada -- cada item lancado abaixo ja gera compra e venda automaticamente." : "Nota criada."));
       setManualIssuerSearchTerm("");
       setManualIssuerPartnerLegalEntityId(null);
@@ -553,6 +570,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlQueue(inspections);
     setXmlJob(null);
     setXmlScopeOverrides({});
+    setXmlContractNumbers({});
+    setXmlBillingObservations({});
     setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
     setMessage(
       invalidCount
@@ -575,9 +594,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         sourceType: xmlSelectionSource,
         selectedFolder: null,
         includeSubfolders: includeXmlSubfolders,
-        settings: { ownLegalEntityId, clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true }
+        settings: { ownLegalEntityId, clientPartnerId: partnerId || null, operationType, operationScope: scope, productId: productId || null, createOperations: true, reviewBeforeConfirm }
       });
       const added = await window.operationsCafe.addXmlImportFiles({ jobId: job.id, tokens: xmlSelections.map((file) => file.token) });
+      for (const file of added.files) {
+        const inspected = xmlQueue.find((candidate) => candidate.accessKey && candidate.accessKey === file.accessKey)
+          ?? xmlQueue.find((candidate) => candidate.originalFileName === file.originalFileName);
+        if (!inspected) continue;
+        const contractNumber = xmlContractNumbers[inspected.token]?.trim() || null;
+        const billingObservations = xmlBillingObservations[inspected.token]?.trim() || null;
+        if (contractNumber || billingObservations) {
+          await window.operationsCafe.updateXmlImportFileResolution(file.id, { contractNumber, billingObservations });
+        }
+      }
       const validated = await window.operationsCafe.validateXmlImportJob(added.job.id);
       setXmlJob(validated);
       setMessage("Fila XML validada.");
@@ -640,7 +669,17 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     if (!clientPartnerId) return;
     const secondaryPartnerId = xmlSecondaryResolutionSelections[fileId] || null;
     try {
-      await window.operationsCafe.updateXmlImportFileResolution(fileId, { clientPartnerId, secondaryPartnerId });
+      const importFile = xmlJob?.files.find((file) => file.id === fileId);
+      const inspected = importFile
+        ? (xmlQueue.find((candidate) => candidate.accessKey && candidate.accessKey === importFile.accessKey)
+          ?? xmlQueue.find((candidate) => candidate.originalFileName === importFile.originalFileName))
+        : null;
+      await window.operationsCafe.updateXmlImportFileResolution(fileId, {
+        clientPartnerId,
+        secondaryPartnerId,
+        contractNumber: inspected ? xmlContractNumbers[inspected.token]?.trim() || null : null,
+        billingObservations: inspected ? xmlBillingObservations[inspected.token]?.trim() || null : null
+      });
       if (xmlJob) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJob.job.id));
       setMessage(
         secondaryPartnerId
@@ -659,7 +698,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       const counterparty = xmlFileCounterparty(file);
       const cnpjDigits = (counterparty?.cnpjCpf ? onlyDigits(counterparty.cnpjCpf) : null) ?? "";
       if (cnpjDigits.length === 14) {
-        await window.operationsCafe.createPartnerLegalEntity({
+        const existingCompany = partnerLegalEntities.find((entity) => entity.cnpj === cnpjDigits);
+        if (existingCompany) await window.operationsCafe.linkPartnerLegalEntity(existingCompany.id, clientPartnerId);
+        else await window.operationsCafe.createPartnerLegalEntity({
+          organizationId,
           businessPartnerId: clientPartnerId,
           legalName: counterparty?.legalName ?? counterparty?.tradeName ?? "Nao informado",
           tradeName: counterparty?.tradeName ?? counterparty?.legalName ?? "Nao informado",
@@ -690,7 +732,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         });
       }
       await saveXmlFileResolution(file.id);
-      setMessage("Cliente/corretor associado e empresa/apelido cadastrado. Proximas notas desse contraparte poderao ser vinculadas a ele.");
+      setMessage("Cliente/corretor associado e empresa/apelido cadastrado. Notas de empresas com varios clientes continuarao exigindo a escolha do responsavel.");
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao cadastrar CNPJ/alias."}`);
     }
@@ -698,6 +740,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   const selectedXmlFile = xmlQueue.find((file) => file.token === selectedXmlToken) ?? xmlQueue[0] ?? null;
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
+  const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
+    ? selectedXmlFile.extractedData.contractNumber
+    : "";
   const selectedXmlParties = resolveOwnAndCounterparty(selectedXmlPreview, data.legalEntities);
   const selectedXmlItem = selectedXmlPreview?.items[0] ?? null;
   const selectedXmlSacks = xmlQuantityInSacks(
@@ -705,7 +750,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     selectedXmlItem?.commercialUnit
   );
   const selectedXmlInferredScope = inferXmlOperationScope(selectedXmlPreview);
-  const selectedXmlScope = selectedXmlFile ? xmlScopeOverrides[selectedXmlFile.token] ?? selectedXmlInferredScope ?? scope : scope;
+  const selectedXmlScope = selectedXmlFile ? selectedXmlInferredScope ?? xmlScopeOverrides[selectedXmlFile.token] ?? scope : scope;
   const selectedXmlOwnMismatch = Boolean(
     selectedXmlParties.ownEntityLabel &&
     ownLegalEntity &&
@@ -722,7 +767,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       preview,
       parties,
       firstItem,
-      operationScope: xmlScopeOverrides[file.token] ?? inferredScope ?? scope
+      operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope
     };
   });
   const validXmlBatchRows = xmlBatchRows.filter((row) => row.file.status !== "ERROR");
@@ -795,6 +840,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
     const searchableValues = [
       document.documentNumber,
+      document.contractNumber ?? "",
       document.series,
       document.accessKey,
       clientName,
@@ -921,6 +967,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </>
           )}
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
+          <TextField label="Contrato" value={contractNumber} onChange={setContractNumber} />
+          <label>Observacoes da nota (sai na cobranca)<textarea rows={3} maxLength={500} value={billingObservations} onChange={(event) => setBillingObservations(event.target.value)} placeholder="Ex.: lote 123, contrato ABC, referencia do pedido" /></label>
           <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
           <DateInput label="Data de emissão" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} />
           <TextField label="Valor total" value={total} onChange={setTotal} />
@@ -937,7 +985,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         <div className="toolbar document-search-toolbar">
           <TextField
-            label="Pesquisar notas por numero, cliente, empresa ou CNPJ"
+            label="Pesquisar notas por numero, contrato, cliente, empresa ou CNPJ"
             value={documentSearch}
             onChange={setDocumentSearch}
           />
@@ -982,6 +1030,51 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
+        <FormGrid>
+          <PartnerQuickSearch label="Corrigir responsavel da nota" value={replacementPartnerId} onChange={setReplacementPartnerId} partners={[...partners, ...secondaryPartners].filter((partner, index, all) => all.findIndex((item) => item.id === partner.id) === index && partner.roles.includes(detail.document.direction === "INBOUND" ? "SUPPLIER" : "CLIENT"))} legalEntities={partnerLegalEntities} />
+          <button disabled={!replacementPartnerId || replacementPartnerId === detail.document.responsiblePartnerId || detail.document.status === "CANCELED" || detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
+            try {
+              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: replacementPartnerId, operationType: detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE" });
+              setDetail(updated); setReplacementPartnerId(""); await load(); setMessage("Responsavel corrigido e tarifa recalculada. Confira os valores e confirme a nota novamente.");
+            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao corrigir responsavel."}`); }
+          }}>Trocar responsavel e recalcular</button>
+          <TextField label="Contrato" value={detail.document.contractNumber ?? ""} onChange={(value) => setDetail((current) => current ? ({ ...current, document: { ...current.document, contractNumber: value } }) : current)} />
+          <label>Observacoes da nota (sai na cobranca)<textarea rows={3} maxLength={500} value={detail.document.billingObservations ?? ""} onChange={(event) => setDetail((current) => current ? { ...current, document: { ...current.document, billingObservations: event.target.value } } : current)} placeholder="Ex.: lote 123, contrato ABC, referencia do pedido" /></label>
+          <button onClick={async () => {
+            try {
+              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, { ...detail.document, operationType: detail.operations[0]?.operationType ?? "SALE", contractNumber: detail.document.contractNumber?.trim() || null });
+              setDetail(updated); await load(); setMessage("Contrato e observacoes salvos para o relatorio de cobranca.");
+            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar contrato."}`); }
+          }}>Salvar contrato e observacoes</button>
+        </FormGrid>
+        <p className="muted">Ao trocar o responsavel, a tarifa anterior (inclusive manual) e substituida pela regra do novo cliente. Notas vinculadas a cobranca ou acerto precisam ser liberadas primeiro.</p>
+        <h3>Revisao para cobranca</h3>
+        <p>Contrato: <strong>{detail.document.contractNumber || "Nao informado"}</strong></p>
+        {detail.operations.map((op) => <div className="operation-warning-card operation-warning-card--neutral" key={op.id}>
+          <strong>{partnerName(op.responsiblePartnerId)} · {op.operationType === "SALE" ? "A receber" : "A pagar"} · {formatOperationScope(op.operationScope)}</strong>
+          <span>{decimalTextBr(op.quantitySacks)} sacas × {formatCurrencyFromCents(op.appliedRateValueCents)} = {formatCurrencyFromCents(op.serviceAmountCents)}{op.appliedRateValueCents <= 0 ? " — Tarifa pendente: esta operacao nao entra na cobranca." : ""}</span>
+        </div>)}
+        {detail.operations.some((op) => op.operationType === "SALE") ? <section className="coffee-return-card">
+          <header><span>Devolucao de cafe</span><strong>Reduz a quantidade cobrada desta nota</strong></header>
+          {(() => {
+            const sales = detail.operations.filter((op) => op.operationType === "SALE" && op.status !== "CANCELED");
+            const gross = sales.reduce((sum, op) => sum + Number(op.grossQuantitySacks), 0);
+            const returned = detail.returns.reduce((sum, item) => sum + Number(item.quantitySacks), 0);
+            return <div className="coffee-return-summary"><span>Original: <strong>{decimalTextBr(String(gross))} sacas</strong></span><span>Devolvido: <strong>{decimalTextBr(String(returned))} sacas</strong></span><span>Saldo para cobranca: <strong>{decimalTextBr(String(Math.max(0, gross - returned)))} sacas</strong></span></div>;
+          })()}
+          <FormGrid>
+            <label>Data da devolucao<input type="date" value={returnDate} onChange={(event) => setReturnDate(event.target.value)} /></label>
+            <SelectField label="Informar em" value={returnUnit} onChange={(value) => setReturnUnit(value as "SACKS" | "KG")} options={[["SACKS", "Sacas"], ["KG", "Quilos"]]} />
+            <TextField label={returnUnit === "KG" ? "Quantidade devolvida (kg)" : "Quantidade devolvida (sacas)"} value={returnQuantity} onChange={setReturnQuantity} />
+            <TextField label="Motivo" value={returnReason} onChange={setReturnReason} />
+          </FormGrid>
+          <p className="muted">Conversao usada: 60 kg = 1 saca. A cobranca e qualquer rascunho em aberto sao recalculados automaticamente.</p>
+          <button className="invoice-action-button invoice-action-button--primary" disabled={!returnQuantity.trim() || !returnReason.trim()} onClick={() => void window.operationsCafe.addFiscalDocumentReturn({ fiscalDocumentId: detail.document.id, returnDate, inputUnit: returnUnit, inputQuantity: returnQuantity, reason: returnReason }).then((updated) => { setDetail(updated); setReturnQuantity(""); setReturnReason(""); void load(); setMessage("Devolucao registrada e valor da cobranca recalculado."); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao registrar devolucao."}`))}>Registrar devolucao</button>
+          {detail.returns.length ? <div className="coffee-return-history">
+            {detail.returns.map((item) => <div key={item.id} className="coffee-return-row"><span>{formatDateOnlyBr(item.returnDate)}</span><span>{decimalTextBr(item.inputQuantity)} {item.inputUnit === "KG" ? "kg" : "sacas"}</span><span>{decimalTextBr(item.quantitySacks)} sacas abatidas</span><strong>{item.reason}</strong><button className="danger" onClick={() => void window.operationsCafe.deleteFiscalDocumentReturn(item.id).then((updated) => { setDetail(updated); void load(); setMessage("Devolucao removida e quantidade restaurada."); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao remover devolucao."}`))}>Remover</button></div>)}
+          </div> : null}
+        </section> : null}
+        {detail.document.hasPendingIssues ? <p role="alert">Pendencias: {detail.document.pendingNotes}. Revise os itens antes de liberar a nota.</p> : null}
         <div className="invoice-detail-layout">
           <section className="invoice-action-card invoice-action-card--wide">
             <header><span>{detail.items.length ? "Dados da nota" : "Adicionar item"}</span><strong>{detail.items.length ? "Preenchido pelo XML/regra" : "Produto e classificacao fiscal"}</strong></header>
@@ -1191,8 +1284,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                         : ""}
                     </dd>
                   </div>
-                  <div><dt>R$/saca</dt><dd>{selectedXmlItem?.commercialUnitValue ? formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100)) : "-"}</dd></div>
-                  <div><dt>Valor total</dt><dd>{selectedXmlPreview.productsAmountCents != null ? formatCurrencyFromCents(selectedXmlPreview.productsAmountCents) : "-"}</dd></div>
+                  <div><dt>Preco do cafe por unidade do XML</dt><dd>{selectedXmlItem?.commercialUnitValue ? formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100)) : "-"}</dd></div>
+                  <div><dt>Valor fiscal dos produtos</dt><dd>{selectedXmlPreview.productsAmountCents != null ? formatCurrencyFromCents(selectedXmlPreview.productsAmountCents) : "-"}</dd></div>
                 </dl>
                 <h4>Informacoes complementares</h4>
                 <dl className="kv-list">
@@ -1203,6 +1296,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
                   <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
                 </dl>
+                {selectedXmlFile ? (
+                  <FormGrid>
+                    <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
+                    <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
+                  </FormGrid>
+                ) : null}
               </>
             ) : selectedXmlFile?.status === "ERROR" ? (
               <EmptyState title="XML nao lido" description={selectedXmlFile.errorMessage ?? "O arquivo selecionado nao pode ser lido. Confira se ele nao esta vazio ou corrompido."} />
@@ -1213,6 +1312,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
           <div className="import-column">
             <h3><ListStepsIcon /> Fluxo de importacao</h3>
+            <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
+            <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             <FormGrid>
               <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
@@ -1229,7 +1330,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               />
             </FormGrid>
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || !partnerId}>Salvar nota</button>
             </div>
           </div>
@@ -1244,7 +1345,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
             </div>
             <div className="table">
-              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Cliente da nota</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Status</span></div>
+              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Status</span></div>
               {xmlBatchRows.map((row) => (
                 <button
                   key={row.file.token}

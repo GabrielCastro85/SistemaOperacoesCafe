@@ -81,7 +81,6 @@ import type {
   OrganizationListItem
 } from "../../src/shared/types/domain.js";
 import type { UpdateStatus } from "../../src/shared/types/updater.js";
-import type { SharedSyncStatus } from "../../src/shared/types/sync.js";
 import type { saveInstallationProfileSchema } from "../../src/shared/schemas/domainSchemas.js";
 import type { z } from "zod";
 
@@ -136,14 +135,6 @@ const IPC_CHANNELS = {
   updateInstallationProfile: "app:updateInstallationProfile",
   getActiveContext: "app:getActiveContext",
   getDiagnostics: "app:getDiagnostics",
-  syncSharedData: "app:syncSharedData",
-  resetSyncCursorsAndResync: "app:resetSyncCursorsAndResync",
-  sharedAuthStatus: "app:sharedAuthStatus",
-  sharedAuthSignIn: "app:sharedAuthSignIn",
-  sharedAuthSignOut: "app:sharedAuthSignOut",
-  getLocalOnlyMode: "app:getLocalOnlyMode",
-  setLocalOnlyMode: "app:setLocalOnlyMode",
-  getSharedSyncStatus: "app:getSharedSyncStatus",
   getUpdateStatus: "app:getUpdateStatus",
   checkForUpdates: "app:checkForUpdates",
   quitAndInstallUpdate: "app:quitAndInstallUpdate",
@@ -225,6 +216,8 @@ const IPC_CHANNELS = {
   resolvePurchaseRateRule: "purchaseRateRules:resolve",
   listFiscalDocuments: "fiscalDocuments:list",
   getFiscalDocument: "fiscalDocuments:get",
+  addFiscalDocumentReturn: "fiscalDocuments:addReturn",
+  deleteFiscalDocumentReturn: "fiscalDocuments:deleteReturn",
   createFiscalDocument: "fiscalDocuments:create",
   updateFiscalDocument: "fiscalDocuments:update",
   deleteFiscalDocument: "fiscalDocuments:delete",
@@ -233,6 +226,7 @@ const IPC_CHANNELS = {
   listOperations: "operations:list",
   addOperation: "operations:add",
   updateOperationManualRate: "operations:updateManualRate",
+  markLoanCollected: "ledger:markLoanCollected",
   confirmFiscalDocument: "fiscalDocuments:confirm",
   cancelFiscalDocument: "fiscalDocuments:cancel",
   getOperationalIndicators: "operations:indicators",
@@ -297,6 +291,7 @@ const IPC_CHANNELS = {
   suggestChargePeriods: "clientCharges:suggestPeriods",
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
   getPartnerRateSummary: "clientCharges:partnerRateSummary",
+  exportPartnerPeriodReport: "clientCharges:exportPeriodReport",
   createClientChargeDraft: "clientCharges:createDraft",
   reserveChargeOperations: "clientCharges:reserveOperations",
   releaseChargeOperations: "clientCharges:releaseOperations",
@@ -318,6 +313,8 @@ const IPC_CHANNELS = {
   getAvailableCredits: "clientLedger:getAvailableCredits",
   createClientPayment: "clientPayments:create",
   allocateClientPayment: "clientPayments:allocate",
+  generateClientPaymentReceipt: "clientPayments:generateReceipt",
+  openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",
   getDashboardAlerts: "billingDashboard:alerts",
   listExpenseCategories: "expenseCategories:list",
@@ -498,15 +495,6 @@ export interface OperationsCafeApi {
   updateInstallationProfile: (profile: SaveInstallationProfileInput & { confirmVariantChange?: boolean }) => Promise<InstallationProfile>;
   getActiveContext: () => Promise<ActiveContext>;
   getDiagnostics: () => Promise<Diagnostics>;
-  syncSharedData: () => Promise<{ pushed: Array<{ table: string; pushed: number; error: string | null }>; pulled: Array<{ table: string; pulled: number }> }>;
-  resetSyncCursorsAndResync: () => Promise<Array<{ table: string; pulled: number }>>;
-  sharedAuthStatus: () => Promise<{ connected: boolean; email: string | null }>;
-  sharedAuthSignIn: (input: { email: string; password: string }) => Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>;
-  sharedAuthSignOut: () => Promise<{ connected: boolean; email: string | null }>;
-  getLocalOnlyMode: () => Promise<boolean>;
-  setLocalOnlyMode: (enabled: boolean) => Promise<boolean>;
-  getSharedSyncStatus: () => Promise<SharedSyncStatus>;
-  onSharedSyncStatusChanged: (listener: (status: SharedSyncStatus) => void) => () => void;
   getUpdateStatus: () => Promise<UpdateStatus>;
   checkForUpdates: () => Promise<UpdateStatus>;
   quitAndInstallUpdate: () => Promise<null>;
@@ -551,7 +539,7 @@ export interface OperationsCafeApi {
   createPartnerLegalEntity: (input: unknown) => Promise<BusinessPartnerLegalEntity>;
   updatePartnerLegalEntity: (id: string, input: unknown) => Promise<BusinessPartnerLegalEntity>;
   linkPartnerLegalEntity: (legalEntityId: string, businessPartnerId: string) => Promise<BusinessPartnerLegalEntity>;
-  unlinkPartnerLegalEntity: (legalEntityId: string) => Promise<BusinessPartnerLegalEntity>;
+  unlinkPartnerLegalEntity: (legalEntityId: string, businessPartnerId?: string) => Promise<BusinessPartnerLegalEntity>;
   activatePartnerLegalEntity: (id: string) => Promise<BusinessPartnerLegalEntity>;
   deactivatePartnerLegalEntity: (id: string) => Promise<BusinessPartnerLegalEntity>;
   lookupCnpj: (cnpj: string) => Promise<CnpjLookupResult>;
@@ -589,6 +577,8 @@ export interface OperationsCafeApi {
   resolvePurchaseRateRule: (input: unknown) => Promise<ResolveRateResult>;
   listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; includeThirdParty?: boolean }) => Promise<FiscalDocument[]>;
   getFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
+  addFiscalDocumentReturn: (input: { fiscalDocumentId: string; returnDate: string; inputUnit: "SACKS" | "KG"; inputQuantity: string; reason: string }) => Promise<FiscalDocumentDetail>;
+  deleteFiscalDocumentReturn: (id: string) => Promise<FiscalDocumentDetail>;
   createFiscalDocument: (input: unknown) => Promise<FiscalDocumentDetail>;
   updateFiscalDocument: (id: string, input: unknown) => Promise<FiscalDocumentDetail>;
   deleteFiscalDocument: (id: string) => Promise<void>;
@@ -597,6 +587,7 @@ export interface OperationsCafeApi {
   listOperations: (filters?: { organizationId?: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; billingStatus?: "UNBILLED" | "RESERVED" | "BILLED" | "all" }) => Promise<Operation[]>;
   addOperation: (input: unknown) => Promise<Operation>;
   updateOperationManualRate: (id: string, manualRateValueCents: number, reason: string) => Promise<Operation>;
+  markLoanCollected: (id: string) => Promise<ClientLedgerEntry>;
   confirmFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   cancelFiscalDocument: (id: string, reason: string) => Promise<FiscalDocumentDetail>;
   getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number }>;
@@ -662,6 +653,7 @@ export interface OperationsCafeApi {
   suggestChargePeriods: (input: unknown) => Promise<Array<{ periodicity: string; periodStart: string; periodEnd: string; label: string }>>;
   findEligibleChargeOperations: (input: unknown) => Promise<Operation[]>;
   getPartnerRateSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
+  exportPartnerPeriodReport: (input: unknown) => Promise<boolean>;
   createClientChargeDraft: (input: unknown) => Promise<ClientChargeDetail>;
   reserveChargeOperations: (clientChargeId: string, operationIds: string[]) => Promise<ClientChargeDetail>;
   releaseChargeOperations: (clientChargeId: string, operationIds?: string[]) => Promise<ClientChargeDetail>;
@@ -683,7 +675,9 @@ export interface OperationsCafeApi {
   getAvailableCredits: (organizationId: string, ownLegalEntityId: string, clientPartnerId: string) => Promise<ClientLedgerEntry[]>;
   createClientPayment: (input: unknown) => Promise<ClientPayment>;
   allocateClientPayment: (input: unknown) => Promise<ClientChargeDetail>;
-  getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean }) => Promise<BillingSummary>;
+  generateClientPaymentReceipt: (id: string) => Promise<ClientPayment>;
+  openClientPaymentReceipt: (input: { paymentId: string; kind: "pdf" | "image" }) => Promise<boolean>;
+  getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart?: string | null; periodEnd?: string | null }) => Promise<BillingSummary>;
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
   listExpenseCategories: (organizationId: string) => Promise<ExpenseCategory[]>;
   createExpenseCategory: (input: unknown) => Promise<ExpenseCategory>;
@@ -862,20 +856,6 @@ const api: OperationsCafeApi = {
     ipcRenderer.invoke(IPC_CHANNELS.updateInstallationProfile, profile) as Promise<InstallationProfile>,
   getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.getActiveContext) as Promise<ActiveContext>,
   getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.getDiagnostics) as Promise<Diagnostics>,
-  syncSharedData: () => ipcRenderer.invoke(IPC_CHANNELS.syncSharedData) as Promise<{ pushed: Array<{ table: string; pushed: number; error: string | null }>; pulled: Array<{ table: string; pulled: number }> }>,
-  resetSyncCursorsAndResync: () => ipcRenderer.invoke(IPC_CHANNELS.resetSyncCursorsAndResync) as Promise<Array<{ table: string; pulled: number }>>,
-  sharedAuthStatus: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthStatus) as Promise<{ connected: boolean; email: string | null }>,
-  sharedAuthSignIn: (input) => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignIn, input) as Promise<{ connected: boolean; email: string | null; referenceDataPushed: Array<{ table: string; pushed: number; error: string | null }> }>,
-  sharedAuthSignOut: () => ipcRenderer.invoke(IPC_CHANNELS.sharedAuthSignOut) as Promise<{ connected: boolean; email: string | null }>,
-  getLocalOnlyMode: () => ipcRenderer.invoke(IPC_CHANNELS.getLocalOnlyMode) as Promise<boolean>,
-  setLocalOnlyMode: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.setLocalOnlyMode, enabled) as Promise<boolean>,
-  getSharedSyncStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getSharedSyncStatus) as Promise<SharedSyncStatus>,
-  onSharedSyncStatusChanged: (listener) => {
-    const channel = "app:sharedSyncStatusChanged";
-    const handler = (_event: IpcRendererEvent, status: SharedSyncStatus): void => listener(status);
-    ipcRenderer.on(channel, handler);
-    return () => ipcRenderer.removeListener(channel, handler);
-  },
   getUpdateStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getUpdateStatus) as Promise<UpdateStatus>,
   checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.checkForUpdates) as Promise<UpdateStatus>,
   quitAndInstallUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.quitAndInstallUpdate) as Promise<null>,
@@ -931,7 +911,7 @@ const api: OperationsCafeApi = {
   createPartnerLegalEntity: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPartnerLegalEntity, input) as Promise<BusinessPartnerLegalEntity>,
   updatePartnerLegalEntity: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updatePartnerLegalEntity, { id, input }) as Promise<BusinessPartnerLegalEntity>,
   linkPartnerLegalEntity: (legalEntityId, businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.linkPartnerLegalEntity, { legalEntityId, businessPartnerId }) as Promise<BusinessPartnerLegalEntity>,
-  unlinkPartnerLegalEntity: (legalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.unlinkPartnerLegalEntity, legalEntityId) as Promise<BusinessPartnerLegalEntity>,
+  unlinkPartnerLegalEntity: (legalEntityId, businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.unlinkPartnerLegalEntity, { legalEntityId, businessPartnerId }) as Promise<BusinessPartnerLegalEntity>,
   activatePartnerLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.activatePartnerLegalEntity, id) as Promise<BusinessPartnerLegalEntity>,
   deactivatePartnerLegalEntity: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivatePartnerLegalEntity, id) as Promise<BusinessPartnerLegalEntity>,
   lookupCnpj: (cnpj) => ipcRenderer.invoke(IPC_CHANNELS.lookupCnpj, cnpj) as Promise<CnpjLookupResult>,
@@ -969,6 +949,8 @@ const api: OperationsCafeApi = {
   resolvePurchaseRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.resolvePurchaseRateRule, input) as Promise<ResolveRateResult>,
   listFiscalDocuments: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listFiscalDocuments, filters) as Promise<FiscalDocument[]>,
   getFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalDocument, id) as Promise<FiscalDocumentDetail>,
+  addFiscalDocumentReturn: (input) => ipcRenderer.invoke(IPC_CHANNELS.addFiscalDocumentReturn, input) as Promise<FiscalDocumentDetail>,
+  deleteFiscalDocumentReturn: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFiscalDocumentReturn, id) as Promise<FiscalDocumentDetail>,
   createFiscalDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFiscalDocument, input) as Promise<FiscalDocumentDetail>,
   updateFiscalDocument: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateFiscalDocument, { id, input }) as Promise<FiscalDocumentDetail>,
   deleteFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFiscalDocument, id) as Promise<void>,
@@ -978,6 +960,7 @@ const api: OperationsCafeApi = {
   addOperation: (input) => ipcRenderer.invoke(IPC_CHANNELS.addOperation, input) as Promise<Operation>,
   updateOperationManualRate: (id, manualRateValueCents, reason) =>
     ipcRenderer.invoke(IPC_CHANNELS.updateOperationManualRate, { id, manualRateValueCents, reason }) as Promise<Operation>,
+  markLoanCollected: (id) => ipcRenderer.invoke(IPC_CHANNELS.markLoanCollected, id) as Promise<ClientLedgerEntry>,
   confirmFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.confirmFiscalDocument, id) as Promise<FiscalDocumentDetail>,
   cancelFiscalDocument: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelFiscalDocument, { id, reason }) as Promise<FiscalDocumentDetail>,
   getOperationalIndicators: (organizationId) =>
@@ -1053,6 +1036,7 @@ const api: OperationsCafeApi = {
   suggestChargePeriods: (input) => ipcRenderer.invoke(IPC_CHANNELS.suggestChargePeriods, input) as Promise<Array<{ periodicity: string; periodStart: string; periodEnd: string; label: string }>>,
   findEligibleChargeOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligibleChargeOperations, input) as Promise<Operation[]>,
   getPartnerRateSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerRateSummary, input) as Promise<PartnerRateSummaryRow[]>,
+  exportPartnerPeriodReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPartnerPeriodReport, input) as Promise<boolean>,
   createClientChargeDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientChargeDraft, input) as Promise<ClientChargeDetail>,
   reserveChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.reserveChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
   releaseChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.releaseChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
@@ -1074,6 +1058,8 @@ const api: OperationsCafeApi = {
   getAvailableCredits: (organizationId, ownLegalEntityId, clientPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.getAvailableCredits, { organizationId, ownLegalEntityId, clientPartnerId }) as Promise<ClientLedgerEntry[]>,
   createClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientPayment, input) as Promise<ClientPayment>,
   allocateClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.allocateClientPayment, input) as Promise<ClientChargeDetail>,
+  generateClientPaymentReceipt: (id) => ipcRenderer.invoke(IPC_CHANNELS.generateClientPaymentReceipt, id) as Promise<ClientPayment>,
+  openClientPaymentReceipt: (input) => ipcRenderer.invoke(IPC_CHANNELS.openClientPaymentReceipt, input) as Promise<boolean>,
   getBillingSummary: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingSummary, organizationId) as Promise<BillingSummary>,
   getDashboardAlerts: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDashboardAlerts, input) as Promise<DashboardAlerts>,
   listExpenseCategories: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listExpenseCategories, organizationId) as Promise<ExpenseCategory[]>,
@@ -1204,7 +1190,7 @@ const api: OperationsCafeApi = {
 // (rede/disco) conta aqui -- o renderer usa isso pra acender um overlay na
 // tela e bloquear clique duplo enquanto uma acao ainda esta em andamento (ver
 // GlobalLoadingOverlay). So' Promises sao rastreadas -- os poucos metodos
-// on* (assinatura de evento, ex: onSharedSyncStatusChanged) devolvem uma
+// on* (assinatura de evento, ex: onUpdateStatusChanged) devolvem uma
 // funcao de cancelamento na hora, nao uma Promise, entao passam direto.
 export interface OperationsCafeLoadingApi {
   subscribe: (listener: (pendingCount: number) => void) => () => void;

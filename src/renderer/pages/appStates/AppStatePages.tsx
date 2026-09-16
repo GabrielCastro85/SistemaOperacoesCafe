@@ -342,17 +342,21 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
 
   useEffect(() => {
     if (!organizationId) return;
+    let canceled = false;
+    setBillingSummary(null);
     void Promise.all([
-      window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies: true }),
+      window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies: true, periodStart: periodStart || null, periodEnd: periodEnd || null }),
       window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId, periodStart: periodStart || null, periodEnd: periodEnd || null }),
       window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: periodStart || null, dateEnd: periodEnd || null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
       window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
     ]).then(([billing, operations, confirmations, dashboardAlerts]) => {
+      if (canceled) return;
       setBillingSummary(billing);
       setOperationalIndicators(operations);
       setConfirmationSummary(confirmations);
       setAlerts(dashboardAlerts);
     });
+    return () => { canceled = true; };
   }, [organizationId, ownLegalEntityId, periodStart, periodEnd]);
 
   useEffect(() => {
@@ -396,7 +400,6 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
 
   const totalReceivable = billingSummary?.openCents ?? 0;
   const totalCommercialAmount = operationalIndicators?.fiscalAmountCents ?? 0;
-  const confirmationCount = confirmationSummary?.issued ?? 0;
   const sacks = Number(operationalIndicators?.sacksDecimal ?? 0);
   const maxMonthlyAmount = Math.max(1, ...monthlyTotals.map((item) => item.amountCents));
   const maxMonthlySacks = Math.max(1, ...monthlyTotals.map((item) => Number(item.sacksDecimal)));
@@ -410,7 +413,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     { label: "Rascunho/pendente", value: (confirmationSummary?.drafts ?? 0) + (confirmationSummary?.pendingReview ?? 0) }
   ];
   const statusTotal = statusSlices.reduce((sum, item) => sum + item.value, 0);
-  const hasAlerts = Boolean(alerts && (alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length));
+  const hasAlerts = Boolean(alerts && (alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
 
   return (
     <section className="content-section">
@@ -437,11 +440,12 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
       <div className="dashboard-grid dashboard-grid--hero">
         <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
         <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
-        <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber geral</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>{billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
-        <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Confirmacoes geradas</span><strong>{confirmationCount}</strong><small>{confirmationSummary?.waitingSignature ?? 0} aguardando assinatura</small></Card>
+        <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber no periodo</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>Todas as empresas · {billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
+        <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Recebido no periodo</span><strong>{formatCurrencyFromCents(billingSummary?.receivedCents ?? 0)}</strong><small>Todas as empresas</small></Card>
       </div>
 
       {hasAlerts && alerts ? (
+        <div className="dashboard-alerts-card">
         <Card>
           <div className="ui-card__header">
             <div>
@@ -468,8 +472,15 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
                 <span>{item.partnerName} - {item.percentUsed}% do limite ({formatCurrencyFromCents(item.outstandingCents)} de {formatCurrencyFromCents(item.creditLimitCents)})</span>
               </button>
             ))}
+            {alerts.loansDueForCollection.map((item) => (
+              <button key={item.ledgerEntryId} className="alert-item" onClick={() => { window.location.hash = "#/client-ledger"; }}>
+                <Badge tone="danger">Emprestimo a cobrar</Badge>
+                <span>{item.partnerName} - {formatCurrencyFromCents(item.amountCents)} previsto ha {item.daysOverdue} dia(s)</span>
+              </button>
+            ))}
           </div>
         </Card>
+        </div>
       ) : null}
 
       <div className="dashboard-workspace">

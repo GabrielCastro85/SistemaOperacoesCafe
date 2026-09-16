@@ -36,6 +36,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const [applyNow, setApplyNow] = useState(true);
   const [movementKind, setMovementKind] = useState<"ADIANTAMENTO" | "ACRESCIMO" | "EMPRESTIMO">("ADIANTAMENTO");
   const [movementNotes, setMovementNotes] = useState("");
+  const [loanCollectionDueDate, setLoanCollectionDueDate] = useState("");
   const [periodStart, setPeriodStart] = useState(() => currentMonthToDateRange().periodStart);
   const [periodEnd, setPeriodEnd] = useState(() => currentMonthToDateRange().periodEnd);
   const [message, setMessage] = useState<string | null>(null);
@@ -71,10 +72,10 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
     setMovementNotes("");
   }, [clientId]);
 
-  const MOVEMENT_KIND_CONFIG: Record<typeof movementKind, { entryType: "ADVANCE_RECEIVED" | "SURCHARGE" | "MANUAL_ADJUSTMENT"; effect: "REDUCE_RECEIVABLE" | "INCREASE_RECEIVABLE"; description: string; actionLabel: string; confirmedMessage: string; draftMessage: string }> = {
+  const MOVEMENT_KIND_CONFIG: Record<typeof movementKind, { entryType: "ADVANCE_RECEIVED" | "SURCHARGE" | "LOAN"; effect: "REDUCE_RECEIVABLE" | "INCREASE_RECEIVABLE"; description: string; actionLabel: string; confirmedMessage: string; draftMessage: string }> = {
     ADIANTAMENTO: { entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", description: "Adiantamento recebido", actionLabel: "Registrar adiantamento", confirmedMessage: "Adiantamento registrado e ja abatido do saldo.", draftMessage: "Adiantamento registrado, mas ainda nao abate do saldo (confirme depois quando quiser aplicar)." },
     ACRESCIMO: { entryType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", actionLabel: "Registrar acrescimo", confirmedMessage: "Acrescimo registrado e ja somado ao saldo.", draftMessage: "Acrescimo registrado, mas ainda nao soma no saldo (confirme depois quando quiser aplicar)." },
-    EMPRESTIMO: { entryType: "MANUAL_ADJUSTMENT", effect: "INCREASE_RECEIVABLE", description: "Emprestimo", actionLabel: "Registrar emprestimo", confirmedMessage: "Emprestimo registrado e ja somado ao saldo.", draftMessage: "Emprestimo registrado, mas ainda nao soma no saldo (confirme depois quando quiser aplicar)." }
+    EMPRESTIMO: { entryType: "LOAN", effect: "INCREASE_RECEIVABLE", description: "Emprestimo", actionLabel: "Registrar emprestimo", confirmedMessage: "Emprestimo registrado e ja somado ao saldo.", draftMessage: "Emprestimo registrado, mas ainda nao soma no saldo (confirme depois quando quiser aplicar)." }
   };
 
   async function createLedgerMovement(): Promise<void> {
@@ -112,12 +113,14 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
         notes: movementNotes.trim() || null,
         attachmentPath: null,
         availableAmountCents: amountCents,
-        status: applyNow ? "CONFIRMED" : "DRAFT"
+        status: applyNow ? "CONFIRMED" : "DRAFT",
+        collectionDueDate: movementKind === "EMPRESTIMO" ? (loanCollectionDueDate || null) : null
       });
 
       setMessage(applyNow ? config.confirmedMessage : config.draftMessage);
       setEntryDate(localDateInputValue(new Date()));
       setMovementNotes("");
+      setLoanCollectionDueDate("");
       await load();
     } catch (errorValue) {
       setMessage(
@@ -146,7 +149,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const advanceCents = sumByType("ADVANCE_RECEIVED");
   const creditCents = sumByType("CREDIT");
   const paymentCents = sumByType("PAYMENT_RECEIVED");
-  const surchargeCents = sumByType("SURCHARGE") + sumByType("MANUAL_ADJUSTMENT");
+  const surchargeCents = sumByType("SURCHARGE") + sumByType("LOAN") + sumByType("MANUAL_ADJUSTMENT");
   const balanceCents = entries.filter((entry) => entry.status === "CONFIRMED").reduce((sum, entry) => sum + (entry.effect === "INCREASE_RECEIVABLE" ? entry.amountCents : -entry.amountCents), 0) + liveUnbilledServiceCents;
 
   return (
@@ -213,6 +216,9 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
           />
           <TextField label="Valor (R$)" value={amount} onChange={setAmount} />
           <DateInput label="Data do lancamento" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} />
+          {movementKind === "EMPRESTIMO" ? (
+            <DateInput label="Data prevista de cobranca (opcional)" value={loanCollectionDueDate} onChange={(event) => setLoanCollectionDueDate(event.target.value)} />
+          ) : null}
           <TextField
             label={movementKind === "ADIANTAMENTO" ? "Observacao (opcional)" : "Observacao"}
             value={movementNotes}
@@ -226,10 +232,11 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
         {!applyNow ? <p className="muted">Sem marcar, o lancamento fica registrado no historico mas nao entra no saldo ate ser confirmado.</p> : null}
         {movementKind !== "ADIANTAMENTO" ? <p className="muted">A observacao e obrigatoria para acrescimos e emprestimos.</p> : null}
         {movementKind !== "ADIANTAMENTO" ? <p className="muted">Acrescimos e emprestimos aumentam o quanto o cliente deve -- quando houver uma cobranca em aberto para ele, esse valor aparece automaticamente em "Acrescimos" na tela de Cobrancas.</p> : null}
+        {movementKind === "EMPRESTIMO" ? <p className="muted">Informando a data prevista de cobranca, o emprestimo aparece como alerta no Dashboard a partir dessa data ate ser marcado como cobrado.</p> : null}
       </AdminBlock>
 
       <AdminBlock title="Historico de lancamentos">
-        {entries.length ? <ClientLedgerTable entries={entries} /> : <EmptyState title="Nenhum lancamento" description="Este cliente ainda nao possui movimentos na conta-corrente no periodo selecionado." />}
+        {entries.length ? <ClientLedgerTable entries={entries} onMarkLoanCollected={async (id) => { await window.operationsCafe.markLoanCollected(id); await load(); }} /> : <EmptyState title="Nenhum lancamento" description="Este cliente ainda nao possui movimentos na conta-corrente no periodo selecionado." />}
       </AdminBlock>
       <Feedback message={message} />
     </section>

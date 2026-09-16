@@ -8,7 +8,7 @@ export function ChargeTable({ charges }: { charges: ClientCharge[] }): JSX.Eleme
       rows={charges}
       getRowKey={(row) => row.id}
       columns={[
-        { key: "number", header: "Cobranca", render: (row) => row.chargeNumber ?? "Rascunho" },
+        { key: "created", header: "Criada em", render: (row) => new Date(row.createdAt).toLocaleString("pt-BR") },
         { key: "period", header: "Periodo", render: (row) => `${formatDateOnlyBr(row.periodStart)} a ${formatDateOnlyBr(row.periodEnd)}` },
         { key: "open", header: "Em aberto", align: "right", render: (row) => formatCurrencyFromCents(row.openAmountCents) },
         { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} label={row.status} /> }

@@ -1,8 +1,8 @@
+import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
 import { deterministicUuid } from "./deterministicId.js";
 import {
   legalEntityInputSchema,
@@ -19,6 +19,7 @@ import {
   purchaseRateRuleInputSchema,
   resolvePurchaseRateInputSchema,
   fiscalDocumentInputSchema,
+  fiscalDocumentReturnInputSchema,
   fiscalDocumentTriangulationInputSchema,
   fiscalDocumentItemInputSchema,
   operationInputSchema,
@@ -172,6 +173,7 @@ import {
   mapProductAlias,
   mapOperationClassificationRule,
   mapFiscalDocumentMergeHistory,
+  mapFiscalDocumentReturn,
   mapClientCharge,
   mapClientChargeOperation,
   mapClientChargeAdjustment,
@@ -205,823 +207,19 @@ import {
 } from "../database/mappers.js";
 import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, multiplyDecimalText, normalizeDecimalText, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
 import { generateChargeDocuments } from "./chargeDocuments.js";
+import { generatePaymentReceiptDocuments } from "./paymentReceiptDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
-import type { SharedRepository } from "./sharedRepository.js";
-import { SharedPushOutbox } from "./sharedPushOutbox.js";
-import { replayUserPush, replayUserDeletionPush } from "./security.js";
 import type { AppDirectories, DealConfirmationSequenceStatus } from "../../../src/shared/types/domain.js";
 
 type DbRecord = Record<string, unknown>;
 type DealItemInput = ReturnType<typeof dealConfirmationItemInputSchema.parse> & { totalAmountCents?: number | null };
 
-// Tabelas compartilhadas que precisam de visibilidade entre os 4 PCs --
-// sync poll-based (nao realtime) por simplicidade, ver
-// SharedRepository.pullChangesSince. Cobre tanto cadastro de referencia
-// (organizations..service_rate_rules -- essas tambem sao empurradas na hora
-// em que este PC as cria/edita, ver createOrganization etc., mas ainda
-// precisam ser PUXADAS aqui pra este PC ficar sabendo do que outro PC
-// cadastrou) quanto dado operacional "quente" (fiscal_documents em diante).
-// Ordem importa: pais antes de filhos (FK local e' ON), pra minimizar o caso
-// de um filho chegar antes do pai numa mesma rodada de sync.
-const HOT_SYNC_TABLES: Array<{ table: string; timestampColumn: string }> = [
-  { table: "organizations", timestampColumn: "updated_at" },
-  { table: "legal_entities", timestampColumn: "updated_at" },
-  { table: "locations", timestampColumn: "updated_at" },
-  { table: "business_partners", timestampColumn: "updated_at" },
-  { table: "business_partner_roles", timestampColumn: "created_at" },
-  { table: "partner_legal_entities", timestampColumn: "updated_at" },
-  { table: "partner_contacts", timestampColumn: "updated_at" },
-  { table: "products", timestampColumn: "updated_at" },
-  { table: "client_billing_profiles", timestampColumn: "updated_at" },
-  { table: "service_rate_rules", timestampColumn: "updated_at" },
-  { table: "purchase_rate_rules", timestampColumn: "updated_at" },
-  { table: "fiscal_documents", timestampColumn: "updated_at" },
-  { table: "fiscal_document_items", timestampColumn: "updated_at" },
-  { table: "operations", timestampColumn: "updated_at" },
-  { table: "fiscal_document_events", timestampColumn: "created_at" },
-  { table: "fiscal_document_merge_history", timestampColumn: "created_at" },
-  { table: "xml_import_jobs", timestampColumn: "updated_at" },
-  { table: "xml_import_files", timestampColumn: "updated_at" },
-  { table: "document_sequences", timestampColumn: "updated_at" },
-  { table: "client_charges", timestampColumn: "updated_at" },
-  { table: "client_charge_operations", timestampColumn: "created_at" },
-  { table: "client_charge_adjustments", timestampColumn: "updated_at" },
-  { table: "client_ledger_entries", timestampColumn: "updated_at" },
-  { table: "client_credit_allocations", timestampColumn: "allocated_at" },
-  { table: "client_payments", timestampColumn: "updated_at" },
-  { table: "client_payment_allocations", timestampColumn: "allocated_at" },
-  { table: "charge_document_versions", timestampColumn: "created_at" },
-  { table: "charge_status_history", timestampColumn: "created_at" },
-  // Modulo financeiro (Contas a Pagar) -- ate' aqui era so' local por PC;
-  // passa a compartilhar pra o PC fiscal (que lanca a nota de entrada) e o
-  // financeiro (que fecha o acerto) verem os mesmos dados. cost_centers,
-  // financial_accounts, payable_recurring_templates, payable_installment_groups
-  // e account_payable_allocations ficam de fora por enquanto (fora do escopo
-  // desta leva, ver plano).
-  { table: "expense_categories", timestampColumn: "updated_at" },
-  { table: "accounts_payable", timestampColumn: "updated_at" },
-  { table: "account_payable_operations", timestampColumn: "created_at" },
-  { table: "payable_payments", timestampColumn: "updated_at" },
-  { table: "payable_payment_allocations", timestampColumn: "allocated_at" },
-  { table: "payable_status_history", timestampColumn: "changed_at" },
-  { table: "payable_document_attachments", timestampColumn: "updated_at" },
-  // Fusao de cadastros de parceiro duplicados (ver mergeBusinessPartnerDuplicate) --
-  // ao baixar uma linha nova aqui, syncTableDown aplica a mesma fusao localmente,
-  // autocorrigindo PCs que ainda nao rodaram a limpeza.
-  { table: "business_partner_merges", timestampColumn: "created_at" },
-  // Login de funcionario passa a sincronizar entre os 4 PCs -- antes so'
-  // existia no PC onde foi cadastrado. roles/permissions/role_permissions
-  // ficam FORA de propositos: sao seed estatico (so' mudam via migration/
-  // codigo, nunca por acao do usuario no app), ja' nascem identicos em cada
-  // instalacao e nao tem coluna de timestamp pra sincronizar de forma
-  // incremental. So' entram as 3 tabelas que realmente mudam em tempo de
-  // execucao (cadastrar funcionario, trocar senha, atribuir role).
-  { table: "app_users", timestampColumn: "updated_at" },
-  { table: "user_credentials", timestampColumn: "password_changed_at" },
-  { table: "user_role_assignments", timestampColumn: "assigned_at" },
-  // Confirmacoes de negocio nunca sincronizavam entre PCs -- o modulo inteiro
-  // era local (nenhuma tabela deal_confirmation* existia no Postgres ate'
-  // agora). document_sequences ja' sincroniza desde antes, nao precisa
-  // entrar de novo aqui.
-  { table: "deal_confirmation_templates", timestampColumn: "updated_at" },
-  { table: "deal_clause_templates", timestampColumn: "updated_at" },
-  { table: "deal_confirmations", timestampColumn: "updated_at" },
-  { table: "deal_confirmation_parties", timestampColumn: "updated_at" },
-  { table: "deal_confirmation_items", timestampColumn: "updated_at" },
-  { table: "deal_confirmation_operations", timestampColumn: "created_at" },
-  { table: "deal_confirmation_fiscal_documents", timestampColumn: "created_at" },
-  { table: "deal_confirmation_clauses", timestampColumn: "updated_at" },
-  { table: "deal_payment_terms", timestampColumn: "updated_at" },
-  { table: "deal_confirmation_signers", timestampColumn: "updated_at" },
-  { table: "deal_confirmation_document_versions", timestampColumn: "created_at" },
-  { table: "deal_confirmation_status_history", timestampColumn: "changed_at" },
-  // Registro permanente de exclusao (ver pushTombstone/applyTombstone abaixo)
-  // -- pulled aqui como qualquer outra tabela quente, mas nunca empurrado em
-  // lote (entra em BULK_PUSH_MANAGED_TABLES): cada exclusao gera SEU proprio
-  // tombstone no momento em que acontece, nunca em lote.
-  { table: "sync_tombstones", timestampColumn: "deleted_at" }
-];
-
-// Algumas tabelas entram em HOT_SYNC_TABLES para serem PUXADAS dos outros PCs,
-// mas nao podem ser empurradas pelo reconciliador generico. Cada uma delas tem
-// um fluxo proprio ou restricao de seguranca no Supabase.
-const BULK_PUSH_MANAGED_TABLES = new Set([
-  "document_sequences",
-  "charge_status_history",
-  "payable_status_history",
-  "app_users",
-  "user_credentials",
-  "user_role_assignments",
-  "sync_tombstones",
-
-  // Hierarquias com pai/filhos e chaves naturais. Sao enviadas pelos metodos
-  // push*ToShared depois da reconciliacao de UUIDs, nunca pelo lote generico.
-  "fiscal_documents",
-  "fiscal_document_items",
-  "operations",
-  "fiscal_document_events",
-  "fiscal_document_merge_history",
-  "xml_import_jobs",
-  "xml_import_files",
-  "deal_confirmations",
-  "deal_confirmation_parties",
-  "deal_confirmation_items",
-  "deal_confirmation_operations",
-  "deal_confirmation_fiscal_documents",
-  "deal_confirmation_clauses",
-  "deal_payment_terms",
-  "deal_confirmation_signers",
-  "deal_confirmation_document_versions",
-  "deal_confirmation_status_history"
-]);
-
-// Tabelas onde um tombstone puxado de outro PC pode ser aplicado por um
-// DELETE simples (id = row_id), sem nenhuma tabela filha pra limpar junto.
-// fiscal_documents/client_charges/deal_confirmations/xml_import_jobs tem
-// filhas e por isso tem sua propria funcao de cascata (ver applyTombstone).
-const TOMBSTONE_APPLY_TABLES = new Set(HOT_SYNC_TABLES.map((entry) => entry.table));
-
-// Mesma lista usada por flushSharedPushOutbox() e getSharedPushOutboxPendingCount()
-// -- um so' lugar pra manter os "tipos" de push que passam pela fila de reenvio.
-const OUTBOX_PUSH_KINDS = [
-  "fiscal_document",
-  "xml_import_job",
-  "client_charge",
-  "deal_confirmation",
-  "account_payable",
-  "payable_payment",
-  "client_payment",
-  "client_ledger_entry",
-  "user",
-  "user_deletion",
-  "tombstone"
-];
-
-// Colunas boolean no Postgres (as mesmas colunas sao INTEGER 0/1 no SQLite
-// local) -- ao empurrar uma linha lida direto do SQLite pro Supabase, essas
-// colunas precisam virar true/false de verdade, senao o Postgres rejeita
-// (0/1 nao converte implicitamente pra boolean via PostgREST).
-const BOOLEAN_COLUMNS_BY_TABLE: Record<string, string[]> = {
-  fiscal_documents: ["has_pending_issues"],
-  operations: ["rate_was_manually_overridden"],
-  xml_import_jobs: ["include_subfolders"],
-  document_sequences: ["is_active"],
-  app_users: ["must_change_password"],
-  user_role_assignments: ["is_active"],
-  deal_confirmation_templates: ["show_broker", "show_commercial_values", "show_item_origins", "show_signature_blocks", "is_default", "is_active"],
-  deal_clause_templates: ["is_active"],
-  deal_confirmation_items: ["total_was_manually_overridden"],
-  deal_confirmation_clauses: ["is_visible"],
-  deal_confirmation_document_versions: ["generated_by_system", "is_current"]
-};
-
-function toSharedRow(row: DbRecord, table: string): DbRecord {
-  const booleanColumns = BOOLEAN_COLUMNS_BY_TABLE[table];
-  if (!booleanColumns) return row;
-  const converted: DbRecord = { ...row };
-  for (const column of booleanColumns) {
-    if (column in converted) converted[column] = Boolean(Number(converted[column]));
-  }
-  return converted;
-}
-
 export class AppRepository {
-  private readonly outbox: SharedPushOutbox;
-
-  constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories, private readonly sharedRepository?: SharedRepository) {
-    this.outbox = new SharedPushOutbox(db);
+  constructor(private readonly db: Database.Database, private readonly directories?: AppDirectories) {
+    this.repairLegacyReferencedCoffeeProducts();
   }
 
-  /**
-   * "Modo somente local" -- PC configurado pra nunca sincronizar com o
-   * Supabase (nem push nem pull), mesmo com sessao autenticada disponivel.
-   * Guarda em app_settings (mesmo padrao dos cursores de sync) pra sobreviver
-   * a reinicios do app sem depender do estado da sessao Supabase. Ativar
-   * tambem desconecta a sessao atual, ja que "somente local" e "conectado" se
-   * excluem -- assim a UI nao fica num estado ambiguo (conectado, mas ignorado).
-   */
-  isLocalOnlyMode(): boolean {
-    const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get("local_only_mode") as { value: string } | undefined;
-    return row?.value === "true";
-  }
-
-  async setLocalOnlyMode(enabled: boolean): Promise<void> {
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO app_settings (id, key, value, value_type, created_at, updated_at)
-      VALUES (@id, @key, @value, 'boolean', @now, @now)
-      ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = @now
-    `).run({ id: randomUUID(), key: "local_only_mode", value: enabled ? "true" : "false", now });
-    if (enabled && this.sharedRepository) {
-      await this.sharedRepository.signOut().catch((error) => log.warn("Falha ao desconectar do Supabase ao ativar o modo somente local", error instanceof Error ? error.message : error));
-    }
-  }
-
-  /**
-   * Reenvia pro Supabase tudo que falhou em pushes anteriores (ver
-   * sharedPushOutbox.ts) -- chamado no comeco de syncSharedDataDown(), ou
-   * seja, tanto no poll automatico de 20s quanto no "Sincronizar agora"
-   * manual. So' assim um dado que so' existe neste PC (por causa de uma falha
-   * de rede/Supabase momentanea) tem uma chance real de chegar nos outros.
-   */
-  async flushSharedPushOutbox(): Promise<{ retried: number; stillPending: number }> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return { retried: 0, stillPending: 0 };
-    return this.outbox.flush(OUTBOX_PUSH_KINDS, (kind, id) => this.replayOutboxPush(kind, id));
-  }
-
-  /**
-   * Quantidade real de gravacoes que ainda nao chegaram no Supabase (fila de
-   * reenvio). Usado pelo indicador de sincronizacao no rodape -- "Sincronizado
-   * com os outros PCs" nunca pode aparecer enquanto isso for maior que zero,
-   * senao o usuario acha que os outros PCs ja tem o dado quando na verdade so'
-   * existe neste PC (ver Req 7 da correcao de numeracao de confirmacoes).
-   */
-  getSharedPushOutboxPendingCount(): number {
-    return this.outbox.list(OUTBOX_PUSH_KINDS).length;
-  }
-
-  /** Usado pelo poll de 20s (main/index.ts) pra alimentar o badge de conexao com o estado real apos cada ciclo, inclusive uma reconexao automatica. */
-  async isSharedConnected(): Promise<boolean> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return false;
-    return Boolean(await this.sharedRepository.getSession().catch(() => null));
-  }
-
-  private async replayOutboxPush(kind: string, id: string): Promise<void> {
-    switch (kind) {
-      case "fiscal_document":
-        return this.pushFiscalDocumentToShared(id);
-      case "xml_import_job":
-        return this.pushXmlImportJobToShared(id);
-      case "client_charge":
-        return this.pushClientChargeToShared(id);
-      case "deal_confirmation":
-        return this.pushDealConfirmationToShared(id);
-      case "account_payable":
-        return this.pushAccountPayableToShared(id);
-      case "payable_payment":
-        return this.pushPayablePaymentToShared(id);
-      case "client_payment":
-        return this.pushClientPaymentToShared(id);
-      case "client_ledger_entry":
-        return this.pushClientLedgerEntryToShared(id);
-      case "user":
-        return replayUserPush(this.db, this.sharedRepository!, id);
-      case "user_deletion":
-        return replayUserDeletionPush(this.db, this.sharedRepository!, id);
-      case "tombstone": {
-        // entity_id guarda "tabela:id" (ver pushTombstone) -- so' o "id" puro
-        // nao bastaria pra saber qual tabela reenviar.
-        const sepIndex = id.indexOf(":");
-        if (sepIndex === -1) return;
-        return this.pushTombstone(id.slice(0, sepIndex), id.slice(sepIndex + 1));
-      }
-      default:
-        return;
-    }
-  }
-
-  /**
-   * Puxa do Supabase pro cache local tudo que mudou desde a ultima vez, pras
-   * tabelas "quentes" (ver HOT_SYNC_TABLES) -- e' assim que um PC fica
-   * sabendo do que outro PC lancou. Chamado periodicamente (ver main/index.ts)
-   * e sob demanda (ex: ao abrir a tela de Notas Fiscais). Sem sessao
-   * autenticada, tenta recuperar a sessao primeiro (ver
-   * SharedRepository.attemptSessionRecovery -- cobre o caso de uma
-   * atualizacao do app ter relancado o processo bem no instante em que a
-   * rede ainda nao estava pronta); se mesmo assim continuar sem sessao, e'
-   * um no-op silencioso (RLS bloquearia a leitura mesmo).
-   */
-  async syncSharedDataDown(): Promise<Array<{ table: string; pulled: number }>> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return [];
-    await this.sharedRepository.attemptSessionRecovery().catch(() => false);
-    // Reenvia pushes pendentes ANTES de puxar -- assim, se a rede voltou
-    // desde o ultimo ciclo, o que so' existia neste PC ja chega no Supabase
-    // antes deste PC puxar (evita puxar um estado velho por cima do que
-    // acabou de conseguir empurrar). Roda tanto no poll de 20s quanto no
-    // "Sincronizar agora" manual, ja que os dois passam por aqui.
-    await this.flushSharedPushOutbox().catch((error) => log.warn("Falha ao reenviar fila pendente pro Supabase", error instanceof Error ? error.message : String(error)));
-    const results: Array<{ table: string; pulled: number }> = [];
-    for (const { table, timestampColumn } of HOT_SYNC_TABLES) {
-      try {
-        results.push(await this.syncTableDown(table, timestampColumn));
-      } catch (error) {
-        // Uma tabela com erro (ex: rede caiu no meio) nunca pode travar as
-        // demais -- cada tabela e' independente, senao um problema so' numa
-        // delas (a mais "no fim da fila") deixaria o resto pra sempre parado.
-        log.warn(`Falha ao sincronizar tabela ${table} (pulando pra proxima)`, { error: error instanceof Error ? error.message : String(error) });
-        results.push({ table, pulled: 0 });
-      }
-    }
-    return results;
-  }
-
-  /**
-   * "Sincronizacao completa" manual (Configuracoes) -- apaga o cursor salvo
-   * de cada tabela compartilhada e chama syncSharedDataDown() em seguida,
-   * forcando esse PC a rebaixar TUDO desde o inicio, nao so' o que mudou
-   * depois do ultimo cursor salvo. Existe pra corrigir o caso em que o
-   * cursor deste PC avancou alem de uma linha antiga que ele nunca chegou a
-   * baixar de verdade (ex: PC que so' comecou a sincronizar uma tabela nova
-   * depois que ela ja tinha historico no Supabase) -- sem isso, esse PC
-   * ficaria pra sempre sem ver aquelas linhas antigas, ja que o pull normal
-   * so' busca WHERE updated_at > cursor.
-   */
-  async resetSyncCursorsAndResync(): Promise<Array<{ table: string; pulled: number }>> {
-    const deleteCursor = this.db.prepare("DELETE FROM app_settings WHERE key = ?");
-    for (const { table } of HOT_SYNC_TABLES) deleteCursor.run(`sync_cursor_${table}`);
-    return this.syncSharedDataDown();
-  }
-
-  private async syncTableDown(table: string, timestampColumn: string): Promise<{ table: string; pulled: number }> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return { table, pulled: 0 };
-    const cursorKey = `sync_cursor_${table}`;
-    const cursorRow = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(cursorKey) as { value: string } | undefined;
-    const since = cursorRow?.value ?? "1970-01-01T00:00:00.000Z";
-    const rows = await this.sharedRepository.pullChangesSince(table, timestampColumn, since);
-    if (rows.length === 0) return { table, pulled: 0 };
-
-    // Cada linha aplica numa transacao PROPRIA (nao uma so' pro lote inteiro)
-    // -- assim uma linha com conflito real (ex: UNIQUE duplicado por dado
-    // gerado localmente em dois PCs antes de conectar) so' fica de fora dela
-    // mesma, sem derrubar as outras dezenas/centenas de linhas validas do
-    // mesmo lote. pullChangesSince ja devolve as linhas em ordem crescente de
-    // timestamp -- o cursor so' pode avancar atraves da primeira sequencia
-    // CONTINUA de sucessos a partir do inicio do lote. Se avancasse ate' a
-    // MAIOR linha aplicada mesmo quando uma linha ANTERIOR (timestamp menor)
-    // falhou no meio do caminho, a proxima sincronizacao nunca mais tentaria
-    // de novo essa linha que falhou (WHERE updated_at > cursor a excluiria
-    // pra sempre) -- foi exatamente isso que fez ~385 empresas desvinculadas
-    // sumirem de um PC sem nenhum erro visivel: uma linha no meio do lote deu
-    // erro, uma linha mais recente no mesmo lote teve sucesso, o cursor pulou
-    // pra frente da que falhou.
-    let applied = 0;
-    let latestApplied = since;
-    let sawFailure = false;
-    for (const row of rows) {
-      try {
-        this.db.transaction(() => {
-          if (table === "sync_tombstones") {
-            this.recordLocalTombstone(String(row.table_name), String(row.row_id), String(row.deleted_at));
-            this.applyTombstone(String(row.table_name), String(row.row_id));
-          } else {
-            this.upsertLocalRow(table, row);
-          }
-        })();
-        applied += 1;
-        if (table === "business_partner_merges") {
-          // Fusao decidida por OUTRO PC -- aplica localmente aqui tambem (sem
-          // reempurrar pro Supabase, ja veio de la'), autocorrigindo este PC.
-          try {
-            const canonical = this.getBusinessPartner(String(row.canonical_partner_id));
-            const duplicate = this.getBusinessPartner(String(row.duplicate_partner_id));
-            await this.applyBusinessPartnerMerge(canonical, duplicate, row.matched_cnpj ? String(row.matched_cnpj) : null, String(row.applied_at ?? row.created_at), false);
-          } catch (mergeError) {
-            log.warn("Falha ao aplicar fusao de parceiros sincronizada", { id: row.id, error: mergeError instanceof Error ? mergeError.message : String(mergeError) });
-          }
-        }
-        if (!sawFailure) {
-          const value = String(row[timestampColumn]);
-          if (value > latestApplied) latestApplied = value;
-        }
-      } catch (error) {
-        sawFailure = true;
-        log.warn(`Falha ao aplicar linha sincronizada (${table})`, { id: row.id, error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-
-    const now = new Date().toISOString();
-    this.db.prepare(
-      `INSERT INTO app_settings (id, key, value, value_type, created_at, updated_at) VALUES (@id, @key, @value, 'string', @now, @now)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    ).run({ id: randomUUID(), key: cursorKey, value: latestApplied, now });
-    return { table, pulled: applied };
-  }
-
-  /**
-   * Empurra pro Supabase o estado atual (linha inteira, via upsert) de uma
-   * nota fiscal + itens + operacoes + eventos ja gravados localmente --
-   * chamado DEPOIS que a escrita local sincrona ja comitou (nunca durante,
-   * ja que o fluxo local roda dentro de this.db.transaction, que nao aceita
-   * await). E' assim que outro PC fica sabendo de uma nota criada/editada
-   * neste PC, seja lancamento manual ou importacao de XML.
-   */
-  async pushFiscalDocumentToShared(fiscalDocumentId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const doc = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as DbRecord | undefined;
-      if (!doc) return;
-      const accessKey = typeof doc.access_key === "string" && doc.access_key.trim() ? doc.access_key.trim() : null;
-      const existing = accessKey ? await this.sharedRepository.findOne("fiscal_documents", { access_key: accessKey }) : null;
-      const remoteFiscalDocumentId = existing?.id ? String(existing.id) : fiscalDocumentId;
-      const sharedDoc = toSharedRow(doc, "fiscal_documents");
-      if (remoteFiscalDocumentId !== fiscalDocumentId) {
-        const { id: _ignoredId, ...patch } = sharedDoc;
-        await this.sharedRepository.updateRow("fiscal_documents", remoteFiscalDocumentId, patch);
-      } else {
-        await this.sharedRepository.upsertRow("fiscal_documents", sharedDoc);
-      }
-      const items = this.db.prepare("SELECT * FROM fiscal_document_items WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-      for (const item of items) {
-        const row = toSharedRow(item, "fiscal_document_items");
-        row.fiscal_document_id = remoteFiscalDocumentId;
-        await this.sharedRepository.upsertRow("fiscal_document_items", row);
-      }
-      const operations = this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-      for (const operation of operations) {
-        const row = toSharedRow(operation, "operations");
-        row.fiscal_document_id = remoteFiscalDocumentId;
-        await this.sharedRepository.upsertRow("operations", row);
-      }
-      const events = this.db.prepare("SELECT * FROM fiscal_document_events WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-      for (const event of events) await this.sharedRepository.upsertRow("fiscal_document_events", toSharedRow(event, "fiscal_document_events"));
-      const mergeHistory = this.db.prepare("SELECT * FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").all(fiscalDocumentId) as DbRecord[];
-      for (const entry of mergeHistory) await this.sharedRepository.upsertRow("fiscal_document_merge_history", toSharedRow(entry, "fiscal_document_merge_history"));
-    } catch (error) {
-      this.outbox.enqueue("fiscal_document", fiscalDocumentId, error);
-      throw error;
-    }
-  }
-
-  /** Mesma ideia de pushFiscalDocumentToShared, pro job de importacao de XML e seus arquivos. */
-  async pushXmlImportJobToShared(jobId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const job = this.db.prepare("SELECT * FROM xml_import_jobs WHERE id = ?").get(jobId) as DbRecord | undefined;
-      if (!job) return;
-      await this.sharedRepository.upsertRow("xml_import_jobs", toSharedRow(job, "xml_import_jobs"));
-      const files = this.db.prepare("SELECT * FROM xml_import_files WHERE import_job_id = ?").all(jobId) as DbRecord[];
-      for (const file of files) {
-        const row = toSharedRow(file, "xml_import_files");
-        row.import_job_id = jobId;
-        await this.sharedRepository.upsertRow("xml_import_files", row);
-      }
-    } catch (error) {
-      this.outbox.enqueue("xml_import_job", jobId, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Empurra pro Supabase o estado atual de uma cobranca + operacoes
-   * vinculadas + ajustes + alocacoes de pagamento + versoes de documento +
-   * historico de status -- mesma logica de pushFiscalDocumentToShared,
-   * chamado DEPOIS que a escrita local ja comitou.
-   */
-  async pushClientChargeToShared(clientChargeId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const charge = this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(clientChargeId) as DbRecord | undefined;
-      if (!charge) return;
-      await this.sharedRepository.upsertRow("client_charges", toSharedRow(charge, "client_charges"));
-      const operations = this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      // client_charge_operations.operation_id referencia operations(id) --
-      // garante que a nota da operacao ja foi empurrada (mesma logica de
-      // pushDealConfirmationToShared) antes do vinculo, senao a FK falha se a
-      // nota nunca tiver sido sincronizada antes desta cobranca.
-      const pushedFiscalDocumentIds = new Set<string>();
-      for (const row of operations) {
-        const operation = this.db.prepare("SELECT fiscal_document_id FROM operations WHERE id = ?").get(String(row.operation_id)) as { fiscal_document_id: string | null } | undefined;
-        if (operation?.fiscal_document_id && !pushedFiscalDocumentIds.has(operation.fiscal_document_id)) {
-          await this.pushFiscalDocumentToShared(operation.fiscal_document_id);
-          pushedFiscalDocumentIds.add(operation.fiscal_document_id);
-        }
-        await this.sharedRepository.upsertRow("client_charge_operations", toSharedRow(row, "client_charge_operations"));
-      }
-      const adjustments = this.db.prepare("SELECT * FROM client_charge_adjustments WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      for (const row of adjustments) await this.sharedRepository.upsertRow("client_charge_adjustments", toSharedRow(row, "client_charge_adjustments"));
-      const paymentAllocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      for (const row of paymentAllocations) await this.sharedRepository.upsertRow("client_payment_allocations", toSharedRow(row, "client_payment_allocations"));
-      const creditAllocations = this.db.prepare("SELECT * FROM client_credit_allocations WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      for (const row of creditAllocations) await this.sharedRepository.upsertRow("client_credit_allocations", toSharedRow(row, "client_credit_allocations"));
-      const documentVersions = this.db.prepare("SELECT * FROM charge_document_versions WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      for (const row of documentVersions) await this.sharedRepository.upsertRow("charge_document_versions", toSharedRow(row, "charge_document_versions"));
-      // Historico de status e' auditoria local e nao tem permissao de escrita no
-      // writer generico do Supabase. O status atual da cobranca ja sobe em
-      // client_charges; nao bloqueamos a sync inteira por causa do historico.
-      const ledgerEntries = this.db.prepare("SELECT * FROM client_ledger_entries WHERE client_charge_id = ?").all(clientChargeId) as DbRecord[];
-      for (const row of ledgerEntries) await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(row, "client_ledger_entries"));
-    } catch (error) {
-      this.outbox.enqueue("client_charge", clientChargeId, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Empurra pro Supabase o estado atual de uma confirmacao de negocio +
-   * partes + itens + operacoes/notas vinculadas + clausulas + condicoes de
-   * pagamento + assinantes + versoes de documento (so' path/hash, o PDF em
-   * si fica local, mesmo padrao de charge_document_versions) + historico de
-   * status -- mesma logica de pushClientChargeToShared, chamado DEPOIS que a
-   * escrita local ja comitou.
-   */
-  async pushDealConfirmationToShared(dealConfirmationId: string): Promise<void> {
-    if (this.isLocalOnlyMode()) return;
-    if (!this.sharedRepository) {
-      throw new Error("Conexao compartilhada com o Supabase nao foi inicializada.");
-    }
-    try {
-      const confirmation = this.db.prepare("SELECT * FROM deal_confirmations WHERE id = ?").get(dealConfirmationId) as DbRecord | undefined;
-      if (!confirmation) {
-        this.outbox.discard("deal_confirmation", dealConfirmationId);
-        return;
-      }
-      const confirmationNumber = typeof confirmation.confirmation_number === "string" && confirmation.confirmation_number.trim()
-        ? confirmation.confirmation_number.trim()
-        : null;
-      let existing = confirmationNumber
-        ? await this.sharedRepository.findOne("deal_confirmations", {
-            organization_id: confirmation.organization_id,
-            own_legal_entity_id: confirmation.own_legal_entity_id,
-            confirmation_number: confirmationNumber
-          })
-        : null;
-
-      const normalize = (value: unknown): string => String(value ?? "").trim().toUpperCase();
-      const sameNaturalKey = (row: DbRecord): boolean => {
-        if (!confirmation) return false;
-        return (
-          normalize(row.organization_id) === normalize(confirmation.organization_id) &&
-          normalize(row.own_legal_entity_id) === normalize(confirmation.own_legal_entity_id) &&
-          normalize(row.confirmation_number) === normalize(confirmationNumber)
-        );
-      };
-
-      // PostgREST pode nao devolver a linha no findOne quando ha pequenas
-      // diferencas de espaco/caixa em dados antigos. O indice unico do banco,
-      // porem, ainda pode acusar conflito. Faz uma segunda busca normalizada.
-      if (!existing && confirmationNumber) {
-        const candidates = await this.sharedRepository.listAll("deal_confirmations", "confirmation_number");
-        existing = candidates.find((row) => sameNaturalKey(row)) ?? null;
-      }
-
-      // Conflito de número nunca é resolvido automaticamente. Renumerar um
-      // rascunho durante o push ou redirecionar UUID pode fazer um fechamento
-      // desaparecer e reutilizar números. Preserva o registro local e bloqueia.
-      if (existing?.id && String(existing.id) !== dealConfirmationId) {
-        throw new Error(
-          `Conflito de numeração: ${confirmationNumber} já pertence à confirmação ${String(existing.id)} no servidor. ` +
-          "O registro local foi preservado e nenhuma alteração remota foi feita."
-        );
-      }
-
-      const remoteDealConfirmationId = existing?.id ? String(existing.id) : dealConfirmationId;
-      const sharedConfirmation = toSharedRow(confirmation, "deal_confirmations");
-
-      try {
-        if (remoteDealConfirmationId !== dealConfirmationId) {
-          const { id: _ignoredId, ...patch } = sharedConfirmation;
-          await this.sharedRepository.updateRow("deal_confirmations", remoteDealConfirmationId, patch);
-          this.outbox.remap("deal_confirmation", dealConfirmationId, remoteDealConfirmationId);
-        } else {
-          await this.sharedRepository.upsertRow("deal_confirmations", sharedConfirmation);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (/Ja existe um registro com esses dados/i.test(message) && confirmationNumber) {
-          throw new Error(
-            `Conflito de numeração ao sincronizar ${confirmationNumber}. ` +
-            "O registro local foi preservado; o sistema não redirecionou nem sobrescreveu outra confirmação."
-          );
-        }
-        throw error;
-      }
-      const parties = this.db.prepare("SELECT * FROM deal_confirmation_parties WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of parties) {
-        const row = toSharedRow(source, "deal_confirmation_parties");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_parties", row);
-      }
-      const items = this.db.prepare("SELECT * FROM deal_confirmation_items WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of items) {
-        const row = toSharedRow(source, "deal_confirmation_items");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_items", row);
-      }
-      // Garante que toda nota vinculada (e as operacoes dela, empurradas junto
-      // por pushFiscalDocumentToShared) ja existe no servidor -- com o id
-      // correto, mesmo se a nota tiver sido redirecionada por access_key --
-      // ANTES de gravar qualquer vinculo (deal_confirmation_operations e
-      // deal_confirmation_fiscal_documents apontam pra essas linhas). Sem
-      // isso a FK falha e a confirmacao inteira trava sem sincronizar nada
-      // (reproduz o erro real visto em producao: "violates foreign key
-      // constraint deal_confirmation_fiscal_documents_fiscal_document_id_fkey").
-      const linkedFiscalDocuments = this.db.prepare("SELECT * FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      const remoteFiscalDocumentIdByLocalId = new Map<string, string>();
-      for (const source of linkedFiscalDocuments) {
-        const localFiscalDocumentId = String(source.fiscal_document_id);
-        await this.pushFiscalDocumentToShared(localFiscalDocumentId);
-        const localDoc = this.db.prepare("SELECT access_key FROM fiscal_documents WHERE id = ?").get(localFiscalDocumentId) as { access_key: string | null } | undefined;
-        const accessKey = localDoc?.access_key?.trim() || null;
-        const existingRemoteDoc = accessKey ? await this.sharedRepository.findOne("fiscal_documents", { access_key: accessKey }) : null;
-        remoteFiscalDocumentIdByLocalId.set(localFiscalDocumentId, existingRemoteDoc?.id ? String(existingRemoteDoc.id) : localFiscalDocumentId);
-      }
-
-      const operations = this.db.prepare("SELECT * FROM deal_confirmation_operations WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of operations) {
-        const row = toSharedRow(source, "deal_confirmation_operations");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_operations", row);
-      }
-      for (const source of linkedFiscalDocuments) {
-        const localFiscalDocumentId = String(source.fiscal_document_id);
-        const row = toSharedRow(source, "deal_confirmation_fiscal_documents");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        row.fiscal_document_id = remoteFiscalDocumentIdByLocalId.get(localFiscalDocumentId) ?? localFiscalDocumentId;
-        await this.sharedRepository.upsertRow("deal_confirmation_fiscal_documents", row);
-      }
-      const clauses = this.db.prepare("SELECT * FROM deal_confirmation_clauses WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of clauses) {
-        const row = toSharedRow(source, "deal_confirmation_clauses");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_clauses", row);
-      }
-      const paymentTerms = this.db.prepare("SELECT * FROM deal_payment_terms WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of paymentTerms) {
-        const row = toSharedRow(source, "deal_payment_terms");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_payment_terms", row);
-      }
-      const signers = this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of signers) {
-        const row = toSharedRow(source, "deal_confirmation_signers");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_signers", row);
-      }
-      const documentVersions = this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of documentVersions) {
-        const row = toSharedRow(source, "deal_confirmation_document_versions");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_document_versions", row);
-      }
-      const statusHistory = this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ?").all(dealConfirmationId) as DbRecord[];
-      for (const source of statusHistory) {
-        const row = toSharedRow(source, "deal_confirmation_status_history");
-        row.deal_confirmation_id = remoteDealConfirmationId;
-        await this.sharedRepository.upsertRow("deal_confirmation_status_history", row);
-      }
-    } catch (error) {
-      this.outbox.enqueue("deal_confirmation", dealConfirmationId, error);
-      throw error;
-    }
-  }
-
-  async pushDealConfirmationTemplateToShared(id: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const row = this.db.prepare("SELECT * FROM deal_confirmation_templates WHERE id = ?").get(id) as DbRecord | undefined;
-    if (row) await this.sharedRepository.upsertRow("deal_confirmation_templates", toSharedRow(row, "deal_confirmation_templates"));
-  }
-
-  async pushDealClauseTemplateToShared(id: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const row = this.db.prepare("SELECT * FROM deal_clause_templates WHERE id = ?").get(id) as DbRecord | undefined;
-    if (row) await this.sharedRepository.upsertRow("deal_clause_templates", toSharedRow(row, "deal_clause_templates"));
-  }
-
-  /**
-   * Empurra pro Supabase o estado atual de uma conta a pagar + operacoes de
-   * compra vinculadas + historico de status + anexos -- mesma logica de
-   * pushClientChargeToShared, agora que Contas a Pagar deixou de ser so'
-   * local (fiscal lanca a nota, financeiro precisa ver e pagar de outro PC).
-   */
-  async pushAccountPayableToShared(accountPayableId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const payable = this.db.prepare("SELECT * FROM accounts_payable WHERE id = ?").get(accountPayableId) as DbRecord | undefined;
-      if (!payable) return;
-      await this.sharedRepository.upsertRow("accounts_payable", toSharedRow(payable, "accounts_payable"));
-      const operations = this.db.prepare("SELECT * FROM account_payable_operations WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-      // account_payable_operations.operation_id referencia operations(id) --
-      // mesma garantia de pushClientChargeToShared: empurra a nota da
-      // operacao antes do vinculo, senao a FK falha se a nota nunca tiver
-      // sido sincronizada antes desta conta a pagar.
-      const pushedFiscalDocumentIds = new Set<string>();
-      for (const row of operations) {
-        const operation = this.db.prepare("SELECT fiscal_document_id FROM operations WHERE id = ?").get(String(row.operation_id)) as { fiscal_document_id: string | null } | undefined;
-        if (operation?.fiscal_document_id && !pushedFiscalDocumentIds.has(operation.fiscal_document_id)) {
-          await this.pushFiscalDocumentToShared(operation.fiscal_document_id);
-          pushedFiscalDocumentIds.add(operation.fiscal_document_id);
-        }
-        await this.sharedRepository.upsertRow("account_payable_operations", toSharedRow(row, "account_payable_operations"));
-      }
-      // payable_status_history e' append-only no Postgres (so' tem RLS policy
-      // de INSERT, ver migration 0010) -- reenviar com upsertRow reenviaria
-      // TODAS as linhas antigas de novo a cada mudanca nesta conta a pagar,
-      // e as que ja existem cairiam no caminho de UPDATE, sem policy pra
-      // autorizar (mesmo bug corrigido em pushTombstone).
-      const statusHistory = this.db.prepare("SELECT * FROM payable_status_history WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-      for (const row of statusHistory) await this.sharedRepository.insertIfMissing("payable_status_history", toSharedRow(row, "payable_status_history"));
-      const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE account_payable_id = ?").all(accountPayableId) as DbRecord[];
-      for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
-    } catch (error) {
-      this.outbox.enqueue("account_payable", accountPayableId, error);
-      throw error;
-    }
-  }
-
-  /** Empurra um pagamento de conta a pagar + suas alocacoes. Ver pushAccountPayableToShared. */
-  async pushPayablePaymentToShared(payablePaymentId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const payment = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(payablePaymentId) as DbRecord | undefined;
-      if (!payment) return;
-      await this.sharedRepository.upsertRow("payable_payments", toSharedRow(payment, "payable_payments"));
-      const allocations = this.db.prepare("SELECT * FROM payable_payment_allocations WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
-      for (const row of allocations) await this.sharedRepository.upsertRow("payable_payment_allocations", toSharedRow(row, "payable_payment_allocations"));
-      const attachments = this.db.prepare("SELECT * FROM payable_document_attachments WHERE payable_payment_id = ?").all(payablePaymentId) as DbRecord[];
-      for (const row of attachments) await this.sharedRepository.upsertRow("payable_document_attachments", toSharedRow(row, "payable_document_attachments"));
-    } catch (error) {
-      this.outbox.enqueue("payable_payment", payablePaymentId, error);
-      throw error;
-    }
-  }
-
-  /** Empurra um pagamento avulso (nao vinculado a nenhuma cobranca especifica ainda). */
-  async pushClientPaymentToShared(clientPaymentId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const payment = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(clientPaymentId) as DbRecord | undefined;
-      if (!payment) return;
-      await this.sharedRepository.upsertRow("client_payments", toSharedRow(payment, "client_payments"));
-    } catch (error) {
-      this.outbox.enqueue("client_payment", clientPaymentId, error);
-      throw error;
-    }
-  }
-
-  /** Empurra um lancamento avulso de conta-corrente (adiantamento/credito sem cobranca vinculada ainda). */
-  async pushClientLedgerEntryToShared(ledgerEntryId: string): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      const entry = this.db.prepare("SELECT * FROM client_ledger_entries WHERE id = ?").get(ledgerEntryId) as DbRecord | undefined;
-      if (!entry) return;
-      await this.sharedRepository.upsertRow("client_ledger_entries", toSharedRow(entry, "client_ledger_entries"));
-    } catch (error) {
-      this.outbox.enqueue("client_ledger_entry", ledgerEntryId, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Antes de empurrar legal_entities, corrige o caso de um CNPJ terceirizado
-   * (TERC-XML, ver getOrCreateThirdPartyLegalEntityFromXml) ter sido criado
-   * de forma independente em dois PCs diferentes antes de sincronizar entre
-   * si -- cada um com um id aleatorio proprio (bug ja corrigido na criacao,
-   * mas registros antigos criados antes da correcao ainda existem). Se o
-   * Supabase ja tem uma linha com o MESMO cnpj sob OUTRO id, adota o id do
-   * Supabase localmente (redireciona toda referencia local e remove o
-   * duplicado) em vez de tentar empurrar um id que colide no indice unico de
-   * cnpj -- e' esse conflito que gerava "Ja existe um registro com esses
-   * dados" e travava fiscal_documents/xml_import_files em cascata (FK pra' um
-   * own_legal_entity_id que nunca conseguia subir).
-   *
-   * O redirecionamento e' generico (descobre via PRAGMA foreign_key_list toda
-   * tabela/coluna que referencia legal_entities) em vez de uma lista
-   * hardcoded -- dezenas de tabelas tem own_legal_entity_id/legal_entity_id,
-   * e uma lista manual ficaria desatualizada a cada tabela nova.
-   */
-  private async reconcileThirdPartyLegalEntityIds(): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const localThirdParty = this.db.prepare(
-      "SELECT id, cnpj FROM legal_entities WHERE document_prefix = 'TERC-XML' AND cnpj IS NOT NULL"
-    ).all() as Array<{ id: string; cnpj: string }>;
-    if (localThirdParty.length === 0) return;
-    let sharedRows: Array<{ id: string; cnpj: string | null }>;
-    try {
-      sharedRows = (await this.withTimeout(this.sharedRepository.listAll("legal_entities", "cnpj"), 15_000, "Tempo esgotado ao consultar legal_entities.")) as Array<{ id: string; cnpj: string | null }>;
-    } catch {
-      return;
-    }
-    const sharedIdByCnpj = new Map(sharedRows.filter((row) => row.cnpj).map((row) => [row.cnpj as string, row.id]));
-    const toRedirect = localThirdParty.filter((local) => {
-      const sharedId = sharedIdByCnpj.get(local.cnpj);
-      return sharedId && sharedId !== local.id;
-    });
-    if (toRedirect.length === 0) return;
-    const referencingColumns = this.findColumnsReferencing("legal_entities");
-    const transaction = this.db.transaction(() => {
-      for (const local of toRedirect) {
-        const sharedId = sharedIdByCnpj.get(local.cnpj) as string;
-        // O id do Supabase ainda nao existe localmente -- cria a linha aqui
-        // primeiro (copiando os dados do registro local, so' trocando o id),
-        // senao o redirecionamento abaixo violaria a FK (apontar pra' um id
-        // que a tabela legal_entities local nao conhece). Precisa liberar o
-        // cnpj do registro antigo ANTES de inserir o novo, senao o indice
-        // unico de cnpj rejeita (as duas linhas coexistiriam brevemente).
-        const localRow = this.db.prepare("SELECT * FROM legal_entities WHERE id = ?").get(local.id) as DbRecord;
-        this.db.prepare("UPDATE legal_entities SET cnpj = NULL WHERE id = ?").run(local.id);
-        const columns = Object.keys(localRow).filter((column) => column !== "id");
-        this.db.prepare(
-          `INSERT OR IGNORE INTO legal_entities (id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})`
-        ).run(sharedId, ...columns.map((column) => localRow[column]));
-        for (const { table, column } of referencingColumns) {
-          this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`).run(sharedId, local.id);
-        }
-        this.db.prepare("DELETE FROM legal_entities WHERE id = ?").run(local.id);
-      }
-    });
-    transaction();
-  }
 
   /** Descobre, via PRAGMA foreign_key_list, toda tabela/coluna que referencia `referencedTable(id)` (inclui auto-referencia, ex: expense_categories.parent_category_id). */
   private findColumnsReferencing(referencedTable: string): Array<{ table: string; column: string }> {
@@ -1037,459 +235,23 @@ export class AppRepository {
   }
 
   /**
-   * Mesmo problema/correcao de reconcileThirdPartyLegalEntityIds, agora pra
-   * expense_categories: categorias-padrao criadas ANTES da correcao de id
-   * deterministico (ensureDefaultExpenseCategories) ainda existem localmente
-   * com id aleatorio antigo -- se o Supabase ja tem a MESMA categoria
-   * (organization_id, code) sob OUTRO id (de outro PC que sincronizou depois
-   * da correcao), o push colide no indice unico em vez de simplesmente
-   * atualizar. Adota o id do Supabase localmente antes de empurrar.
-   */
-  private async reconcileDuplicateExpenseCategories(): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const localRows = this.db.prepare("SELECT * FROM expense_categories WHERE code IS NOT NULL").all() as DbRecord[];
-    if (localRows.length === 0) return;
-    let sharedRows: Array<{ id: string; organization_id: string; code: string | null }>;
-    try {
-      sharedRows = (await this.withTimeout(this.sharedRepository.listAll("expense_categories", "code"), 15_000, "Tempo esgotado ao consultar expense_categories.")) as Array<{ id: string; organization_id: string; code: string | null }>;
-    } catch {
-      return;
-    }
-    const keyOf = (organizationId: unknown, code: unknown): string => `${organizationId}::${code}`;
-    const sharedIdByKey = new Map(sharedRows.filter((row) => row.code).map((row) => [keyOf(row.organization_id, row.code), row.id]));
-    const toRedirect = localRows.filter((local) => {
-      const sharedId = sharedIdByKey.get(keyOf(local.organization_id, local.code));
-      return sharedId && sharedId !== local.id;
-    });
-    if (toRedirect.length === 0) return;
-    const referencingColumns = this.findColumnsReferencing("expense_categories");
-    const transaction = this.db.transaction(() => {
-      for (const local of toRedirect) {
-        const sharedId = sharedIdByKey.get(keyOf(local.organization_id, local.code)) as string;
-        // Libera o slot do indice unico (organization_id, code) antes de
-        // inserir a linha nova sob o id do Supabase.
-        this.db.prepare("UPDATE expense_categories SET code = NULL WHERE id = ?").run(local.id);
-        const columns = Object.keys(local).filter((column) => column !== "id");
-        this.db.prepare(
-          `INSERT OR IGNORE INTO expense_categories (id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})`
-        ).run(sharedId, ...columns.map((column) => local[column]));
-        for (const { table, column } of referencingColumns) {
-          this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`).run(sharedId, local.id);
-        }
-        this.db.prepare("DELETE FROM expense_categories WHERE id = ?").run(local.id);
-      }
-    });
-    transaction();
-  }
-
-  /**
-   * Troca localmente um UUID por outro ja existente no Supabase, preservando
-   * todas as referencias por FK. A linha remota passa a ser a identidade
-   * canonica, evitando duplicidade e falhas em cascata nos registros filhos.
-   */
-  private redirectLocalPrimaryKey(table: string, localId: string, sharedId: string, releaseUniqueColumns: string[] = []): void {
-    if (localId === sharedId) return;
-    const localRow = this.db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(localId) as DbRecord | undefined;
-    if (!localRow) return;
-
-    const references = this.findColumnsReferencing(table);
-    const transaction = this.db.transaction(() => {
-      for (const column of releaseUniqueColumns) {
-        if (column in localRow) this.db.prepare(`UPDATE ${table} SET ${column} = NULL WHERE id = ?`).run(localId);
-      }
-
-      const columns = Object.keys(localRow).filter((column) => column !== "id");
-      this.db.prepare(
-        `INSERT OR IGNORE INTO ${table} (id, ${columns.join(", ")}) VALUES (?, ${columns.map(() => "?").join(", ")})`
-      ).run(sharedId, ...columns.map((column) => localRow[column]));
-
-      for (const { table: referencingTable, column } of references) {
-        this.db.prepare(`UPDATE ${referencingTable} SET ${column} = ? WHERE ${column} = ?`).run(sharedId, localId);
-      }
-
-      this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(localId);
-    });
-    transaction();
-  }
-
-  private async reconcileDuplicateProducts(): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const localRows = this.db.prepare("SELECT id, organization_id, code FROM products WHERE code IS NOT NULL").all() as Array<{ id: string; organization_id: string; code: string }>;
-    if (localRows.length === 0) return;
-    const sharedRows = await this.sharedRepository.listAll("products", "code") as Array<{ id: string; organization_id: string; code: string | null }>;
-    const key = (organizationId: string, code: string): string => `${organizationId}::${code}`;
-    const sharedByKey = new Map(sharedRows.filter((row) => row.code).map((row) => [key(row.organization_id, row.code as string), row.id]));
-    for (const local of localRows) {
-      const sharedId = sharedByKey.get(key(local.organization_id, local.code));
-      if (sharedId && sharedId !== local.id) this.redirectLocalPrimaryKey("products", local.id, sharedId, ["code"]);
-    }
-  }
-
-  private async reconcileDuplicateFiscalDocuments(): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const localRows = this.db.prepare("SELECT id, access_key FROM fiscal_documents WHERE access_key IS NOT NULL AND TRIM(access_key) <> ''").all() as Array<{ id: string; access_key: string }>;
-    if (localRows.length === 0) return;
-    const sharedRows = await this.sharedRepository.listAll("fiscal_documents", "access_key") as Array<{ id: string; access_key: string | null }>;
-    const sharedByKey = new Map(sharedRows.filter((row) => row.access_key).map((row) => [String(row.access_key), row.id]));
-    for (const local of localRows) {
-      const sharedId = sharedByKey.get(local.access_key);
-      if (sharedId && sharedId !== local.id) this.redirectLocalPrimaryKey("fiscal_documents", local.id, sharedId, ["access_key"]);
-    }
-  }
-
-  private async reconcileDuplicateDealConfirmations(): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    const localRows = this.db.prepare(
-      "SELECT id, organization_id, own_legal_entity_id, confirmation_number FROM deal_confirmations WHERE confirmation_number IS NOT NULL AND TRIM(confirmation_number) <> ''"
-    ).all() as Array<{ id: string; organization_id: string; own_legal_entity_id: string; confirmation_number: string }>;
-    if (localRows.length === 0) return;
-
-    const sharedRows = await this.sharedRepository.listAll(
-      "deal_confirmations",
-      "confirmation_number"
-    ) as Array<{
-      id: string;
-      organization_id: string;
-      own_legal_entity_id: string;
-      confirmation_number: string | null;
-    }>;
-
-    const normalize = (value: unknown): string =>
-      String(value ?? "").trim().toUpperCase();
-    const key = (
-      organizationId: unknown,
-      legalEntityId: unknown,
-      number: unknown
-    ): string =>
-      `${normalize(organizationId)}::${normalize(legalEntityId)}::${normalize(number)}`;
-
-    const sharedByKey = new Map(
-      sharedRows
-        .filter((row) => row.confirmation_number)
-        .map((row) => [
-          key(row.organization_id, row.own_legal_entity_id, row.confirmation_number),
-          row.id
-        ])
-    );
-
-    for (const local of localRows) {
-      const sharedId = sharedByKey.get(
-        key(local.organization_id, local.own_legal_entity_id, local.confirmation_number)
-      );
-      if (!sharedId || sharedId === local.id) continue;
-
-      log.error("Conflito de número em confirmação; registro local preservado sem renumeração automática", {
-        localId: local.id,
-        sharedId,
-        confirmationNumber: local.confirmation_number
-      });
-    }
-  }
-
-  private async pushManagedHierarchiesToShared(results: Array<{ table: string; pushed: number; error: string | null }>): Promise<void> {
-    const pushEach = async (table: string, ids: string[], push: (id: string) => Promise<void>): Promise<void> => {
-      let pushed = 0;
-      let lastError: string | null = null;
-      for (const id of ids) {
-        try {
-          await push(id);
-          pushed += 1;
-        } catch (error) {
-          lastError = error instanceof Error ? error.message : "Falha desconhecida.";
-        }
-      }
-      results.push({ table, pushed, error: lastError });
-    };
-
-    await pushEach(
-      "fiscal_documents",
-      (this.db.prepare("SELECT id FROM fiscal_documents").all() as Array<{ id: string }>).map((row) => row.id),
-      (id) => this.pushFiscalDocumentToShared(id)
-    );
-    await pushEach(
-      "xml_import_jobs",
-      (this.db.prepare("SELECT id FROM xml_import_jobs").all() as Array<{ id: string }>).map((row) => row.id),
-      (id) => this.pushXmlImportJobToShared(id)
-    );
-    await pushEach(
-      "deal_confirmations",
-      (this.db.prepare("SELECT id FROM deal_confirmations").all() as Array<{ id: string }>).map((row) => row.id),
-      (id) => this.pushDealConfirmationToShared(id)
-    );
-  }
-
-  /**
-   * Empurra pro Supabase TUDO que existe localmente nas tabelas
-   * compartilhadas (mesma lista e' ordem de HOT_SYNC_TABLES, que ja' respeita
-   * FK), um lote por tabela. Resolve tanto o caso de um PC que ja tinha
-   * cadastro ANTES desta migracao quanto o de um push individual que falhou
-   * silenciosamente na hora da criacao (ex: rede instavel no meio de um lote
-   * grande de import de XML). Chamado automaticamente ao conectar (ver
-   * sharedAuthSignIn) e exposto como acao manual ("Sincronizar agora") --
-   * seguro rodar de novo a qualquer momento (upsert).
-   *
-   * Cada tabela e' UM lote (upsertRows manda todas as linhas numa unica
-   * chamada), nao uma chamada por linha -- com centenas de notas, uma chamada
-   * por linha levava minutos e travava a tela "carregando" se uma unica
-   * requisicao no meio do caminho engasgasse na rede. Cada tabela tambem tem
-   * um limite de tempo (30s): se uma travar, ela falha e a proxima tabela
-   * continua, em vez de travar "Sincronizar agora" pra sempre.
-   */
-  async pushAllLocalReferenceDataToShared(): Promise<Array<{ table: string; pushed: number; error: string | null }>> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return [];
-    await this.reconcileThirdPartyLegalEntityIds();
-    await this.reconcileDuplicateExpenseCategories();
-    await this.reconcileDuplicateProducts();
-    await this.reconcileDuplicateFiscalDocuments();
-    await this.reconcileDuplicateDealConfirmations();
-    // Atualiza os tombstones ANTES de empurrar qualquer coisa -- sem isso, um
-    // PC que nunca soube de uma exclusao feita em outro lugar (ex: acabou de
-    // atualizar e ainda nao rodou um pull normal) empurraria de volta pro
-    // Supabase uma copia local zumba de algo que foi apagado de proposito.
-    // Foi exatamente esse buraco que ressuscitou o reset de dados de teste
-    // mais de uma vez em 2026-08-02 -- ver applyTombstone/pushTombstone.
-    await this.syncTableDown("sync_tombstones", "deleted_at").catch((error) =>
-      log.warn("Falha ao atualizar tombstones antes de empurrar", { error: error instanceof Error ? error.message : String(error) })
-    );
-    const results: Array<{ table: string; pushed: number; error: string | null }> = [];
-    await this.pushManagedHierarchiesToShared(results);
-    for (const { table } of HOT_SYNC_TABLES) {
-      // Tabelas gerenciadas por RPC/servico proprio entram aqui so' para o
-      // lado de PUXAR (syncSharedDataDown). Tentar empurrar em lote causa RLS,
-      // duplicidade ou FK fora de ordem no Supabase.
-      if (BULK_PUSH_MANAGED_TABLES.has(table)) {
-        results.push({ table, pushed: 0, error: null });
-        continue;
-      }
-      let rows = this.db.prepare(`SELECT * FROM ${table}`).all() as DbRecord[];
-      const tombstonedIds = new Set(
-        (this.db.prepare("SELECT row_id FROM sync_tombstones WHERE table_name = ?").all(table) as Array<{ row_id: string }>).map((row) => row.row_id)
-      );
-      if (tombstonedIds.size > 0) {
-        const survivors: DbRecord[] = [];
-        for (const row of rows) {
-          const id = String(row.id);
-          if (tombstonedIds.has(id)) {
-            // Este PC ainda tinha localmente algo que foi apagado de
-            // proposito em outro lugar -- nunca reenvia, e aproveita pra se
-            // autocurar (apaga a copia local zumbi tambem).
-            try {
-              this.db.transaction(() => this.applyTombstone(table, id))();
-            } catch (error) {
-              log.warn(`Falha ao autocurar linha tombstoned (${table})`, { id, error: error instanceof Error ? error.message : String(error) });
-            }
-          } else {
-            survivors.push(row);
-          }
-        }
-        rows = survivors;
-      }
-      if (rows.length === 0) {
-        results.push({ table, pushed: 0, error: null });
-        continue;
-      }
-      const sharedRows = rows.map((row) => toSharedRow(row, table));
-      // business_partner_roles e' a unica tabela onde o Postgres gera seu
-      // proprio id (ver create_business_partner/addBusinessPartnerRole, que
-      // nunca enviam o id local) -- reenviar o id local aqui criaria uma
-      // linha nova a cada reconciliacao em vez de atualizar a existente,
-      // violando o indice unico (business_partner_id, role). Upsert mira a
-      // chave natural em vez do id nesse caso especifico.
-      const onConflict = table === "business_partner_roles" ? "business_partner_id,role" : undefined;
-      if (onConflict) for (const row of sharedRows) delete row.id;
-      // Envia em pedacos de ate' 100 linhas em vez de um unico lote com a
-      // tabela inteira -- xml_import_files, por exemplo, guarda o XML
-      // extraido inteiro por arquivo (extracted_data_json), e uma tabela com
-      // centenas de linhas grandes numa unica requisicao arrisca estourar
-      // tempo/tamanho e falhar tudo de uma vez ("Sem conexao com o
-      // servidor"). Em pedacos menores, um problema pontual so' derruba
-      // aquele pedaco -- o resto continua e fica so' pra proxima rodada.
-      let pushed = 0;
-      let lastError: string | null = null;
-      for (let offset = 0; offset < sharedRows.length; offset += 100) {
-        const chunk = sharedRows.slice(offset, offset + 100);
-        try {
-          await this.withTimeout(
-            this.sharedRepository.upsertRows(table, chunk, onConflict),
-            30_000,
-            `Tempo esgotado ao enviar ${table}.`
-          );
-          pushed += chunk.length;
-        } catch (error) {
-          lastError = error instanceof Error ? error.message : "Falha desconhecida.";
-        }
-      }
-      results.push({ table, pushed, error: lastError });
-    }
-    return results;
-  }
-
-  private withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
-      promise.then(
-        (value) => { clearTimeout(timer); resolve(value); },
-        (error) => { clearTimeout(timer); reject(error); }
-      );
-    });
-  }
-
-  private recordLocalTombstone(tableName: string, rowId: string, deletedAt: string): void {
-    this.db.prepare(
-      `INSERT INTO sync_tombstones (table_name, row_id, deleted_at) VALUES (?, ?, ?)
-       ON CONFLICT(table_name, row_id) DO UPDATE SET deleted_at = excluded.deleted_at`
-    ).run(tableName, rowId, deletedAt);
-  }
-
-  /**
-   * Aplica localmente uma exclusao que veio de outro lugar (pull de
-   * sync_tombstones) ou que este PC descobriu tarde (self-heal em
-   * pushAllLocalReferenceDataToShared). fiscal_documents/client_charges/
-   * deal_confirmations/xml_import_jobs tem tabelas filhas -- espelha a MESMA
-   * cascata das funcoes delete*() publicas, so' que sem as checagens de
-   * regra de negocio (ex: "cobranca com pagamento nao pode ser excluida"):
-   * a decisao de apagar ja foi tomada em outro lugar, aplicar de novo aqui
-   * so' sincroniza o estado, nao inicia uma exclusao nova.
-   */
-  private applyTombstone(tableName: string, rowId: string): void {
-    switch (tableName) {
-      case "fiscal_documents":
-        return this.applyFiscalDocumentTombstone(rowId);
-      case "client_charges":
-        return this.applyClientChargeTombstone(rowId);
-      case "deal_confirmations":
-        return this.applyDealConfirmationTombstone(rowId);
-      case "xml_import_jobs":
-        return this.applyXmlImportJobTombstone(rowId);
-      default:
-        if (TOMBSTONE_APPLY_TABLES.has(tableName) && this.tableExists(tableName)) {
-          this.db.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(rowId);
-        }
-    }
-  }
-
-  /** Mesma cascata de deleteFiscalDocument, sem as checagens de vinculo (ver applyTombstone). */
-  private applyFiscalDocumentTombstone(id: string): void {
-    const now = new Date().toISOString();
-    if (this.tableExists("spreadsheet_import_rows")) this.db.prepare("UPDATE spreadsheet_import_rows SET fiscal_document_id = NULL, operation_id = NULL WHERE fiscal_document_id = ? OR operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id, id);
-    if (this.tableExists("xml_import_files")) this.db.prepare("UPDATE xml_import_files SET fiscal_document_id = NULL, status = 'REVERTED', updated_at = ? WHERE fiscal_document_id = ?").run(now, id);
-    if (this.tableExists("fiscal_document_merge_history")) this.db.prepare("DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").run(id);
-    if (this.tableExists("fiscal_document_events")) this.db.prepare("DELETE FROM fiscal_document_events WHERE fiscal_document_id = ?").run(id);
-    // deleteFiscalDocument() (a versao com regra de negocio) RECUSA apagar se
-    // a nota estiver vinculada a cobranca/confirmacao -- aqui a decisao ja
-    // foi tomada em outro lugar, entao desfaz o vinculo em vez de recusar
-    // (senao o DELETE de operations abaixo violaria FK contra essas tabelas).
-    if (this.tableExists("client_charge_operations")) this.db.prepare("DELETE FROM client_charge_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
-    if (this.tableExists("account_payable_operations")) this.db.prepare("DELETE FROM account_payable_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
-    if (this.tableExists("deal_confirmation_operations")) this.db.prepare("DELETE FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
-    if (this.tableExists("deal_confirmation_fiscal_documents")) this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ?").run(id);
-    if (this.tableExists("operation_rate_history")) this.db.prepare("DELETE FROM operation_rate_history WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
-    this.db.prepare("DELETE FROM operations WHERE fiscal_document_id = ?").run(id);
-    this.db.prepare("DELETE FROM fiscal_document_items WHERE fiscal_document_id = ?").run(id);
-    this.db.prepare("DELETE FROM fiscal_documents WHERE id = ?").run(id);
-  }
-
-  /** Mesma cascata de deleteClientCharge, sem as checagens de pagamento (ver applyTombstone). */
-  private applyClientChargeTombstone(id: string): void {
-    const now = new Date().toISOString();
-    this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE client_charge_id = ?").run(now, id);
-    const creditAllocations = this.db.prepare("SELECT ledger_entry_id, amount_cents FROM client_credit_allocations WHERE client_charge_id = ?").all(id) as Array<{ ledger_entry_id: string; amount_cents: number }>;
-    creditAllocations.forEach((allocation) => this.db.prepare("UPDATE client_ledger_entries SET available_amount_cents = available_amount_cents + ?, updated_at = ? WHERE id = ?").run(allocation.amount_cents, now, allocation.ledger_entry_id));
-    this.db.prepare("UPDATE client_charges SET replaced_by_charge_id = NULL, updated_at = ? WHERE replaced_by_charge_id = ?").run(now, id);
-    [
-      "client_payment_allocations",
-      "client_credit_allocations",
-      "client_charge_adjustments",
-      "charge_status_history",
-      "charge_document_versions",
-      "client_charge_operations",
-      "client_ledger_entries"
-    ].forEach((tableName) => {
-      this.db.prepare(`DELETE FROM ${tableName} WHERE client_charge_id = ?`).run(id);
-    });
-    this.db.prepare("DELETE FROM client_charges WHERE id = ?").run(id);
-  }
-
-  /** Mesma cascata de deleteDealConfirmation (ver applyTombstone). */
-  private applyDealConfirmationTombstone(id: string): void {
-    this.db.prepare("UPDATE deal_confirmations SET replaced_by_confirmation_id = NULL, updated_at = ? WHERE replaced_by_confirmation_id = ?").run(new Date().toISOString(), id);
-    [
-      "deal_confirmation_status_history",
-      "deal_confirmation_document_versions",
-      "deal_confirmation_signers",
-      "deal_payment_terms",
-      "deal_confirmation_clauses",
-      "deal_confirmation_fiscal_documents",
-      "deal_confirmation_operations",
-      "deal_confirmation_items",
-      "deal_confirmation_parties"
-    ].forEach((tableName) => {
-      this.db.prepare(`DELETE FROM ${tableName} WHERE deal_confirmation_id = ?`).run(id);
-    });
-    this.db.prepare("DELETE FROM deal_confirmations WHERE id = ?").run(id);
-  }
-
-  private applyXmlImportJobTombstone(id: string): void {
-    if (this.tableExists("xml_import_files")) this.db.prepare("DELETE FROM xml_import_files WHERE import_job_id = ?").run(id);
-    this.db.prepare("DELETE FROM xml_import_jobs WHERE id = ?").run(id);
-  }
-
-  /**
-   * Registra localmente (sempre, mesmo sem rede) e tenta empurrar pro
-   * Supabase a exclusao de UMA linha -- chamado depois que a exclusao local
-   * ja comitou (ver deleteFiscalDocument/deleteClientCharge/
-   * deleteDealConfirmation em ipc/handlers.ts, mesmo padrao de
-   * pushFiscalDocumentToShared etc: escreve local primeiro, sincrono, so'
-   * depois tenta a rede). Falha de rede vai pra fila de reenvio (ver
-   * sharedPushOutbox.ts) exatamente como qualquer outro push.
-   */
-  /**
-   * So' usado no fluxo de deleteDealConfirmation (rascunho sem numero -- ver
-   * regra em deleteDealConfirmation): a confirmacao em si nunca e' de fato
-   * apagada no Postgres, so' um tombstone (ver pushTombstone abaixo, mesmo
-   * padrao append-only usado em toda exclusao deste app). Sem isto, os
-   * vinculos com nota fiscal continuariam "reivindicando" o documento pra
-   * sempre no indice unico parcial de deal_confirmation_fiscal_documents (ver
-   * migration da corrida de confirmacao duplicada), mesmo com o rascunho ja
-   * tendo sumido daqui -- bloqueando pra sempre um novo rascunho reusar
-   * aquela mesma nota. Best-effort, mesmo padrao de trySharedReferenceWrite.
-   */
-  async releaseDealConfirmationFiscalDocumentClaims(dealConfirmationId: string): Promise<void> {
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("deal_confirmation_fiscal_documents", { deal_confirmation_id: dealConfirmationId }));
-  }
-
-  /**
    * Usado so' pra melhorar a mensagem de erro do indice unico parcial (ver
-   * 0027_fiscal_document_claim_uniqueness.sql): "esta nota ja foi usada"
-   * sozinho obrigava o usuario a adivinhar/procurar em qual confirmacao --
-   * relatado como confuso ("abro outra confirmacao e nao encontro"). Busca
-   * direto no Supabase qual confirmacao ativa hoje reivindica esta nota, pra
-   * citar o numero dela na mensagem. Best-effort: se a busca falhar (ex: sem
-   * rede), devolve null e o chamador cai de volta na mensagem generica.
+   * 0027_fiscal_document_claim_uniqueness.sql, migrado pra local na 043):
+   * "esta nota ja foi usada" sozinho obrigava o usuario a adivinhar/procurar
+   * em qual confirmacao -- relatado como confuso ("abro outra confirmacao e
+   * nao encontro"). Busca local qual confirmacao ativa hoje reivindica esta
+   * nota, pra citar o numero dela na mensagem.
    */
   async findConflictingDealConfirmationLabel(fiscalDocumentId: string): Promise<string | null> {
-    if (!this.sharedRepository) return null;
-    try {
-      const link = await this.sharedRepository.findOne("deal_confirmation_fiscal_documents", { fiscal_document_id: fiscalDocumentId, is_active: true });
-      if (!link?.deal_confirmation_id) return null;
-      const confirmation = await this.sharedRepository.findOne("deal_confirmations", { id: String(link.deal_confirmation_id) });
-      if (!confirmation) return null;
-      return String(confirmation.confirmation_number ?? confirmation.temporary_reference ?? link.deal_confirmation_id);
-    } catch {
-      return null;
-    }
-  }
-
-  async pushTombstone(tableName: string, rowId: string): Promise<void> {
-    const now = new Date().toISOString();
-    this.recordLocalTombstone(tableName, rowId, now);
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      await this.sharedRepository.insertIfMissing("sync_tombstones", { table_name: tableName, row_id: rowId, deleted_at: now });
-    } catch (error) {
-      this.outbox.enqueue("tombstone", `${tableName}:${rowId}`, error);
-      throw error;
-    }
+    const link = this.db.prepare(`
+      SELECT dc.confirmation_number AS confirmationNumber, dc.temporary_reference AS temporaryReference, dc.id AS id
+      FROM deal_confirmation_fiscal_documents dcfd
+      JOIN deal_confirmations dc ON dc.id = dcfd.deal_confirmation_id
+      WHERE dcfd.fiscal_document_id = ? AND dcfd.is_active = 1
+      LIMIT 1
+    `).get(fiscalDocumentId) as { confirmationNumber: string | null; temporaryReference: string | null; id: string } | undefined;
+    if (!link) return null;
+    return link.confirmationNumber ?? link.temporaryReference ?? link.id;
   }
 
   getBootstrapData(version: string): BootstrapData {
@@ -1546,7 +308,6 @@ export class AppRepository {
       icon_path: data.iconPath ?? null, primary_color: data.primaryColor, secondary_color: data.secondaryColor,
       accent_color: data.accentColor, theme_mode: data.themeMode, is_active: data.isActive, created_at: now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("organizations", row));
     this.upsertLocalRow("organizations", row);
     return this.getOrganization(id);
   }
@@ -1561,7 +322,6 @@ export class AppRepository {
       icon_path: data.iconPath ?? null, primary_color: data.primaryColor, secondary_color: data.secondaryColor,
       accent_color: data.accentColor, theme_mode: data.themeMode, is_active: data.isActive, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, row));
     this.patchLocalRow("organizations", id, row);
     return this.getOrganization(id);
   }
@@ -1574,7 +334,6 @@ export class AppRepository {
       icon_path: paths.iconPath ?? organization.iconPath,
       updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
     this.patchLocalRow("organizations", id, patch);
     return this.getOrganization(id);
   }
@@ -1591,7 +350,6 @@ export class AppRepository {
       accent_color: colors.accentColor ?? organization.accentColor,
       updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
     this.patchLocalRow("organizations", id, patch);
     return this.getOrganization(id);
   }
@@ -1599,7 +357,6 @@ export class AppRepository {
   async activateOrganization(id: string): Promise<Organization> {
     this.getOrganization(id);
     const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", id, patch));
     this.patchLocalRow("organizations", id, patch);
     return this.getOrganization(id);
   }
@@ -1623,7 +380,6 @@ export class AppRepository {
       });
     }
     const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("organizations", organization.id, patch));
     this.patchLocalRow("organizations", organization.id, patch);
     return this.getOrganization(id);
   }
@@ -1655,7 +411,6 @@ export class AppRepository {
       ["client_charges", "organization_id"],
       ["deal_confirmations", "organization_id"]
     ], id, "esta organizacao");
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("organizations", { id }));
     this.db.prepare("DELETE FROM organizations WHERE id = ?").run(id);
   }
 
@@ -1742,52 +497,6 @@ export class AppRepository {
     this.db.prepare(`UPDATE ${table} SET ${assignments} WHERE id = @id`).run({ ...normalized, id });
   }
 
-  /**
-   * Envolve QUALQUER push de cadastro de referencia pro Supabase -- nunca
-   * deixa a gravacao local depender da rede/RLS/estado remoto. Falha aqui so'
-   * loga (electron-log), nunca bloqueia a escrita local que vem depois. Bug
-   * real que motivou isso: um registro que so' existia no cache local (nunca
-   * chegou no Supabase, ou foi removido de la' por fora do app) fazia o
-   * UPDATE remoto falhar com "no rows returned" -- e como esse push era
-   * `await`ado sem tratamento, a excecao subia e a gravacao LOCAL (que viria
-   * logo depois) nunca chegava a rodar. Usuario clicava "Desativar" e nada
-   * acontecia, sem nenhum aviso.
-   */
-  private async trySharedReferenceWrite(action: () => Promise<unknown>): Promise<void> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return;
-    try {
-      await action();
-    } catch (error) {
-      log.warn("Falha ao sincronizar cadastro com o Supabase (gravacao local prossegue mesmo assim)", error instanceof Error ? error.message : error);
-    }
-  }
-
-  /**
-   * Sobe uma copia de um PDF/planilha ja gerado localmente pro bucket
-   * confirmation-files (app de visualizacao pelo celular) -- nunca bloqueia
-   * nem derruba a geracao/emissao local; se falhar, so' loga e o app de
-   * visualizacao fica sem o botao de download dessa versao especifica ate' a
-   * proxima geracao ter sucesso.
-   */
-  private async uploadDocumentToShared(
-    organizationId: string,
-    ownLegalEntityId: string,
-    kind: "confirmations" | "charges",
-    fileName: string,
-    localFilePath: string,
-    contentType: string
-  ): Promise<string | null> {
-    if (!this.sharedRepository || this.isLocalOnlyMode()) return null;
-    const objectPath = `${organizationId}/${ownLegalEntityId}/${kind}/${fileName}`;
-    try {
-      const bytes = readFileSync(localFilePath);
-      await this.sharedRepository.uploadFile("confirmation-files", objectPath, bytes, contentType);
-      return objectPath;
-    } catch (error) {
-      log.warn("Falha ao subir arquivo pro Supabase Storage (app de visualizacao nao vai conseguir baixar esta versao)", error instanceof Error ? error.message : error);
-      return null;
-    }
-  }
 
   listLegalEntities(filters: { search?: string; organizationId?: string; state?: string; status?: "active" | "inactive" | "all" } = {}): LegalEntity[] {
     return (this.db.prepare("SELECT * FROM legal_entities ORDER BY trade_name").all() as DbRecord[])
@@ -1816,7 +525,6 @@ export class AppRepository {
     this.assertOrganizationWritable(data.organizationId);
     this.assertValidLegalEntity(data);
     const row = this.buildLegalEntityRow(data);
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("legal_entities", row));
     this.upsertLocalRow("legal_entities", row);
     return this.getLegalEntity(String(row.id));
   }
@@ -1874,7 +582,6 @@ export class AppRepository {
       default_confirmation_notes: data.defaultConfirmationNotes,
       is_draft: data.isDraft, is_active: data.isActive, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, row));
     this.patchLocalRow("legal_entities", id, row);
     return this.getLegalEntity(id);
   }
@@ -1885,7 +592,6 @@ export class AppRepository {
       throw new Error("CNPJ valido e obrigatorio para ativar o cadastro.");
     }
     const patch: DbRecord = { is_active: true, is_draft: false, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, patch));
     this.patchLocalRow("legal_entities", id, patch);
     return this.getLegalEntity(id);
   }
@@ -1904,7 +610,6 @@ export class AppRepository {
       this.updateInstallationProfile({ ...profile, defaultLegalEntityId: replacementLegalEntityId });
     }
     const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("legal_entities", id, patch));
     this.patchLocalRow("legal_entities", id, patch);
     return this.getLegalEntity(id);
   }
@@ -1927,7 +632,6 @@ export class AppRepository {
       ["deal_confirmations", "own_legal_entity_id"],
       ["deal_confirmation_parties", "own_legal_entity_id"]
     ], id, "este CNPJ");
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("legal_entities", { id }));
     this.db.prepare("DELETE FROM legal_entities WHERE id = ?").run(id);
   }
 
@@ -1965,7 +669,6 @@ export class AppRepository {
       address_complement: data.addressComplement, district: data.district, city: data.city, state: data.state,
       postal_code: data.postalCode, is_active: data.isActive, created_at: now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("locations", row));
     this.upsertLocalRow("locations", row);
     return this.getLocation(id);
   }
@@ -1980,7 +683,6 @@ export class AppRepository {
       address_complement: data.addressComplement, district: data.district, city: data.city, state: data.state,
       postal_code: data.postalCode, is_active: data.isActive, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("locations", id, row));
     this.patchLocalRow("locations", id, row);
     return this.getLocation(id);
   }
@@ -1988,7 +690,6 @@ export class AppRepository {
   async activateLocation(id: string): Promise<Location> {
     this.getLocation(id);
     const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("locations", id, patch));
     this.patchLocalRow("locations", id, patch);
     return this.getLocation(id);
   }
@@ -1996,7 +697,6 @@ export class AppRepository {
   async deactivateLocation(id: string): Promise<Location> {
     this.getLocation(id);
     const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("locations", id, patch));
     this.patchLocalRow("locations", id, patch);
     return this.getLocation(id);
   }
@@ -2028,12 +728,11 @@ export class AppRepository {
       credit_limit_cents: data.creditLimitCents ?? null, document_number: data.documentNumber ?? null, email: data.email ?? null,
       phone: data.phone ?? null, mobile: data.mobile ?? null, postal_code: data.postalCode ?? null, address_line: data.addressLine,
       address_number: data.addressNumber, address_complement: data.addressComplement, district: data.district, city: data.city,
-      state: data.state, created_at: now, updated_at: now
+      state: data.state, requires_contract: data.requiresContract ? 1 : 0, created_at: now, updated_at: now
     };
     // business_partners + business_partner_roles precisam ser gravados
     // atomicamente -- o REST do Supabase nao abrange 2 tabelas numa
     // transacao do lado do client, por isso vira RPC (migration 0007).
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.rpc("create_business_partner", { p_row: row, p_roles: data.roles }));
     const transaction = this.db.transaction(() => {
       this.upsertLocalRow("business_partners", row);
       data.roles.forEach((role) => this.addBusinessPartnerRoleLocal(id, role, now));
@@ -2052,9 +751,8 @@ export class AppRepository {
       credit_limit_cents: data.creditLimitCents ?? null, document_number: data.documentNumber ?? null, email: data.email ?? null,
       phone: data.phone ?? null, mobile: data.mobile ?? null, postal_code: data.postalCode ?? null, address_line: data.addressLine,
       address_number: data.addressNumber, address_complement: data.addressComplement, district: data.district, city: data.city,
-      state: data.state, updated_at: new Date().toISOString()
+      state: data.state, requires_contract: (data.requiresContract ?? this.getBusinessPartner(id).requiresContract) ? 1 : 0, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.rpc("update_business_partner", { p_id: id, p_row: row, p_roles: data.roles }));
     const transaction = this.db.transaction(() => {
       this.patchLocalRow("business_partners", id, row);
       this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
@@ -2066,7 +764,6 @@ export class AppRepository {
 
   async addBusinessPartnerRole(id: string, role: BusinessPartnerRole, createdAt = new Date().toISOString()): Promise<BusinessPartner> {
     if (this.getPartnerRoles(id).includes(role)) throw new Error("Papel ja cadastrado para este parceiro.");
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("business_partner_roles", { business_partner_id: id, role, created_at: createdAt }));
     this.addBusinessPartnerRoleLocal(id, role, createdAt);
     return this.getBusinessPartner(id);
   }
@@ -2079,7 +776,6 @@ export class AppRepository {
   async removeBusinessPartnerRole(id: string, role: BusinessPartnerRole): Promise<BusinessPartner> {
     const roles = this.getPartnerRoles(id);
     if (roles.length <= 1 && roles.includes(role)) throw new Error("Parceiro deve possuir pelo menos um papel.");
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("business_partner_roles", { business_partner_id: id, role }));
     this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ? AND role = ?").run(id, role);
     return this.getBusinessPartner(id);
   }
@@ -2087,7 +783,6 @@ export class AppRepository {
   async activateBusinessPartner(id: string): Promise<BusinessPartner> {
     this.getBusinessPartner(id);
     const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("business_partners", id, patch));
     this.patchLocalRow("business_partners", id, patch);
     return this.getBusinessPartner(id);
   }
@@ -2095,7 +790,6 @@ export class AppRepository {
   async deactivateBusinessPartner(id: string): Promise<BusinessPartner> {
     this.getBusinessPartner(id);
     const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("business_partners", id, patch));
     this.patchLocalRow("business_partners", id, patch);
     return this.getBusinessPartner(id);
   }
@@ -2114,33 +808,28 @@ export class AppRepository {
     const now = new Date().toISOString();
 
     const partnerPatch: DbRecord = { is_active: false, updated_at: now };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("business_partners", id, partnerPatch));
     this.patchLocalRow("business_partners", id, partnerPatch);
 
     for (const entity of this.listPartnerLegalEntities(id)) {
-      if (!entity.isActive) continue;
+      if (!entity.isActive || this.linkedPartnersForCompany(entity.id).some((partner) => partner.id !== id && partner.isActive)) continue;
       const patch: DbRecord = { is_active: false, updated_at: now };
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", entity.id, patch));
       this.patchLocalRow("partner_legal_entities", entity.id, patch);
     }
 
     for (const contact of this.listPartnerContacts(id)) {
       if (!contact.isActive) continue;
       const patch: DbRecord = { is_active: false, updated_at: now };
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_contacts", contact.id, patch));
       this.patchLocalRow("partner_contacts", contact.id, patch);
     }
 
     for (const rule of this.listServiceRateRules({ businessPartnerId: id, status: "active" })) {
       const patch: DbRecord = { is_active: false, updated_at: now };
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", rule.id, patch));
       this.patchLocalRow("service_rate_rules", rule.id, patch);
     }
 
     const billingProfile = this.getBillingProfile(id);
     if (billingProfile?.isActive) {
       const patch: DbRecord = { is_active: false, updated_at: now };
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("client_billing_profiles", billingProfile.id, patch));
       this.patchLocalRow("client_billing_profiles", billingProfile.id, patch);
     }
   }
@@ -2162,6 +851,7 @@ export class AppRepository {
     ], id, "este parceiro");
 
     for (const entity of this.listPartnerLegalEntities(id)) {
+      if (this.linkedPartnersForCompany(entity.id).some((partner) => partner.id !== id)) throw new Error("Desvincule as empresas compartilhadas antes de excluir o parceiro.");
       this.assertEmptyFor([
         ["fiscal_documents", "partner_legal_entity_id"],
         ["service_rate_rules", "counterparty_partner_legal_entity_id"],
@@ -2169,24 +859,19 @@ export class AppRepository {
       ], entity.id, "um CNPJ deste parceiro");
     }
 
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("partner_contacts", { business_partner_id: id }));
     this.db.prepare("DELETE FROM partner_contacts WHERE business_partner_id = ?").run(id);
 
     for (const entity of this.listPartnerLegalEntities(id)) {
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("partner_legal_entities", { id: entity.id }));
       this.db.prepare("DELETE FROM partner_legal_entities WHERE id = ?").run(entity.id);
     }
 
     const billingProfile = this.getBillingProfile(id);
     if (billingProfile) {
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("client_billing_profiles", { id: billingProfile.id }));
       this.db.prepare("DELETE FROM client_billing_profiles WHERE id = ?").run(billingProfile.id);
     }
 
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("business_partner_roles", { business_partner_id: id }));
     this.db.prepare("DELETE FROM business_partner_roles WHERE business_partner_id = ?").run(id);
 
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("business_partners", { id }));
     this.db.prepare("DELETE FROM business_partners WHERE id = ?").run(id);
   }
 
@@ -2280,7 +965,7 @@ export class AppRepository {
     if (canonical.organizationId !== duplicate.organizationId) throw new Error("Nao e possivel mesclar cadastros de organizacoes diferentes.");
     const now = new Date().toISOString();
 
-    await this.applyBusinessPartnerMerge(canonical, duplicate, data.matchedCnpj, now, true);
+    await this.applyBusinessPartnerMerge(canonical, duplicate, data.matchedCnpj, now);
 
     // Registra a fusao -- sincroniza como qualquer outra tabela, entao autocorrige os outros PCs
     // sozinha quando eles baixarem esta linha (ver syncTableDown, que chama applyBusinessPartnerMerge
@@ -2299,19 +984,9 @@ export class AppRepository {
       INSERT OR REPLACE INTO business_partner_merges (id, organization_id, duplicate_partner_id, canonical_partner_id, matched_cnpj, reason, applied_at, created_at)
       VALUES (@id, @organization_id, @duplicate_partner_id, @canonical_partner_id, @matched_cnpj, @reason, @applied_at, @created_at)
     `).run(mergeRow);
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.upsertRow("business_partner_merges", toSharedRow(mergeRow, "business_partner_merges")));
   }
 
-  /**
-   * Nucleo da fusao, compartilhado entre a chamada direta (pushToShared=true,
-   * quando ESTE PC decide a fusao) e a aplicacao automatica de uma fusao que
-   * chegou de outro PC via sync-down (pushToShared=false, so' aplica local,
-   * sem reempurrar o que acabou de vir do Supabase).
-   */
-  private async applyBusinessPartnerMerge(canonical: BusinessPartner, duplicate: BusinessPartner, matchedCnpj: string | null, now: string, pushToShared: boolean): Promise<void> {
-    const push = (table: string, id: string, patch: DbRecord): Promise<void> =>
-      pushToShared ? this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow(table, id, patch)) : Promise.resolve();
-
+  private async applyBusinessPartnerMerge(canonical: BusinessPartner, duplicate: BusinessPartner, matchedCnpj: string | null, now: string): Promise<void> {
     const unconditionalRedirects: Array<[string, string]> = [
       ["fiscal_documents", "responsible_partner_id"],
       ["operations", "responsible_partner_id"],
@@ -2331,7 +1006,6 @@ export class AppRepository {
       const rows = this.db.prepare(`SELECT id FROM ${table} WHERE ${column} = ?`).all(duplicate.id) as Array<{ id: string }>;
       for (const row of rows) {
         const patch: DbRecord = { [column]: canonical.id, updated_at: now };
-        await push(table, row.id, patch);
         this.patchLocalRow(table, row.id, patch);
       }
     }
@@ -2344,14 +1018,12 @@ export class AppRepository {
     for (const role of this.getPartnerRoles(duplicate.id)) {
       if (canonicalRoles.has(role)) continue;
       this.addBusinessPartnerRoleLocal(canonical.id, role, now);
-      if (pushToShared) await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("business_partner_roles", { business_partner_id: canonical.id, role, created_at: now }));
     }
 
     // client_billing_profiles e' 1:1 por parceiro (UNIQUE) -- so' redireciona se o canonico ainda nao tiver.
     const duplicateBilling = this.getBillingProfile(duplicate.id);
     if (duplicateBilling && !this.getBillingProfile(canonical.id)) {
       const patch: DbRecord = { business_partner_id: canonical.id, updated_at: now };
-      await push("client_billing_profiles", duplicateBilling.id, patch);
       this.patchLocalRow("client_billing_profiles", duplicateBilling.id, patch);
     }
 
@@ -2363,7 +1035,6 @@ export class AppRepository {
       for (const row of rows) {
         const conflict = this.db.prepare(`SELECT id FROM partner_aliases WHERE organization_id = ? AND normalized_alias = ? AND is_active = 1 AND id != ?`).get(canonical.organizationId, row.normalized_alias, row.id);
         const patch: DbRecord = conflict ? { is_active: false, updated_at: now } : { business_partner_id: canonical.id, updated_at: now };
-        await push("partner_aliases", row.id, patch);
         this.patchLocalRow("partner_aliases", row.id, patch);
       }
     }
@@ -2374,7 +1045,6 @@ export class AppRepository {
       const conflicting = this.db.prepare(`SELECT id FROM partner_legal_entities WHERE business_partner_id = ? AND cnpj = ?`).all(duplicate.id, matchedCnpj) as Array<{ id: string }>;
       for (const row of conflicting) {
         const patch: DbRecord = { cnpj: null, updated_at: now };
-        await push("partner_legal_entities", row.id, patch);
         this.patchLocalRow("partner_legal_entities", row.id, patch);
       }
     }
@@ -2382,13 +1052,12 @@ export class AppRepository {
     // Arquiva o cadastro duplicado (mesmo padrao de deleteBusinessPartner) -- preserva papeis/contatos
     // como historico, so' marca como inativo e mescla o nome.
     const archivedPatch: DbRecord = { is_active: false, display_name: `[Mesclado em ${canonical.displayName}] ${duplicate.displayName}`, updated_at: now };
-    await push("business_partners", duplicate.id, archivedPatch);
     this.patchLocalRow("business_partners", duplicate.id, archivedPatch);
   }
 
   listPartnerLegalEntities(businessPartnerId: string): BusinessPartnerLegalEntity[] {
     const partner = this.getBusinessPartner(businessPartnerId);
-    return (this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id = ? ORDER BY trade_name").all(partner.id) as DbRecord[]).map(mapBusinessPartnerLegalEntity);
+    return (this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id = ? OR id IN (SELECT partner_legal_entity_id FROM partner_company_links WHERE business_partner_id = ?) ORDER BY trade_name").all(partner.id, partner.id) as DbRecord[]).map((row) => ({ ...mapBusinessPartnerLegalEntity(row), businessPartnerId: partner.id, isPrimary: row.business_partner_id === partner.id && Boolean(row.is_primary) }));
   }
 
   /** Empresas/CNPJs cadastradas mas ainda sem cliente/corretor dono -- lista pra tela de "vincular empresa existente". */
@@ -2417,14 +1086,14 @@ export class AppRepository {
       city: data.city, state: data.state, postal_code: data.postalCode, is_primary: data.isPrimary, is_active: data.isActive, is_draft: data.isDraft,
       created_at: now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("partner_legal_entities", row));
     this.upsertLocalRow("partner_legal_entities", row);
     return this.getPartnerLegalEntity(id);
   }
 
   async updatePartnerLegalEntity(id: string, input: unknown): Promise<BusinessPartnerLegalEntity> {
-    this.getPartnerLegalEntity(id);
+    const previous = this.getPartnerLegalEntity(id);
     const data = partnerLegalEntityInputSchema.parse(input);
+    if (!data.businessPartnerId && this.db.prepare("SELECT 1 FROM partner_company_links WHERE partner_legal_entity_id = ? LIMIT 1").get(id)) throw new Error("Esta empresa possui varios clientes. Use Desvincular no cadastro do cliente para preservar os outros vinculos.");
     this.assertPartnerLegalEntity(data, id);
     if (data.isPrimary && data.businessPartnerId) this.clearPrimaryPartnerLegalEntity(data.businessPartnerId, id);
     const patch: DbRecord = {
@@ -2434,36 +1103,44 @@ export class AppRepository {
       city: data.city, state: data.state, postal_code: data.postalCode, is_primary: data.isPrimary, is_active: data.isActive, is_draft: data.isDraft,
       updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", id, patch));
-    this.patchLocalRow("partner_legal_entities", id, patch);
+    this.db.transaction(() => {
+      this.patchLocalRow("partner_legal_entities", id, patch);
+      if (previous.businessPartnerId && data.businessPartnerId && previous.businessPartnerId !== data.businessPartnerId) {
+        this.db.prepare("INSERT OR IGNORE INTO partner_company_links VALUES (?, ?, ?)").run(id, previous.businessPartnerId, new Date().toISOString());
+        this.db.prepare("DELETE FROM partner_company_links WHERE partner_legal_entity_id = ? AND business_partner_id = ?").run(id, data.businessPartnerId);
+      }
+    })();
     return this.getPartnerLegalEntity(id);
   }
 
-  /**
-   * Vincula uma empresa/CNPJ ja' cadastrada (solta ou de outro parceiro) a um
-   * cliente/corretor -- fluxo pedido pelo dono: cadastra a empresa primeiro
-   * (ex: via "Buscar CNPJ"), so' vincula ao corretor quando a relacao comercial
-   * comeca de fato. Se a empresa vinha de outro parceiro (ex: corrigindo um
-   * vinculo errado), so' redireciona -- nao mexe no cadastro antigo.
-   */
+  /** Acrescenta um vinculo comercial sem transferir a empresa de outro cliente. */
   async linkPartnerLegalEntityToPartner(legalEntityId: string, businessPartnerId: string): Promise<BusinessPartnerLegalEntity> {
-    this.getPartnerLegalEntity(legalEntityId);
+    const entity = this.getPartnerLegalEntity(legalEntityId);
     this.getBusinessPartner(businessPartnerId);
+    if (!entity.isActive) throw new Error("Empresa inativa.");
     const now = new Date().toISOString();
-    const makesPrimary = !this.db.prepare("SELECT 1 FROM partner_legal_entities WHERE business_partner_id = ? AND is_primary = 1 LIMIT 1").get(businessPartnerId);
-    const patch: DbRecord = { business_partner_id: businessPartnerId, is_primary: makesPrimary, updated_at: now };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", legalEntityId, patch));
-    this.patchLocalRow("partner_legal_entities", legalEntityId, patch);
+    if (!entity.businessPartnerId) {
+      const makesPrimary = !this.listPartnerLegalEntities(businessPartnerId).some((item) => item.isPrimary);
+      this.patchLocalRow("partner_legal_entities", legalEntityId, { business_partner_id: businessPartnerId, is_primary: makesPrimary, updated_at: now });
+    } else if (entity.businessPartnerId !== businessPartnerId) {
+      this.db.prepare("INSERT OR IGNORE INTO partner_company_links VALUES (?, ?, ?)").run(legalEntityId, businessPartnerId, now);
+    }
     return this.getPartnerLegalEntity(legalEntityId);
   }
 
-  /** Desfaz o vinculo, devolvendo a empresa pro estado solto (sem cliente/corretor dono). */
-  async unlinkPartnerLegalEntityFromPartner(legalEntityId: string): Promise<BusinessPartnerLegalEntity> {
-    this.getPartnerLegalEntity(legalEntityId);
-    const now = new Date().toISOString();
-    const patch: DbRecord = { business_partner_id: null, is_primary: false, updated_at: now };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", legalEntityId, patch));
-    this.patchLocalRow("partner_legal_entities", legalEntityId, patch);
+  async unlinkPartnerLegalEntityFromPartner(legalEntityId: string, businessPartnerId?: string): Promise<BusinessPartnerLegalEntity> {
+    const entity = this.getPartnerLegalEntity(legalEntityId);
+    const partnerId = businessPartnerId ?? entity.businessPartnerId;
+    if (!partnerId) return entity;
+    this.getBusinessPartner(partnerId);
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM partner_company_links WHERE partner_legal_entity_id = ? AND business_partner_id = ?").run(legalEntityId, partnerId);
+      if (entity.businessPartnerId === partnerId) {
+        const next = this.db.prepare("SELECT business_partner_id FROM partner_company_links WHERE partner_legal_entity_id = ? ORDER BY created_at, business_partner_id LIMIT 1").get(legalEntityId) as { business_partner_id: string } | undefined;
+        this.patchLocalRow("partner_legal_entities", legalEntityId, { business_partner_id: next?.business_partner_id ?? null, is_primary: false, updated_at: new Date().toISOString() });
+        if (next) this.db.prepare("DELETE FROM partner_company_links WHERE partner_legal_entity_id = ? AND business_partner_id = ?").run(legalEntityId, next.business_partner_id);
+      }
+    })();
     return this.getPartnerLegalEntity(legalEntityId);
   }
 
@@ -2527,7 +1204,6 @@ export class AppRepository {
       default_unit: data.defaultUnit, default_sack_weight_kg: data.defaultSackWeightKg, description: data.description,
       is_active: data.isActive, created_at: now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("products", row));
     this.upsertLocalRow("products", row);
     return this.getProduct(id);
   }
@@ -2541,7 +1217,6 @@ export class AppRepository {
       default_unit: data.defaultUnit, default_sack_weight_kg: data.defaultSackWeightKg, description: data.description,
       is_active: data.isActive, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("products", id, row));
     this.patchLocalRow("products", id, row);
     return this.getProduct(id);
   }
@@ -2598,7 +1273,6 @@ export class AppRepository {
       due_days_after_closing: data.dueDaysAfterClosing, auto_include_unbilled_operations: data.autoIncludeUnbilledOperations,
       notes: data.notes, is_active: data.isActive, created_at: existing?.createdAt ?? now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => existing ? this.sharedRepository!.updateRow("client_billing_profiles", id, row) : this.sharedRepository!.insertRow("client_billing_profiles", row));
     this.upsertLocalRow("client_billing_profiles", row);
     const saved = this.getBillingProfile(data.businessPartnerId);
     if (!saved) throw new Error("Falha ao salvar perfil de cobranca.");
@@ -2638,14 +1312,14 @@ export class AppRepository {
       rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("service_rate_rules", row));
     this.upsertLocalRow("service_rate_rules", row);
     await this.recomputeServiceRateRuleConflictWarnings(data.businessPartnerId);
     return this.getServiceRateRule(id);
   }
 
   async updateServiceRateRule(id: string, input: unknown): Promise<ServiceRateRule> {
-    this.getServiceRateRule(id);
+    const previous = this.getServiceRateRule(id);
+    const changedChargeIds = new Set<string>();
     const data = serviceRateRuleInputSchema.parse(input);
     this.assertServiceRateRule(data, id);
     const row: DbRecord = {
@@ -2654,9 +1328,19 @@ export class AppRepository {
       rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", id, row));
-    this.patchLocalRow("service_rate_rules", id, row);
+    this.db.transaction(() => {
+      this.patchLocalRow("service_rate_rules", id, row);
+      for (const responsiblePartnerId of new Set([previous.businessPartnerId, data.businessPartnerId])) {
+        this.refreshAllOrganizationOperationServiceRates({ responsiblePartnerId, repriceExisting: true, changedChargeIds });
+      }
+      for (const chargeId of changedChargeIds) {
+        this.recalculateClientCharge(chargeId);
+        this.db.prepare("UPDATE client_charges SET snapshot_json = ?, updated_at = ? WHERE id = ?")
+          .run(JSON.stringify(this.buildChargeSnapshot(chargeId)), new Date().toISOString(), chargeId);
+      }
+    })();
     await this.recomputeServiceRateRuleConflictWarnings(data.businessPartnerId);
+    for (const chargeId of changedChargeIds) await this.regenerateChargeDocuments(chargeId);
     return this.getServiceRateRule(id);
   }
 
@@ -2670,7 +1354,6 @@ export class AppRepository {
       this.db.prepare("DELETE FROM service_rate_rules WHERE id = ?").run(id);
     });
     transaction();
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("service_rate_rules", { id }));
     await this.recomputeServiceRateRuleConflictWarnings(rule.businessPartnerId);
   }
 
@@ -2735,7 +1418,6 @@ export class AppRepository {
         : null;
       if (rule.conflictWarning !== warning) {
         const patch: DbRecord = { conflict_warning: warning };
-        await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", rule.id, patch));
         this.patchLocalRow("service_rate_rules", rule.id, patch);
       }
     }
@@ -2751,38 +1433,17 @@ export class AppRepository {
       .filter((rule) => !rule.productId || rule.productId === data.productId);
     const candidates = activeRules
       .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
-      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000 }));
+      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) }));
     if (candidates.length === 0) {
       return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
     }
     const max = Math.max(...candidates.map((item) => item.score));
-    const best = candidates.filter((item) => item.score === max);
+    const specific = candidates.filter((item) => item.score === max);
+    const priority = Math.max(...specific.map((item) => item.rule.priority));
+    const best = specific.filter((item) => item.rule.priority === priority);
     if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
     const rule = best[0].rule;
     return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
-  }
-
-  private resolveServiceRateRuleForUnbilledBackfill(input: unknown): ResolveRateResult {
-    const data = resolveRateInputSchema.parse(input);
-    this.assertClientPartner(data.businessPartnerId, data.organizationId);
-    const activeRules = this.listServiceRateRules({ businessPartnerId: data.businessPartnerId, status: "active" })
-      .filter((rule) => !rule.effectiveTo || rule.effectiveTo >= data.operationDate)
-      .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
-      .filter((rule) => !rule.counterpartyPartnerLegalEntityId || rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId)
-      .filter((rule) => !rule.productId || rule.productId === data.productId);
-    const scoreRule = (rule: ServiceRateRule): number => (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000;
-    const candidates = activeRules
-      .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
-      .map((rule) => ({ rule, score: scoreRule(rule) }));
-    if (candidates.length === 0) return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
-    const max = Math.max(...candidates.map((item) => item.score));
-    const best = candidates
-      .filter((item) => item.score === max)
-      .sort((a, b) => a.rule.effectiveFrom.localeCompare(b.rule.effectiveFrom));
-    const sameEffectiveBest = best.filter((item) => item.rule.effectiveFrom === best[0].rule.effectiveFrom);
-    if (sameEffectiveBest.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
-    const rule = best[0].rule;
-    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: "backfill", message: "Regra ativa aplicada a operacao em aberto anterior a vigencia." };
   }
 
   // Espelha o bloco service_rate_rules acima -- mesma logica de resolucao por
@@ -2818,7 +1479,6 @@ export class AppRepository {
       rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("purchase_rate_rules", row));
     this.upsertLocalRow("purchase_rate_rules", row);
     await this.recomputePurchaseRateRuleConflictWarnings(data.businessPartnerId);
     return this.getPurchaseRateRule(id);
@@ -2834,7 +1494,6 @@ export class AppRepository {
       rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("purchase_rate_rules", id, row));
     this.patchLocalRow("purchase_rate_rules", id, row);
     await this.recomputePurchaseRateRuleConflictWarnings(data.businessPartnerId);
     return this.getPurchaseRateRule(id);
@@ -2850,7 +1509,6 @@ export class AppRepository {
       this.db.prepare("DELETE FROM purchase_rate_rules WHERE id = ?").run(id);
     });
     transaction();
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("purchase_rate_rules", { id }));
     await this.recomputePurchaseRateRuleConflictWarnings(rule.businessPartnerId);
   }
 
@@ -2902,7 +1560,6 @@ export class AppRepository {
         : null;
       if (rule.conflictWarning !== warning) {
         const patch: DbRecord = { conflict_warning: warning };
-        await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("purchase_rate_rules", rule.id, patch));
         this.patchLocalRow("purchase_rate_rules", rule.id, patch);
       }
     }
@@ -2918,12 +1575,14 @@ export class AppRepository {
       .filter((rule) => !rule.productId || rule.productId === data.productId);
     const candidates = activeRules
       .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
-      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + rule.priority / 1000 }));
+      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) }));
     if (candidates.length === 0) {
       return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra de preco de compra aplicavel encontrada." };
     }
     const max = Math.max(...candidates.map((item) => item.score));
-    const best = candidates.filter((item) => item.score === max);
+    const specific = candidates.filter((item) => item.score === max);
+    const priority = Math.max(...specific.map((item) => item.rule.priority));
+    const best = specific.filter((item) => item.rule.priority === priority);
     if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
     const rule = best[0].rule;
     return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
@@ -2953,7 +1612,6 @@ export class AppRepository {
   private async setPurchaseRateRuleActive(id: string, active: boolean): Promise<PurchaseRateRule> {
     const rule = this.getPurchaseRateRule(id);
     const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("purchase_rate_rules", id, patch));
     this.patchLocalRow("purchase_rate_rules", id, patch);
     await this.recomputePurchaseRateRuleConflictWarnings(rule.businessPartnerId);
     return this.getPurchaseRateRule(id);
@@ -2992,7 +1650,81 @@ export class AppRepository {
     const rateHistory = this.tableExists("operation_rate_history")
       ? (this.db.prepare("SELECT * FROM operation_rate_history WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) ORDER BY changed_at").all(id) as DbRecord[]).map(mapOperationRateHistory)
       : [];
-    return { document, items, operations, events, mergeHistory, rateHistory };
+    const returns = this.tableExists("fiscal_document_returns")
+      ? (this.db.prepare("SELECT * FROM fiscal_document_returns WHERE fiscal_document_id = ? ORDER BY return_date, created_at").all(id) as DbRecord[]).map(mapFiscalDocumentReturn)
+      : [];
+    return { document, items, operations, events, mergeHistory, rateHistory, returns };
+  }
+
+  addFiscalDocumentReturn(input: unknown): FiscalDocumentDetail {
+    const data = fiscalDocumentReturnInputSchema.parse(input);
+    const detail = this.getFiscalDocument(data.fiscalDocumentId);
+    if (detail.document.status === "CANCELED") throw new Error("Nota cancelada nao aceita devolucao.");
+    const saleOperations = detail.operations.filter((operation) => operation.operationType === "SALE" && operation.status !== "CANCELED");
+    if (!saleOperations.length) throw new Error("Esta nota nao possui operacao de venda para ajustar na cobranca.");
+    this.assertReturnCanChangeBilling(saleOperations);
+    const quantitySacks = data.inputUnit === "KG" ? divideDecimalText(data.inputQuantity, "60") : normalizeDecimalText(data.inputQuantity);
+    const grossTotal = saleOperations.reduce((sum, operation) => sum + decimalTextToScaled(operation.grossQuantitySacks), 0n);
+    const alreadyReturned = detail.returns.reduce((sum, item) => sum + decimalTextToScaled(item.quantitySacks), 0n);
+    if (alreadyReturned + decimalTextToScaled(quantitySacks) > grossTotal) throw new Error("A devolucao informada ultrapassa a quantidade original da nota.");
+    const now = new Date().toISOString();
+    const trx = this.db.transaction(() => {
+      this.db.prepare(`INSERT INTO fiscal_document_returns (id, fiscal_document_id, return_date, input_unit, input_quantity_decimal, quantity_sacks_decimal, reason, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(randomUUID(), data.fiscalDocumentId, data.returnDate, data.inputUnit, normalizeDecimalText(data.inputQuantity), quantitySacks, data.reason.trim(), now, now);
+      this.recalculateDocumentReturnQuantities(data.fiscalDocumentId);
+    });
+    trx();
+    return this.getFiscalDocument(data.fiscalDocumentId);
+  }
+
+  deleteFiscalDocumentReturn(id: string): FiscalDocumentDetail {
+    const row = this.db.prepare("SELECT * FROM fiscal_document_returns WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Devolucao nao encontrada.");
+    const documentId = String(row.fiscal_document_id);
+    const detail = this.getFiscalDocument(documentId);
+    this.assertReturnCanChangeBilling(detail.operations.filter((operation) => operation.operationType === "SALE" && operation.status !== "CANCELED"));
+    const trx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM fiscal_document_returns WHERE id = ?").run(id);
+      this.recalculateDocumentReturnQuantities(documentId);
+    });
+    trx();
+    return this.getFiscalDocument(documentId);
+  }
+
+  private assertReturnCanChangeBilling(operations: Operation[]): void {
+    for (const operation of operations) {
+      if (!operation.clientChargeId) continue;
+      const charge = this.getClientCharge(operation.clientChargeId).charge;
+      if (charge.paidAmountCents > 0 || charge.status === "PAID") throw new Error("Nao e possivel alterar devolucoes depois que a cobranca recebeu pagamento.");
+    }
+  }
+
+  private recalculateDocumentReturnQuantities(documentId: string): void {
+    const operations = (this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ? AND operation_type = 'SALE' AND status <> 'CANCELED' ORDER BY created_at, id").all(documentId) as DbRecord[]).map(mapOperation);
+    const returnRows = this.db.prepare("SELECT quantity_sacks_decimal FROM fiscal_document_returns WHERE fiscal_document_id = ?").all(documentId) as Array<{ quantity_sacks_decimal: string }>;
+    let remainingReturn = returnRows.reduce((sum, row) => sum + decimalTextToScaled(row.quantity_sacks_decimal), 0n);
+    const scale = 1_000_000n;
+    const scaledToText = (value: bigint): string => {
+      const whole = value / scale;
+      const fraction = (value % scale).toString().padStart(6, "0").replace(/0+$/, "");
+      return fraction ? `${whole}.${fraction}` : whole.toString();
+    };
+    const changedCharges = new Set<string>();
+    const now = new Date().toISOString();
+    for (const operation of operations) {
+      const gross = decimalTextToScaled(operation.grossQuantitySacks);
+      const deducted = remainingReturn > gross ? gross : remainingReturn;
+      remainingReturn -= deducted;
+      const net = scaledToText(gross - deducted);
+      const amount = multiplyDecimalByCents(net, operation.appliedRateValueCents);
+      this.db.prepare("UPDATE operations SET quantity_sacks_decimal = ?, service_amount_cents = ?, updated_at = ? WHERE id = ?").run(net, amount, now, operation.id);
+      if (operation.clientChargeId) {
+        this.db.prepare(`UPDATE client_charge_operations SET quantity_sacks_decimal_snapshot = ?, service_amount_cents_snapshot = ?
+          WHERE client_charge_id = ? AND operation_id = ? AND released_at IS NULL`).run(net, amount, operation.clientChargeId, operation.id);
+        changedCharges.add(operation.clientChargeId);
+      }
+    }
+    changedCharges.forEach((chargeId) => this.recalculateClientCharge(chargeId));
   }
 
   // Nota triangulada: quando a nota representa uma compra de um fornecedor
@@ -3032,20 +1764,48 @@ export class AppRepository {
       notes, confirmed_at, canceled_at, cancel_reason, created_at, updated_at, direction
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
       .run(id, data.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, status, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, now, now, direction);
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ? WHERE id = ?").run(data.contractNumber?.trim() || null, data.billingObservations ?? null, id);
     return this.getFiscalDocument(id);
   }
 
   updateFiscalDocument(id: string, input: unknown): FiscalDocumentDetail {
-    this.getFiscalDocument(id);
+    const previous = this.getFiscalDocument(id);
     const data = fiscalDocumentInputSchema.parse(input);
     if (data.operationType === "PURCHASE") this.assertSupplierPartner(data.responsiblePartnerId, data.organizationId);
     else this.assertClientPartner(data.responsiblePartnerId, data.organizationId);
     this.assertSecondaryPartner(data);
+    if (previous.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")) throw new Error("Nota vinculada a cobranca/acerto. Libere o vinculo antes de editar.");
+    const reassigning = data.responsiblePartnerId !== previous.document.responsiblePartnerId;
+    if (data.organizationId !== previous.document.organizationId) throw new Error("A organizacao da nota nao pode ser alterada.");
+    if (reassigning && this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ? UNION SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id, id)) throw new Error("Nota vinculada a confirmacao de negocio. Remova o vinculo antes de trocar o responsavel.");
+    if (previous.document.status === "CANCELED") throw new Error("Nota cancelada nao pode ser editada.");
+    if (reassigning && (data.secondaryResponsiblePartnerId !== previous.document.secondaryResponsiblePartnerId || data.ownLegalEntityId !== previous.document.ownLegalEntityId || data.issueDate !== previous.document.issueDate || data.partnerLegalEntityId !== previous.document.partnerLegalEntityId)) throw new Error("Corrija o responsavel separadamente dos demais dados comerciais.");
+    const transaction = this.db.transaction(() => {
     const duplicateWarning = this.detectPossibleDuplicate(data, id);
     const direction = data.operationType === "PURCHASE" ? "INBOUND" : "OUTBOUND";
     const secondaryOperationType = data.secondaryResponsiblePartnerId ? (data.secondaryOperationType ?? (data.operationType === "PURCHASE" ? "SALE" : "PURCHASE")) : null;
     this.db.prepare(`UPDATE fiscal_documents SET own_legal_entity_id = ?, responsible_partner_id = ?, partner_legal_entity_id = ?, secondary_responsible_partner_id = ?, secondary_operation_type = ?, access_key = ?, document_number = ?, series = ?, issue_date = ?, total_amount_cents = ?, has_pending_issues = ?, pending_notes = ?, duplicate_warning = ?, notes = ?, updated_at = ?, direction = ? WHERE id = ?`)
       .run(data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, new Date().toISOString(), direction, id);
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ? WHERE id = ?").run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, id);
+    if (reassigning) {
+      const now = new Date().toISOString();
+      for (const op of previous.operations.filter((item) => item.responsiblePartnerId === previous.document.responsiblePartnerId)) {
+        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate };
+        const resolved = op.operationType === "PURCHASE" ? this.resolvePurchaseRateRule(input) : this.resolveServiceRateRule(input);
+        if (resolved.status === "conflict") throw new Error("O novo responsavel possui tarifas conflitantes. Ajuste as regras antes de trocar.");
+        const rate = resolved.rateValueCents ?? 0;
+        const amount = multiplyDecimalByCents(op.quantitySacks, rate);
+        this.db.prepare(`UPDATE operations SET responsible_partner_id = ?, service_rate_rule_id = ?, purchase_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, rate_was_manually_overridden = 0, manual_rate_value_cents = NULL, manual_override_reason = NULL, updated_at = ? WHERE id = ?`)
+          .run(data.responsiblePartnerId, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, op.operationType === "PURCHASE" ? resolved.rule?.id ?? null : null, rate, amount, now, op.id);
+        const reason = `Responsavel alterado: ${previous.document.responsiblePartnerId} -> ${data.responsiblePartnerId}. Tarifa recalculada para o novo responsavel.`;
+        this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(randomUUID(), op.id, op.serviceRateRuleId, op.appliedRateValueCents, op.serviceAmountCents, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, rate, amount, reason, now);
+      }
+      this.db.prepare("UPDATE fiscal_documents SET status = 'DRAFT', confirmed_at = NULL WHERE id = ?").run(id);
+      this.db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(id);
+    }
+    });
+    transaction();
     return this.getFiscalDocument(id);
   }
 
@@ -3169,10 +1929,10 @@ export class AppRepository {
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO operations (
       id, fiscal_document_id, fiscal_document_item_id, organization_id, own_legal_entity_id, responsible_partner_id, product_id,
-      operation_type, operation_scope, operation_date, quantity_sacks_decimal, service_rate_rule_id, purchase_rate_rule_id, applied_rate_value_cents,
+      operation_type, operation_scope, operation_date, quantity_sacks_decimal, gross_quantity_sacks_decimal, service_rate_rule_id, purchase_rate_rule_id, applied_rate_value_cents,
       service_amount_cents, rate_was_manually_overridden, manual_rate_value_cents, manual_override_reason, notes, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, data.fiscalDocumentId, data.fiscalDocumentItemId, detail.document.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.productId, data.operationType, data.operationScope, data.operationDate, normalizeDecimalText(data.quantitySacks), isPurchase ? null : (resolved.rule?.id ?? null), isPurchase ? (resolved.rule?.id ?? null) : null, rate, amount, manual ? 1 : 0, data.manualRateValueCents, data.manualOverrideReason, data.notes, detail.document.hasPendingIssues || resolved.status === "missing" ? "PENDING" : "DRAFT", now, now);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.fiscalDocumentId, data.fiscalDocumentItemId, detail.document.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.productId, data.operationType, data.operationScope, data.operationDate, normalizeDecimalText(data.quantitySacks), normalizeDecimalText(data.quantitySacks), isPurchase ? null : (resolved.rule?.id ?? null), isPurchase ? (resolved.rule?.id ?? null) : null, rate, amount, manual ? 1 : 0, data.manualRateValueCents, data.manualOverrideReason, data.notes, detail.document.hasPendingIssues || resolved.status === "missing" ? "PENDING" : "DRAFT", now, now);
     return this.getFiscalDocument(data.fiscalDocumentId).operations.find((item) => item.id === id) as Operation;
   }
 
@@ -3223,7 +1983,7 @@ export class AppRepository {
           counterpartyPartnerLegalEntityId: secondaryPartnerLegalEntity?.id ?? null
         }, detail);
         this.db.prepare("UPDATE operations SET status = ?, source = ?, import_job_id = ?, import_row_id = ?, xml_import_job_id = ?, classification_rule_id = ?, updated_at = ? WHERE id = ?")
-          .run(operation.status, operation.source, operation.importJobId, operation.importRowId, operation.xmlImportJobId, operation.classificationRuleId, now, secondary.id);
+          .run(secondary.status === "PENDING" ? "PENDING" : operation.status, operation.source, operation.importJobId, operation.importRowId, operation.xmlImportJobId, operation.classificationRuleId, now, secondary.id);
       }
     });
     trx();
@@ -3233,14 +1993,20 @@ export class AppRepository {
   updateOperationManualRate(id: string, manualRateValueCents: number, reason: string): Operation {
     const operation = this.getOperation(id);
     if (!reason.trim()) throw new Error("Motivo obrigatorio para alteracao manual.");
+    if (!Number.isSafeInteger(manualRateValueCents) || manualRateValueCents < 0) throw new Error("Valor por saca invalido.");
+    if (operation.status === "CANCELED" || operation.billingStatus !== "UNBILLED" || operation.purchaseSettlementStatus !== "UNSETTLED") throw new Error("Operacao cancelada ou vinculada a cobranca/acerto nao pode ter a tarifa alterada.");
     const amount = multiplyDecimalByCents(operation.quantitySacks, manualRateValueCents);
     this.db.prepare("UPDATE operations SET applied_rate_value_cents = ?, service_amount_cents = ?, rate_was_manually_overridden = 1, manual_rate_value_cents = ?, manual_override_reason = ?, updated_at = ? WHERE id = ?")
       .run(manualRateValueCents, amount, manualRateValueCents, reason, new Date().toISOString(), id);
+    this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
+      .run(randomUUID(), id, operation.serviceRateRuleId, operation.appliedRateValueCents, operation.serviceAmountCents, manualRateValueCents, amount, reason.trim(), new Date().toISOString());
     return this.getOperation(id);
   }
 
   confirmFiscalDocument(id: string): FiscalDocumentDetail {
     const detail = this.getFiscalDocument(id);
+    if (detail.document.status === "CANCELED") throw new Error("Nota cancelada nao pode ser confirmada.");
+    if (this.documentRequiresContract(detail.document) && !detail.document.contractNumber) throw new Error("Informe o contrato exigido pelo cliente antes de confirmar.");
     if (detail.document.hasPendingIssues) throw new Error("Resolva as pendencias antes de confirmar.");
     if (detail.items.length === 0 || detail.operations.length === 0) throw new Error("Nota precisa ter itens e operacoes.");
     const now = new Date().toISOString();
@@ -3483,7 +2249,8 @@ export class AppRepository {
               totalAmountCents: Number(normalized.totalAmountCents ?? 0),
               hasPendingIssues: row.status === "WARNING",
               pendingNotes: row.warningCodesJson,
-              notes: normalized.notes || null
+              notes: normalized.notes || null,
+              contractNumber: normalized.contractNumber || null
             });
         if (!groupedDocumentId) {
           documentGroups.set(groupKey, doc.document.id);
@@ -3654,7 +2421,8 @@ export class AppRepository {
   updateXmlImportFileResolution(id: string, resolution: unknown): XmlImportFile {
     const file = this.getXmlImportFile(id);
     const data = xmlImportResolutionSchema.parse(resolution);
-    this.db.prepare("UPDATE xml_import_files SET resolution_data_json = ?, status = CASE WHEN status = 'ERROR' THEN status ELSE 'WARNING' END, updated_at = ? WHERE id = ?").run(JSON.stringify(data), new Date().toISOString(), id);
+    const previous = file.resolutionDataJson ? JSON.parse(file.resolutionDataJson) as Record<string, unknown> : {};
+    this.db.prepare("UPDATE xml_import_files SET resolution_data_json = ?, status = CASE WHEN status = 'ERROR' THEN status ELSE 'WARNING' END, updated_at = ? WHERE id = ?").run(JSON.stringify({ ...previous, ...data }), new Date().toISOString(), id);
     this.recountXmlImportJob(file.importJobId);
     return this.getXmlImportJob(file.importJobId).files.find((item) => item.id === id) as XmlImportFile;
   }
@@ -3690,14 +2458,6 @@ export class AppRepository {
       } catch (error) {
         this.db.prepare("UPDATE xml_import_files SET status = 'ERROR', error_code = 'IMPORT_FAILED', error_message = ?, updated_at = ? WHERE id = ?").run(error instanceof Error ? error.message : "Falha ao importar XML.", new Date().toISOString(), file.id);
       }
-      const updatedFile = this.db.prepare("SELECT fiscal_document_id FROM xml_import_files WHERE id = ?").get(file.id) as { fiscal_document_id: string | null } | undefined;
-      if (updatedFile?.fiscal_document_id) {
-        // Falha de rede aqui nao aborta o job -- a nota ja esta segura local,
-        // e o sync poll (ou o proximo push) fecha a diferenca depois. So' nao
-        // pode ficar muda: e' exatamente esse tipo de falha silenciosa que
-        // deixou cadastro/nota "presos" so' localmente sem ninguem perceber.
-        await this.pushFiscalDocumentToShared(updatedFile.fiscal_document_id).catch((error) => log.warn("Falha ao sincronizar nota fiscal com o Supabase", error instanceof Error ? error.message : error));
-      }
     }
     this.recountXmlImportJob(id);
     const after = this.getXmlImportJob(id);
@@ -3705,7 +2465,6 @@ export class AppRepository {
     const completedAt = new Date().toISOString();
     this.db.prepare("UPDATE xml_import_jobs SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(hasErrors ? "COMPLETED_WITH_ERRORS" : "COMPLETED", completedAt, completedAt, id);
     this.recountXmlImportJob(id);
-    await this.pushXmlImportJobToShared(id).catch((error) => log.warn("Falha ao sincronizar job de importacao de XML com o Supabase", error instanceof Error ? error.message : error));
     return this.getXmlImportJob(id);
   }
 
@@ -3773,6 +2532,8 @@ export class AppRepository {
     if (!doc) return 0;
     const fiscal = mapFiscalDocument(doc);
     const result = this.db.prepare("UPDATE fiscal_document_events SET fiscal_document_id = ? WHERE access_key = ? AND fiscal_document_id IS NULL").run(fiscal.id, accessKey);
+    const cancellation = this.db.prepare("SELECT protocol_number FROM fiscal_document_events WHERE access_key = ? AND event_type = 'CANCELLATION' AND status_code IN ('135', '155') AND COALESCE(protocol_number, '') <> '' LIMIT 1").get(accessKey) as { protocol_number: string } | undefined;
+    if (cancellation && fiscal.status !== "CANCELED") this.cancelFiscalDocument(fiscal.id, `Cancelamento XML protocolo ${cancellation.protocol_number}`);
     return Number(result.changes);
   }
 
@@ -3906,14 +2667,15 @@ export class AppRepository {
     const data = eligibleOperationsInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
     if (data.includeAllCompanies) {
-      this.refreshAllOrganizationOperationServiceRates({ responsiblePartnerId: data.clientPartnerId, periodStart: data.periodStart, periodEnd: data.periodEnd });
+      this.refreshAllOrganizationOperationServiceRates({ responsiblePartnerId: data.clientPartnerId, periodStart: data.periodStart, periodEnd: data.periodEnd, repriceExisting: true });
     } else {
       this.refreshOperationServiceRates({
         organizationId: data.organizationId,
         ownLegalEntityId: data.ownLegalEntityId ?? undefined,
         responsiblePartnerId: data.clientPartnerId,
         periodStart: data.periodStart,
-        periodEnd: data.periodEnd
+        periodEnd: data.periodEnd,
+        repriceExisting: true
       });
     }
     const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
@@ -3930,11 +2692,16 @@ export class AppRepository {
         AND responsible_partner_id = ?
         AND operation_date BETWEEN ? AND ?
         AND operation_type = 'SALE'
-        AND status = 'CONFIRMED'
+        AND status IN ('DRAFT', 'CONFIRMED')
+        AND EXISTS (SELECT 1 FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id AND fd.status IN ('DRAFT', 'CONFIRMED') AND fd.has_pending_issues = 0
+          AND (COALESCE(fd.contract_number, '') <> '' OR NOT EXISTS (SELECT 1 FROM business_partners bp WHERE bp.id = operations.responsible_partner_id AND bp.requires_contract = 1)))
         AND billing_status = 'UNBILLED'
         AND applied_rate_value_cents > 0
         AND service_amount_cents > 0
-      ORDER BY operation_date, created_at
+      ORDER BY operation_date,
+        CAST((SELECT fd.document_number FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id) AS INTEGER),
+        (SELECT fd.document_number FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id),
+        created_at
     `).all(...params) as DbRecord[]).map(mapOperation);
   }
 
@@ -3968,7 +2735,8 @@ export class AppRepository {
         ${organizationClause}
         ${ownLegalEntityClause}
         AND operations.operation_date BETWEEN ? AND ?
-        AND operations.status = 'CONFIRMED'
+        AND operations.status IN ('DRAFT', 'CONFIRMED')
+        AND operations.operation_type = 'SALE'
         ${billingStatusClause}
     `).all(...params) as Array<{ partnerId: string; scope: "INTERNAL" | "EXTERNAL"; sacks: string; amountCents: number }>;
 
@@ -4026,6 +2794,7 @@ export class AppRepository {
         operations.id,
         operations.fiscal_document_id,
         operations.quantity_sacks_decimal,
+        operations.gross_quantity_sacks_decimal,
         operations.applied_rate_value_cents,
         fiscal_document_items.sacks_quantity_decimal
       FROM operations
@@ -4050,50 +2819,32 @@ export class AppRepository {
       id: string;
       fiscal_document_id: string;
       quantity_sacks_decimal: string;
+      gross_quantity_sacks_decimal: string | null;
       applied_rate_value_cents: number;
       sacks_quantity_decimal: string;
     }>;
 
     const now = new Date().toISOString();
-    const correctedFiscalDocumentIds = new Set<string>();
-    const update = this.db.prepare(`
-      UPDATE operations
-      SET quantity_sacks_decimal = ?,
-          service_amount_cents = ?,
-          updated_at = ?
-      WHERE id = ?
-    `);
+    const update = this.db.prepare("UPDATE operations SET gross_quantity_sacks_decimal = ?, updated_at = ? WHERE id = ?");
+    const changedDocuments = new Set<string>();
 
     for (const row of rows) {
       const correctSacks = normalizeDecimalText(row.sacks_quantity_decimal);
-      const currentSacks = normalizeDecimalText(row.quantity_sacks_decimal);
+      const currentSacks = normalizeDecimalText(row.gross_quantity_sacks_decimal ?? row.quantity_sacks_decimal);
       if (correctSacks === currentSacks) continue;
-
-      const correctedAmount = multiplyDecimalByCents(correctSacks, row.applied_rate_value_cents);
-      update.run(correctSacks, correctedAmount, now, row.id);
-      correctedFiscalDocumentIds.add(row.fiscal_document_id);
+      update.run(correctSacks, now, row.id);
+      changedDocuments.add(row.fiscal_document_id);
       log.info("Quantidade em sacas corrigida antes da cobranca", {
         operationId: row.id,
         previousQuantitySacks: currentSacks,
         correctedQuantitySacks: correctSacks
       });
     }
+    changedDocuments.forEach((documentId) => this.recalculateDocumentReturnQuantities(documentId));
 
-    // No aplicativo instalado existe sincronizacao com o Supabase. Sem reenviar
-    // a nota/operacoes corrigidas, o proximo pull pode trazer de volta o valor
-    // antigo (ex.: 2640) e desfazer a correcao que funcionava apenas localmente.
-    // A outbox e esvaziada antes do pull, garantindo que a quantidade em sacas
-    // corrigida seja compartilhada antes de baixar alteracoes remotas.
-    for (const fiscalDocumentId of correctedFiscalDocumentIds) {
-      this.outbox.enqueue(
-        "fiscal_document",
-        fiscalDocumentId,
-        new Error("Reenvio apos corrigir quantidade KG para sacas.")
-      );
-    }
   }
 
-  private refreshOperationServiceRates(filters: { organizationId: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string }): void {
+  private refreshOperationServiceRates(filters: { organizationId: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; repriceExisting?: boolean; changedChargeIds?: Set<string> }): void {
     this.normalizeUnbilledOperationSacksFromFiscalItems(filters);
     const operations = this.listOperations({
       organizationId: filters.organizationId,
@@ -4102,13 +2853,19 @@ export class AppRepository {
       periodStart: filters.periodStart,
       periodEnd: filters.periodEnd,
       status: "all",
-      billingStatus: "UNBILLED"
+      billingStatus: filters.repriceExisting ? "all" : "UNBILLED"
     // "PURCHASE" nunca passa por aqui -- isso e' backfill de COMISSAO
     // (service_rate_rules), nao faz sentido pra operacao de compra, e
     // resolveServiceRateRule exige papel CLIENT (fornecedor pode nao ter).
     }).filter((operation) => !operation.rateWasManuallyOverridden && operation.status !== "CANCELED" && operation.operationType !== "PURCHASE");
     const now = new Date().toISOString();
     for (const operation of operations) {
+      if (operation.clientChargeId) {
+        const charge = this.getClientCharge(operation.clientChargeId).charge;
+        if (["PAID", "CANCELLED", "REPLACED"].includes(charge.status)) continue;
+      } else if (operation.billingStatus !== "UNBILLED") continue;
+      // Consultas preservam o preco; salvar uma regra solicita o recalculo das notas abertas.
+      if ((!filters.repriceExisting && operation.serviceRateRuleId !== null) || operation.rateWasManuallyOverridden) continue;
       const resolved = this.resolveServiceRateRule({
         organizationId: operation.organizationId,
         businessPartnerId: operation.responsiblePartnerId,
@@ -4118,20 +2875,15 @@ export class AppRepository {
         operationScope: operation.operationScope,
         operationDate: operation.operationDate
       });
-      const backfilled = resolved.status === "missing" && operation.appliedRateValueCents === 0 && operation.serviceAmountCents === 0
-        ? this.resolveServiceRateRuleForUnbilledBackfill({
-          organizationId: operation.organizationId,
-          businessPartnerId: operation.responsiblePartnerId,
-          ownLegalEntityId: operation.ownLegalEntityId,
-          counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId, operation.responsiblePartnerId),
-          productId: operation.productId,
-          operationScope: operation.operationScope,
-          operationDate: operation.operationDate
-        })
-        : resolved;
+      const backfilled = resolved;
       if (backfilled.status !== "found" || backfilled.rateValueCents === null) continue;
       const resolvedRule = backfilled.rule;
       const serviceAmountCents = multiplyDecimalByCents(operation.quantitySacks, backfilled.rateValueCents);
+      if (filters.repriceExisting && operation.status === "PENDING" && serviceAmountCents > 0) {
+        this.db.prepare(`UPDATE operations SET status = (SELECT status FROM fiscal_documents WHERE id = operations.fiscal_document_id), updated_at = ?
+          WHERE id = ? AND EXISTS (SELECT 1 FROM fiscal_documents f WHERE f.id = operations.fiscal_document_id
+            AND f.status IN ('DRAFT', 'CONFIRMED') AND f.has_pending_issues = 0)`).run(now, operation.id);
+      }
       if (operation.serviceRateRuleId === resolvedRule?.id && operation.appliedRateValueCents === backfilled.rateValueCents && operation.serviceAmountCents === serviceAmountCents) continue;
       // So registra historico quando a operacao JA tinha uma regra aplicada antes (mudanca de verdade,
       // ex: regra nova retroativa "vazando" para tras). A primeira resolucao de uma operacao recem
@@ -4148,17 +2900,25 @@ export class AppRepository {
       }
       this.db.prepare("UPDATE operations SET service_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, updated_at = ? WHERE id = ?")
         .run(resolvedRule?.id ?? null, backfilled.rateValueCents, serviceAmountCents, now, operation.id);
+      if (operation.clientChargeId) {
+        this.db.prepare(`UPDATE client_charge_operations SET service_rate_cents_snapshot = ?, service_amount_cents_snapshot = ?
+          WHERE client_charge_id = ? AND operation_id = ? AND released_at IS NULL`)
+          .run(backfilled.rateValueCents, serviceAmountCents, operation.clientChargeId, operation.id);
+        filters.changedChargeIds?.add(operation.clientChargeId);
+      }
     }
   }
 
-  private refreshAllOrganizationOperationServiceRates(filters: { responsiblePartnerId?: string; periodStart?: string; periodEnd?: string }): void {
+  private refreshAllOrganizationOperationServiceRates(filters: { responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; repriceExisting?: boolean; changedChargeIds?: Set<string> }): void {
     const rows = this.db.prepare("SELECT id FROM organizations WHERE is_active = 1").all() as Array<{ id: string }>;
     rows.forEach((row) => {
       this.refreshOperationServiceRates({
         organizationId: row.id,
         responsiblePartnerId: filters.responsiblePartnerId,
         periodStart: filters.periodStart,
-        periodEnd: filters.periodEnd
+        periodEnd: filters.periodEnd,
+        repriceExisting: filters.repriceExisting,
+        changedChargeIds: filters.changedChargeIds
       });
     });
   }
@@ -4235,9 +2995,9 @@ export class AppRepository {
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO client_ledger_entries (
       id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents,
-      entry_date, description, reference_number, notes, attachment_path, status, available_amount_cents, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, data.organizationId, data.ownLegalEntityId, data.clientPartnerId, data.clientChargeId, data.entryType, data.effect, data.amountCents, data.entryDate, data.description, data.referenceNumber, data.notes, data.attachmentPath, data.status, data.availableAmountCents, now, now);
+      entry_date, description, reference_number, notes, attachment_path, status, available_amount_cents, collection_due_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.organizationId, data.ownLegalEntityId, data.clientPartnerId, data.clientChargeId, data.entryType, data.effect, data.amountCents, data.entryDate, data.description, data.referenceNumber, data.notes, data.attachmentPath, data.status, data.availableAmountCents, data.collectionDueDate, now, now);
     return this.getLedgerEntry(id);
   }
 
@@ -4293,16 +3053,27 @@ export class AppRepository {
     const before = this.getClientCharge(id);
     if (!["DRAFT", "PENDING_REVIEW"].includes(before.charge.status)) throw new Error("Cobranca ja emitida ou cancelada.");
     if (before.operations.length === 0) throw new Error("Cobranca sem operacoes.");
+    for (const snapshot of before.operations) {
+      if (!snapshot.operationId || snapshot.operationId === "null") continue;
+      const operation = this.getOperation(snapshot.operationId);
+      const document = this.getFiscalDocument(operation.fiscalDocumentId).document;
+      if (!["DRAFT", "CONFIRMED"].includes(operation.status) || !["DRAFT", "CONFIRMED"].includes(document.status) || document.hasPendingIssues) throw new Error("Revise as notas pendentes/canceladas antes de emitir a cobranca.");
+      if (this.documentRequiresContract(document) && !snapshot.contractNumberSnapshot) throw new Error("Contrato obrigatorio ausente. Recrie o rascunho apos informar o contrato.");
+    }
     const now = new Date().toISOString();
     const trx = this.db.transaction(() => {
-      const number = this.reserveNextChargeNumber(before.charge.organizationId, before.charge.ownLegalEntityId, now.slice(0, 4));
       this.recalculateClientCharge(id);
       const snapshot = JSON.stringify(this.buildChargeSnapshot(id));
-      this.db.prepare("UPDATE client_charges SET charge_number = ?, issue_date = ?, status = 'ISSUED', issued_at = ?, snapshot_json = ?, updated_at = ? WHERE id = ?").run(number, now.slice(0, 10), now, snapshot, now, id);
+      this.db.prepare("UPDATE client_charges SET issue_date = ?, status = 'ISSUED', issued_at = ?, snapshot_json = ?, updated_at = ? WHERE id = ?").run(now.slice(0, 10), now, snapshot, now, id);
       this.db.prepare("UPDATE operations SET billing_status = 'BILLED', updated_at = ? WHERE client_charge_id = ?").run(now, id);
       this.db.prepare("INSERT INTO client_ledger_entries (id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents, entry_date, description, status, available_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'SERVICE_CHARGE', 'INCREASE_RECEIVABLE', ?, ?, ?, 'CONFIRMED', NULL, ?, ?)")
-        .run(randomUUID(), before.charge.organizationId, before.charge.ownLegalEntityId, before.charge.clientPartnerId, id, this.getClientCharge(id).charge.finalAmountCents, now.slice(0, 10), `Cobranca ${number}`, now, now);
+        .run(randomUUID(), before.charge.organizationId, before.charge.ownLegalEntityId, before.charge.clientPartnerId, id, this.getClientCharge(id).charge.finalAmountCents, now.slice(0, 10), `Cobranca ${chargePeriodLabel(before.charge)}`, now, now);
       this.recordChargeStatus(id, before.charge.status, "ISSUED", "Cobranca emitida");
+      // Um pagamento pode ter sido registrado enquanto a cobranca ainda era
+      // rascunho (comportamento permitido pelas versoes anteriores). Depois de
+      // emitir, recalcule novamente para que saldo zero resulte em PAID, em vez
+      // de deixar a cobranca integralmente paga marcada como ISSUED/parcial.
+      this.recalculateClientCharge(id);
     });
     trx();
     const generated = await this.regenerateChargeDocuments(id);
@@ -4317,32 +3088,14 @@ export class AppRepository {
     const client = this.getBusinessPartner(detail.charge.clientPartnerId);
     const clientLegalEntity = this.listPartnerLegalEntities(client.id).find((entity) => entity.isPrimary && entity.isActive) ?? this.listPartnerLegalEntities(client.id).find((entity) => entity.isActive) ?? null;
     const relatedOpenChargeDetails = this.listRelatedOpenChargeDetailsForDocuments(detail);
-    const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, clientLegalEntity, detail, relatedOpenChargeDetails });
+    const relatedPaidChargeDetails = this.listRelatedPaidChargeDetailsForDocuments(detail);
+    const result = await generateChargeDocuments({ directories: this.directories, organization, ownLegalEntity, client, clientLegalEntity, detail, relatedOpenChargeDetails, relatedPaidChargeDetails });
     const version = detail.documents.length + 1;
     const now = new Date().toISOString();
     const documentVersionId = randomUUID();
-    const pdfStorageObjectPath = await this.uploadDocumentToShared(
-      detail.charge.organizationId,
-      detail.charge.ownLegalEntityId,
-      "charges",
-      `${documentVersionId}-cobranca.pdf`,
-      result.pdfFilePath,
-      "application/pdf"
-    );
-    const excelStorageObjectPath = await this.uploadDocumentToShared(
-      detail.charge.organizationId,
-      detail.charge.ownLegalEntityId,
-      "charges",
-      `${documentVersionId}-cobranca.xlsx`,
-      result.excelFilePath,
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    this.db.prepare("INSERT INTO charge_document_versions (id, client_charge_id, version, pdf_file_path, pdf_file_hash, excel_file_path, excel_file_hash, image_file_path, image_file_hash, pdf_storage_object_path, excel_storage_object_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(documentVersionId, id, version, result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.excelFileHash, result.imageFilePath, result.imageFileHash, pdfStorageObjectPath, excelStorageObjectPath, now);
+    this.db.prepare("INSERT INTO charge_document_versions (id, client_charge_id, version, pdf_file_path, pdf_file_hash, excel_file_path, excel_file_hash, image_file_path, image_file_hash, pdf_storage_object_path, excel_storage_object_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)")
+      .run(documentVersionId, id, version, result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.excelFileHash, result.imageFilePath, result.imageFileHash, now);
     this.db.prepare("UPDATE client_charges SET pdf_file_path = ?, pdf_file_hash = ?, excel_file_path = ?, image_file_path = ?, updated_at = ? WHERE id = ?").run(result.pdfFilePath, result.pdfFileHash, result.excelFilePath, result.imageFilePath, now, id);
-    if (pdfStorageObjectPath || excelStorageObjectPath) {
-      await this.pushClientChargeToShared(id).catch((error) => log.warn("Falha ao sincronizar cobranca apos subir documento pro Storage", error instanceof Error ? error.message : error));
-    }
     return this.getClientCharge(id);
   }
 
@@ -4355,6 +3108,22 @@ export class AppRepository {
         AND client_partner_id = ?
         AND status NOT IN ('PAID', 'CANCELLED', 'REPLACED')
         AND open_amount_cents > 0
+        AND period_start <= ?
+        AND period_end >= ?
+      ORDER BY period_start, charge_number, created_at
+    `).all(charge.id, charge.clientPartnerId, charge.periodEnd, charge.periodStart) as DbRecord[];
+    return rows.map((row) => this.getClientCharge(String(row.id)));
+  }
+
+  private listRelatedPaidChargeDetailsForDocuments(detail: ClientChargeDetail): ClientChargeDetail[] {
+    const charge = detail.charge;
+    const rows = this.db.prepare(`
+      SELECT id
+      FROM client_charges
+      WHERE id != ?
+        AND client_partner_id = ?
+        AND status = 'PAID'
+        AND paid_amount_cents >= final_amount_cents
         AND period_start <= ?
         AND period_end >= ?
       ORDER BY period_start, charge_number, created_at
@@ -4396,6 +3165,32 @@ export class AppRepository {
     });
     trx();
     return this.getClientCharge(charge.id);
+  }
+
+  async generateClientPaymentReceipt(id: string): Promise<ClientPayment> {
+    if (!this.directories) throw new Error("Diretorios locais nao configurados.");
+    const payment = this.getClientPayment(id);
+    const allocationRows = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_payment_id = ? AND cancelled_at IS NULL ORDER BY allocated_at").all(id) as DbRecord[];
+    if (!allocationRows.length) throw new Error("O pagamento ainda nao foi vinculado a nenhuma cobranca.");
+    const allocations = allocationRows.map((row) => ({ amountCents: Number(row.amount_cents), charge: this.getClientCharge(String(row.client_charge_id)) }));
+    const result = await generatePaymentReceiptDocuments({
+      directories: this.directories,
+      organization: this.getOrganization(payment.organizationId),
+      ownLegalEntity: this.getLegalEntity(payment.ownLegalEntityId),
+      client: this.getBusinessPartner(payment.clientPartnerId),
+      payment,
+      allocations
+    });
+    this.db.prepare("UPDATE client_payments SET receipt_pdf_file_path = ?, receipt_image_file_path = ?, updated_at = ? WHERE id = ?")
+      .run(result.pdfFilePath, result.imageFilePath, new Date().toISOString(), id);
+    return this.getClientPayment(id);
+  }
+
+  getClientPaymentReceiptPath(id: string, kind: "pdf" | "image"): string {
+    const payment = this.getClientPayment(id);
+    const filePath = kind === "pdf" ? payment.receiptPdfFilePath : payment.receiptImageFilePath;
+    if (!filePath) throw new Error("Recibo ainda nao foi gerado.");
+    return filePath;
   }
 
   // Exclusao definitiva (nao so' cancelamento): apaga a cobranca e o historico
@@ -4464,12 +3259,17 @@ export class AppRepository {
     return (this.db.prepare(`SELECT * FROM client_charges ${where} ORDER BY created_at DESC`).all(...params) as DbRecord[]).map((row) => this.refreshChargeComputedStatus(mapClientCharge(row)));
   }
 
-  getClientCharge(id: string): ClientChargeDetail {
+  getClientCharge(id: string, refreshStatus = true): ClientChargeDetail {
     const row = this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(id) as DbRecord | undefined;
     if (!row) throw new Error("Cobranca nao encontrada.");
-    const charge = this.refreshChargeComputedStatus(mapClientCharge(row));
+    const charge = refreshStatus ? this.refreshChargeComputedStatus(mapClientCharge(row)) : mapClientCharge(row);
     this.assertOrganizationWritable(charge.organizationId);
-    const operations = (this.db.prepare("SELECT * FROM client_charge_operations WHERE client_charge_id = ? AND released_at IS NULL ORDER BY operation_date_snapshot").all(id) as DbRecord[]).map((operationRow) => {
+    const operations = (this.db.prepare(`SELECT * FROM client_charge_operations
+      WHERE client_charge_id = ? AND released_at IS NULL
+      ORDER BY operation_date_snapshot,
+        CAST(fiscal_document_number_snapshot AS INTEGER),
+        fiscal_document_number_snapshot,
+        created_at`).all(id) as DbRecord[]).map((operationRow) => {
       const operation = mapClientChargeOperation(operationRow);
       if (operation.destinationNameSnapshot && operation.destinationNameSnapshot !== operation.ownLegalEntityNameSnapshot) return operation;
       try {
@@ -4488,6 +3288,9 @@ export class AppRepository {
     return {
       charge,
       operations,
+      canceledInvoices: this.db.prepare(`SELECT f.id AS documentId, f.document_number AS documentNumber, SUM(c.service_amount_cents_snapshot) AS amountCents
+        FROM client_charge_operations c JOIN operations o ON o.id = c.operation_id JOIN fiscal_documents f ON f.id = o.fiscal_document_id
+        WHERE c.client_charge_id = ? AND c.released_at IS NULL AND f.status = 'CANCELED' GROUP BY f.id`).all(id) as Array<{ documentId: string; documentNumber: string; amountCents: number }>,
       adjustments: (this.db.prepare(`
         SELECT a.*, l.entry_date AS ledger_entry_date
         FROM client_charge_adjustments a
@@ -4509,23 +3312,30 @@ export class AppRepository {
     if (filters.clientPartnerId) { clauses.push("client_partner_id = ?"); params.push(filters.clientPartnerId); }
     if (filters.periodStart) { clauses.push("entry_date >= ?"); params.push(filters.periodStart); }
     if (filters.periodEnd) { clauses.push("entry_date <= ?"); params.push(filters.periodEnd); }
-    return (this.db.prepare(`SELECT * FROM client_ledger_entries WHERE ${clauses.join(" AND ")} ORDER BY entry_date DESC, created_at DESC`).all(...params) as DbRecord[]).map(mapClientLedgerEntry);
+    return (this.db.prepare(`SELECT * FROM client_ledger_entries WHERE ${clauses.join(" AND ")} ORDER BY entry_date DESC, created_at DESC`).all(...params) as DbRecord[]).map(mapClientLedgerEntry).map((entry) => {
+      if (entry.entryType !== "SERVICE_CHARGE" || !entry.clientChargeId) return entry;
+      const charge = this.db.prepare("SELECT period_start, period_end FROM client_charges WHERE id = ?").get(entry.clientChargeId) as { period_start: string; period_end: string } | undefined;
+      return charge ? { ...entry, description: `Cobranca ${chargePeriodLabel({ periodStart: charge.period_start, periodEnd: charge.period_end })}` } : entry;
+    });
   }
 
-  getBillingSummary(input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean }): BillingSummary {
+  getBillingSummary(input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart?: string | null; periodEnd?: string | null }): BillingSummary {
     const organizationId = typeof input === "string" ? input : input.organizationId;
     const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
     const includeAllCompanies = typeof input !== "string" && Boolean(input.includeAllCompanies);
+    const periodStart = typeof input === "string" ? null : input.periodStart;
+    const periodEnd = typeof input === "string" ? null : input.periodEnd;
     this.assertOrganizationWritable(organizationId);
     if (includeAllCompanies) this.refreshAllOrganizationOperationServiceRates({});
     else this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
     const chargeWhere = includeAllCompanies ? "status != 'CANCELLED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status != 'CANCELLED'`;
     const chargeParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
-    const charges = (this.db.prepare(`SELECT * FROM client_charges WHERE ${chargeWhere}`).all(...chargeParams) as DbRecord[]).map(mapClientCharge);
+    const charges = (this.db.prepare(`SELECT * FROM client_charges WHERE ${chargeWhere}`).all(...chargeParams) as DbRecord[]).map(mapClientCharge)
+      .filter((charge) => (!periodStart || charge.periodStart >= periodStart) && (!periodEnd || charge.periodStart <= periodEnd));
     const creditWhere = includeAllCompanies ? "status = 'CONFIRMED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status = 'CONFIRMED'`;
     const creditParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
     const credits = this.db.prepare(`SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE ${creditWhere}`).get(...creditParams) as { total: number };
-    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, status: "CONFIRMED", billingStatus: "UNBILLED" }).filter((item) => item.operationType !== "PURCHASE");
+    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined, status: periodStart || periodEnd ? "all" : "CONFIRMED", billingStatus: "UNBILLED" }).filter((item) => item.operationType !== "PURCHASE" && item.status !== "CANCELED");
     const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
@@ -4607,7 +3417,29 @@ export class AppRepository {
       .filter((item) => item.percentUsed >= AppRepository.CREDIT_LIMIT_ALERT_PERCENT)
       .sort((a, b) => b.percentUsed - a.percentUsed);
 
-    return { overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit };
+    // Substitui os lembretes soltos de emprestimo (.txt por cliente) que o
+    // dono mantinha fora do app -- so' dispara quando ha data de cobranca
+    // vencida e o emprestimo ainda nao foi marcado como cobrado.
+    const loansDueForCollection = this.listLedgerEntries({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined })
+      .filter((entry) => entry.entryType === "LOAN" && entry.status === "CONFIRMED" && !entry.collectedAt && entry.collectionDueDate && entry.collectionDueDate <= today)
+      .map((entry) => ({
+        ledgerEntryId: entry.id,
+        partnerId: entry.clientPartnerId,
+        partnerName: partnerName(entry.clientPartnerId),
+        amountCents: entry.amountCents,
+        collectionDueDate: entry.collectionDueDate as string,
+        daysOverdue: daysBetweenDates(entry.collectionDueDate as string, today)
+      }))
+      .sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+    return { overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
+  }
+
+  markLoanCollected(id: string): ClientLedgerEntry {
+    const entry = this.getLedgerEntry(id);
+    if (entry.entryType !== "LOAN") throw new Error("Lancamento nao e' um emprestimo.");
+    this.db.prepare("UPDATE client_ledger_entries SET collected_at = ?, updated_at = ? WHERE id = ?").run(new Date().toISOString(), new Date().toISOString(), id);
+    return this.getLedgerEntry(id);
   }
 
   getInstallationProfile(): InstallationProfile | null {
@@ -4777,13 +3609,13 @@ export class AppRepository {
     const responsiblePartnerId = explicitClientPartnerId ?? autoMatchedPartnerId;
     if (!responsiblePartnerId) {
       this.db.prepare("UPDATE xml_import_files SET status = 'PENDING_REVIEW', error_code = NULL, error_message = ?, updated_at = ? WHERE id = ?")
-        .run("Cliente responsavel nao identificado automaticamente pelo CNPJ/nome do contraparte. Associe manualmente e reprocesse.", new Date().toISOString(), file.id);
+        .run("Cliente solicitante nao identificado com seguranca. A empresa pode atender varios clientes. Escolha o responsavel desta nota e reprocesse.", new Date().toISOString(), file.id);
       return;
     }
     const explicitFileScope = fileResolution.operationScope === "INTERNAL" || fileResolution.operationScope === "EXTERNAL" ? fileResolution.operationScope : null;
     const inferredOperationScope = this.inferOperationScopeForXml(extracted, own.ownLegalEntityId, own.direction);
     const defaultScope = resolution.operationScope === "INTERNAL" || resolution.operationScope === "EXTERNAL" ? resolution.operationScope : null;
-    const operationScope = explicitFileScope ?? inferredOperationScope ?? defaultScope;
+    const operationScope = inferredOperationScope ?? explicitFileScope ?? defaultScope;
     const createOperations = resolution.createOperations !== false;
     const operationType = resolution.operationType === "PURCHASE" || resolution.operationType === "SALE" ? resolution.operationType : own.operationType;
     // Nota triangulada: nem emitente nem destinatario e' CNPJ proprio, e os
@@ -4814,6 +3646,8 @@ export class AppRepository {
       totalAmountCents: Number(totals?.invoiceAmountCents ?? 0),
       hasPendingIssues: pending.length > 0,
       pendingNotes: pending.length ? pending.join(" ") : null,
+      contractNumber: typeof fileResolution.contractNumber === "string" ? fileResolution.contractNumber : (typeof resolution.contractNumber === "string" ? resolution.contractNumber : this.stringOrNull(extracted.contractNumber)),
+      billingObservations: typeof fileResolution.billingObservations === "string" ? fileResolution.billingObservations : (typeof resolution.billingObservations === "string" ? resolution.billingObservations : null),
       notes: [String(extracted.nature ?? ""), own.isThirdParty ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
@@ -4829,11 +3663,17 @@ export class AppRepository {
         ncm: this.stringOrNull(xmlItem.ncm)
       });
       const referencedProductId = this.resolveProductFromReferencedXml(extracted);
+      const describedCoffeeProductId = referencedProductId
+        ? this.resolveCoffeeProductWhenReferenceConflicts(documentOrganizationId, xmlItem, referencedProductId)
+        : null;
       // Ordem de prioridade:
       // 1. alias especifico do produto do XML;
-      // 2. produto herdado da NF-e referenciada (ex.: "ACRESCIMO DE PESO");
-      // 3. produto padrao selecionado na tela de importacao.
+      // 2. Arábica/Conilon descrito no próprio item quando a referência aponta
+      //    incorretamente para "ACRESCIMO DE PESO";
+      // 3. produto herdado da NF-e referenciada;
+      // 4. produto padrao selecionado na tela de importacao.
       const productId = productAlias?.productId
+        ?? describedCoffeeProductId
         ?? referencedProductId
         ?? (typeof resolution.productId === "string" ? resolution.productId : null);
       const product = productId ? this.getProduct(productId) : null;
@@ -4888,6 +3728,7 @@ export class AppRepository {
           createdOperations += 1;
         }
       } else if (createOperations && operationScope) {
+        if (this.isXmlValueAdditionItem(xmlItem)) return;
         const label = String(xmlItem.description ?? "Item XML");
         if (!productId) itemWarnings.push(`"${label}": produto nao identificado, operacao nao criada.`);
         else if (!sacks) itemWarnings.push(`"${label}": unidade "${String(xmlItem.commercialUnit ?? "")}" nao reconhecida (nao e saca/kg/ton/big bag), operacao nao criada.`);
@@ -4896,17 +3737,19 @@ export class AppRepository {
     this.linkPendingFiscalDocumentEvents(file.accessKey ?? "");
     this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(doc.document.id, new Date().toISOString(), file.id);
     this.db.prepare("UPDATE xml_import_jobs SET imported_notes = imported_notes + 1, created_operations = created_operations + ?, items_without_operation = items_without_operation + ? WHERE id = ?").run(createdOperations, itemWarnings.length, job.id);
-    // Nota sem pendencias de escopo e com pelo menos uma operacao ja entra confirmada, pronta para cobranca,
-    // sem exigir um segundo clique manual em "Confirmar" na tela de Notas fiscais. confirmFiscalDocument()
-    // rejeita notas com has_pending_issues=1, entao o aviso de item sem operacao (abaixo) so e' gravado
-    // DEPOIS de confirmar -- ele nao bloqueia a auto-confirmacao, so sinaliza a nota para revisao manual.
-    if (!pending.length && createdOperations > 0) {
+    if (itemWarnings.length) {
+      this.db.prepare("UPDATE fiscal_documents SET status = CASE WHEN status = 'CANCELED' THEN status ELSE 'PENDING' END, has_pending_issues = 1, pending_notes = COALESCE(pending_notes || ' ', '') || ?, updated_at = ? WHERE id = ?")
+        .run(itemWarnings.join(" "), new Date().toISOString(), doc.document.id);
+    }
+    const importedDocument = this.getFiscalDocument(doc.document.id).document;
+    if (!pending.length && !itemWarnings.length && createdOperations > 0 && importedDocument.status !== "CANCELED"
+      && JSON.parse(job.settingsJson).reviewBeforeConfirm !== true && (!this.documentRequiresContract(importedDocument) || importedDocument.contractNumber)) {
       this.confirmFiscalDocument(doc.document.id);
     }
-    if (itemWarnings.length) {
-      this.db.prepare(`UPDATE fiscal_documents SET has_pending_issues = 1, pending_notes = CASE WHEN pending_notes IS NULL OR pending_notes = '' THEN ? ELSE pending_notes || ' ' || ? END, updated_at = ? WHERE id = ?`)
-        .run(itemWarnings.join(" "), itemWarnings.join(" "), new Date().toISOString(), doc.document.id);
-    }
+  }
+
+  private documentRequiresContract(document: FiscalDocument): boolean {
+    return [document.responsiblePartnerId, document.secondaryResponsiblePartnerId].some((id) => id && this.getBusinessPartner(id).requiresContract);
   }
 
   private importFiscalEvent(job: XmlImportJob, file: XmlImportFile, extracted: Record<string, unknown>): void {
@@ -4920,7 +3763,7 @@ export class AppRepository {
       status_code, status_message, correction_text, xml_file_path, file_hash, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, job.organizationId, document?.id ?? null, file.accessKey, eventType, String(extracted.sequenceNumber ?? "1"), extracted.eventDate ?? null, extracted.protocolNumber ?? null, extracted.statusCode ?? null, extracted.statusMessage ?? null, extracted.correctionText ?? null, file.storedFilePath, file.fileHash, now);
-    if (eventType === "CANCELLATION" && document?.id) {
+    if (eventType === "CANCELLATION" && document?.id && ["135", "155"].includes(String(extracted.statusCode ?? "")) && extracted.protocolNumber) {
       this.cancelFiscalDocument(document.id, `Cancelamento XML protocolo ${String(extracted.protocolNumber ?? "")}`.trim());
     }
     this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_event_id = ?, fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(id, document?.id ?? null, now, file.id);
@@ -5000,31 +3843,28 @@ export class AppRepository {
   // sempre que o parceiro foi criado com a OUTRA empresa ativa, mesmo
   // aparecendo normalmente em Cadastros -- daí o CNPJ proprio escolhido na
   // importacao (ex: Grao & Grao) era descartado e a nota virava "terceirizada".
+  private linkedPartnersForCompany(entityId: string): BusinessPartner[] {
+    const rows = this.db.prepare(`SELECT DISTINCT bp.* FROM business_partners bp WHERE bp.id IN (
+      SELECT business_partner_id FROM partner_legal_entities WHERE id = ?
+      UNION SELECT business_partner_id FROM partner_company_links WHERE partner_legal_entity_id = ?
+    )`).all(entityId, entityId) as DbRecord[];
+    return rows.map((row) => mapBusinessPartner(row, this.getPartnerRoles(String(row.id)))).filter((partner) => this.isOrganizationAllowed(partner.organizationId));
+  }
+
+  private linkedPartnersByCnpj(cnpj: string): BusinessPartner[] {
+    if (!cnpj || cnpj.length !== 14) return [];
+    const entity = this.db.prepare("SELECT id FROM partner_legal_entities WHERE cnpj = ? AND is_active = 1").get(cnpj) as { id: string } | undefined;
+    return entity ? this.linkedPartnersForCompany(entity.id).filter((partner) => partner.isActive) : [];
+  }
+
   private findSupplierPartnerIdByCnpj(cnpj: string): string | null {
-    if (!cnpj || cnpj.length !== 14) return null;
-    const row = this.db.prepare(`
-      SELECT bp.id AS id
-      FROM partner_legal_entities ple
-      JOIN business_partners bp ON bp.id = ple.business_partner_id
-      JOIN business_partner_roles bpr ON bpr.business_partner_id = bp.id AND bpr.role = 'SUPPLIER'
-      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
-      LIMIT 1
-    `).get(cnpj) as { id: string } | undefined;
-    return row?.id ?? null;
+    const candidates = this.linkedPartnersByCnpj(cnpj).filter((partner) => partner.roles.includes("SUPPLIER"));
+    return candidates.length === 1 ? candidates[0].id : null;
   }
 
   private findLinkedPartnerRolesByCnpj(cnpj: string): { businessPartnerId: string; roles: string[] } | null {
-    if (!cnpj || cnpj.length !== 14) return null;
-    const row = this.db.prepare(`
-      SELECT bp.id AS id
-      FROM partner_legal_entities ple
-      JOIN business_partners bp ON bp.id = ple.business_partner_id
-      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
-      LIMIT 1
-    `).get(cnpj) as { id: string } | undefined;
-    if (!row) return null;
-    const roles = (this.db.prepare("SELECT role FROM business_partner_roles WHERE business_partner_id = ?").all(row.id) as Array<{ role: string }>).map((item) => item.role);
-    return { businessPartnerId: row.id, roles };
+    const candidates = this.linkedPartnersByCnpj(cnpj);
+    return candidates.length === 1 ? { businessPartnerId: candidates[0].id, roles: candidates[0].roles } : null;
   }
 
   /**
@@ -5052,10 +3892,11 @@ export class AppRepository {
 
     const secondaryOperationType: "PURCHASE" | "SALE" = primaryOperationType === "PURCHASE" ? "SALE" : "PURCHASE";
     const secondaryRole = secondaryOperationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
-    const candidates = [this.findLinkedPartnerRolesByCnpj(issuerDoc), this.findLinkedPartnerRolesByCnpj(recipientDoc)]
-      .filter((item): item is { businessPartnerId: string; roles: string[] } => item !== null);
-    const secondaryCandidate = candidates.find((item) => item.businessPartnerId !== primaryPartnerId && item.roles.includes(secondaryRole));
-    if (!secondaryCandidate) return null;
+    const secondaryCnpj = secondaryOperationType === "PURCHASE" ? issuerDoc : recipientDoc;
+    const candidates = this.linkedPartnersByCnpj(secondaryCnpj)
+      .filter((partner) => partner.id !== primaryPartnerId && partner.roles.includes(secondaryRole));
+    if (candidates.length !== 1) return null;
+    const secondaryCandidate = { businessPartnerId: candidates[0].id };
     return { partnerId: secondaryCandidate.businessPartnerId, operationType: secondaryOperationType };
   }
 
@@ -5174,15 +4015,9 @@ export class AppRepository {
     const counterpartyLegalName = this.stringOrNull(counterpartyParty?.legalName);
 
     if (counterpartyDoc && counterpartyDoc.length === 14) {
-      // Sem filtro de organization_id, mesmo motivo do findSupplierPartnerIdByCnpj:
-      // parceiros sao cadastrados uma vez e valem pras duas empresas.
-      const row = this.db.prepare(`
-        SELECT ple.business_partner_id AS id
-        FROM partner_legal_entities ple
-        JOIN business_partners bp ON bp.id = ple.business_partner_id
-        WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
-      `).get(counterpartyDoc) as { id: string } | undefined;
-      if (row) return row.id;
+      const candidates = this.linkedPartnersByCnpj(counterpartyDoc);
+      if (candidates.length > 1) return null;
+      if (candidates.length === 1) return candidates[0].id;
     }
     if (counterpartyTradeName) {
       const aliasMatch = this.resolvePartnerAlias(organizationId, counterpartyTradeName);
@@ -5198,13 +4033,7 @@ export class AppRepository {
   private resolveCounterpartyLegalEntityForXml(extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
     const counterpartyDoc = this.resolveXmlCounterparty(extracted, ownLegalEntityId, direction).documentNumber;
     if (!counterpartyDoc || counterpartyDoc.length !== 14) return null;
-    const row = this.db.prepare(`
-      SELECT ple.id AS id
-      FROM partner_legal_entities ple
-      JOIN business_partners bp ON bp.id = ple.business_partner_id
-      WHERE ple.cnpj = ? AND ple.is_active = 1 AND bp.is_active = 1
-      LIMIT 1
-    `).get(counterpartyDoc) as { id: string } | undefined;
+    const row = this.db.prepare("SELECT id FROM partner_legal_entities WHERE cnpj = ? AND is_active = 1").get(counterpartyDoc) as { id: string } | undefined;
     return row?.id ?? null;
   }
 
@@ -5263,6 +4092,52 @@ export class AppRepository {
     }
 
     return null;
+  }
+
+  private resolveCoffeeProductFromDescription(organizationId: string, descriptionValue: unknown, unitValue: unknown): Product | null {
+    const description = this.normalizeXmlDescription(descriptionValue);
+    const category = description.includes("ARABICA")
+      ? "COFFEE_ARABICA"
+      : description.includes("CONILON")
+        ? "COFFEE_CONILON"
+        : null;
+    if (!category || !description.includes("CAFE")) return null;
+    const unit = String(unitValue ?? "").trim().toUpperCase();
+    const products = (this.db.prepare("SELECT * FROM products WHERE organization_id = ? AND category = ? AND is_active = 1").all(organizationId, category) as DbRecord[]).map(mapProduct);
+    if (unit === "KG") return products.find((product) => this.normalizeXmlDescription(product.name).includes(" KG")) ?? products[0] ?? null;
+    return products.find((product) => !this.normalizeXmlDescription(product.name).includes(" KG")) ?? products[0] ?? null;
+  }
+
+  private resolveCoffeeProductWhenReferenceConflicts(organizationId: string, xmlItem: Record<string, unknown>, referencedProductId: string): string | null {
+    const referencedProduct = this.getProduct(referencedProductId);
+    if (!this.normalizeXmlDescription(referencedProduct.name).includes("ACRESCIMO DE PESO")) return null;
+    return this.resolveCoffeeProductFromDescription(organizationId, xmlItem.description, xmlItem.commercialUnit)?.id ?? null;
+  }
+
+  private repairLegacyReferencedCoffeeProducts(): void {
+    const rows = this.db.prepare(`
+      SELECT i.id AS item_id, i.description, i.unit, o.id AS operation_id,
+             o.organization_id, p.name AS current_product_name
+      FROM fiscal_document_items i
+      JOIN operations o ON o.fiscal_document_item_id = i.id
+      JOIN products p ON p.id = o.product_id
+      WHERE upper(p.name) LIKE '%ACRESCIMO DE PESO%'
+        AND (upper(i.description) LIKE '%ARABICA%' OR upper(i.description) LIKE '%CONILON%')
+    `).all() as Array<{ item_id: string; description: string; unit: string | null; operation_id: string; organization_id: string; current_product_name: string }>;
+    if (rows.length === 0) return;
+    const now = new Date().toISOString();
+    const repair = this.db.transaction(() => {
+      for (const row of rows) {
+        const product = this.resolveCoffeeProductFromDescription(row.organization_id, row.description, row.unit);
+        if (!product) continue;
+        this.db.prepare("UPDATE fiscal_document_items SET product_id = ?, updated_at = ? WHERE id = ?").run(product.id, now, row.item_id);
+        this.db.prepare("UPDATE operations SET product_id = ?, updated_at = ? WHERE id = ?").run(product.id, now, row.operation_id);
+        // Corrige apenas a identificação visual congelada. Valores e pagamentos
+        // de cobranças já concluídas permanecem exatamente como estavam.
+        this.db.prepare("UPDATE client_charge_operations SET product_name_snapshot = ? WHERE operation_id = ?").run(product.name, row.operation_id);
+      }
+    });
+    repair();
   }
 
   private normalizeXmlDescription(value: unknown): string {
@@ -5492,9 +4367,12 @@ export class AppRepository {
     operationIds.forEach((operationId) => {
       const operation = this.getOperation(operationId);
       if (operation.responsiblePartnerId !== charge.clientPartnerId) throw new Error("Operacao fora do escopo da cobranca.");
-      if (operation.status !== "CONFIRMED") throw new Error("Somente operacoes confirmadas entram em cobranca.");
+      if (!["DRAFT", "CONFIRMED"].includes(operation.status)) throw new Error("Operacao com pendencias ou cancelada.");
       if (operation.billingStatus !== "UNBILLED" && operation.clientChargeId !== charge.id) throw new Error("Operacao ja reservada ou cobrada.");
       const doc = this.getFiscalDocument(operation.fiscalDocumentId).document;
+      if (!["DRAFT", "CONFIRMED"].includes(doc.status) || doc.hasPendingIssues) throw new Error("Nota com pendencias ou cancelada nao pode ser cobrada.");
+      if (this.documentRequiresContract(doc) && !doc.contractNumber) throw new Error("Contrato obrigatorio ausente.");
+      if (operation.operationType !== "SALE" || operation.appliedRateValueCents <= 0) throw new Error("Operacao sem tarifa de venda valida.");
       const product = operation.productId ? this.getProduct(operation.productId) : null;
       const ownLegalEntity = this.getLegalEntity(operation.ownLegalEntityId);
       const issuerName = this.fiscalSnapshotPartyName(doc, "issuer") ?? (ownLegalEntity.legalName || ownLegalEntity.tradeName);
@@ -5502,9 +4380,9 @@ export class AppRepository {
       this.db.prepare(`INSERT INTO client_charge_operations (
         id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot, fiscal_document_number_snapshot,
         fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
-        service_rate_cents_snapshot, service_amount_cents_snapshot, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now);
+        service_rate_cents_snapshot, service_amount_cents_snapshot, created_at, contract_number_snapshot, billing_observations_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
     });
   }
@@ -5529,20 +4407,6 @@ export class AppRepository {
       .run(subtotal, additions, deductions, finalAmount, paid, open, status, new Date().toISOString(), id);
     this.db.prepare("UPDATE client_ledger_entries SET amount_cents = ?, updated_at = ? WHERE client_charge_id = ? AND entry_type = 'SERVICE_CHARGE'")
       .run(finalAmount, new Date().toISOString(), id);
-  }
-
-  private reserveNextChargeNumber(organizationId: string, ownLegalEntityId: string, yearText: string): string {
-    const year = Number(yearText);
-    const now = new Date().toISOString();
-    let row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'CLIENT_CHARGE' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord | undefined;
-    if (!row) {
-      this.db.prepare("INSERT INTO document_sequences (id, organization_id, own_legal_entity_id, document_type, year, prefix, current_number, padding, is_active, created_at, updated_at) VALUES (?, ?, ?, 'CLIENT_CHARGE', ?, ?, 0, 4, 1, ?, ?)")
-        .run(randomUUID(), organizationId, ownLegalEntityId, year, `COB-${year}-`, now, now);
-      row = this.db.prepare("SELECT * FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'CLIENT_CHARGE' AND year = ? AND is_active = 1").get(organizationId, ownLegalEntityId, year) as DbRecord;
-    }
-    const next = Number(row.current_number) + 1;
-    this.db.prepare("UPDATE document_sequences SET current_number = ?, updated_at = ? WHERE id = ?").run(next, now, row.id);
-    return `${String(row.prefix ?? "")}${String(next).padStart(Number(row.padding), "0")}`;
   }
 
   private buildChargeSnapshot(id: string): Record<string, unknown> {
@@ -5613,7 +4477,6 @@ export class AppRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     const row: DbRecord = { id, organization_id: data.organizationId, parent_category_id: data.parentCategoryId, name: data.name, code: data.code, expense_nature: data.expenseNature, description: data.description, is_active: data.isActive, created_at: now, updated_at: now };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.insertRow("expense_categories", row));
     this.upsertLocalRow("expense_categories", row);
     return this.getExpenseCategory(id);
   }
@@ -5628,21 +4491,18 @@ export class AppRepository {
       this.assertNoExpenseCategoryCycle(id, data.parentCategoryId);
     }
     const patch: DbRecord = { parent_category_id: data.parentCategoryId, name: data.name, code: data.code, expense_nature: data.expenseNature, description: data.description, is_active: data.isActive, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("expense_categories", id, patch));
     this.patchLocalRow("expense_categories", id, patch);
     return this.getExpenseCategory(id);
   }
 
   async activateExpenseCategory(id: string): Promise<ExpenseCategory> {
     const patch: DbRecord = { is_active: true, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("expense_categories", id, patch));
     this.patchLocalRow("expense_categories", id, patch);
     return this.getExpenseCategory(id);
   }
 
   async deactivateExpenseCategory(id: string): Promise<ExpenseCategory> {
     const patch: DbRecord = { is_active: false, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("expense_categories", id, patch));
     this.patchLocalRow("expense_categories", id, patch);
     return this.getExpenseCategory(id);
   }
@@ -5861,7 +4721,8 @@ export class AppRepository {
       const operation = this.getOperation(operationId);
       if (operation.responsiblePartnerId !== data.supplierPartnerId) throw new Error("Operacao fora do escopo do acerto.");
       if (operation.operationType !== "PURCHASE") throw new Error("Somente operacoes de compra entram num acerto de fornecedor.");
-      if (operation.status !== "CONFIRMED") throw new Error("Somente operacoes confirmadas entram no acerto.");
+      const document = this.getFiscalDocument(operation.fiscalDocumentId).document;
+      if (!["DRAFT", "CONFIRMED"].includes(operation.status) || !["DRAFT", "CONFIRMED"].includes(document.status) || document.hasPendingIssues || operation.appliedRateValueCents <= 0) throw new Error("Nota com pendencias ou sem regra de entrada nao pode entrar no acerto.");
       if (operation.purchaseSettlementStatus !== "UNSETTLED") throw new Error("Operacao ja reservada ou acertada.");
       return operation;
     });
@@ -5896,7 +4757,6 @@ export class AppRepository {
       this.db.prepare("UPDATE operations SET purchase_settlement_status = 'SETTLED', updated_at = ? WHERE account_payable_id = ?").run(now, payableId);
     });
     trx();
-    await this.pushAccountPayableToShared(payableId).catch((error) => log.warn("Falha ao sincronizar acerto de compras com o Supabase", error instanceof Error ? error.message : error));
     return this.getAccountPayable(payableId);
   }
 
@@ -5916,8 +4776,29 @@ export class AppRepository {
     this.db.prepare("UPDATE operations SET purchase_settlement_status = 'UNSETTLED', account_payable_id = NULL, updated_at = ? WHERE account_payable_id = ?").run(now, accountPayableId);
   }
 
+  private completeKnownSupplierTriangulations(filters: { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart: string; periodEnd: string; supplierPartnerId?: string }): void {
+    const rows = this.db.prepare(`SELECT id, organization_id, own_legal_entity_id, fiscal_snapshot_json FROM fiscal_documents
+      WHERE secondary_responsible_partner_id IS NULL AND status IN ('DRAFT', 'CONFIRMED')
+        AND has_pending_issues = 0 AND issue_date BETWEEN ? AND ? AND fiscal_snapshot_json IS NOT NULL`).all(filters.periodStart, filters.periodEnd) as Array<{ id: string; organization_id: string; own_legal_entity_id: string; fiscal_snapshot_json: string }>;
+    this.db.transaction(() => {
+      for (const row of rows) {
+        if (!this.isOrganizationAllowed(row.organization_id)) continue;
+        if (!filters.includeAllCompanies && (row.organization_id !== filters.organizationId || (filters.ownLegalEntityId && row.own_legal_entity_id !== filters.ownLegalEntityId))) continue;
+        let snapshot: Record<string, unknown>;
+        try { snapshot = JSON.parse(row.fiscal_snapshot_json) as Record<string, unknown>; } catch { continue; }
+        const detail = this.getFiscalDocument(row.id);
+        const operations = detail.operations.filter((op) => op.status !== "CANCELED");
+        if (!operations.length || operations.some((op) => op.operationType !== "SALE")) continue;
+        const secondary = this.resolveTriangulatedSecondaryPartner(snapshot, detail.document.responsiblePartnerId, "SALE");
+        if (!secondary || (filters.supplierPartnerId && secondary.partnerId !== filters.supplierPartnerId)) continue;
+        this.completeFiscalDocumentTriangulation(row.id, { secondaryResponsiblePartnerId: secondary.partnerId });
+      }
+    })();
+  }
+
   findEligiblePurchaseOperations(input: unknown): Operation[] {
     const data = eligiblePurchaseOperationsInputSchema.parse(input);
+    this.completeKnownSupplierTriangulations(data);
     this.assertOrganizationWritable(data.organizationId);
     const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
     const ownLegalEntityClause = data.includeAllCompanies || !data.ownLegalEntityId ? "" : "AND operations.own_legal_entity_id = ?";
@@ -5933,7 +4814,9 @@ export class AppRepository {
         AND responsible_partner_id = ?
         AND operation_date BETWEEN ? AND ?
         AND operation_type = 'PURCHASE'
-        AND status = 'CONFIRMED'
+        AND status IN ('DRAFT', 'CONFIRMED')
+        AND applied_rate_value_cents > 0
+        AND EXISTS (SELECT 1 FROM fiscal_documents f WHERE f.id = operations.fiscal_document_id AND f.status IN ('DRAFT', 'CONFIRMED') AND f.has_pending_issues = 0)
         AND purchase_settlement_status = 'UNSETTLED'
       ORDER BY operation_date, created_at
     `).all(...params) as DbRecord[]).map(mapOperation);
@@ -5941,6 +4824,7 @@ export class AppRepository {
 
   getSupplierPurchaseSummary(input: unknown): PartnerRateSummaryRow[] {
     const data = supplierPurchaseSummaryInputSchema.parse(input);
+    this.completeKnownSupplierTriangulations(data);
     this.assertOrganizationWritable(data.organizationId);
     const settlementClause = data.includeAlreadySettled ? "" : "AND operations.purchase_settlement_status = 'UNSETTLED'";
     const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
@@ -5957,7 +4841,9 @@ export class AppRepository {
         ${ownLegalEntityClause}
         AND operations.operation_date BETWEEN ? AND ?
         AND operations.operation_type = 'PURCHASE'
-        AND operations.status = 'CONFIRMED'
+        AND operations.status IN ('DRAFT', 'CONFIRMED')
+        AND operations.applied_rate_value_cents > 0
+        AND EXISTS (SELECT 1 FROM fiscal_documents f WHERE f.id = operations.fiscal_document_id AND f.status IN ('DRAFT', 'CONFIRMED') AND f.has_pending_issues = 0)
         ${settlementClause}
     `).all(...params) as Array<{ partnerId: string; scope: "INTERNAL" | "EXTERNAL"; sacks: string; amountCents: number }>;
 
@@ -6256,11 +5142,6 @@ export class AppRepository {
     return this.getPayablePayment(id);
   }
 
-  /** IDs de accounts_payable afetadas por um pagamento -- usado so' pelo handler IPC pra saber o que reempurrar pro Supabase depois de cancelar. */
-  getPayablePaymentAllocatedPayableIds(payablePaymentId: string): string[] {
-    return (this.db.prepare("SELECT DISTINCT account_payable_id FROM payable_payment_allocations WHERE payable_payment_id = ?").all(payablePaymentId) as Array<{ account_payable_id: string }>).map((row) => row.account_payable_id);
-  }
-
   getPayablePayment(id: string): PayablePayment {
     const row = this.db.prepare("SELECT * FROM payable_payments WHERE id = ?").get(id) as DbRecord | undefined;
     if (!row) throw new Error("Pagamento de conta nao encontrado.");
@@ -6460,7 +5341,6 @@ export class AppRepository {
       // refletiu localmente ainda) -- um insertRow puro colide no unique
       // (organization_id, code) com "Ja existe um registro com esses dados"
       // (achado ao testar geracao de acerto de compra: 11 falhas seguidas).
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.upsertRow("expense_categories", row));
       this.upsertLocalRow("expense_categories", row);
     }
   }
@@ -6795,9 +5675,10 @@ export class AppRepository {
           this.addDealItemInternal({
             dealConfirmationId: draft.confirmation.id,
             sortOrder: this.nextDealSortOrder("deal_confirmation_items", draft.confirmation.id),
-            productId: item.productId,
-            // Documento comercial deve reproduzir o item da NF. O productId
-            // permanece vinculado apenas para classificacao e relatorios.
+            // O catalogo pode ter sido reconhecido em outra empresa na importacao.
+            // Preserva a NF por snapshot, sem vincular um produto de outra organizacao.
+            productId: product?.organizationId === draft.confirmation.organizationId ? item.productId : null,
+            // Descricao, quantidade, peso e valores oficiais permanecem os da nota.
             productNameSnapshot: item.description,
             productDescriptionSnapshot: item.description,
             cropSnapshot: null,
@@ -6820,7 +5701,17 @@ export class AppRepository {
         });
       });
     });
-    trx();
+    try {
+      trx();
+    } catch (error) {
+      // O rascunho (draft) ja foi commitado por createDealConfirmationDraft
+      // ANTES desta transacao (que so' cobre os vinculos/itens) -- se ela
+      // falhar (ex: nota ja reivindicada por outra confirmacao, ver
+      // linkDealFiscalDocumentInternal), desfaz o rascunho orfao em vez de
+      // deixar uma confirmacao vazia solta no banco.
+      this.deleteDealConfirmation(draft.confirmation.id);
+      throw error;
+    }
     this.refreshDealTotals(draft.confirmation.id);
     return this.getDealConfirmation(draft.confirmation.id);
   }
@@ -7012,18 +5903,7 @@ export class AppRepository {
 
   async unlinkDealFiscalDocument(dealConfirmationId: string, fiscalDocumentId: string): Promise<DealConfirmationDetail> {
     this.assertDealEditable(dealConfirmationId);
-    const existing = this.db.prepare("SELECT id FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? AND fiscal_document_id = ?").get(dealConfirmationId, fiscalDocumentId) as { id: string } | undefined;
     this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? AND fiscal_document_id = ?").run(dealConfirmationId, fiscalDocumentId);
-    // Precisa apagar tambem do lado do servidor -- pushDealConfirmationToShared
-    // so' faz upsert do que existe localmente AGORA pra essa confirmacao, nunca
-    // remove uma linha que sumiu daqui. Sem isto, o indice unico parcial de
-    // deal_confirmation_fiscal_documents (ver migration da corrida de
-    // confirmacao duplicada) continuaria vendo o documento como "reivindicado"
-    // por esta confirmacao pra sempre, bloqueando ate' um simples "tirei a
-    // nota errada, coloquei a certa" na MESMA confirmacao.
-    if (existing) {
-      await this.trySharedReferenceWrite(() => this.sharedRepository!.deleteWhere("deal_confirmation_fiscal_documents", { id: existing.id }));
-    }
     return this.getDealConfirmation(dealConfirmationId);
   }
 
@@ -7137,7 +6017,7 @@ export class AppRepository {
     if (issues.some((issue) => issue.severity === "critical")) throw new Error(`Pendencias criticas impedem emissao: ${issues.map((issue) => issue.message).join("; ")}`);
     const initial = this.getDealConfirmation(id);
     if (!["DRAFT", "PENDING_REVIEW"].includes(initial.confirmation.status)) throw new Error("Confirmacao ja emitida ou encerrada.");
-    const number = await this.ensureDealConfirmationNumberOnServer(id, false);
+    const number = await this.ensureDealConfirmationNumber(id);
     const before = this.getDealConfirmation(id);
     const now = new Date().toISOString();
     let versionId = "";
@@ -7149,13 +6029,6 @@ export class AppRepository {
       versionId = randomUUID();
     });
     trx();
-    // Confirma no servidor o mesmo UUID, número e status antes de gerar o PDF.
-    // Se falhar, não há documento emitido com estado apenas local.
-    await this.withTimeout(
-      this.pushDealConfirmationToShared(id),
-      45_000,
-      "Tempo esgotado ao confirmar a emissao no servidor. Verifique a conexao e tente novamente."
-    );
     const generated = await this.generateDealDocumentVersion(id, "ISSUED_ORIGINAL", versionId, false, "Documento original emitido");
     this.db.prepare("UPDATE deal_confirmations SET issued_document_version_id = ?, updated_at = ? WHERE id = ?").run(generated.id, new Date().toISOString(), id);
     return this.getDealConfirmation(id);
@@ -7211,7 +6084,12 @@ export class AppRepository {
     if (detail.confirmation.status === "CANCELLED") return detail;
     if (detail.confirmation.status === "REPLACED") throw new Error("Confirmacao substituida nao pode ser cancelada novamente.");
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE deal_confirmations SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
+    // signature_status precisa sair de WAITING_SIGNATURE/PARTIALLY_SIGNED junto
+    // com o status -- senao uma confirmacao cancelada que ja estava em processo
+    // de assinatura continua aparecendo pra sempre no alerta "Aguardando
+    // assinatura" do dashboard (esse alerta filtra so' por signature_status,
+    // nunca checa se a confirmacao segue ativa).
+    this.db.prepare("UPDATE deal_confirmations SET status = 'CANCELLED', signature_status = 'NOT_APPLICABLE', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
     this.recordDealStatus(id, detail.confirmation.status, "CANCELLED", reason);
     return this.getDealConfirmation(id);
   }
@@ -7224,7 +6102,9 @@ export class AppRepository {
     }
     const replacement = this.duplicateDealConfirmationAsDraft(id);
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE deal_confirmations SET status = 'REPLACED', replaced_by_confirmation_id = ?, updated_at = ? WHERE id = ?").run(replacement.confirmation.id, now, id);
+    // Mesmo motivo do cancelamento acima: a confirmacao original sai do fluxo
+    // de assinatura ao ser substituida.
+    this.db.prepare("UPDATE deal_confirmations SET status = 'REPLACED', signature_status = 'NOT_APPLICABLE', replaced_by_confirmation_id = ?, updated_at = ? WHERE id = ?").run(replacement.confirmation.id, now, id);
     this.recordDealStatus(id, detail.confirmation.status, "REPLACED", reason);
     return replacement;
   }
@@ -7437,31 +6317,16 @@ export class AppRepository {
   }
 
   /**
-   * stored_file_path e' um caminho ABSOLUTO no HD do PC que gerou o
-   * documento -- so' faz sentido naquele PC. Quando outro PC (que so'
-   * recebeu a LINHA via sync, nunca o arquivo) tenta abrir/baixar, o
-   * arquivo simplesmente nao existe ali, e o app mostrava "sem previa
-   * gerada" sem nenhuma explicacao (bug real reportado em producao).
-   * storage_object_path e' o unico caminho de fato compartilhado (bucket
-   * privado "confirmation-files", ja usado pelo app de visualizacao) --
-   * baixa de la' na primeira vez que faltar localmente, guarda uma copia
-   * neste PC (pasta propria, nunca reescreve o caminho original de quem
-   * gerou) e atualiza o proprio registro local pra nao rebaixar de novo.
+   * stored_file_path e' um caminho ABSOLUTO no HD deste PC. Se o arquivo foi
+   * apagado/movido manualmente do disco, ou a linha veio de um banco restaurado
+   * de outro PC, o arquivo nao existe mais aqui -- nao ha de onde recupera-lo
+   * (aplicativo single-PC, sem armazenamento compartilhado). A recuperacao e'
+   * gerar uma nova previa/emissao, que cria um arquivo novo neste PC.
    */
   async ensureDealDocumentLocalPath(versionId: string): Promise<string> {
     const version = this.getDealDocumentVersion(versionId);
     if (existsSync(version.storedFilePath)) return version.storedFilePath;
-    if (!version.storageObjectPath || !this.sharedRepository) {
-      throw new Error("Este documento ainda nao esta disponivel neste computador -- o PC que gerou provavelmente nao terminou de sincronizar. Tente novamente em instantes ou gere uma nova previa/emissao.");
-    }
-    const bytes = await this.sharedRepository.downloadFile("confirmation-files", version.storageObjectPath);
-    if (!this.directories) throw new Error("Diretorios locais nao configurados.");
-    const targetDir = join(this.directories.documentsDir, "confirmations", "downloaded", version.dealConfirmationId, versionId);
-    mkdirSync(targetDir, { recursive: true });
-    const localPath = join(targetDir, version.originalFileName);
-    writeFileSync(localPath, bytes);
-    this.db.prepare("UPDATE deal_confirmation_document_versions SET stored_file_path = ? WHERE id = ?").run(localPath, versionId);
-    return localPath;
+    throw new Error("Este documento nao esta mais disponivel neste computador. Gere uma nova previa ou reemita a confirmacao.");
   }
 
   calculateDealDocumentHash(versionId: string): string {
@@ -7630,6 +6495,20 @@ export class AppRepository {
     const document = this.getFiscalDocument(fiscalDocumentId).document;
     if (document.organizationId !== deal.organizationId) throw new Error("Nota pertence a outra organizacao.");
     if (document.ownLegalEntityId !== deal.ownLegalEntityId) throw new Error("Nota pertence a outro CNPJ proprio.");
+    // So' um indice normal (nao UNIQUE) protege deal_confirmation_fiscal_documents
+    // localmente -- essa checagem e' quem de fato impede a MESMA nota ficar
+    // reivindicada por duas confirmacoes ativas ao mesmo tempo.
+    const claim = this.db.prepare(`
+      SELECT dc.confirmation_number AS confirmationNumber, dc.temporary_reference AS temporaryReference, dc.id AS id
+      FROM deal_confirmation_fiscal_documents dcfd
+      JOIN deal_confirmations dc ON dc.id = dcfd.deal_confirmation_id
+      WHERE dcfd.fiscal_document_id = ? AND dcfd.deal_confirmation_id != ? AND dcfd.is_active = 1
+      LIMIT 1
+    `).get(fiscalDocumentId, dealConfirmationId) as { confirmationNumber: string | null; temporaryReference: string | null; id: string } | undefined;
+    if (claim) {
+      const label = claim.confirmationNumber ?? claim.temporaryReference ?? claim.id;
+      throw new Error(`Esta nota fiscal ja foi usada na confirmacao ${label}. Abra "${label}" na lista de confirmacoes pra ver ou editar.`);
+    }
     this.db.prepare("INSERT OR IGNORE INTO deal_confirmation_fiscal_documents (id, deal_confirmation_id, fiscal_document_id, created_at) VALUES (?, ?, ?, ?)").run(randomUUID(), dealConfirmationId, fiscalDocumentId, new Date().toISOString());
   }
 
@@ -7740,63 +6619,6 @@ export class AppRepository {
     return next;
   }
 
-  private async reserveDealConfirmationNumberOnServer(
-    confirmationId: string,
-    organizationId: string,
-    ownLegalEntityId: string,
-    year: number
-  ): Promise<string> {
-    if (!this.sharedRepository) {
-      throw new Error("Sem conexão com o servidor. A emissão foi bloqueada para evitar número duplicado.");
-    }
-    const prefix = this.defaultDealConfirmationPrefix(organizationId, ownLegalEntityId);
-    // Piso manual (ver setDealConfirmationSequenceFloor) fica em document_sequences
-    // local -- precisa ser mandado explicitamente pra RPC, senao a reserva atomica
-    // no servidor ignora o piso e reaproveita numeros que deveriam ficar bloqueados.
-    const floorRow = this.db.prepare(
-      "SELECT current_number FROM document_sequences WHERE organization_id = ? AND own_legal_entity_id = ? AND document_type = 'DEAL_CONFIRMATION' AND year = ? AND prefix = ? AND is_active = 1"
-    ).get(organizationId, ownLegalEntityId, year, prefix) as { current_number: number } | undefined;
-    const floor = Number(floorRow?.current_number ?? 0);
-    const result = await this.withTimeout(
-      this.sharedRepository.rpc<Array<{ confirmation_number: string }>>(
-        "ensure_deal_confirmation_number",
-        {
-          p_confirmation_id: confirmationId,
-          p_organization_id: organizationId,
-          p_own_legal_entity_id: ownLegalEntityId,
-          p_year: year,
-          p_prefix: prefix,
-          p_padding: 4,
-          p_floor: floor
-        }
-      ),
-      20_000,
-      "Tempo esgotado ao reservar o numero no servidor. Verifique a conexao e tente novamente."
-    );
-    const number = result?.[0]?.confirmation_number;
-    if (!number) throw new Error("O servidor não devolveu o número reservado da confirmação.");
-
-    // Defesa em profundidade: o número devolvido só é aceito quando o próprio
-    // Supabase confirma que ele pertence ao mesmo UUID. Nunca gere PDF apenas
-    // confiando no valor local ou na resposta isolada da RPC.
-    const remoteOwner = await this.withTimeout(
-      this.sharedRepository.findOne("deal_confirmations", {
-        organization_id: organizationId,
-        own_legal_entity_id: ownLegalEntityId,
-        confirmation_number: number
-      }),
-      15_000,
-      "Tempo esgotado ao confirmar a reserva do numero no servidor."
-    );
-    if (!remoteOwner?.id || String(remoteOwner.id) !== confirmationId) {
-      throw new Error(
-        `Reserva inválida: ${number} não pertence a esta confirmação no servidor. ` +
-        "A prévia foi bloqueada e nenhum PDF novo foi gerado."
-      );
-    }
-    return number;
-  }
-
   listDealConfirmationSequenceStatus(): DealConfirmationSequenceStatus[] {
     const year = new Date().getFullYear();
     return this.listLegalEntities({ status: "active" })
@@ -7852,7 +6674,6 @@ export class AppRepository {
       created_at: existing?.created_at ?? now,
       updated_at: now
     };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.upsertRow("document_sequences", row));
     this.upsertLocalRow("document_sequences", row);
     const next = this.findNextReusableDealConfirmationNumber(entity.organizationId, ownLegalEntityId, year, prefix, currentNumber);
     return {
@@ -7920,17 +6741,14 @@ export class AppRepository {
   }
 
   private async generateDealDocument(id: string, draft: boolean): Promise<DealConfirmationDetail> {
-    if (draft) await this.ensureDealConfirmationNumberOnServer(id, true);
+    if (draft) await this.ensureDealConfirmationNumber(id);
     const versionId = randomUUID();
     const documentType = draft ? "GENERATED_DRAFT" : "ISSUED_ORIGINAL";
     await this.generateDealDocumentVersion(id, documentType, versionId, draft, draft ? "Previa com marca d'agua" : "Documento emitido");
     return this.getDealConfirmation(id);
   }
 
-  // allowProvisional so' pode ser true pra previa (generateDealDocument),
-  // nunca pra emissao real -- um numero provisorio virando numero oficial
-  // "por acidente" seria um documento juridico com numeracao inventada.
-  private async ensureDealConfirmationNumberOnServer(id: string, allowProvisional: boolean): Promise<string> {
+  private async ensureDealConfirmationNumber(id: string): Promise<string> {
     const detail = this.getDealConfirmation(id);
     const confirmation = detail.confirmation;
     if (!["DRAFT", "PENDING_REVIEW"].includes(confirmation.status)) {
@@ -7938,100 +6756,18 @@ export class AppRepository {
       return confirmation.confirmationNumber;
     }
 
-    // Modo somente local e' uma escolha deliberada do operador (Configuracoes) --
-    // "este PC opera sozinho, sem sincronizar". Nesse caso numerar localmente e'
-    // seguro (nao ha outro PC disputando a mesma sequencia), entao a numeracao
-    // definitiva funciona pra previa E pra emissao final, nao so' provisoria.
-    // Diferente de uma queda de rede pontual num PC que normalmente sincroniza,
-    // onde continua sendo arriscado inventar um numero oficial local.
-    if (this.isLocalOnlyMode()) {
-      return this.reserveDealConfirmationNumberLocally(id, confirmation.organizationId, confirmation.ownLegalEntityId, Number(confirmation.confirmationDate.slice(0, 4)) || new Date().getFullYear());
-    }
-
-    const connected = await this.isSharedConnected();
-    if (!connected) {
-      if (allowProvisional) return this.assignProvisionalDealConfirmationNumber(id, confirmation.temporaryReference);
-      throw new Error("Sem conexao com o servidor. A emissao foi bloqueada para evitar numero duplicado.");
-    }
-    if (!this.sharedRepository) throw new Error("Sem conexao com o servidor. A emissao foi bloqueada para evitar numero duplicado.");
-
-    // Remove qualquer numero criado por versoes antigas antes do primeiro push.
-    // Uma reserva valida existente e recuperada de forma idempotente pela RPC.
-    this.db.prepare(
-      "UPDATE deal_confirmations SET confirmation_number = NULL, updated_at = ? WHERE id = ? AND status IN ('DRAFT','PENDING_REVIEW')"
-    ).run(new Date().toISOString(), id);
-
-    await this.withTimeout(
-      this.pushDealConfirmationToShared(id),
-      45_000,
-      "Tempo esgotado ao enviar o rascunho pro servidor. Verifique a conexao e tente novamente."
-    );
-
-    // Valida persistencia antes de reservar: nao basta o push nao ter
-    // lancado erro, o mesmo UUID precisa existir de fato no Supabase. Tenta
-    // algumas vezes com um pequeno intervalo -- uma inconsistencia de leitura
-    // logo apos a escrita (rede instavel, latencia momentanea do Supabase)
-    // nao pode bloquear a previa se o dado realmente foi gravado.
-    let remote: DbRecord | null = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_000));
-      remote = await this.withTimeout(
-        this.sharedRepository.findOne("deal_confirmations", { id }),
-        15_000,
-        "Tempo esgotado ao confirmar o rascunho no servidor."
-      );
-      if (remote?.id && String(remote.id) === id) break;
-    }
-    if (!remote?.id || String(remote.id) !== id) {
-      throw new Error(
-        "Nao foi possivel confirmar o rascunho no servidor antes de reservar o numero. " +
-        "Nenhum numero foi reservado e nenhuma previa foi gerada."
-      );
-    }
-
-    const current = this.getDealConfirmation(id).confirmation;
-    const number = await this.reserveDealConfirmationNumberOnServer(
-      id,
-      current.organizationId,
-      current.ownLegalEntityId,
-      Number(current.confirmationDate.slice(0, 4) || new Date().getFullYear())
-    );
-    this.db.prepare(
-      "UPDATE deal_confirmations SET confirmation_number = ?, temporary_reference = ?, updated_at = ? WHERE id = ?"
-    ).run(number, number, new Date().toISOString(), id);
-    await this.withTimeout(
-      this.pushDealConfirmationToShared(id),
-      45_000,
-      "Tempo esgotado ao confirmar o numero reservado no servidor."
-    );
-    return number;
+    // Aplicativo single-PC: nao ha outro PC disputando a mesma sequencia, entao
+    // numerar localmente e' sempre seguro. A numeracao definitiva funciona pra
+    // previa E pra emissao final, sem precisar de numero provisorio.
+    return this.reserveDealConfirmationNumberLocally(id, confirmation.organizationId, confirmation.ownLegalEntityId, Number(confirmation.confirmationDate.slice(0, 4)) || new Date().getFullYear());
   }
 
   /**
-   * Usado quando um PC que normalmente sincroniza fica temporariamente sem
-   * sessao/conexao (NAO em modo somente local -- esse caso tem numeracao
-   * definitiva propria, ver reserveDealConfirmationNumberLocally): gera a
-   * previa mesmo assim, usando a referencia RASCUNHO-XXXXXXXX (ja criada
-   * junto com o rascunho) como numero provisorio -- nunca grava em
-   * confirmation_number um numero "oficial" inventado. Ao reconectar, a
-   * proxima chamada com sessao ativa (aqui ou em issueDealConfirmation)
-   * sempre limpa e reserva o numero real antes de qualquer emissao
-   * definitiva.
-   */
-  private assignProvisionalDealConfirmationNumber(id: string, temporaryReference: string): string {
-    this.db.prepare(
-      "UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ? WHERE id = ? AND status IN ('DRAFT','PENDING_REVIEW')"
-    ).run(temporaryReference, new Date().toISOString(), id);
-    return temporaryReference;
-  }
-
-  /**
-   * Numeracao definitiva local pro modo somente local (ver isLocalOnlyMode):
-   * o operador declarou explicitamente que este PC opera sozinho, entao nao
-   * ha outro PC disputando a mesma sequencia -- seguro usar aqui a mesma
-   * logica de reaproveitamento de buracos/piso manual que ja existia antes
-   * da numeracao virar server-only (reserveNextDealConfirmationNumber).
-   * Funciona tanto pra previa quanto pra emissao final.
+   * Numeracao definitiva local: aplicativo single-PC, entao nao ha outro PC
+   * disputando a mesma sequencia -- reaproveita buracos/respeita o piso
+   * manual (ver findNextReusableDealConfirmationNumber/
+   * setDealConfirmationSequenceFloor). Funciona tanto pra previa quanto pra
+   * emissao final.
    */
   private reserveDealConfirmationNumberLocally(id: string, organizationId: string, ownLegalEntityId: string, year: number): string {
     // Idempotente por confirmation_id (mesma garantia da RPC do servidor): se
@@ -8059,27 +6795,12 @@ export class AppRepository {
     const stored = await generateDealConfirmationPdf({ directories: this.directories, organization, ownLegalEntity, detail, versionId, draft });
     const version = this.nextDealDocumentVersion(id);
     const now = new Date().toISOString();
-    // Previa com marca d'agua (draft) nunca sobe pro app de visualizacao --
-    // so' o documento final emitido interessa por la'.
-    const storageObjectPath = draft
-      ? null
-      : await this.uploadDocumentToShared(
-          detail.confirmation.organizationId,
-          detail.confirmation.ownLegalEntityId,
-          "confirmations",
-          `${versionId}-${stored.originalFileName}`,
-          stored.storedFilePath,
-          stored.mimeType
-        );
     this.db.prepare("UPDATE deal_confirmation_document_versions SET is_current = 0 WHERE deal_confirmation_id = ? AND document_type = ?").run(id, documentType);
     this.db.prepare(`INSERT INTO deal_confirmation_document_versions (
       id, deal_confirmation_id, version_number, document_type, original_file_name, stored_file_path,
       mime_type, file_size, file_hash, generated_by_system, is_current, notes, storage_object_path, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)`)
-      .run(versionId, id, version, documentType, stored.originalFileName, stored.storedFilePath, stored.mimeType, stored.fileSize, stored.fileHash, notes, storageObjectPath, now);
-    if (storageObjectPath) {
-      await this.pushDealConfirmationToShared(id).catch((error) => log.warn("Falha ao sincronizar confirmacao apos subir documento pro Storage", error instanceof Error ? error.message : error));
-    }
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, NULL, ?)`)
+      .run(versionId, id, version, documentType, stored.originalFileName, stored.storedFilePath, stored.mimeType, stored.fileSize, stored.fileHash, notes, now);
     return this.getDealDocumentVersion(versionId);
   }
 
@@ -8264,7 +6985,6 @@ export class AppRepository {
   private async setPartnerLegalEntityActive(id: string, active: boolean): Promise<BusinessPartnerLegalEntity> {
     this.getPartnerLegalEntity(id);
     const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("partner_legal_entities", id, patch));
     this.patchLocalRow("partner_legal_entities", id, patch);
     return this.getPartnerLegalEntity(id);
   }
@@ -8296,7 +7016,6 @@ export class AppRepository {
   private async setProductActive(id: string, active: boolean): Promise<Product> {
     this.getProduct(id);
     const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("products", id, patch));
     this.patchLocalRow("products", id, patch);
     return this.getProduct(id);
   }
@@ -8319,7 +7038,6 @@ export class AppRepository {
     const row = this.db.prepare("SELECT business_partner_id AS businessPartnerId FROM client_billing_profiles WHERE id = ?").get(id) as { businessPartnerId: string } | undefined;
     if (!row) throw new Error("Perfil de cobranca nao encontrado.");
     const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("client_billing_profiles", id, patch));
     this.patchLocalRow("client_billing_profiles", id, patch);
     const profile = this.getBillingProfile(row.businessPartnerId);
     if (!profile) throw new Error("Perfil de cobranca nao encontrado.");
@@ -8356,7 +7074,6 @@ export class AppRepository {
   private async setServiceRateRuleActive(id: string, active: boolean): Promise<ServiceRateRule> {
     const rule = this.getServiceRateRule(id);
     const patch: DbRecord = { is_active: active, updated_at: new Date().toISOString() };
-    await this.trySharedReferenceWrite(() => this.sharedRepository!.updateRow("service_rate_rules", id, patch));
     this.patchLocalRow("service_rate_rules", id, patch);
     await this.recomputeServiceRateRuleConflictWarnings(rule.businessPartnerId);
     return this.getServiceRateRule(id);

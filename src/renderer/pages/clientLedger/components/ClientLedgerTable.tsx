@@ -13,10 +13,11 @@ const ENTRY_TYPE_LABELS: Record<LedgerEntryType, string> = {
   PREVIOUS_BALANCE: "Saldo anterior",
   MANUAL_ADJUSTMENT: "Ajuste manual",
   REVERSAL: "Estorno",
+  LOAN: "Emprestimo",
   OTHER: "Outro"
 };
 
-export function ClientLedgerTable({ entries }: { entries: ClientLedgerEntry[] }): JSX.Element {
+export function ClientLedgerTable({ entries, onMarkLoanCollected }: { entries: ClientLedgerEntry[]; onMarkLoanCollected?: (id: string) => void | Promise<void> }): JSX.Element {
   return (
     <DataTable
       rows={entries}
@@ -36,7 +37,21 @@ export function ClientLedgerTable({ entries }: { entries: ClientLedgerEntry[] })
             </span>
           )
         },
-        { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} label={row.status === "CONFIRMED" ? "Confirmado" : row.status === "CANCELLED" ? "Cancelado" : "Rascunho"} /> }
+        { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} label={row.status === "CONFIRMED" ? "Confirmado" : row.status === "CANCELLED" ? "Cancelado" : "Rascunho"} /> },
+        {
+          key: "loan",
+          header: "Cobranca do emprestimo",
+          render: (row) => {
+            if (row.entryType !== "LOAN" || !row.collectionDueDate) return row.entryType === "LOAN" ? "Sem data prevista" : "-";
+            if (row.collectedAt) return `Cobrado em ${formatDateBr(row.collectedAt)}`;
+            return (
+              <span className="row-actions">
+                <span>Previsto para {formatDateBr(row.collectionDueDate)}</span>
+                {onMarkLoanCollected ? <button onClick={() => void onMarkLoanCollected(row.id)}>Marcar como cobrado</button> : null}
+              </span>
+            );
+          }
+        }
       ]}
     />
   );

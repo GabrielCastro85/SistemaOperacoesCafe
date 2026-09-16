@@ -1056,9 +1056,13 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function formatDateTime(value: string): string {
-  const [datePart, timePart = ""] = value.split("T");
-  const date = formatDate(datePart);
-  return timePart ? `${date} ${timePart.slice(0, 5)}` : date;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return formatDate(value);
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false
+  }).format(parsed);
 }
 
 function formatTaxId(value: string | null | undefined): string {

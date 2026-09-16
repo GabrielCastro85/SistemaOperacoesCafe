@@ -167,7 +167,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       const saved = editingRule
         ? await window.operationsCafe.updateServiceRateRule(editingRule.id, buildPayload())
         : await window.operationsCafe.createServiceRateRule(buildPayload());
-      const baseMessage = editingRule ? "Regra por saca atualizada." : "Regra por saca cadastrada.";
+      const baseMessage = editingRule ? "Regra atualizada: notas e cobrancas abertas recalculadas. Cobrancas pagas e valores manuais preservados." : "Regra por saca cadastrada.";
       setMessage(saved.conflictWarning ? `${baseMessage} Atencao: ${saved.conflictWarning}` : baseMessage);
       closeModal();
       await load();

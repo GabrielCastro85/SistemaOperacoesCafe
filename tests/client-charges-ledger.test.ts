@@ -1,9 +1,11 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import ExcelJS from "exceljs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../electron/main/database/database";
 import { AppRepository } from "../electron/main/services/appRepository";
+import { getPartnerPeriodReport } from "../electron/main/services/partnerPeriodReport";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
 
 const tempDirs: string[] = [];
@@ -33,6 +35,146 @@ afterEach(() => {
 });
 
 describe("client charges and ledger", () => {
+  it("reports paid and unpaid notes without creating charges, respecting period and billing filter", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      for (const number of ["REPORT-PAID", "REPORT-PARTIAL", "REPORT-OPEN", "REPORT-CANCELLED"]) createConfirmedOperation(repo, partnerId, productId, number, "10");
+      createConfirmedOperation(repo, partnerId, productId, "REPORT-OTHER-MONTH", "10", "EXTERNAL", ownLegalEntityId, villaId, "2026-06-16");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operations = repo.findEligibleOperations(filters);
+      for (const number of ["REPORT-PAID", "REPORT-PARTIAL"]) {
+        const operation = operations.find((op) => repo.getFiscalDocument(op.fiscalDocumentId).document.documentNumber === number)!;
+        const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+        const amount = number === "REPORT-PAID" ? draft.charge.finalAmountCents : 100;
+        const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: amount, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+        repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: draft.charge.id, amountCents: amount });
+        await repo.issueClientCharge(draft.charge.id);
+      }
+      const cancelled = operations.find((op) => repo.getFiscalDocument(op.fiscalDocumentId).document.documentNumber === "REPORT-CANCELLED")!;
+      repo.cancelFiscalDocument(cancelled.fiscalDocumentId, "Teste");
+      const before = db.prepare("SELECT * FROM operations ORDER BY id").all();
+      const beforeCharges = db.prepare("SELECT * FROM client_charges ORDER BY id").all();
+      const full = getPartnerPeriodReport(repo, { ...filters, includeAlreadyBilled: true });
+      expect(full.rows.map((row) => [row.number, row.status])).toEqual([
+        ["REPORT-OPEN", "Nao cobrada"], ["REPORT-PAID", "Quitada"], ["REPORT-PARTIAL", "Cobranca parcial"]
+      ]);
+      expect(getPartnerPeriodReport(repo, { ...filters, includeAlreadyBilled: false }).rows.map((row) => row.number)).toEqual(["REPORT-OPEN", "REPORT-PARTIAL"]);
+      expect(db.prepare("SELECT * FROM operations ORDER BY id").all()).toEqual(before);
+      expect(db.prepare("SELECT * FROM client_charges ORDER BY id").all()).toEqual(beforeCharges);
+    } finally { db.close(); }
+  });
+  it("marks a draft paid in full as paid when it is issued", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "PAID-DRAFT", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operations = repo.findEligibleOperations(filters);
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: operations.map((operation) => operation.id) });
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: draft.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+      const allocated = repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: draft.charge.id, amountCents: draft.charge.finalAmountCents });
+      expect(allocated.charge.status).toBe("DRAFT");
+      expect(allocated.charge.openAmountCents).toBe(0);
+
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      expect(issued.charge.status).toBe("PAID");
+      expect(issued.charge.paidAmountCents).toBe(issued.charge.finalAmountCents);
+      expect(issued.charge.openAmountCents).toBe(0);
+    } finally { db.close(); }
+  });
+
+  it("generates a branded receipt with the client name and partial note payment", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "RECIBO-101", "100");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: 10000, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: "NF RECIBO-101", notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: 10000 });
+      const receipt = await repo.generateClientPaymentReceipt(payment.id);
+      expect(receipt.receiptPdfFilePath && existsSync(receipt.receiptPdfFilePath)).toBe(true);
+      expect(receipt.receiptImageFilePath && existsSync(receipt.receiptImageFilePath)).toBe(true);
+      const imageText = readFileSync(receipt.receiptImageFilePath!, "utf8");
+      expect(imageText).toContain("Cliente Cobranca");
+      expect(imageText).toContain("RECIBO-101");
+      expect(imageText).toContain("Pagamento parcial");
+    } finally { db.close(); }
+  });
+
+  it("reprices an open charge, preserves partial payments and freezes paid charges", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "REPRICE-OPEN", "500");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operations = repo.findEligibleOperations(filters);
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: operations.map(op => op.id) });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: 100000, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: 100000 });
+      const rule = repo.listServiceRateRules({ businessPartnerId: partnerId })[0];
+      await repo.updateServiceRateRule(rule.id, { ...rule, rateValueCents: 700 });
+      const updated = repo.getClientCharge(issued.charge.id);
+      expect(updated.charge.finalAmountCents).toBe(350000);
+      expect(updated.charge.paidAmountCents).toBe(100000);
+      expect(updated.charge.openAmountCents).toBe(250000);
+      expect(updated.operations[0].serviceRateCentsSnapshot).toBe(700);
+      expect(updated.charge.pdfFilePath).not.toBe(issued.charge.pdfFilePath);
+      const rest = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-02", amountCents: 250000, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: rest.id, clientChargeId: issued.charge.id, amountCents: 250000 });
+      await repo.updateServiceRateRule(rule.id, { ...rule, rateValueCents: 900 });
+      const paid = repo.getClientCharge(issued.charge.id);
+      expect(paid.charge.status).toBe("PAID");
+      expect(paid.charge.finalAmountCents).toBe(350000);
+      expect(paid.operations[0].serviceRateCentsSnapshot).toBe(700);
+    } finally { db.close(); }
+  });
+
+  it("reserves only selected notes and leaves the others available in the same period", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "SELECT-1", "500");
+      createConfirmedOperation(repo, partnerId, productId, "SELECT-2", "200");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operations = repo.findEligibleOperations(filters);
+      const selected = operations.find((operation) => operation.quantitySacks === "500")!;
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [selected.id] });
+      expect(draft.operations).toHaveLength(1);
+      expect(draft.charge.subtotalServicesCents).toBe(250000);
+      const remaining = repo.findEligibleOperations(filters);
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].quantitySacks).toBe("200");
+    } finally { db.close(); }
+  });
+
+  it("exports contract references and the 500 sacks times five reais service fee", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "QA-500", "500");
+      const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      const document = repo.getFiscalDocument(eligible[0].fiscalDocumentId).document;
+      repo.updateFiscalDocument(document.id, { ...document, contractNumber: "MCU-103265", billingObservations: "Lote 123\nContrato complementar ABC-456" });
+      db.prepare("UPDATE fiscal_documents SET status = 'DRAFT' WHERE id = ?").run(document.id);
+      db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(document.id);
+      expect(repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(1);
+      const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      expect(issued.charge.subtotalServicesCents).toBe(250000);
+      expect(issued.operations[0].billingObservationsSnapshot).toBe("Lote 123\nContrato complementar ABC-456");
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(issued.charge.excelFilePath!);
+      const sheet = workbook.getWorksheet("Operacoes");
+      expect(sheet?.getRow(2).getCell(10).value).toBe("MCU-103265");
+      expect(sheet?.getRow(2).getCell(11).value).toBe("Lote 123\nContrato complementar ABC-456");
+      expect(sheet?.getRow(2).getCell(9).value).toBe(2500);
+      if (process.env.CAFE_QA_REPORT_DIR) {
+        mkdirSync(process.env.CAFE_QA_REPORT_DIR, { recursive: true });
+        copyFileSync(issued.charge.pdfFilePath!, join(process.env.CAFE_QA_REPORT_DIR, "cobranca-exemplo.pdf"));
+        copyFileSync(issued.charge.excelFilePath!, join(process.env.CAFE_QA_REPORT_DIR, "cobranca-exemplo.xlsx"));
+        copyFileSync(issued.charge.imageFilePath!, join(process.env.CAFE_QA_REPORT_DIR, `cobranca-exemplo${extname(issued.charge.imageFilePath!)}`));
+      }
+    } finally { db.close(); }
+  });
   it("suggests periods including leap-year monthly and biweekly windows", async () => {
     const { repo, db, partnerId } = await setup();
     expect(repo.suggestChargePeriods({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodicity: "MONTHLY", referenceDate: "2024-02-20" })[0]).toMatchObject({ periodStart: "2024-02-01", periodEnd: "2024-02-29" });
@@ -52,7 +194,9 @@ describe("client charges and ledger", () => {
     const withCredit = repo.applyCredit({ ledgerEntryId: credit.id, clientChargeId: draft.charge.id, amountCents: 1500 });
     expect(withCredit.charge.finalAmountCents).toBe(3750);
     const issued = await repo.issueClientCharge(draft.charge.id);
-    expect(issued.charge.chargeNumber).toMatch(/^COB-2026-/);
+    expect(issued.charge.chargeNumber).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS total FROM document_sequences WHERE document_type = 'CLIENT_CHARGE'").get()).toEqual({ total: 0 });
+    expect(repo.listLedgerEntries({ organizationId: villaId, clientPartnerId: partnerId }).find((entry) => entry.entryType === "SERVICE_CHARGE")?.description).toBe("Cobranca 01/07/2026 a 31/07/2026");
     expect(issued.charge.pdfFilePath && existsSync(issued.charge.pdfFilePath)).toBe(true);
     expect(issued.charge.excelFilePath && existsSync(issued.charge.excelFilePath)).toBe(true);
     expect(issued.charge.imageFilePath && existsSync(issued.charge.imageFilePath)).toBe(true);
@@ -189,7 +333,7 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
-  it("backfills an active client rate into older unbilled operations without a calculated value", async () => {
+  it("does not apply a future rate to older unbilled operations", async () => {
     const { repo, db, productId } = await setup();
     const partner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Regra Posterior", notes: null, roles: ["CLIENT"], isActive: true });
     createConfirmedOperation(repo, partner.id, productId, "9201", "330", "EXTERNAL");
@@ -198,8 +342,8 @@ describe("client charges and ledger", () => {
     await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partner.id, ownLegalEntityId: null, productId, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-23", effectiveTo: null, priority: 10, notes: null, isActive: true });
     const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partner.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
 
-    expect(eligible).toHaveLength(1);
-    expect(eligible[0]).toMatchObject({ appliedRateValueCents: 500, serviceAmountCents: 165000 });
+    expect(eligible).toHaveLength(0);
+    expect(repo.listOperations({ responsiblePartnerId: partner.id })[0].serviceAmountCents).toBe(0);
     db.close();
   });
 
@@ -262,6 +406,70 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("keeps paid notes out of the open total and exports them in a separate worksheet", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      createConfirmedOperation(repo, partnerId, productId, "6769", "500");
+      const paidOperation = repo.findEligibleOperations(filters)[0];
+      const paidDraft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [paidOperation.id] });
+      const paidCharge = await repo.issueClientCharge(paidDraft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: paidCharge.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: paidCharge.charge.id, amountCents: paidCharge.charge.finalAmountCents });
+
+      createConfirmedOperation(repo, partnerId, productId, "6823", "200");
+      const openOperation = repo.findEligibleOperations(filters)[0];
+      const openDraft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [openOperation.id] });
+      const openCharge = await repo.issueClientCharge(openDraft.charge.id);
+      expect(openCharge.charge.openAmountCents).toBe(100000);
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(openCharge.charge.excelFilePath!);
+      const paidNotes = workbook.getWorksheet("Notas pagas");
+      expect(paidNotes?.getRow(2).getCell(2).value).toBe("6769");
+      expect(paidNotes?.getRow(2).getCell(3).value).toBe("Cliente Cobranca");
+      expect(paidNotes?.getRow(2).getCell(4).value).toBe(2500);
+      if (process.env.CAFE_QA_REPORT_DIR) {
+        mkdirSync(process.env.CAFE_QA_REPORT_DIR, { recursive: true });
+        copyFileSync(openCharge.charge.pdfFilePath!, join(process.env.CAFE_QA_REPORT_DIR, "cobranca-com-notas-pagas.pdf"));
+      }
+    } finally { db.close(); }
+  });
+
+  it("orders billing notes by date and then by ascending invoice number", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "6610", "100", "EXTERNAL", ownLegalEntityId, villaId, "2026-07-01");
+      createConfirmedOperation(repo, partnerId, productId, "6609", "100", "EXTERNAL", ownLegalEntityId, villaId, "2026-07-01");
+      createConfirmedOperation(repo, partnerId, productId, "6645", "100", "EXTERNAL", ownLegalEntityId, villaId, "2026-07-02");
+      createConfirmedOperation(repo, partnerId, productId, "6644", "100", "EXTERNAL", ownLegalEntityId, villaId, "2026-07-02");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operations = repo.findEligibleOperations(filters);
+      const numbers = operations.map((operation) => repo.getFiscalDocument(operation.fiscalDocumentId).document.documentNumber);
+      expect(numbers).toEqual(["6609", "6610", "6644", "6645"]);
+
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: operations.map((operation) => operation.id) });
+      expect(draft.operations.map((operation) => operation.fiscalDocumentNumberSnapshot)).toEqual(["6609", "6610", "6644", "6645"]);
+    } finally { db.close(); }
+  });
+
+  it("refreshes a stale unbilled note from the current value of its linked rule while searching charges", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "STALE-RATE", "500");
+      const operationId = (db.prepare(`SELECT o.id FROM operations o JOIN fiscal_documents f ON f.id = o.fiscal_document_id
+        WHERE f.document_number = 'STALE-RATE'`).get() as { id: string }).id;
+      const rule = repo.listServiceRateRules({ businessPartnerId: partnerId })[0];
+      db.prepare("UPDATE service_rate_rules SET rate_value_cents = 300 WHERE id = ?").run(rule.id);
+      const before = db.prepare("SELECT applied_rate_value_cents FROM operations WHERE id = ?").get(operationId) as { applied_rate_value_cents: number };
+      expect(before.applied_rate_value_cents).toBe(500);
+      const found = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      expect(found).toHaveLength(1);
+      expect(found[0].appliedRateValueCents).toBe(300);
+      expect(found[0].serviceAmountCents).toBe(150000);
+    } finally { db.close(); }
+  });
+
   it("releases reserved operations when draft is cancelled", async () => {
     const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "2");
@@ -271,11 +479,31 @@ describe("client charges and ledger", () => {
     expect(repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(1);
     db.close();
   });
+
+  it("subtracts manual returns in sacks or kilograms and recalculates an open charge", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "RETURN-500", "500");
+      const operation = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })[0];
+      let detail = repo.addFiscalDocumentReturn({ fiscalDocumentId: operation.fiscalDocumentId, returnDate: "2026-07-17", inputUnit: "SACKS", inputQuantity: "100", reason: "Cafe recusado" });
+      expect(detail.operations.find((item) => item.id === operation.id)?.quantitySacks).toBe("400");
+      expect(detail.operations.find((item) => item.id === operation.id)?.serviceAmountCents).toBe(200000);
+      const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      detail = repo.addFiscalDocumentReturn({ fiscalDocumentId: operation.fiscalDocumentId, returnDate: "2026-07-18", inputUnit: "KG", inputQuantity: "6000", reason: "Segunda devolucao" });
+      expect(detail.operations[0].quantitySacks).toBe("300");
+      expect(repo.getClientCharge(draft.charge.id).charge.finalAmountCents).toBe(150000);
+      const firstReturn = detail.returns[0];
+      detail = repo.deleteFiscalDocumentReturn(firstReturn.id);
+      expect(detail.operations[0].quantitySacks).toBe("400");
+      expect(repo.getClientCharge(draft.charge.id).charge.finalAmountCents).toBe(200000);
+    } finally { db.close(); }
+  });
+
 });
 
-function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, operationScope: "INTERNAL" | "EXTERNAL" = "EXTERNAL", targetOwnLegalEntityId = ownLegalEntityId, organizationId = villaId): void {
-  const doc = repo.createFiscalDocument({ organizationId, ownLegalEntityId: targetOwnLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-16", totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
+function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, operationScope: "INTERNAL" | "EXTERNAL" = "EXTERNAL", targetOwnLegalEntityId = ownLegalEntityId, organizationId = villaId, operationDate = "2026-07-16"): void {
+  const doc = repo.createFiscalDocument({ organizationId, ownLegalEntityId: targetOwnLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: operationDate, totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
   const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId, description: "Cafe", quantity: sacks, unit: "SACK", unitPriceDecimal: "1000.000", totalAmountCents: 100000, sacksQuantity: sacks });
-  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId: targetOwnLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope, operationDate: "2026-07-16", quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
+  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId: targetOwnLegalEntityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope, operationDate, quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
   repo.confirmFiscalDocument(doc.document.id);
 }

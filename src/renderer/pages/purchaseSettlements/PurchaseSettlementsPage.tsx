@@ -141,6 +141,14 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
     return operationDocuments[operation.fiscalDocumentId] ?? null;
   }
 
+  function operationPartiesLabel(operation: Operation): string {
+    try {
+      const snapshot = JSON.parse(operationDocument(operation)?.fiscalSnapshotJson ?? "null") as { issuer?: { legalName?: string }; recipient?: { legalName?: string } } | null;
+      if (snapshot?.issuer?.legalName && snapshot.recipient?.legalName) return `${snapshot.issuer.legalName} → ${snapshot.recipient.legalName}`;
+    } catch { /* Notas manuais usam a empresa cadastrada. */ }
+    return legalEntityLabel(operation.ownLegalEntityId);
+  }
+
   function operationNoteLabel(operation: Operation): string {
     const document = operationDocument(operation);
     return document?.documentNumber ? `NF ${document.documentNumber}` : "NF nao localizada";
@@ -250,7 +258,7 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
           <div className="charge-context-note">
             <span>Escopo do acerto</span>
             <strong>Todas as empresas do sistema</strong>
-            <small>Notas de entrada de Villa, Grao & Grao e terceiros entram na consulta quando tiverem fornecedor e regra de entrada aplicada.</small>
+            <small>Inclui notas para Villa, Grao & Grao e notas trianguladas para terceiros. O CNPJ do emitente deve estar vinculado a um fornecedor com regra de entrada.</small>
           </div>
           <FormGrid>
             <PartnerQuickSearch label="Fornecedor" value={supplierId} onChange={setSupplierId} partners={suppliers} legalEntities={partnerLegalEntities} />
@@ -276,7 +284,7 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
                   {eligible.map((operation) => (
                     <div key={operation.id} className="table-row purchase-operation-grid">
                       <span><strong>{operationNoteLabel(operation)}</strong><small>{formatDateOnlyBr(operation.operationDate)}</small></span>
-                      <span>{legalEntityLabel(operation.ownLegalEntityId)}</span>
+                      <span>{operationPartiesLabel(operation)}</span>
                       <span><strong>{formatOperationScope(operation.operationScope)}</strong><small>{decimalTextBr(operation.quantitySacks)} sacas · {formatCurrencyFromCents(operation.appliedRateValueCents)}/saca</small></span>
                       <span><strong>{formatCurrencyFromCents(operation.serviceAmountCents)}</strong><small>{formatCurrencyFromCents(operation.serviceAmountCents)} x {operationNoteLabel(operation)}</small></span>
                       <span>{operation.purchaseSettlementStatus === "UNSETTLED" ? "Nao acertada" : "Ja em acerto"}</span>

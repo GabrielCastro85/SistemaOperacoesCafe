@@ -12,7 +12,8 @@ const aliases: Record<string, string[]> = {
   destinationName: ["DESTINO", "DESTINATARIO", "COMPRADOR", "LOCAL DE DESCARGA"],
   documentNumber: ["NF", "NOTA", "NOTA FISCAL", "N NF", "NUMERO NF"],
   clientName: ["CLIENTE", "CORRETOR", "RESPONSAVEL"],
-  operationScope: ["UF DA VENDA", "INTERNO/EXTERNO", "INTERNA/EXTERNA", "TIPO", "OPERACAO", "CLASSIFICACAO"]
+  operationScope: ["UF DA VENDA", "INTERNO X EXTERNO", "INTERNO/EXTERNO", "INTERNA/EXTERNA", "TIPO", "OPERACAO", "CLASSIFICACAO"],
+  contractNumber: ["CONTRATO", "N DO CONTRATO", "NUMERO DO CONTRATO", "N CONTRATO"]
 };
 
 export function normalizeHeader(value: string): string {
@@ -71,15 +72,14 @@ export async function previewSheet(filePath: string, sheetName: string, headerRo
   const headerValues: ExcelJS.CellValue[] = Array.isArray(header.values) ? (header.values as ExcelJS.CellValue[]) : [];
   const headers = headerValues
     .slice(1)
-    .map((value) => cellToText(value))
-    .filter((value) => value.length > 0);
-  if (headers.length === 0) throw new Error("Linha de cabecalho vazia.");
+    .map((value) => cellToText(value));
+  if (!headers.some(Boolean)) throw new Error("Linha de cabecalho vazia.");
   const rows: Array<Record<string, string>> = [];
   for (let rowIndex = headerRow + 1; rowIndex <= sheet.rowCount && rows.length < limit; rowIndex += 1) {
     const row = sheet.getRow(rowIndex);
     const data: Record<string, string> = {};
     headers.forEach((name, index) => {
-      data[name] = cellToText(row.getCell(index + 1).value);
+      if (name) data[name] = cellToText(row.getCell(index + 1).value);
     });
     if (Object.values(data).some((value) => value.trim() !== "")) rows.push(data);
   }

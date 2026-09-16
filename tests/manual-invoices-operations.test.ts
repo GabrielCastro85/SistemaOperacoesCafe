@@ -74,6 +74,26 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
+  it("accepts Brazilian decimal commas when adding a manual invoice item", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    const doc = repo.createFiscalDocument(sampleDocument(partnerId, "6832", null));
+
+    const item = repo.addFiscalDocumentItem({
+      fiscalDocumentId: doc.document.id,
+      productId,
+      description: "Cafe Conilon",
+      quantity: "1",
+      unit: "SACK",
+      unitPriceDecimal: "950,00",
+      totalAmountCents: 28500000,
+      sacksQuantity: "300,00"
+    });
+
+    expect(item.unitPriceDecimal).toBe("950");
+    expect(item.sacksQuantity).toBe("300");
+    db.close();
+  });
+
   it("resolveIssuerLegalEntityFromPartner cria (ou reaproveita) o CNPJ terceirizado a partir de uma empresa solta, pra' nota manual de terceiro", async () => {
     const { repo, db } = await setup();
     // Empresa cadastrada em "Empresas e CNPJs" sem cliente/corretor dono --

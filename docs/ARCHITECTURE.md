@@ -1,10 +1,16 @@
 # Arquitetura
 
+## Transição para servidor central
+
+A implantação multi-PC adotará API própria e PostgreSQL central, conforme [CENTRAL_SERVER_ROLLOUT.md](./CENTRAL_SERVER_ROLLOUT.md). Durante a transição, o SQLite continua como fonte oficial e o servidor remoto permanece em homologação. Não haverá sincronização bidirecional entre bancos locais: após a virada, todas as gravações passarão pelo servidor central.
+
 Electron usa processo principal para banco, migrations, arquivos, logs e IPC. O renderer React nao acessa Node, filesystem ou SQLite diretamente.
 
 Seguranca: `contextIsolation: true`, `nodeIntegration: false`, preload com `contextBridge`, canais IPC especificos e validacao com Zod.
 
 Banco: SQLite local em `app.getPath("userData")/database/operations.sqlite`. Documentos, anexos, backups, logs e settings tambem ficam em `userData`.
+
+Escopo: aplicativo single-PC, 100% local -- nao ha sincronizacao entre maquinas nem backend remoto (o antigo mecanismo de sync via Supabase foi removido). `shared_push_outbox`, `sync_tombstones` e as colunas `storage_object_path`/`pdf_storage_object_path`/`excel_storage_object_path` continuam existindo no schema (migrations ja aplicadas em bancos existentes nao sao revertidas), mas ficam sempre vazias/nulas e sem uso. Cada instalacao e' independente; dados so' saem da maquina via backup manual (`.cafebackup`, ver `docs/BACKUP_RESTORE.md`).
 
 Branding: variantes `villa`, `grao` e `multiempresa` compartilham o mesmo codigo. Logos ficam em `assets/branding/<variante>/` e podem ser substituidas por PNG, SVG ou WebP.
 

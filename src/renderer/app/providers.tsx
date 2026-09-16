@@ -54,7 +54,7 @@ function DialogProvider({ children }: { children: ReactNode }): JSX.Element {
 
   useEffect(() => {
     registerDialogListener((nextRequest) => {
-      setValue("");
+      setValue(nextRequest.kind === "text" ? nextRequest.initialValue ?? "" : "");
       setRequest(nextRequest);
     });
     return () => registerDialogListener(null);

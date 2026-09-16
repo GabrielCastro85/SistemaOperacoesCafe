@@ -56,13 +56,12 @@ function upsertPartner(db: Database.Database, organizationId: string, entry: Cli
     return existing.id;
   }
 
-  // Determinístico (nao randomUUID): esse mesmo seed roda de forma
-  // independente em cada PC na primeira instalacao, antes de qualquer PC se
-  // conectar ao Supabase. Com id aleatorio, dois PCs criariam o "mesmo"
-  // cliente da lista estatica com ids diferentes -- e a primeira
-  // sincronizacao colidiria nas constraints UNIQUE (cnpj, etc). Derivar o id
-  // do CNPJ (ou do nome, na ausencia de CNPJ) garante que todo PC gera
-  // exatamente o mesmo id pro mesmo cliente da lista.
+  // Determinístico (nao randomUUID): o seed pode rodar mais de uma vez (ex:
+  // reset/reinstalacao) e precisa ser idempotente -- com id aleatorio, cada
+  // rodada criaria um "novo" cliente da lista estatica com id diferente,
+  // duplicando o cadastro. Derivar o id do CNPJ (ou do nome, na ausencia de
+  // CNPJ) garante que toda rodada gera exatamente o mesmo id pro mesmo
+  // cliente da lista.
   const id = deterministicUuid("businessPartner", cnpj ?? normalizedKey(entry.displayName));
   db.prepare("INSERT INTO business_partners (id, organization_id, display_name, notes, is_active, credit_limit_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(id, organizationId, entry.displayName, nullable(entry.notes), entry.isActive ? 1 : 0, entry.creditLimitCents, now, now);

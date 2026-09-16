@@ -1,10 +1,13 @@
 node_modules/
 dist/
 dist-electron/
+dist-server/
 /release/
 *.log
 .env
 .env.*
+!server/.env.example
+server/.env
 .vite/
 coverage/
 _backups_pre_consolidacao_*/

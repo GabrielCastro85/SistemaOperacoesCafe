@@ -1,6 +1,5 @@
 import type Database from "better-sqlite3";
 import { createHash, randomBytes, randomUUID, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
-import log from "electron-log/main.js";
 import type {
   AppPermission,
   AppRole,
@@ -12,8 +11,6 @@ import type {
   AuthSession,
   LocalSessionStatus
 } from "../../../src/shared/types/domain.js";
-import type { SharedRepository } from "./sharedRepository.js";
-import { SharedPushOutbox } from "./sharedPushOutbox.js";
 
 const CREDENTIAL_FORMAT = "scrypt$v1$N=16384,r=8,p=1,keylen=64";
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
@@ -21,48 +18,6 @@ const KEY_LENGTH = 64;
 const MAX_FAILED_ATTEMPTS = 5;
 
 type DbRecord = Record<string, unknown>;
-
-// Colunas boolean no Postgres que sao INTEGER 0/1 no SQLite local (mesmo
-// motivo do BOOLEAN_COLUMNS_BY_TABLE em appRepository.ts, mas nao importa de
-// la' pra nao criar dependencia cruzada entre os dois servicos).
-const AUTH_BOOLEAN_COLUMNS_BY_TABLE: Record<string, string[]> = {
-  app_users: ["must_change_password"],
-  user_role_assignments: ["is_active"]
-};
-
-function toSharedAuthRow(row: DbRecord, table: string): DbRecord {
-  const booleanColumns = AUTH_BOOLEAN_COLUMNS_BY_TABLE[table];
-  if (!booleanColumns) return row;
-  const converted: DbRecord = { ...row };
-  for (const column of booleanColumns) {
-    if (column in converted) converted[column] = Boolean(Number(converted[column]));
-  }
-  return converted;
-}
-
-/**
- * Reenvio de usuario/exclusao de usuario pro Supabase, chamado pela fila de
- * reenvio em appRepository.ts (flushSharedPushOutbox). Exportadas como
- * funcoes soltas (em vez de metodos privados de AuthService) porque o
- * reenvio roda a partir de AppRepository, que nao tem (nem deveria ter) uma
- * instancia de AuthService -- as duas classes so' compartilham o mesmo `db`
- * e `sharedRepository`, que e' tudo que essa logica precisa.
- */
-export async function replayUserPush(db: Database.Database, sharedRepository: SharedRepository, userId: string): Promise<void> {
-  const user = db.prepare("SELECT * FROM app_users WHERE id = ?").get(userId) as DbRecord | undefined;
-  if (user) await sharedRepository.upsertRow("app_users", toSharedAuthRow(user, "app_users"));
-  const credential = db.prepare("SELECT * FROM user_credentials WHERE user_id = ?").get(userId) as DbRecord | undefined;
-  if (credential) await sharedRepository.upsertRow("user_credentials", toSharedAuthRow(credential, "user_credentials"));
-  const assignments = db.prepare("SELECT * FROM user_role_assignments WHERE user_id = ?").all(userId) as DbRecord[];
-  for (const assignment of assignments) await sharedRepository.upsertRow("user_role_assignments", toSharedAuthRow(assignment, "user_role_assignments"));
-}
-
-export async function replayUserDeletionPush(db: Database.Database, sharedRepository: SharedRepository, userId: string): Promise<void> {
-  const now = new Date().toISOString();
-  await sharedRepository.deleteWhere("user_role_assignments", { user_id: userId });
-  await sharedRepository.deleteWhere("user_credentials", { user_id: userId });
-  await sharedRepository.updateRow("app_users", userId, { deleted_at: now, updated_at: now });
-}
 
 export const AUTH_PUBLIC_CHANNELS = new Set([
   "auth:needsBootstrap",
@@ -139,28 +94,8 @@ export class AuthError extends Error {
 
 export class AuthService {
   private currentSessionId: string | null = null;
-  private readonly outbox: SharedPushOutbox;
 
-  constructor(private readonly db: Database.Database, private readonly sharedRepository?: SharedRepository) {
-    this.outbox = new SharedPushOutbox(db);
-  }
-
-  /**
-   * Login de funcionario passa a sincronizar entre os 4 PCs -- sem isso, um
-   * usuario criado num PC so' existia ali. Mesmo padrao de "nunca bloqueia a
-   * escrita local" ja usado em appRepository.ts: se o push falhar (offline,
-   * etc.), so' loga um aviso, a conta continua funcionando normalmente no PC
-   * onde foi criada.
-   */
-  private async pushUserToShared(userId: string): Promise<void> {
-    if (!this.sharedRepository) return;
-    try {
-      await replayUserPush(this.db, this.sharedRepository, userId);
-    } catch (error) {
-      log.warn("Falha ao sincronizar usuario com o Supabase (gravacao local prossegue mesmo assim; sera reenviado automaticamente)", error instanceof Error ? error.message : error);
-      this.outbox.enqueue("user", userId, error);
-    }
-  }
+  constructor(private readonly db: Database.Database) {}
 
   needsBootstrap(): boolean {
     const row = this.db.prepare("SELECT COUNT(*) AS total FROM app_users WHERE status <> 'INACTIVE'").get() as { total: number };
@@ -189,7 +124,6 @@ export class AuthService {
     });
     trx();
     this.writeAudit({ actorUserId: userId, action: "auth.bootstrap_admin", result: "SUCCESS", severity: "CRITICAL", entityType: "app_user", entityId: userId, metadata: { username } });
-    await this.pushUserToShared(userId);
     return this.openSession(userId, "auth.bootstrap_login");
   }
 
@@ -286,7 +220,6 @@ export class AuthService {
       .run(CREDENTIAL_FORMAT, nextHash, now, session.user.id);
     this.db.prepare("UPDATE app_users SET must_change_password = 0, updated_at = ? WHERE id = ?").run(now, session.user.id);
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "auth.change_password", result: "SUCCESS", severity: "CRITICAL" });
-    await this.pushUserToShared(session.user.id);
   }
 
   listUsers(): AppUser[] {
@@ -311,7 +244,6 @@ export class AuthService {
         .run(randomUUID(), id, CREDENTIAL_FORMAT, hash, now, now);
     })();
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "users.create", entityType: "app_user", entityId: id, result: "SUCCESS", severity: "CRITICAL", metadata: { username } });
-    await this.pushUserToShared(id);
     return this.getUser(id);
   }
 
@@ -323,7 +255,6 @@ export class AuthService {
     this.db.prepare("UPDATE app_users SET display_name = COALESCE(?, display_name), email = COALESCE(?, email), status = COALESCE(?, status), must_change_password = COALESCE(?, must_change_password), updated_at = ? WHERE id = ?")
       .run(optionalString(data, "displayName"), optionalString(data, "email"), optionalString(data, "status"), optionalBoolean(data, "mustChangePassword"), now, id);
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "users.update", entityType: "app_user", entityId: id, result: "SUCCESS", severity: "WARNING" });
-    await this.pushUserToShared(id);
     return this.getUser(id);
   }
 
@@ -367,17 +298,6 @@ export class AuthService {
       this.db.prepare("DELETE FROM app_users WHERE id = ?").run(id);
     })();
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "users.delete", entityType: "app_user", entityId: id, result: "SUCCESS", severity: "CRITICAL", metadata: { username: user.username } });
-    await this.pushUserDeletionToShared(id);
-  }
-
-  private async pushUserDeletionToShared(userId: string): Promise<void> {
-    if (!this.sharedRepository) return;
-    try {
-      await replayUserDeletionPush(this.db, this.sharedRepository, userId);
-    } catch (error) {
-      log.warn("Falha ao propagar exclusao de usuario pro Supabase (exclusao local ja aconteceu; sera reenviado automaticamente)", error instanceof Error ? error.message : error);
-      this.outbox.enqueue("user_deletion", userId, error);
-    }
   }
 
   listRoles(): AppRole[] {
@@ -398,7 +318,6 @@ export class AuthService {
     this.db.prepare("INSERT INTO user_role_assignments (id, user_id, role_id, organization_id, legal_entity_id, assigned_at, expires_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)")
       .run(randomUUID(), userId, readString(data, "roleId"), optionalString(data, "organizationId"), optionalString(data, "legalEntityId"), now, optionalString(data, "expiresAt"));
     this.writeAudit({ actorUserId: session.user.id, sessionId: session.id, action: "roles.assign", entityType: "app_user", entityId: userId, result: "SUCCESS", severity: "CRITICAL" });
-    await this.pushUserToShared(userId);
     return this.getUser(userId);
   }
 

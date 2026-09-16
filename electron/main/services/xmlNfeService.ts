@@ -143,7 +143,8 @@ function parseNfe(nfe: Record<string, unknown>, prot: Record<string, unknown> | 
       freightCents: money(prod.vFrete),
       insuranceCents: money(prod.vSeg),
       otherExpensesCents: money(prod.vOutro),
-      additionalInfo: text(asRecord(det.infAdProd))
+      additionalInfo: text(det.infAdProd),
+      purchaseOrder: text(prod.xPed)
     };
   });
   if (!idKey) warnings.push("CHAVE_AUSENTE");
@@ -166,6 +167,7 @@ function parseNfe(nfe: Record<string, unknown>, prot: Record<string, unknown> | 
       occurrenceCityCode: text(ide.cMunFG),
       emissionType: text(ide.tpEmis),
       referencedAccessKeys,
+      contractNumber: extractContractNumber([text(infAdic.infCpl), ...items.map((item) => item.additionalInfo)]),
       issuer: partySnapshot(emit),
       recipient: partySnapshot(dest),
       items,
@@ -191,6 +193,14 @@ function parseNfe(nfe: Record<string, unknown>, prot: Record<string, unknown> | 
       }
     }
   };
+}
+
+// Apenas referencias explicitamente identificadas como contrato; pedidos de compra
+// e numeros soltos nao sao contratos. Multiplas referencias exigem revisao.
+export function extractContractNumber(values: string[]): string | null {
+  const matches = values.flatMap((value) => Array.from(value.matchAll(/\bCONTRATO\b\s*(?:(?:NUMERO\b|NÚMERO\b|N[º°.]|N\b)\s*)?[:#-]?\s*([A-Z0-9]+(?:[-/][A-Z0-9]+)*)/gi), (match) => match[1])).filter((value) => /\d/.test(value));
+  const unique = Array.from(new Set(matches.map((value) => value.toUpperCase())));
+  return unique.length === 1 ? unique[0] : null;
 }
 
 function parseProcEvento(data: Record<string, unknown>): ParsedXmlNfe {

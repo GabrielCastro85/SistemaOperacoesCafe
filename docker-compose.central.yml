@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: operacoes_cafe
+      POSTGRES_USER: operacoes
+      POSTGRES_PASSWORD: operacoes
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - operacoes_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operacoes -d operacoes_cafe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3333
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://operacoes:operacoes@postgres:5432/operacoes_cafe
+      DATABASE_SSL: "false"
+      SESSION_TTL_HOURS: 12
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "127.0.0.1:3333:3333"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  operacoes_postgres:
+

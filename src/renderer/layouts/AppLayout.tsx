@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
@@ -89,86 +89,6 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
   }
 }
 
-// Indicador de sincronizacao entre PCs, visivel em toda tela (rodape) -- nao
-// so' na tela de Configuracoes. Mostra "N atualizacoes pendentes" quando o
-// poll automatico de 20s (ver electron/main/index.ts) traz algo novo de
-// outro PC, com atalho pra sincronizar na hora. So' aparece se este PC
-// estiver conectado ao Supabase (senao nao ha nada pra sincronizar).
-//
-// onDataSynced() forca a tela atual a remontar do zero (ver syncRefreshKey
-// em AppLayout) -- de proposito so' e' chamado aqui dentro de syncNow()
-// (clique manual em "Sincronizar agora"), nunca a partir do poll automatico
-// de 20s. Chamar num poll em segundo plano apagaria sem aviso qualquer
-// formulario que o usuario estivesse preenchendo naquele momento (ex:
-// lancando uma nota) so' porque OUTRO PC sincronizou algo sem relacao
-// nenhuma -- com 4 PCs ativos ao mesmo tempo, isso ia acontecer o tempo
-// todo. O clique manual e' seguro porque e' uma acao que o proprio usuario
-// pediu, sabendo que a tela vai atualizar.
-function SharedSyncIndicator({ onDataSynced }: { onDataSynced: () => void }): JSX.Element | null {
-  const [connected, setConnected] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [outboxPendingCount, setOutboxPendingCount] = useState(0);
-  const [syncing, setSyncing] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.operationsCafe.sharedAuthStatus().then((status) => {
-      if (!cancelled) setConnected(status.connected);
-    });
-    void window.operationsCafe.getSharedSyncStatus().then((status) => {
-      if (!cancelled) {
-        setPendingCount(status.pendingCount);
-        setOutboxPendingCount(status.outboxPendingCount);
-      }
-    });
-    const unsubscribe = window.operationsCafe.onSharedSyncStatusChanged((status) => {
-      setPendingCount(status.pendingCount);
-      setOutboxPendingCount(status.outboxPendingCount);
-      // Reflete uma reconexao automatica (ver attemptSessionRecovery em
-      // sharedRepository.ts) sem precisar remontar a tela -- antes disso,
-      // "connected" so' era lido uma vez no mount e nunca mais atualizava,
-      // entao uma sessao recuperada minutos depois de uma atualizacao
-      // continuava aparecendo como desconectada pro resto da sessao.
-      setConnected(status.connected);
-    });
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
-
-  if (!connected) return null;
-
-  async function syncNow(): Promise<void> {
-    setSyncing(true);
-    try {
-      // acknowledgeSyncUpdates() no main process transmite o outboxPendingCount
-      // atualizado via onSharedSyncStatusChanged assim que o push/pull terminar.
-      await window.operationsCafe.syncSharedData();
-      onDataSynced();
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  // Nunca mostra "Sincronizado" enquanto houver algo que so' existe neste PC
-  // (fila de reenvio pendente) -- ver Req 7 da correcao de numeracao de
-  // confirmacoes: o indicador nao pode mentir que os outros PCs ja tem o dado.
-  const hasPendingWork = pendingCount > 0 || outboxPendingCount > 0;
-  const label = outboxPendingCount > 0
-    ? `${outboxPendingCount} pendente${outboxPendingCount > 1 ? "s" : ""} de envio`
-    : pendingCount > 0
-      ? `${pendingCount} atualizacao${pendingCount > 1 ? "es" : ""} pendente${pendingCount > 1 ? "s" : ""}`
-      : "Sincronizado com os outros PCs";
-
-  return (
-    <div className={`shared-sync-indicator${hasPendingWork ? " shared-sync-indicator--pending" : ""}`}>
-      <span>{label}</span>
-      <button type="button" onClick={() => void syncNow()} disabled={syncing}>{syncing ? "Sincronizando..." : "Sincronizar agora"}</button>
-    </div>
-  );
-}
-
 function stateFlagClass(state: string | null | undefined): string {
   const normalized = (state ?? "").trim().toUpperCase();
   if (["MG", "ES", "SP"].includes(normalized)) return `context-pill--state-${normalized.toLowerCase()}`;
@@ -203,11 +123,8 @@ export function AppLayout({
   onLogout,
   children
 }: AppLayoutProps): JSX.Element {
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [syncRefreshKey, setSyncRefreshKey] = useState(0);
-  const refreshSyncedData = useCallback(() => {
-    setSyncRefreshKey((value) => value + 1);
-  }, []);
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveOrganizationLogoSrc(organization, variant);
@@ -229,7 +146,11 @@ export function AppLayout({
           {collapsed ? "→" : "←"}
         </button>
         <nav className="app-sidebar__nav">
-          {navigationGroups.map((group) => (
+          <button type="button" aria-label={showAdvanced ? "Ocultar administracao" : "Mostrar administracao"} title={showAdvanced ? "Ocultar administracao" : "Mostrar administracao"} aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>
+            <span className="nav-icon" aria-hidden="true"><UserAdminIcon /></span>
+            <span className="nav-label">{showAdvanced ? "Ocultar administracao" : "Mostrar administracao"}</span>
+          </button>
+          {navigationGroups.filter((group) => group.title !== "Administração" || showAdvanced || group.items.some((item) => item.id === activeRoute)).map((group) => (
             <section key={group.title}>
               <span className="nav-group-title">{group.title}</span>
               {group.items.map((item) => (
@@ -237,6 +158,7 @@ export function AppLayout({
                   key={item.id}
                   className={activeRoute === item.id ? "active" : ""}
                   title={collapsed ? item.label : undefined}
+                  aria-label={item.label}
                   aria-current={activeRoute === item.id ? "page" : undefined}
                   onClick={() => onNavigate(item.legacyMenu)}
                 >
@@ -250,6 +172,9 @@ export function AppLayout({
           ))}
         </nav>
         <footer className="app-sidebar__footer">
+          <button type="button" onClick={() => onNavigate("Configuracoes")} title="Configuracoes e atualizacoes" aria-label="Configuracoes e atualizacoes">
+            {collapsed ? "⚙" : "Configuracoes e atualizacoes"}
+          </button>
           <span>Backup automático ativo</span>
           <span>Versão</span>
           <strong>{version}</strong>
@@ -306,10 +231,9 @@ export function AppLayout({
             <button type="button" onClick={onLogout}>Sair</button>
           </div>
         </header>
-        <Fragment key={syncRefreshKey}>{children}</Fragment>
+        {children}
         <footer className="app-statusbar">
           <span>Backup automático ativo</span>
-          <SharedSyncIndicator onDataSynced={refreshSyncedData} />
           <strong>{theme.appName} {version}</strong>
         </footer>
       </section>
