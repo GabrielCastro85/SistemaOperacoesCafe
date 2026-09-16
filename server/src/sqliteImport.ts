@@ -77,21 +77,35 @@ export function registerSqliteImportRoutes(app: FastifyInstance, pool: pg.Pool):
     const session = await authenticated(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
-    const run = await pool.query<{ expected_table_counts: Record<string, number> }>("SELECT expected_table_counts FROM sqlite_import_runs WHERE id = $1", [runId]);
-    if (!run.rows[0]) return reply.code(404).send({ error: "IMPORT_NOT_FOUND" });
-    const rows = await pool.query<{ table_name: string; total: string }>(`
-      SELECT table_name, COUNT(*)::text AS total FROM sqlite_import_rows WHERE run_id = $1 GROUP BY table_name
-    `, [runId]);
-    const actual = Object.fromEntries(rows.rows.map((row) => [row.table_name, Number(row.total)]));
-    const expected = run.rows[0].expected_table_counts;
-    const discrepancies = Object.entries(expected)
-      .filter(([table, count]) => (actual[table] ?? 0) !== count)
-      .map(([table, count]) => ({ table, expected: count, actual: actual[table] ?? 0 }));
-    const status = discrepancies.length === 0 ? "VERIFIED" : "FAILED";
-    await pool.query(`
-      UPDATE sqlite_import_runs SET imported_table_counts = $2::jsonb, status = $3, completed_at = now() WHERE id = $1
-    `, [runId, JSON.stringify(actual), status]);
-    return reply.code(discrepancies.length ? 409 : 200).send({ runId, status, expected, actual, discrepancies });
+    try {
+      const run = await pool.query<{ expected_table_counts: Record<string, number> | string }>("SELECT expected_table_counts FROM sqlite_import_runs WHERE id = $1::uuid", [runId]);
+      if (!run.rows[0]) return reply.code(404).send({ error: "IMPORT_NOT_FOUND" });
+      const rows = await pool.query<{ table_name: string; total: string }>(`
+        SELECT table_name, COUNT(*)::text AS total FROM sqlite_import_rows WHERE run_id = $1::uuid GROUP BY table_name
+      `, [runId]);
+      const actual: Record<string, number> = Object.fromEntries(rows.rows.map((row) => [row.table_name, Number(row.total)]));
+      const rawExpected = run.rows[0].expected_table_counts;
+      const expected: Record<string, number> = typeof rawExpected === "string" ? JSON.parse(rawExpected) as Record<string, number> : rawExpected;
+      const discrepancies = Object.entries(expected)
+        .filter(([table, count]) => (actual[table] ?? 0) !== Number(count))
+        .map(([table, count]) => ({ table, expected: Number(count), actual: actual[table] ?? 0 }));
+      const status = discrepancies.length === 0 ? "VERIFIED" : "FAILED";
+      await pool.query(`
+        UPDATE sqlite_import_runs
+        SET imported_table_counts = $2::jsonb, status = $3::text, completed_at = now()
+        WHERE id = $1::uuid
+      `, [runId, JSON.stringify(actual), status]);
+      return reply.code(discrepancies.length ? 409 : 200).send({ runId, status, expected, actual, discrepancies });
+    } catch (error) {
+      request.log.error({ err: error, runId }, "sqlite import verification failed");
+      const databaseError = error as { code?: string; constraint?: string; message?: string };
+      return reply.code(500).send({
+        error: "IMPORT_VERIFICATION_FAILED",
+        databaseCode: databaseError.code ?? null,
+        constraint: databaseError.constraint ?? null,
+        message: databaseError.message ?? "Falha ao conferir a importacao."
+      });
+    }
   });
 
   app.get("/v1/sqlite-imports/:runId", async (request, reply) => {
