@@ -52,8 +52,8 @@ export function registerBootstrapRoutes(app: FastifyInstance, pool: pg.Pool, con
       `, [randomUUID(), userId, await bcrypt.hash(input.password, 12)]);
       await client.query(`
         INSERT INTO server_audit_events(id, actor_user_id, action, entity_type, entity_id, result)
-        VALUES ($1, $2, 'BOOTSTRAP_ADMIN', 'app_user', $2, 'SUCCESS')
-      `, [randomUUID(), userId]);
+        VALUES ($1, $2, 'BOOTSTRAP_ADMIN', 'app_user', $3, 'SUCCESS')
+      `, [randomUUID(), userId, userId]);
       await client.query("COMMIT");
       return reply.code(201).send({ user: { id: userId, username: input.username, displayName: input.displayName } });
     } catch (error) {
