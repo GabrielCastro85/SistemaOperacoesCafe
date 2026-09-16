@@ -76,7 +76,7 @@ try {
       }
       console.log(`${table}: ${rows.length}`);
     }
-    const verification = await request(`/v1/sqlite-imports/${started.runId}/verify`, { method: "POST", headers });
+    const verification = await request(`/v1/sqlite-imports/${started.runId}/verify-v2`, { method: "POST", headers });
     console.log(`Resultado: ${verification.status}`);
     console.log(JSON.stringify(verification, null, 2));
   }

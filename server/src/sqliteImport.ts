@@ -122,4 +122,54 @@ export function registerSqliteImportRoutes(app: FastifyInstance, pool: pg.Pool):
     if (!result.rows[0]) return reply.code(404).send({ error: "IMPORT_NOT_FOUND" });
     return result.rows[0];
   });
+
+  app.post("/v1/sqlite-imports/:runId/verify-v2", async (request, reply) => {
+    try {
+      const session = await resolveSession(pool, request);
+      if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
+      const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
+      const result = await pool.query<{ table_name: string; expected: string; actual: string }>(`
+        WITH expected AS (
+          SELECT entry.key AS table_name, entry.value::text::bigint AS expected
+          FROM sqlite_import_runs run,
+               LATERAL jsonb_each_text(run.expected_table_counts) AS entry
+          WHERE run.id = $1::uuid
+        ), actual AS (
+          SELECT table_name, COUNT(*)::bigint AS actual
+          FROM sqlite_import_rows
+          WHERE run_id = $1::uuid
+          GROUP BY table_name
+        )
+        SELECT expected.table_name, expected.expected::text, COALESCE(actual.actual, 0)::text AS actual
+        FROM expected LEFT JOIN actual USING (table_name)
+        WHERE expected.expected <> COALESCE(actual.actual, 0)
+        ORDER BY expected.table_name
+      `, [runId]);
+      const exists = await pool.query("SELECT 1 FROM sqlite_import_runs WHERE id = $1::uuid", [runId]);
+      if (!exists.rowCount) return reply.code(404).send({ error: "IMPORT_NOT_FOUND" });
+      const status = result.rows.length === 0 ? "VERIFIED" : "FAILED";
+      await pool.query(`
+        UPDATE sqlite_import_runs
+        SET imported_table_counts = COALESCE((
+              SELECT jsonb_object_agg(table_name, total)
+              FROM (SELECT table_name, COUNT(*) AS total FROM sqlite_import_rows WHERE run_id = $1::uuid GROUP BY table_name) counts
+            ), '{}'::jsonb),
+            status = $2::text,
+            completed_at = now()
+        WHERE id = $1::uuid
+      `, [runId, status]);
+      if (result.rows.length) {
+        return reply.code(409).send({
+          error: "COUNT_MISMATCH",
+          runId,
+          discrepancies: result.rows.map((row) => ({ table: row.table_name, expected: Number(row.expected), actual: Number(row.actual) }))
+        });
+      }
+      return reply.type("application/json").send({ runId, status: "VERIFIED", discrepancies: 0 });
+    } catch (error) {
+      request.log.error({ err: error }, "sqlite import verification v2 failed");
+      const databaseError = error as { code?: string; message?: string };
+      return reply.code(500).send({ error: "VERIFY_V2_FAILED", code: databaseError.code ?? null, detail: databaseError.message ?? "unknown" });
+    }
+  });
 }
