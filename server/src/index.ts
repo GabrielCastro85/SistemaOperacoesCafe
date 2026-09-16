@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { createPool, runCentralMigrations } from "./database.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerBootstrapRoutes } from "./bootstrap.js";
+import { registerSqliteImportRoutes } from "./sqliteImport.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -27,6 +28,7 @@ app.get("/ready", async (_request, reply) => {
 
 registerAuthRoutes(app, pool, config);
 registerBootstrapRoutes(app, pool, config);
+registerSqliteImportRoutes(app, pool);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });

@@ -20,6 +20,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "server:dev": "tsx --env-file=server/.env server/src/index.ts",
     "server:create-admin": "tsx --env-file=server/.env server/scripts/create-admin.ts",
+    "central:upload-sqlite": "node scripts/central/upload-sqlite.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "test": "vitest",
