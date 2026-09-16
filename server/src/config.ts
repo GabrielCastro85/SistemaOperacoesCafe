@@ -9,7 +9,8 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: booleanFromText,
   SESSION_TTL_HOURS: z.coerce.number().positive().max(168).default(12),
-  CORS_ORIGINS: z.string().default("http://localhost:5173")
+  CORS_ORIGINS: z.string().default("http://localhost:5173"),
+  BOOTSTRAP_SECRET: z.string().min(24).optional()
 });
 
 export type ServerConfig = ReturnType<typeof loadConfig>;
@@ -21,4 +22,3 @@ export function loadConfig() {
     corsOrigins: parsed.CORS_ORIGINS.split(",").map((item) => item.trim()).filter(Boolean)
   };
 }
-

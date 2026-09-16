@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { loadConfig } from "./config.js";
 import { createPool, runCentralMigrations } from "./database.js";
 import { registerAuthRoutes } from "./auth.js";
+import { registerBootstrapRoutes } from "./bootstrap.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -25,6 +26,7 @@ app.get("/ready", async (_request, reply) => {
 });
 
 registerAuthRoutes(app, pool, config);
+registerBootstrapRoutes(app, pool, config);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });
@@ -40,4 +42,3 @@ process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 
 await app.listen({ port: config.PORT, host: config.HOST });
-
