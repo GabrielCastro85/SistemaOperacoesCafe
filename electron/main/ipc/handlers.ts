@@ -115,9 +115,19 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.authLogin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
-    const session = await auth.login(payload);
+    let session;
+    try {
+      session = await auth.login(payload);
+    } catch (error) {
+      if (!(error instanceof AuthError) || error.code !== "INVALID_CREDENTIALS") throw error;
+      const profile = await centralSync.login(credentials.username, credentials.password);
+      if (!profile) throw error;
+      await auth.provisionCentralUser(profile, credentials.password);
+      session = await auth.login(payload);
+    }
     try {
       await loginCentral(credentials.username, credentials.centralPassword);
+      if (session.permissions.includes("users.manage")) await centralSync.publishLocalUsers();
       return session;
     } catch (error) {
       auth.logout();
@@ -132,15 +142,28 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return auth.logout();
   });
   handle(IPC_CHANNELS.authChangePassword, async (_event, payload: unknown) => {
-    return auth.changePassword(payload);
+    await auth.changePassword(payload);
+    await centralSync.publishLocalUsers();
   });
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());
-  handle(IPC_CHANNELS.createUser, (_event, payload: unknown) => auth.createUser(payload));
-  handle(IPC_CHANNELS.updateUser, (_event, payload: unknown) => auth.updateUser(payload));
+  handle(IPC_CHANNELS.createUser, async (_event, payload: unknown) => {
+    const user = await auth.createUser(payload);
+    await centralSync.publishLocalUsers();
+    return user;
+  });
+  handle(IPC_CHANNELS.updateUser, async (_event, payload: unknown) => {
+    const user = await auth.updateUser(payload);
+    await centralSync.publishLocalUsers();
+    return user;
+  });
   handle(IPC_CHANNELS.deleteUser, (_event, payload: unknown) => auth.deleteUser(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listRoles, () => auth.listRoles());
   handle(IPC_CHANNELS.listPermissions, () => auth.listPermissions());
-  handle(IPC_CHANNELS.assignUserRole, (_event, payload: unknown) => auth.assignRole(payload));
+  handle(IPC_CHANNELS.assignUserRole, async (_event, payload: unknown) => {
+    const user = await auth.assignRole(payload);
+    await centralSync.publishLocalUsers();
+    return user;
+  });
   handle(IPC_CHANNELS.listAuditEvents, (_event, payload: unknown) => {
     const data = z.object({ limit: z.number().int().min(1).max(1000).optional() }).optional().parse(payload);
     return auth.listAuditEvents(data?.limit ?? 200);

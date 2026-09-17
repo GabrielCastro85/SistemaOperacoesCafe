@@ -156,6 +156,42 @@ export class AuthService {
     return this.openSession(user.id, "auth.login");
   }
 
+  async provisionCentralUser(profile: {
+    localUserId: string; displayName: string; username: string; email: string | null;
+    status: "ACTIVE" | "INACTIVE" | "LOCKED"; mustChangePassword: boolean;
+    roleAssignments: Array<{ roleId: string; organizationId: string | null; legalEntityId: string | null; assignedAt: string; expiresAt: string | null; isActive: boolean }>;
+    legalEntityAccess: Array<{ organizationId: string; legalEntityId: string | null; accessMode: "ALL" | "SPECIFIC" }>;
+  }, password: string): Promise<void> {
+    const now = new Date().toISOString();
+    const normalized = normalizeUsername(profile.username);
+    const existing = this.db.prepare("SELECT id FROM app_users WHERE normalized_username = ?").get(normalized) as { id: string } | undefined;
+    const userId = existing?.id ?? profile.localUserId;
+    const passwordHash = await hashPassword(password);
+    this.db.transaction(() => {
+      if (existing) {
+        this.db.prepare("UPDATE app_users SET display_name = ?, username = ?, email = ?, status = ?, must_change_password = ?, failed_login_attempts = 0, locked_at = NULL, updated_at = ? WHERE id = ?")
+          .run(profile.displayName, profile.username, profile.email, profile.status, profile.mustChangePassword ? 1 : 0, now, userId);
+      } else {
+        this.db.prepare("INSERT INTO app_users (id, display_name, username, normalized_username, email, status, must_change_password, failed_login_attempts, locked_at, last_login_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)")
+          .run(userId, profile.displayName, profile.username, normalized, profile.email, profile.status, profile.mustChangePassword ? 1 : 0, now, now);
+      }
+      this.db.prepare(`INSERT INTO user_credentials(id, user_id, credential_format, password_hash, password_changed_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET credential_format = excluded.credential_format,
+        password_hash = excluded.password_hash, password_changed_at = excluded.password_changed_at`)
+        .run(randomUUID(), userId, CREDENTIAL_FORMAT, passwordHash, now, now);
+      this.db.prepare("DELETE FROM user_role_legal_entity_access WHERE user_id = ?").run(userId);
+      this.db.prepare("DELETE FROM user_role_assignments WHERE user_id = ?").run(userId);
+      for (const role of profile.roleAssignments) {
+        this.db.prepare("INSERT INTO user_role_assignments(id, user_id, role_id, organization_id, legal_entity_id, assigned_at, expires_at, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(randomUUID(), userId, role.roleId, role.organizationId, role.legalEntityId, role.assignedAt, role.expiresAt, role.isActive ? 1 : 0);
+      }
+      for (const item of profile.legalEntityAccess) {
+        this.db.prepare("INSERT INTO user_role_legal_entity_access(id, user_id, organization_id, legal_entity_id, access_mode, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(randomUUID(), userId, item.organizationId, item.legalEntityId, item.accessMode, now);
+      }
+    })();
+  }
+
   getCurrentSession(): AuthSession | null {
     if (!this.currentSessionId) return null;
     return this.sessionFromId(this.currentSessionId);

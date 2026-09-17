@@ -27,6 +27,16 @@ type JsonRecord = Record<string, unknown>;
 type CentralRecord = { table: string; key: string; data: JsonRecord; sha256: string; revision: number };
 type CentralChange = { revision: number; sequence: number; table: string; key: string; operation: "UPSERT" | "DELETE"; data: JsonRecord | null; sha256: string | null };
 type LocalRow = { table: string; key: string; data: JsonRecord; sha256: string };
+export interface CentralDesktopProfile {
+  localUserId: string;
+  displayName: string;
+  username: string;
+  email: string | null;
+  status: "ACTIVE" | "INACTIVE" | "LOCKED";
+  mustChangePassword: boolean;
+  roleAssignments: Array<{ roleId: string; organizationId: string | null; legalEntityId: string | null; assignedAt: string; expiresAt: string | null; isActive: boolean }>;
+  legalEntityAccess: Array<{ organizationId: string; legalEntityId: string | null; accessMode: "ALL" | "SPECIFIC" }>;
+}
 
 function jsonValue(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return { $binaryBase64: value.toString("base64") };
@@ -88,9 +98,9 @@ export class CentralSyncService {
     };
   }
 
-  async login(username: string, password: string): Promise<void> {
+  async login(username: string, password: string): Promise<CentralDesktopProfile | null> {
     const installationId = this.getInstallationId() ?? `unconfigured-${randomUUID()}`;
-    const response = await this.request<{ token: string }>("/v1/session/login", {
+    const response = await this.request<{ token: string; user: { desktopProfile?: CentralDesktopProfile | null } }>("/v1/session/login", {
       method: "POST",
       body: JSON.stringify({
         username,
@@ -101,6 +111,26 @@ export class CentralSyncService {
     this.token = response.token;
     await this.synchronize();
     this.start();
+    return response.user?.desktopProfile ?? null;
+  }
+
+  async publishLocalUsers(): Promise<void> {
+    if (!this.token || !this.tableExists("app_users")) return;
+    const users = this.db.prepare("SELECT * FROM app_users ORDER BY created_at").all() as JsonRecord[];
+    const payload = users.flatMap((user) => {
+      const credential = this.db.prepare("SELECT * FROM user_credentials WHERE user_id = ?").get(user.id) as JsonRecord | undefined;
+      if (!credential) return [];
+      const roles = this.db.prepare("SELECT * FROM user_role_assignments WHERE user_id = ?").all(user.id) as JsonRecord[];
+      const access = this.db.prepare("SELECT * FROM user_role_legal_entity_access WHERE user_id = ?").all(user.id) as JsonRecord[];
+      return [{
+        localUserId: String(user.id), displayName: String(user.display_name), username: String(user.username),
+        email: user.email ? String(user.email) : null, status: String(user.status), mustChangePassword: Boolean(user.must_change_password),
+        roleAssignments: roles.map((role) => ({ roleId: String(role.role_id), organizationId: role.organization_id ? String(role.organization_id) : null, legalEntityId: role.legal_entity_id ? String(role.legal_entity_id) : null, assignedAt: String(role.assigned_at), expiresAt: role.expires_at ? String(role.expires_at) : null, isActive: Boolean(role.is_active) })),
+        legalEntityAccess: access.map((item) => ({ organizationId: String(item.organization_id), legalEntityId: item.legal_entity_id ? String(item.legal_entity_id) : null, accessMode: String(item.access_mode) })),
+        credential: { format: String(credential.credential_format), passwordHash: String(credential.password_hash), passwordChangedAt: String(credential.password_changed_at) }
+      }];
+    });
+    await this.request("/v1/users/synchronize", { method: "POST", body: JSON.stringify({ users: payload }) });
   }
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {

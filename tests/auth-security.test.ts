@@ -64,6 +64,25 @@ describe("local authentication and authorization", () => {
     expect(created.email).toBeNull();
   });
 
+  it("provisions a centrally authenticated user on a second computer", async () => {
+    const auth = createAuthService();
+    await auth.provisionCentralUser({
+      localUserId: "a9104ef0-a6b1-47b8-82b6-c56c90cebc66",
+      displayName: "Thadeu",
+      username: "Thadeu",
+      email: null,
+      status: "ACTIVE",
+      mustChangePassword: false,
+      roleAssignments: [{ roleId: "role-employee-operacional", organizationId: null, legalEntityId: null, assignedAt: new Date().toISOString(), expiresAt: null, isActive: true }],
+      legalEntityAccess: []
+    }, "senha-do-thadeu");
+
+    const session = await auth.login({ username: "thadeu", password: "senha-do-thadeu" });
+    expect(session.user.displayName).toBe("Thadeu");
+    expect(session.roles.map((role) => role.id)).toContain("role-employee-operacional");
+    await expect(auth.login({ username: "thadeu", password: "incorreta" })).rejects.toThrow();
+  });
+
   it("opens, locks, unlocks and logs out a local session", async () => {
     const auth = createAuthService();
     await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });
