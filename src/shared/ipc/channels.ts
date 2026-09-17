@@ -1,5 +1,6 @@
 export const IPC_CHANNELS = {
   authNeedsBootstrap: "auth:needsBootstrap",
+  authCentralConnectionStatus: "auth:centralConnectionStatus",
   authBootstrapAdmin: "auth:bootstrapAdmin",
   authLogin: "auth:login",
   authCurrentSession: "auth:currentSession",

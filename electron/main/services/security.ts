@@ -21,6 +21,7 @@ type DbRecord = Record<string, unknown>;
 
 export const AUTH_PUBLIC_CHANNELS = new Set([
   "auth:needsBootstrap",
+  "auth:centralConnectionStatus",
   "auth:bootstrapAdmin",
   "auth:login",
   "auth:currentSession",
@@ -34,7 +35,7 @@ export type IpcPolicy =
   | { mode: "permission"; permission: string };
 
 export const CHANNEL_PERMISSION_RULES: Array<{ pattern: RegExp; policy: IpcPolicy }> = [
-  { pattern: /^auth:(needsBootstrap|bootstrapAdmin|login|currentSession|unlock|logout)$/, policy: { mode: "public" } },
+  { pattern: /^auth:(needsBootstrap|centralConnectionStatus|bootstrapAdmin|login|currentSession|unlock|logout)$/, policy: { mode: "public" } },
   // Le so' organizations/legalEntities/locations ativos (sem dados de
   // usuario/credencial) -- precisa funcionar ANTES do login pra tela de
   // login/bloqueio/primeiro-admin mostrar a logo/cor reais da organizacao

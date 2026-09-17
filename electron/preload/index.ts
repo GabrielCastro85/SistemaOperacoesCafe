@@ -86,6 +86,7 @@ import type { z } from "zod";
 
 const IPC_CHANNELS = {
   authNeedsBootstrap: "auth:needsBootstrap",
+  authCentralConnectionStatus: "auth:centralConnectionStatus",
   authBootstrapAdmin: "auth:bootstrapAdmin",
   authLogin: "auth:login",
   authCurrentSession: "auth:currentSession",
@@ -446,6 +447,7 @@ type SaveInstallationProfileInput = z.infer<typeof saveInstallationProfileSchema
 
 export interface OperationsCafeApi {
   authNeedsBootstrap: () => Promise<boolean>;
+  authCentralConnectionStatus: () => Promise<{ configured: boolean }>;
   authBootstrapAdmin: (input: { displayName: string; username: string; email?: string | null; password: string; centralPassword?: string }) => Promise<AuthSession>;
   authLogin: (input: { username: string; password: string; centralPassword?: string }) => Promise<AuthSession>;
   authCurrentSession: () => Promise<AuthSession | null>;
@@ -805,6 +807,7 @@ export interface OperationsCafeApi {
 
 const api: OperationsCafeApi = {
   authNeedsBootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.authNeedsBootstrap) as Promise<boolean>,
+  authCentralConnectionStatus: () => ipcRenderer.invoke(IPC_CHANNELS.authCentralConnectionStatus) as Promise<{ configured: boolean }>,
   authBootstrapAdmin: (input) => ipcRenderer.invoke(IPC_CHANNELS.authBootstrapAdmin, input) as Promise<AuthSession>,
   authLogin: (input) => ipcRenderer.invoke(IPC_CHANNELS.authLogin, input) as Promise<AuthSession>,
   authCurrentSession: () => ipcRenderer.invoke(IPC_CHANNELS.authCurrentSession) as Promise<AuthSession | null>,

@@ -4668,6 +4668,37 @@ table tbody tr:hover {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
+.auth-central-connected {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid #acd5bb;
+  border-radius: var(--radius-md);
+  color: #1f6b43;
+  background: #e4f4ea;
+}
+
+.auth-central-connected > span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: white;
+  background: #1f6b43;
+  font-weight: 800;
+}
+
+.auth-central-connected > div {
+  display: grid;
+  gap: 2px;
+}
+
+.auth-central-connected small {
+  color: #356a4d;
+}
+
 .coffee-return-card {
   margin: 18px 0;
   padding: 18px;

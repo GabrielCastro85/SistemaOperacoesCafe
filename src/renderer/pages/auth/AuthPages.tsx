@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 import type { AppVariant, AuthSession, Organization } from "../../../shared/types/domain";
@@ -8,6 +8,30 @@ interface AuthPageProps {
   onSession: (session: AuthSession | null) => void;
   organization?: Organization | null;
   variant?: AppVariant;
+}
+
+function useCentralConnectionStatus(): boolean | null {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    void window.operationsCafe.authCentralConnectionStatus()
+      .then((status) => { if (active) setConfigured(status.configured); })
+      .catch(() => { if (active) setConfigured(false); });
+    return () => { active = false; };
+  }, []);
+  return configured;
+}
+
+function CentralConnectionField({ configured, password, onChange }: { configured: boolean | null; password: string; onChange: (value: string) => void }): JSX.Element {
+  if (configured) {
+    return <div className="auth-central-connected"><span aria-hidden="true">✓</span><div><strong>Servidor central conectado</strong><small>Este computador ja esta autorizado para sincronizar.</small></div></div>;
+  }
+  return (
+    <>
+      <PasswordField label="Senha para autorizar este computador (somente no primeiro acesso)" value={password} onChange={onChange} />
+      <small>Depois que um administrador autorizar este computador, todos os usuarios entram apenas com a propria senha.</small>
+    </>
+  );
 }
 
 // Tenta a logo real da organizacao primeiro (cliente que subiu a propria
@@ -63,6 +87,7 @@ export function PasswordField({ label, value, onChange, autoFocus, onKeyDown }: 
 }
 
 export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPageProps): JSX.Element {
+  const centralConfigured = useCentralConnectionStatus();
   const [displayName, setDisplayName] = useState("Administrador");
   const [username, setUsername] = useState("admin");
   const [email, setEmail] = useState("");
@@ -90,8 +115,7 @@ export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPa
         <label>Usuario<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <label>Email (opcional)<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         <PasswordField label="Senha" value={password} onChange={setPassword} />
-        <PasswordField label="Senha do servidor central" value={centralPassword} onChange={setCentralPassword} />
-        <small>Informe a senha central recebida para conectar este computador. Ela ficara protegida pelo Windows.</small>
+        <CentralConnectionField configured={centralConfigured} password={centralPassword} onChange={setCentralPassword} />
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Criar administrador</button>
       </section>
@@ -100,6 +124,7 @@ export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPa
 }
 
 export function LoginPage({ onSession, organization, variant }: AuthPageProps): JSX.Element {
+  const centralConfigured = useCentralConnectionStatus();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [centralPassword, setCentralPassword] = useState("");
@@ -122,8 +147,7 @@ export function LoginPage({ onSession, organization, variant }: AuthPageProps): 
         <h1>Entrar</h1>
         <label>Usuario<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <PasswordField label="Senha" value={password} onChange={setPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
-        <PasswordField label="Senha para autorizar este computador (somente no primeiro acesso)" value={centralPassword} onChange={setCentralPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
-        <small>Depois que um administrador autorizar este computador, todos os usuarios entram apenas com a propria senha.</small>
+        <CentralConnectionField configured={centralConfigured} password={centralPassword} onChange={setCentralPassword} />
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Entrar</button>
       </section>

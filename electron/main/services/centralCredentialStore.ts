@@ -23,6 +23,10 @@ export class CentralCredentialStore {
     this.path = join(settingsDir, "central-credentials.json");
   }
 
+  isConfigured(): boolean {
+    return this.load("") !== null;
+  }
+
   load(username: string): CentralCredential | null {
     if (!safeStorage.isEncryptionAvailable()) return null;
     const passwords = this.read().passwords;

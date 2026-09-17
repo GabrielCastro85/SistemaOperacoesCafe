@@ -106,6 +106,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   };
 
   handle(IPC_CHANNELS.authNeedsBootstrap, () => auth.needsBootstrap());
+  handle(IPC_CHANNELS.authCentralConnectionStatus, () => ({ configured: centralCredentials.isConfigured() }));
   handle(IPC_CHANNELS.authBootstrapAdmin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
     const session = await auth.bootstrapAdministrator(payload);
