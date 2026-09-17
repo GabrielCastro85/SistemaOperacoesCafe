@@ -67,12 +67,13 @@ export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPa
   const [username, setUsername] = useState("admin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [centralPassword, setCentralPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function submit(): Promise<void> {
     try {
       setError(null);
-      onSession(await window.operationsCafe.authBootstrapAdmin({ displayName, username, email: email.trim() ? email.trim() : null, password }));
+      onSession(await window.operationsCafe.authBootstrapAdmin({ displayName, username, email: email.trim() ? email.trim() : null, password, centralPassword }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nao foi possivel criar o administrador.");
     }
@@ -89,6 +90,8 @@ export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPa
         <label>Usuario<input value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <label>Email (opcional)<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         <PasswordField label="Senha" value={password} onChange={setPassword} />
+        <PasswordField label="Senha do servidor central" value={centralPassword} onChange={setCentralPassword} />
+        <small>Informe a senha central recebida para conectar este computador. Ela ficara protegida pelo Windows.</small>
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Criar administrador</button>
       </section>
@@ -99,12 +102,13 @@ export function FirstAdminSetupPage({ onSession, organization, variant }: AuthPa
 export function LoginPage({ onSession, organization, variant }: AuthPageProps): JSX.Element {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [centralPassword, setCentralPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function submit(): Promise<void> {
     try {
       setError(null);
-      onSession(await window.operationsCafe.authLogin({ username, password }));
+      onSession(await window.operationsCafe.authLogin({ username, password, centralPassword: centralPassword || undefined }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Usuario ou senha invalidos.");
     }
@@ -118,6 +122,8 @@ export function LoginPage({ onSession, organization, variant }: AuthPageProps): 
         <h1>Entrar</h1>
         <label>Usuario<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <PasswordField label="Senha" value={password} onChange={setPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
+        <PasswordField label="Senha do servidor central (somente no primeiro acesso)" value={centralPassword} onChange={setCentralPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
+        <small>Depois da primeira conexao, essa senha fica protegida pelo Windows e pode ser deixada em branco.</small>
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Entrar</button>
       </section>

@@ -20,6 +20,7 @@ import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
 import { checkForUpdates, getUpdateStatus, quitAndInstallUpdate } from "../services/updaterService.js";
 import type { CentralSyncService } from "../services/centralSyncService.js";
+import { CentralCredentialStore } from "../services/centralCredentialStore.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
@@ -63,6 +64,19 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
 export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository, centralSync: CentralSyncService): void {
   const auth = new AuthService(context.db);
   const backups = new BackupService(context, auth);
+  const centralCredentials = new CentralCredentialStore(context.directories.settingsDir);
+
+  const loginCentral = async (username: string, suppliedPassword?: string): Promise<void> => {
+    const centralPassword = suppliedPassword?.trim() ? suppliedPassword : centralCredentials.load(username);
+    if (!centralPassword) {
+      throw new AuthError(
+        "Informe a senha do servidor central neste primeiro acesso. Ela ficara protegida pelo Windows.",
+        "CENTRAL_CREDENTIAL_REQUIRED"
+      );
+    }
+    await centralSync.login(username, centralPassword);
+    if (suppliedPassword?.trim()) centralCredentials.save(username, suppliedPassword);
+  };
   const handle = <T>(channel: string, listener: (event: IpcMainInvokeEvent, payload?: unknown) => T | Promise<T>): void => {
     ipcMain.handle(channel, async (event, payload) => {
       const policy = getIpcPolicy(channel);
@@ -91,16 +105,16 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
 
   handle(IPC_CHANNELS.authNeedsBootstrap, () => auth.needsBootstrap());
   handle(IPC_CHANNELS.authBootstrapAdmin, async (_event, payload: unknown) => {
-    const credentials = z.object({ username: z.string().min(1), password: z.string().min(1) }).passthrough().parse(payload);
+    const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
     const session = await auth.bootstrapAdministrator(payload);
-    await centralSync.login(credentials.username, credentials.password);
+    await loginCentral(credentials.username, credentials.centralPassword);
     return session;
   });
   handle(IPC_CHANNELS.authLogin, async (_event, payload: unknown) => {
-    const credentials = z.object({ username: z.string().min(1), password: z.string().min(1) }).passthrough().parse(payload);
+    const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
     const session = await auth.login(payload);
     try {
-      await centralSync.login(credentials.username, credentials.password);
+      await loginCentral(credentials.username, credentials.centralPassword);
       return session;
     } catch (error) {
       auth.logout();
@@ -115,8 +129,6 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return auth.logout();
   });
   handle(IPC_CHANNELS.authChangePassword, async (_event, payload: unknown) => {
-    const passwords = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(1) }).parse(payload);
-    await centralSync.changePassword(passwords.currentPassword, passwords.newPassword);
     return auth.changePassword(payload);
   });
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());

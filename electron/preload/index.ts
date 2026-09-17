@@ -446,8 +446,8 @@ type SaveInstallationProfileInput = z.infer<typeof saveInstallationProfileSchema
 
 export interface OperationsCafeApi {
   authNeedsBootstrap: () => Promise<boolean>;
-  authBootstrapAdmin: (input: { displayName: string; username: string; email?: string | null; password: string }) => Promise<AuthSession>;
-  authLogin: (input: { username: string; password: string }) => Promise<AuthSession>;
+  authBootstrapAdmin: (input: { displayName: string; username: string; email?: string | null; password: string; centralPassword?: string }) => Promise<AuthSession>;
+  authLogin: (input: { username: string; password: string; centralPassword?: string }) => Promise<AuthSession>;
   authCurrentSession: () => Promise<AuthSession | null>;
   authLock: () => Promise<AuthSession | null>;
   authUnlock: (password: string) => Promise<AuthSession>;
