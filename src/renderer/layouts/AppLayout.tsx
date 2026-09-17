@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
-import type { AppVariant, AuthSession, LegalEntity, Organization } from "../../shared/types/domain";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { AppVariant, AuthSession, Diagnostics, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
 import {
@@ -125,12 +125,29 @@ export function AppLayout({
 }: AppLayoutProps): JSX.Element {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveOrganizationLogoSrc(organization, variant);
   const activeStateFlagSrc = stateFlagSrc(legalEntity?.state);
   const legalEntityLabel = legalEntity ? `${legalEntity.tradeName} - ${formatCnpj(legalEntity.cnpj)}` : "Nenhum CNPJ ativo";
   const userLabel = session.permissions.includes("users.manage") ? "Administrador" : "Usuario";
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => void window.operationsCafe.getDiagnostics()
+      .then((result) => { if (active) setDiagnostics(result); })
+      .catch(() => { if (active) setDiagnostics(null); });
+    refresh();
+    const timer = window.setInterval(refresh, 8_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  const syncLabel = diagnostics?.centralSyncStatus === "ONLINE"
+    ? `Servidor central sincronizado · revisão ${diagnostics.centralSyncRevision ?? 0}`
+    : diagnostics?.centralSyncStatus === "ERROR"
+      ? "Falha na sincronização central"
+      : "Servidor central desconectado";
 
   return (
     <main className={`app-shell professional-shell ${collapsed ? "is-collapsed" : ""}`} style={themeToCssVariables(theme)}>
@@ -233,7 +250,7 @@ export function AppLayout({
         </header>
         {children}
         <footer className="app-statusbar">
-          <span>Backup automático ativo</span>
+          <span title={diagnostics?.centralSyncError ?? undefined}>{syncLabel}</span>
           <strong>{theme.appName} {version}</strong>
         </footer>
       </section>

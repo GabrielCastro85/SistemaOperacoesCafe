@@ -73,6 +73,19 @@ export class CentralSyncService {
 
   constructor(private readonly db: Database.Database, private readonly appVersion: string) {}
 
+  getStatus(): { status: "ONLINE" | "OFFLINE" | "ERROR"; revision: number; lastSuccessAt: string | null; error: string | null } {
+    const row = this.db.prepare(`
+      SELECT server_revision AS revision, last_success_at AS lastSuccessAt, last_error AS error
+      FROM central_sync_state WHERE singleton = 1
+    `).get() as { revision: number; lastSuccessAt: string | null; error: string | null };
+    return {
+      status: row.error ? "ERROR" : this.token ? "ONLINE" : "OFFLINE",
+      revision: Number(row.revision),
+      lastSuccessAt: row.lastSuccessAt,
+      error: row.error
+    };
+  }
+
   async login(username: string, password: string): Promise<void> {
     const installationId = this.getInstallationId() ?? `unconfigured-${randomUUID()}`;
     const response = await this.request<{ token: string }>("/v1/session/login", {
@@ -86,6 +99,13 @@ export class CentralSyncService {
     this.token = response.token;
     await this.synchronize();
     this.start();
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await this.request("/v1/session/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
   }
 
   stop(): void {

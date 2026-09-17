@@ -12,6 +12,10 @@ const loginSchema = z.object({
   password: z.string().min(1).max(200),
   device: z.object({ installationId: z.string().min(1).max(200), displayName: z.string().min(1).max(200), platform: z.string().max(100).optional(), appVersion: z.string().max(40).optional() })
 });
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200)
+});
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 const normalizeUsername = (value: string) => value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -63,6 +67,19 @@ export function registerAuthRoutes(app: FastifyInstance, pool: pg.Pool, config: 
     return { user: { id: session.userId, username: session.username, displayName: session.displayName }, deviceId: session.deviceId };
   });
 
+  app.post("/v1/session/change-password", async (request, reply) => {
+    const session = await resolveSession(pool, request);
+    if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
+    const input = changePasswordSchema.parse(request.body);
+    const credential = await pool.query<{ password_hash: string }>("SELECT password_hash FROM user_credentials WHERE user_id = $1", [session.userId]);
+    if (!credential.rows[0] || !(await bcrypt.compare(input.currentPassword, credential.rows[0].password_hash))) {
+      return reply.code(401).send({ error: "INVALID_CREDENTIALS", message: "Senha atual invalida." });
+    }
+    await pool.query("UPDATE user_credentials SET password_hash = $1, password_changed_at = now() WHERE user_id = $2", [await bcrypt.hash(input.newPassword, 12), session.userId]);
+    await pool.query("INSERT INTO server_audit_events(id, actor_user_id, device_id, action, result) VALUES ($1, $2, $3, 'PASSWORD_CHANGED', 'SUCCESS')", [randomUUID(), session.userId, session.deviceId]);
+    return reply.code(204).send();
+  });
+
   app.post("/v1/session/logout", async (request, reply) => {
     const session = await resolveSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
@@ -70,4 +87,3 @@ export function registerAuthRoutes(app: FastifyInstance, pool: pg.Pool, config: 
     return reply.code(204).send();
   });
 }
-

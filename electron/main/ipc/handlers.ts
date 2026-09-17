@@ -31,11 +31,12 @@ function isLikelyDataMutation(channel: string): boolean {
   return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return)/i.test(channel);
 }
 
-export function createDiagnostics(context: AppContext, repository: AppRepository): Diagnostics {
+export function createDiagnostics(context: AppContext, repository: AppRepository, centralSync?: CentralSyncService): Diagnostics {
   const profile = repository.getInstallationProfile();
   const bootstrap = repository.getBootstrapData(context.version);
   const organization = bootstrap.organizations.find((item) => item.id === profile?.defaultOrganizationId);
   const legalEntity = bootstrap.legalEntities.find((item) => item.id === profile?.defaultLegalEntityId);
+  const sync = centralSync?.getStatus();
   return {
     appVersion: context.version,
     productName: context.buildVariant?.productName,
@@ -51,7 +52,11 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
     activeOrganization: organization?.displayName ?? null,
     activeLegalEntity: legalEntity?.tradeName ?? null,
     currentMigration: getCurrentMigration(context.db),
-    databaseStatus: "ok"
+    databaseStatus: "ok",
+    centralSyncStatus: sync?.status,
+    centralSyncRevision: sync?.revision,
+    centralSyncLastSuccessAt: sync?.lastSuccessAt,
+    centralSyncError: sync?.error
   };
 }
 
@@ -85,7 +90,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   };
 
   handle(IPC_CHANNELS.authNeedsBootstrap, () => auth.needsBootstrap());
-  handle(IPC_CHANNELS.authBootstrapAdmin, (_event, payload: unknown) => auth.bootstrapAdministrator(payload));
+  handle(IPC_CHANNELS.authBootstrapAdmin, async (_event, payload: unknown) => {
+    const credentials = z.object({ username: z.string().min(1), password: z.string().min(1) }).passthrough().parse(payload);
+    const session = await auth.bootstrapAdministrator(payload);
+    await centralSync.login(credentials.username, credentials.password);
+    return session;
+  });
   handle(IPC_CHANNELS.authLogin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1) }).passthrough().parse(payload);
     const session = await auth.login(payload);
@@ -104,7 +114,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     centralSync.stop();
     return auth.logout();
   });
-  handle(IPC_CHANNELS.authChangePassword, (_event, payload: unknown) => auth.changePassword(payload));
+  handle(IPC_CHANNELS.authChangePassword, async (_event, payload: unknown) => {
+    const passwords = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(1) }).parse(payload);
+    await centralSync.changePassword(passwords.currentPassword, passwords.newPassword);
+    return auth.changePassword(payload);
+  });
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());
   handle(IPC_CHANNELS.createUser, (_event, payload: unknown) => auth.createUser(payload));
   handle(IPC_CHANNELS.updateUser, (_event, payload: unknown) => auth.updateUser(payload));
@@ -173,7 +187,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.saveInstallationProfile, (_event, payload: unknown) => repository.saveInstallationProfile(payload));
   handle(IPC_CHANNELS.updateInstallationProfile, (_event, payload: unknown) => repository.updateInstallationProfile(payload));
   handle(IPC_CHANNELS.getActiveContext, () => repository.getActiveContext());
-  handle(IPC_CHANNELS.getDiagnostics, () => createDiagnostics(context, repository));
+  handle(IPC_CHANNELS.getDiagnostics, () => createDiagnostics(context, repository, centralSync));
   handle(IPC_CHANNELS.getUpdateStatus, () => getUpdateStatus());
   handle(IPC_CHANNELS.checkForUpdates, () => {
     checkForUpdates();

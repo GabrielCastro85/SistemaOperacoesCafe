@@ -1772,4 +1772,8 @@ export interface Diagnostics {
   activeLegalEntity: string | null;
   currentMigration: string;
   databaseStatus: "ok" | "error";
+  centralSyncStatus?: "ONLINE" | "OFFLINE" | "ERROR";
+  centralSyncRevision?: number;
+  centralSyncLastSuccessAt?: string | null;
+  centralSyncError?: string | null;
 }
