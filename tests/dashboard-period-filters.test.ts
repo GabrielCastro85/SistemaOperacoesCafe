@@ -104,8 +104,11 @@ describe("filtros de periodo e cliente do Dashboard", () => {
     const augustSummary = repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-08-01", periodEnd: "2026-08-31" });
     expect(augustSummary.openCents).toBe(15000);
     expect(augustSummary.receivedCents).toBe(5000);
+    expect(augustSummary.receivedForOperationsPeriodCents).toBe(0);
+    expect(augustSummary.cashReceivedCents).toBe(0);
     expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-09-01", periodEnd: "2026-09-30" }).openCents).toBe(0);
     expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-09-01", periodEnd: "2026-09-30" }).receivedCents).toBe(0);
+    expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-09-01", periodEnd: "2026-09-30" }).cashReceivedCents).toBe(5000);
     db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(insideDoc.document.id);
     expect(repo.getBillingSummary({ organizationId: villaId, periodStart: "2026-06-01", periodEnd: "2026-06-30" }).openCents).toBe(50000);
 

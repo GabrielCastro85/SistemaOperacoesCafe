@@ -854,7 +854,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       <PageHeader eyebrow="Cobrancas" title="Cobranca por periodo" description="Fechamentos semanais, quinzenais e mensais por cliente/corretor, com ajustes e documentos prontos." />
       <div className="cards">
         <article><span>Total a receber no periodo</span><strong>{summary ? formatCurrencyFromCents(summary.openCents) : "Calculando..."}</strong></article>
-        <article><span>Recebido no periodo</span><strong>{summary ? formatCurrencyFromCents(summary.receivedCents) : "Calculando..."}</strong></article>
+        <article><span>Recebido referente ao periodo</span><strong>{summary ? formatCurrencyFromCents(summary.receivedForOperationsPeriodCents) : "Calculando..."}</strong><small>Total recebido nas datas: {summary ? formatCurrencyFromCents(summary.cashReceivedCents) : "Calculando..."}</small></article>
         <article><span>Creditos</span><strong>{formatCurrencyFromCents(summary?.availableCreditsCents ?? 0)}</strong></article>
         <article><span>Operacoes nao cobradas</span><strong>{summary?.unbilledOperations ?? 0}</strong></article>
       </div>

@@ -441,7 +441,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
         <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
         <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
         <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber no periodo</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>Todas as empresas · {billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
-        <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Recebido no periodo</span><strong>{formatCurrencyFromCents(billingSummary?.receivedCents ?? 0)}</strong><small>Todas as empresas</small></Card>
+        <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Recebido referente ao periodo</span><strong>{formatCurrencyFromCents(billingSummary?.receivedForOperationsPeriodCents ?? 0)}</strong><small>Total recebido nas datas selecionadas: {formatCurrencyFromCents(billingSummary?.cashReceivedCents ?? 0)} · Todas as empresas</small></Card>
       </div>
 
       {hasAlerts && alerts ? (

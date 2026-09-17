@@ -1149,7 +1149,12 @@ export interface ClientChargeDetail {
 
 export interface BillingSummary {
   issuedCents: number;
+  /** Valores pagos nas cobrancas referentes ao periodo selecionado. */
   receivedCents: number;
+  /** Servicos das notas do periodo que pertencem a cobrancas integralmente pagas. */
+  receivedForOperationsPeriodCents: number;
+  /** Pagamentos efetivamente recebidos dentro das datas selecionadas. */
+  cashReceivedCents: number;
   openCents: number;
   overdueCents: number;
   availableCreditsCents: number;

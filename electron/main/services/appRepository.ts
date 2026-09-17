@@ -3335,11 +3335,57 @@ export class AppRepository {
     const creditWhere = includeAllCompanies ? "status = 'CONFIRMED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status = 'CONFIRMED'`;
     const creditParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
     const credits = this.db.prepare(`SELECT COALESCE(SUM(available_amount_cents), 0) AS total FROM client_ledger_entries WHERE ${creditWhere}`).get(...creditParams) as { total: number };
+    const paymentClauses = ["status = 'CONFIRMED'"];
+    const paymentParams: unknown[] = [];
+    if (!includeAllCompanies) {
+      paymentClauses.push("organization_id = ?");
+      paymentParams.push(organizationId);
+      if (ownLegalEntityId) {
+        paymentClauses.push("own_legal_entity_id = ?");
+        paymentParams.push(ownLegalEntityId);
+      }
+    }
+    if (periodStart) {
+      paymentClauses.push("payment_date >= ?");
+      paymentParams.push(periodStart);
+    }
+    if (periodEnd) {
+      paymentClauses.push("payment_date <= ?");
+      paymentParams.push(periodEnd);
+    }
+    const cashReceived = this.db.prepare(`SELECT COALESCE(SUM(amount_cents), 0) AS total FROM client_payments WHERE ${paymentClauses.join(" AND ")}`)
+      .get(...paymentParams) as { total: number };
+    const receivedOperationClauses = ["operations.operation_type = 'SALE'", "operations.status IN ('DRAFT', 'CONFIRMED')", "client_charges.status = 'PAID'"];
+    const receivedOperationParams: unknown[] = [];
+    if (!includeAllCompanies) {
+      receivedOperationClauses.push("operations.organization_id = ?");
+      receivedOperationParams.push(organizationId);
+      if (ownLegalEntityId) {
+        receivedOperationClauses.push("operations.own_legal_entity_id = ?");
+        receivedOperationParams.push(ownLegalEntityId);
+      }
+    }
+    if (periodStart) {
+      receivedOperationClauses.push("operations.operation_date >= ?");
+      receivedOperationParams.push(periodStart);
+    }
+    if (periodEnd) {
+      receivedOperationClauses.push("operations.operation_date <= ?");
+      receivedOperationParams.push(periodEnd);
+    }
+    const receivedForOperationsPeriod = this.db.prepare(`
+      SELECT COALESCE(SUM(operations.service_amount_cents), 0) AS total
+      FROM operations
+      JOIN client_charges ON client_charges.id = operations.client_charge_id
+      WHERE ${receivedOperationClauses.join(" AND ")}
+    `).get(...receivedOperationParams) as { total: number };
     const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined, status: periodStart || periodEnd ? "all" : "CONFIRMED", billingStatus: "UNBILLED" }).filter((item) => item.operationType !== "PURCHASE" && item.status !== "CANCELED");
     const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
       receivedCents: charges.reduce((sum, item) => sum + item.paidAmountCents, 0),
+      receivedForOperationsPeriodCents: Number(receivedForOperationsPeriod.total),
+      cashReceivedCents: Number(cashReceived.total),
       openCents: charges.reduce((sum, item) => sum + item.openAmountCents, 0) + unbilledServiceCents,
       overdueCents: charges.filter((item) => item.status === "OVERDUE").reduce((sum, item) => sum + item.openAmountCents, 0),
       availableCreditsCents: Number(credits.total),
