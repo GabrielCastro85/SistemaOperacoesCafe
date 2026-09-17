@@ -8,6 +8,7 @@ import type { AppDirectories } from "../../src/shared/types/domain.js";
 import { initializeDatabase } from "./database/database.js";
 import { registerIpcHandlers } from "./ipc/handlers.js";
 import { AppRepository } from "./services/appRepository.js";
+import { CentralSyncService } from "./services/centralSyncService.js";
 import { ensureAppDirectories, resolveAppDirectories } from "./services/paths.js";
 import { initializeUpdater, startPeriodicUpdateChecks } from "./services/updaterService.js";
 import { createMainWindow } from "./windows/createMainWindow.js";
@@ -74,7 +75,8 @@ function bootstrap(): void {
   const db = initializeDatabase(directories);
   const context = { version: app.getVersion(), directories, db, buildVariant };
   const repository = new AppRepository(db, directories);
-  registerIpcHandlers(ipcMain, context, repository);
+  const centralSync = new CentralSyncService(db, app.getVersion());
+  registerIpcHandlers(ipcMain, context, repository, centralSync);
 }
 
 function createWindow(minSplashVisible: Promise<void> = Promise.resolve()): void {

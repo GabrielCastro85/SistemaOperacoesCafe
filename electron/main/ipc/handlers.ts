@@ -19,11 +19,17 @@ import { lookupCnpj } from "../services/cnpjLookupService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
 import { checkForUpdates, getUpdateStatus, quitAndInstallUpdate } from "../services/updaterService.js";
+import type { CentralSyncService } from "../services/centralSyncService.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
 const payableAttachmentTokens = new Map<string, string>();
 const signedDealPdfTokens = new Map<string, string>();
+
+function isLikelyDataMutation(channel: string): boolean {
+  if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
+  return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return)/i.test(channel);
+}
 
 export function createDiagnostics(context: AppContext, repository: AppRepository): Diagnostics {
   const profile = repository.getInstallationProfile();
@@ -49,7 +55,7 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
   };
 }
 
-export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository): void {
+export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository, centralSync: CentralSyncService): void {
   const auth = new AuthService(context.db);
   const backups = new BackupService(context, auth);
   const handle = <T>(channel: string, listener: (event: IpcMainInvokeEvent, payload?: unknown) => T | Promise<T>): void => {
@@ -59,6 +65,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         if (policy.mode === "authenticated") auth.requireSession();
         if (policy.mode === "permission") auth.requireSession(policy.permission);
         const result = await listener(event, payload);
+        if (isLikelyDataMutation(channel)) await centralSync.synchronize();
         return result;
       } catch (error) {
         if (error instanceof AuthError) {
@@ -79,11 +86,24 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
 
   handle(IPC_CHANNELS.authNeedsBootstrap, () => auth.needsBootstrap());
   handle(IPC_CHANNELS.authBootstrapAdmin, (_event, payload: unknown) => auth.bootstrapAdministrator(payload));
-  handle(IPC_CHANNELS.authLogin, (_event, payload: unknown) => auth.login(payload));
+  handle(IPC_CHANNELS.authLogin, async (_event, payload: unknown) => {
+    const credentials = z.object({ username: z.string().min(1), password: z.string().min(1) }).passthrough().parse(payload);
+    const session = await auth.login(payload);
+    try {
+      await centralSync.login(credentials.username, credentials.password);
+      return session;
+    } catch (error) {
+      auth.logout();
+      throw error;
+    }
+  });
   handle(IPC_CHANNELS.authCurrentSession, () => auth.getCurrentSession());
   handle(IPC_CHANNELS.authLock, () => auth.lock());
   handle(IPC_CHANNELS.authUnlock, (_event, payload: unknown) => auth.unlock(z.string().parse(payload)));
-  handle(IPC_CHANNELS.authLogout, () => auth.logout());
+  handle(IPC_CHANNELS.authLogout, () => {
+    centralSync.stop();
+    return auth.logout();
+  });
   handle(IPC_CHANNELS.authChangePassword, (_event, payload: unknown) => auth.changePassword(payload));
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());
   handle(IPC_CHANNELS.createUser, (_event, payload: unknown) => auth.createUser(payload));

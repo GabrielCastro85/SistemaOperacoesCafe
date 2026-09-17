@@ -4,6 +4,24 @@ import type pg from "pg";
 import { z } from "zod";
 import { resolveSession } from "./auth.js";
 
+const SYNCED_TABLES = [
+  "organizations", "legal_entities", "locations", "document_sequences",
+  "business_partners", "business_partner_roles", "business_partner_merges", "partner_legal_entities",
+  "partner_company_links", "partner_contacts", "partner_aliases", "client_billing_profiles",
+  "products", "product_aliases", "service_rate_rules", "purchase_rate_rules", "operation_rate_history",
+  "operation_classification_rules", "fiscal_documents", "fiscal_document_items", "fiscal_document_events",
+  "fiscal_document_returns", "fiscal_document_merge_history", "operations", "third_party_operations",
+  "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history",
+  "client_ledger_entries", "client_credit_allocations", "client_payments", "client_payment_allocations",
+  "expense_categories", "cost_centers", "financial_accounts", "accounts_payable", "account_payable_operations",
+  "account_payable_allocations", "payable_recurring_templates", "payable_installment_groups", "payable_payments",
+  "payable_payment_allocations", "payable_status_history", "deal_clause_templates", "deal_confirmation_templates",
+  "deal_confirmations", "deal_confirmation_parties", "deal_confirmation_signers", "deal_confirmation_items",
+  "deal_confirmation_clauses", "deal_confirmation_operations", "deal_confirmation_fiscal_documents",
+  "deal_confirmation_status_history", "deal_payment_terms", "spreadsheet_mapping_templates", "xml_import_jobs",
+  "xml_import_files"
+] as const;
+const syncedTableSet = new Set<string>(SYNCED_TABLES);
 const tableNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/);
 const rowKeySchema = z.string().min(1).max(500);
 const changeSchema = z.object({
@@ -12,6 +30,9 @@ const changeSchema = z.object({
   operation: z.enum(["UPSERT", "DELETE"]),
   data: z.record(z.string(), z.unknown()).nullable().optional()
 }).superRefine((change, context) => {
+  if (!syncedTableSet.has(change.table)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: `Tabela nao sincronizavel: ${change.table}` });
+  }
   if (change.operation === "UPSERT" && !change.data) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "UPSERT exige data." });
   }
@@ -33,13 +54,17 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
   app.get("/v1/sync/status", async (request, reply) => {
     const session = await requireSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
-    const state = await pool.query<{ revision: string; promoted_import_run_id: string | null; promoted_at: Date | null }>(
-      "SELECT revision::text, promoted_import_run_id, promoted_at FROM central_sync_state WHERE singleton = true"
-    );
+    const state = await pool.query<{ revision: string; promoted_import_run_id: string | null; promoted_at: Date | null; source_installation_id: string | null }>(`
+      SELECT state.revision::text, state.promoted_import_run_id, state.promoted_at, run.source_installation_id
+      FROM central_sync_state state
+      LEFT JOIN sqlite_import_runs run ON run.id = state.promoted_import_run_id
+      WHERE state.singleton = true
+    `);
     const recordCount = await pool.query<{ total: string }>("SELECT COUNT(*)::text AS total FROM central_records WHERE deleted = false");
     return {
       revision: Number(state.rows[0]?.revision ?? 0),
       promotedImportRunId: state.rows[0]?.promoted_import_run_id ?? null,
+      sourceInstallationId: state.rows[0]?.source_installation_id ?? null,
       promotedAt: state.rows[0]?.promoted_at ?? null,
       recordCount: Number(recordCount.rows[0]?.total ?? 0)
     };
@@ -75,8 +100,8 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
       await client.query(`
         INSERT INTO central_records(table_name, row_key, row_data, row_sha256, revision, deleted, updated_by_user_id, updated_by_device_id)
         SELECT table_name, row_key, row_data, row_sha256, 1, false, $2, $3
-        FROM sqlite_import_rows WHERE run_id = $1
-      `, [runId, session.userId, session.deviceId]);
+        FROM sqlite_import_rows WHERE run_id = $1 AND table_name = ANY($4::text[])
+      `, [runId, session.userId, session.deviceId, [...SYNCED_TABLES]]);
       await client.query(`
         UPDATE central_sync_state
         SET revision = 1, promoted_import_run_id = $1, promoted_at = now(), updated_at = now()
@@ -119,15 +144,25 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
   app.get("/v1/sync/changes", async (request, reply) => {
     const session = await requireSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
-    const query = z.object({ after: z.coerce.number().int().min(0), limit: z.coerce.number().int().min(1).max(2000).default(500) }).parse(request.query);
+    const query = z.object({
+      after: z.coerce.number().int().min(0),
+      sequence: z.coerce.number().int().min(0).default(0),
+      limit: z.coerce.number().int().min(1).max(2000).default(500)
+    }).parse(request.query);
     const rows = await pool.query<{ revision: string; sequence: number; table_name: string; row_key: string; operation: "UPSERT" | "DELETE"; row_data: Record<string, unknown> | null; row_sha256: string | null }>(`
       SELECT revision::text, sequence, table_name, row_key, operation, row_data, row_sha256
-      FROM central_change_log WHERE revision > $1 ORDER BY revision, sequence LIMIT $2
-    `, [query.after, query.limit]);
+      FROM central_change_log
+      WHERE revision > $1 OR (revision = $1 AND sequence > $2)
+      ORDER BY revision, sequence LIMIT $3
+    `, [query.after, query.sequence, query.limit]);
     const state = await pool.query<{ revision: string }>("SELECT revision::text FROM central_sync_state WHERE singleton = true");
     return {
       currentRevision: Number(state.rows[0]?.revision ?? 0),
-      changes: rows.rows.map((row) => ({ revision: Number(row.revision), sequence: row.sequence, table: row.table_name, key: row.row_key, operation: row.operation, data: row.row_data, sha256: row.row_sha256 }))
+      changes: rows.rows.map((row) => ({ revision: Number(row.revision), sequence: row.sequence, table: row.table_name, key: row.row_key, operation: row.operation, data: row.row_data, sha256: row.row_sha256 })),
+      next: rows.rows.length === query.limit ? {
+        revision: Number(rows.rows.at(-1)?.revision ?? query.after),
+        sequence: rows.rows.at(-1)?.sequence ?? query.sequence
+      } : null
     };
   });
 

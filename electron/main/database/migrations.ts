@@ -3408,4 +3408,23 @@ export const migrations: Migration[] = [
       ALTER TABLE client_payments ADD COLUMN receipt_image_file_path TEXT;
     `)
   }
+  ,{
+    name: "050_central_sync_metadata",
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS central_sync_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        server_revision INTEGER NOT NULL DEFAULT 0,
+        source_installation_id TEXT,
+        last_success_at TEXT,
+        last_error TEXT
+      );
+      INSERT OR IGNORE INTO central_sync_state(singleton, server_revision) VALUES (1, 0);
+      CREATE TABLE IF NOT EXISTS central_sync_baseline (
+        table_name TEXT NOT NULL,
+        row_key TEXT NOT NULL,
+        row_sha256 TEXT NOT NULL,
+        PRIMARY KEY (table_name, row_key)
+      );
+    `)
+  }
 ];
