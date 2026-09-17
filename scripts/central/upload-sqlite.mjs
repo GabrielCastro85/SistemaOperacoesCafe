@@ -99,7 +99,7 @@ try {
     }
     let verification;
     try {
-      verification = await request(`/v1/sqlite-imports/${started.runId}/verify-v2`, { method: "POST", headers });
+      verification = await request(`/v1/sqlite-imports/${started.runId}/verify-v3`, { method: "POST", headers });
     } catch (verificationError) {
       const persisted = await request(`/v1/sqlite-imports/${started.runId}`, { headers });
       if (persisted.status !== "VERIFIED") throw verificationError;
