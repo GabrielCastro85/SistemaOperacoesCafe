@@ -66,7 +66,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   const backups = new BackupService(context, auth);
   const centralCredentials = new CentralCredentialStore(context.directories.settingsDir);
 
-  const loginCentral = async (username: string, suppliedPassword?: string): Promise<void> => {
+  const loginCentral = async (username: string, suppliedPassword?: string, localPassword?: string): Promise<void> => {
     const storedCredential = centralCredentials.load(username);
     const centralUsername = storedCredential?.username ?? username;
     const centralPassword = suppliedPassword?.trim() ? suppliedPassword : storedCredential?.password;
@@ -76,8 +76,15 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         "CENTRAL_CREDENTIAL_REQUIRED"
       );
     }
-    await centralSync.login(centralUsername, centralPassword);
-    if (suppliedPassword?.trim()) centralCredentials.save(centralUsername, suppliedPassword);
+    try {
+      await centralSync.login(centralUsername, centralPassword);
+      if (suppliedPassword?.trim()) centralCredentials.save(centralUsername, suppliedPassword);
+    } catch (error) {
+      const invalidStoredCredential = !suppliedPassword?.trim() && localPassword && error instanceof Error && error.message.includes("(401)");
+      if (!invalidStoredCredential) throw error;
+      await centralSync.login(username, localPassword);
+      centralCredentials.save(username, localPassword);
+    }
   };
   const handle = <T>(channel: string, listener: (event: IpcMainInvokeEvent, payload?: unknown) => T | Promise<T>): void => {
     ipcMain.handle(channel, async (event, payload) => {
@@ -110,23 +117,26 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.authBootstrapAdmin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
     const session = await auth.bootstrapAdministrator(payload);
-    await loginCentral(credentials.username, credentials.centralPassword);
+    await loginCentral(credentials.username, credentials.centralPassword, credentials.password);
     return session;
   });
   handle(IPC_CHANNELS.authLogin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
     let session;
+    let centralAuthenticated = false;
     try {
       session = await auth.login(payload);
     } catch (error) {
       if (!(error instanceof AuthError) || error.code !== "INVALID_CREDENTIALS") throw error;
       const profile = await centralSync.login(credentials.username, credentials.password);
       if (!profile) throw error;
+      centralAuthenticated = true;
       await auth.provisionCentralUser(profile, credentials.password);
+      centralCredentials.save(credentials.username, credentials.password);
       session = await auth.login(payload);
     }
     try {
-      await loginCentral(credentials.username, credentials.centralPassword);
+      if (!centralAuthenticated) await loginCentral(credentials.username, credentials.centralPassword, credentials.password);
       if (session.permissions.includes("users.manage")) await centralSync.publishLocalUsers();
       return session;
     } catch (error) {

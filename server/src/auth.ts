@@ -114,12 +114,15 @@ export function registerAuthRoutes(app: FastifyInstance, pool: pg.Pool, config: 
             status = excluded.status, must_change_password = excluded.must_change_password,
             desktop_profile = excluded.desktop_profile, updated_at = now()
         `, [serverUserId, user.displayName, user.username, normalized, user.email, user.status, user.mustChangePassword, JSON.stringify(desktopProfile)]);
-        await client.query(`
-          INSERT INTO user_credentials(id, user_id, credential_format, password_hash, password_changed_at)
-          VALUES ($1, $2, $3, $4, $5::timestamptz)
-          ON CONFLICT (user_id) DO UPDATE SET credential_format = excluded.credential_format,
-            password_hash = excluded.password_hash, password_changed_at = excluded.password_changed_at
-        `, [randomUUID(), serverUserId, credential.format, credential.passwordHash, credential.passwordChangedAt]);
+        const centralRole = await client.query<{ is_central_admin: boolean }>("SELECT is_central_admin FROM app_users WHERE id = $1", [serverUserId]);
+        if (!centralRole.rows[0]?.is_central_admin) {
+          await client.query(`
+            INSERT INTO user_credentials(id, user_id, credential_format, password_hash, password_changed_at)
+            VALUES ($1, $2, $3, $4, $5::timestamptz)
+            ON CONFLICT (user_id) DO UPDATE SET credential_format = excluded.credential_format,
+              password_hash = excluded.password_hash, password_changed_at = excluded.password_changed_at
+          `, [randomUUID(), serverUserId, credential.format, credential.passwordHash, credential.passwordChangedAt]);
+        }
       }
       await client.query("INSERT INTO server_audit_events(id, actor_user_id, device_id, action, result, metadata) VALUES ($1, $2, $3, 'DESKTOP_USERS_SYNCHRONIZED', 'SUCCESS', $4::jsonb)", [randomUUID(), session.userId, session.deviceId, JSON.stringify({ count: input.users.length })]);
       await client.query("COMMIT");
