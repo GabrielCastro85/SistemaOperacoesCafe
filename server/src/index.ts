@@ -17,7 +17,11 @@ const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 2 * 1024 * 1024
 await app.register(helmet);
 await app.register(cors, { origin: config.corsOrigins, credentials: false });
 
-app.get("/health", async () => ({ status: "ok", service: "operacoes-cafe-api" }));
+app.get("/health", async () => ({
+  status: "ok",
+  service: "operacoes-cafe-api",
+  commit: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) ?? null
+}));
 app.get("/ready", async (_request, reply) => {
   try {
     await pool.query("SELECT 1");
