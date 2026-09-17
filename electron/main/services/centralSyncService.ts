@@ -109,8 +109,12 @@ export class CentralSyncService {
       })
     }, false);
     this.token = response.token;
-    await this.synchronize();
     this.start();
+    try {
+      await this.synchronize();
+    } catch (error) {
+      log.warn("Central sync during login failed", error instanceof Error ? error.message : String(error));
+    }
     return response.user?.desktopProfile ?? null;
   }
 
@@ -187,6 +191,7 @@ export class CentralSyncService {
   private async runSynchronization(): Promise<void> {
     try {
       if (!this.initialized) await this.initializeFromServer();
+      await this.pullRemoteChanges();
       await this.pushLocalChanges();
       await this.pullRemoteChanges();
       this.db.prepare("UPDATE central_sync_state SET last_success_at = ?, last_error = NULL WHERE singleton = 1").run(new Date().toISOString());
