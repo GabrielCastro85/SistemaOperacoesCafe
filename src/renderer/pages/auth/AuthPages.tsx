@@ -14,7 +14,12 @@ function useCentralConnectionStatus(): boolean | null {
   const [configured, setConfigured] = useState<boolean | null>(null);
   useEffect(() => {
     let active = true;
-    void window.operationsCafe.authCentralConnectionStatus()
+    const readStatus = window.operationsCafe.authCentralConnectionStatus;
+    if (typeof readStatus !== "function") {
+      setConfigured(false);
+      return () => { active = false; };
+    }
+    void readStatus()
       .then((status) => { if (active) setConfigured(status.configured); })
       .catch(() => { if (active) setConfigured(false); });
     return () => { active = false; };

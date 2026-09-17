@@ -86,6 +86,7 @@ import type { z } from "zod";
 
 const IPC_CHANNELS = {
   authNeedsBootstrap: "auth:needsBootstrap",
+  authCentralConnectionStatus: "auth:centralConnectionStatus",
   authBootstrapAdmin: "auth:bootstrapAdmin",
   authLogin: "auth:login",
   authCurrentSession: "auth:currentSession",
@@ -193,6 +194,7 @@ const IPC_CHANNELS = {
   updateProduct: "products:update",
   activateProduct: "products:activate",
   deactivateProduct: "products:deactivate",
+  permanentlyDeleteProduct: "products:permanentlyDelete",
   getBillingProfile: "billingProfiles:get",
   upsertBillingProfile: "billingProfiles:upsert",
   activateBillingProfile: "billingProfiles:activate",
@@ -445,8 +447,9 @@ type SaveInstallationProfileInput = z.infer<typeof saveInstallationProfileSchema
 
 export interface OperationsCafeApi {
   authNeedsBootstrap: () => Promise<boolean>;
-  authBootstrapAdmin: (input: { displayName: string; username: string; email?: string | null; password: string }) => Promise<AuthSession>;
-  authLogin: (input: { username: string; password: string }) => Promise<AuthSession>;
+  authCentralConnectionStatus: () => Promise<{ configured: boolean }>;
+  authBootstrapAdmin: (input: { displayName: string; username: string; email?: string | null; password: string; centralPassword?: string }) => Promise<AuthSession>;
+  authLogin: (input: { username: string; password: string; centralPassword?: string }) => Promise<AuthSession>;
   authCurrentSession: () => Promise<AuthSession | null>;
   authLock: () => Promise<AuthSession | null>;
   authUnlock: (password: string) => Promise<AuthSession>;
@@ -553,6 +556,7 @@ export interface OperationsCafeApi {
   updateProduct: (id: string, input: unknown) => Promise<Product>;
   activateProduct: (id: string) => Promise<Product>;
   deactivateProduct: (id: string) => Promise<Product>;
+  permanentlyDeleteProduct: (id: string) => Promise<null>;
   getBillingProfile: (businessPartnerId: string) => Promise<ClientBillingProfile | null>;
   upsertBillingProfile: (input: unknown) => Promise<ClientBillingProfile>;
   activateBillingProfile: (id: string) => Promise<ClientBillingProfile>;
@@ -803,6 +807,7 @@ export interface OperationsCafeApi {
 
 const api: OperationsCafeApi = {
   authNeedsBootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.authNeedsBootstrap) as Promise<boolean>,
+  authCentralConnectionStatus: () => ipcRenderer.invoke(IPC_CHANNELS.authCentralConnectionStatus) as Promise<{ configured: boolean }>,
   authBootstrapAdmin: (input) => ipcRenderer.invoke(IPC_CHANNELS.authBootstrapAdmin, input) as Promise<AuthSession>,
   authLogin: (input) => ipcRenderer.invoke(IPC_CHANNELS.authLogin, input) as Promise<AuthSession>,
   authCurrentSession: () => ipcRenderer.invoke(IPC_CHANNELS.authCurrentSession) as Promise<AuthSession | null>,
@@ -924,6 +929,7 @@ const api: OperationsCafeApi = {
   updateProduct: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateProduct, { id, input }) as Promise<Product>,
   activateProduct: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateProduct, id) as Promise<Product>,
   deactivateProduct: (id) => ipcRenderer.invoke(IPC_CHANNELS.deactivateProduct, id) as Promise<Product>,
+  permanentlyDeleteProduct: (id) => ipcRenderer.invoke(IPC_CHANNELS.permanentlyDeleteProduct, id) as Promise<null>,
   getBillingProfile: (businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingProfile, businessPartnerId) as Promise<ClientBillingProfile | null>,
   upsertBillingProfile: (input) => ipcRenderer.invoke(IPC_CHANNELS.upsertBillingProfile, input) as Promise<ClientBillingProfile>,
   activateBillingProfile: (id) => ipcRenderer.invoke(IPC_CHANNELS.activateBillingProfile, id) as Promise<ClientBillingProfile>,

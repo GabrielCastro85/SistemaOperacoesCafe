@@ -6,6 +6,11 @@ import { buildVariantConfigs, getBuildVariantConfig } from "../src/shared/buildV
 const root = process.cwd();
 
 describe("Windows distribution", () => {
+  it("keeps the typed preload and the packaged CommonJS preload identical", () => {
+    expect(readFileSync(join(root, "electron/preload/index.cts"), "utf8"))
+      .toBe(readFileSync(join(root, "electron/preload/index.ts"), "utf8"));
+  });
+
   it("keeps brand variants available inside the single multiempresa app", () => {
     const variants = Object.values(buildVariantConfigs);
     expect(new Set(variants.map((variant) => variant.appId))).toHaveLength(variants.length);
