@@ -90,10 +90,10 @@ export function registerBootstrapRoutes(app: FastifyInstance, pool: pg.Pool, con
       }
 
       await client.query(`
-        INSERT INTO user_credentials(id, user_id, password_hash, password_changed_at)
-        VALUES ($1, $2, $3, now())
+        INSERT INTO user_credentials(id, user_id, credential_format, password_hash, password_changed_at)
+        VALUES ($1, $2, 'bcrypt', $3, now())
         ON CONFLICT (user_id) DO UPDATE
-        SET password_hash = excluded.password_hash, password_changed_at = now()
+        SET credential_format = 'bcrypt', password_hash = excluded.password_hash, password_changed_at = now()
       `, [randomUUID(), userId, await bcrypt.hash(input.password, 12)]);
       await client.query("UPDATE app_users SET status = 'ACTIVE', failed_login_attempts = 0, locked_at = NULL, updated_at = now() WHERE id = $1", [userId]);
       await client.query("UPDATE api_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [userId]);
