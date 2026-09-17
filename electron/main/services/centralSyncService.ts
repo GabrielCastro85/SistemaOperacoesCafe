@@ -4,6 +4,7 @@ import log from "electron-log/main.js";
 
 const API_URL = "https://mindful-peace-production.up.railway.app";
 const SYNC_INTERVAL_MS = 8_000;
+const MUTATION_SYNC_DELAY_MS = 750;
 export const CENTRAL_SYNCED_TABLES = [
   "organizations", "legal_entities", "locations", "document_sequences",
   "business_partners", "business_partner_roles", "business_partner_merges", "partner_legal_entities",
@@ -65,6 +66,7 @@ function quoteIdentifier(value: string): string {
 export class CentralSyncService {
   private token: string | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private mutationTimer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
   private rerunRequested = false;
   private initialized = false;
@@ -110,7 +112,9 @@ export class CentralSyncService {
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    if (this.mutationTimer) clearTimeout(this.mutationTimer);
     this.timer = null;
+    this.mutationTimer = null;
     this.token = null;
     this.initialized = false;
   }
@@ -121,6 +125,18 @@ export class CentralSyncService {
       log.warn("Central sync interval failed", error instanceof Error ? error.message : String(error));
     }), SYNC_INTERVAL_MS);
     this.timer.unref();
+  }
+
+  scheduleSynchronization(): void {
+    if (!this.token) return;
+    if (this.mutationTimer) clearTimeout(this.mutationTimer);
+    this.mutationTimer = setTimeout(() => {
+      this.mutationTimer = null;
+      void this.synchronize().catch((error) => {
+        log.warn("Central sync after mutation failed", error instanceof Error ? error.message : String(error));
+      });
+    }, MUTATION_SYNC_DELAY_MS);
+    this.mutationTimer.unref();
   }
 
   async synchronize(): Promise<void> {

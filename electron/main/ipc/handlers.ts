@@ -86,7 +86,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         if (policy.mode === "authenticated") auth.requireSession();
         if (policy.mode === "permission") auth.requireSession(policy.permission);
         const result = await listener(event, payload);
-        if (isLikelyDataMutation(channel)) await centralSync.synchronize();
+        if (isLikelyDataMutation(channel)) centralSync.scheduleSynchronization();
         return result;
       } catch (error) {
         if (error instanceof AuthError) {
