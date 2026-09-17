@@ -66,6 +66,7 @@ export class CentralSyncService {
   private token: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
+  private rerunRequested = false;
   private initialized = false;
   private readonly tableColumns = new Map<string, Set<string>>();
   private readonly primaryKeys = new Map<string, string[]>();
@@ -104,8 +105,16 @@ export class CentralSyncService {
 
   async synchronize(): Promise<void> {
     if (!this.token) return;
-    if (this.running) return this.running;
-    this.running = this.runSynchronization().finally(() => { this.running = null; });
+    if (this.running) {
+      this.rerunRequested = true;
+      return this.running;
+    }
+    this.running = (async () => {
+      do {
+        this.rerunRequested = false;
+        await this.runSynchronization();
+      } while (this.rerunRequested);
+    })().finally(() => { this.running = null; });
     return this.running;
   }
 
