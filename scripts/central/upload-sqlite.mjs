@@ -31,12 +31,33 @@ const rowKey = (row) => {
   return createHash("sha256").update(JSON.stringify(row)).digest("hex");
 };
 
-async function request(path, init = {}) {
-  const response = await fetch(`${apiUrl}${path}`, init);
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(`${response.status} ${path}: ${JSON.stringify(body)}`);
-  return body;
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function request(path, init = {}, maxAttempts = 6) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(`${apiUrl}${path}`, init);
+      const text = await response.text();
+      let body = null;
+      if (text) {
+        try { body = JSON.parse(text); }
+        catch { body = { message: text.trim() }; }
+      }
+      if (response.ok) return body;
+      const error = new Error(`${response.status} ${path}: ${JSON.stringify(body)}`);
+      if (response.status < 500 || attempt === maxAttempts) throw error;
+      lastError = error;
+    } catch (error) {
+      lastError = error;
+      const status = Number(/^([0-9]{3}) /.exec(error.message)?.[1] ?? 0);
+      if ((status > 0 && status < 500) || attempt === maxAttempts) throw error;
+    }
+    const delay = Math.min(1000 * (2 ** (attempt - 1)), 10000);
+    console.warn(`Resposta temporaria do servidor em ${path}. Nova tentativa ${attempt + 1}/${maxAttempts} em ${delay / 1000}s...`);
+    await wait(delay);
+  }
+  throw lastError;
 }
 
 try {
