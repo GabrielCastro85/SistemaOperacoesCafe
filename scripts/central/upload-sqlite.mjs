@@ -76,7 +76,14 @@ try {
       }
       console.log(`${table}: ${rows.length}`);
     }
-    const verification = await request(`/v1/sqlite-imports/${started.runId}/verify-v2`, { method: "POST", headers });
+    let verification;
+    try {
+      verification = await request(`/v1/sqlite-imports/${started.runId}/verify-v2`, { method: "POST", headers });
+    } catch (verificationError) {
+      const persisted = await request(`/v1/sqlite-imports/${started.runId}`, { headers });
+      if (persisted.status !== "VERIFIED") throw verificationError;
+      verification = { runId: started.runId, status: persisted.status, recoveredAfterResponseError: true };
+    }
     console.log(`Resultado: ${verification.status}`);
     console.log(JSON.stringify(verification, null, 2));
   }

@@ -12,6 +12,11 @@ const setupSchema = z.object({
   email: z.string().trim().email().optional()
 });
 
+const resetPasswordSchema = z.object({
+  username: z.string().trim().min(1).max(100),
+  password: z.string().min(8).max(200)
+});
+
 const normalizeUsername = (value: string) => value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 function secretsMatch(received: string | undefined, expected: string | undefined): boolean {
@@ -56,6 +61,48 @@ export function registerBootstrapRoutes(app: FastifyInstance, pool: pg.Pool, con
       `, [randomUUID(), userId, userId]);
       await client.query("COMMIT");
       return reply.code(201).send({ user: { id: userId, username: input.username, displayName: input.displayName } });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post("/v1/bootstrap/reset-password", async (request, reply) => {
+    if (!secretsMatch(request.headers["x-bootstrap-secret"] as string | undefined, config.BOOTSTRAP_SECRET)) {
+      return reply.code(404).send({ error: "NOT_FOUND" });
+    }
+
+    const input = resetPasswordSchema.parse(request.body);
+    const normalizedUsername = normalizeUsername(input.username);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<{ id: string }>(
+        "SELECT id FROM app_users WHERE normalized_username = $1 FOR UPDATE",
+        [normalizedUsername]
+      );
+      const userId = user.rows[0]?.id;
+      if (!userId) {
+        await client.query("ROLLBACK");
+        return reply.code(404).send({ error: "USER_NOT_FOUND", message: "Usuario nao encontrado." });
+      }
+
+      await client.query(`
+        INSERT INTO user_credentials(id, user_id, password_hash, password_changed_at)
+        VALUES ($1, $2, $3, now())
+        ON CONFLICT (user_id) DO UPDATE
+        SET password_hash = excluded.password_hash, password_changed_at = now()
+      `, [randomUUID(), userId, await bcrypt.hash(input.password, 12)]);
+      await client.query("UPDATE app_users SET status = 'ACTIVE', failed_login_attempts = 0, locked_at = NULL, updated_at = now() WHERE id = $1", [userId]);
+      await client.query("UPDATE api_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [userId]);
+      await client.query(`
+        INSERT INTO server_audit_events(id, actor_user_id, action, entity_type, entity_id, result)
+        VALUES ($1, $2, 'BOOTSTRAP_PASSWORD_RESET', 'app_user', $3, 'SUCCESS')
+      `, [randomUUID(), userId, userId]);
+      await client.query("COMMIT");
+      return { success: true };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
