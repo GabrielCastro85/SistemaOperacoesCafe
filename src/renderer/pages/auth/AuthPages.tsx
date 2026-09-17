@@ -122,8 +122,8 @@ export function LoginPage({ onSession, organization, variant }: AuthPageProps): 
         <h1>Entrar</h1>
         <label>Usuario<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} /></label>
         <PasswordField label="Senha" value={password} onChange={setPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
-        <PasswordField label="Senha do servidor central (somente no primeiro acesso)" value={centralPassword} onChange={setCentralPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
-        <small>Depois da primeira conexao, essa senha fica protegida pelo Windows e pode ser deixada em branco.</small>
+        <PasswordField label="Senha para autorizar este computador (somente no primeiro acesso)" value={centralPassword} onChange={setCentralPassword} onKeyDown={(event) => { if (event.key === "Enter") void submit(); }} />
+        <small>Depois que um administrador autorizar este computador, todos os usuarios entram apenas com a propria senha.</small>
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary" type="button" onClick={() => void submit()}>Entrar</button>
       </section>

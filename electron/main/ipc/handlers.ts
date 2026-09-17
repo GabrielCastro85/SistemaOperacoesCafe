@@ -67,15 +67,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   const centralCredentials = new CentralCredentialStore(context.directories.settingsDir);
 
   const loginCentral = async (username: string, suppliedPassword?: string): Promise<void> => {
-    const centralPassword = suppliedPassword?.trim() ? suppliedPassword : centralCredentials.load(username);
+    const storedCredential = centralCredentials.load(username);
+    const centralUsername = storedCredential?.username ?? username;
+    const centralPassword = suppliedPassword?.trim() ? suppliedPassword : storedCredential?.password;
     if (!centralPassword) {
       throw new AuthError(
         "Informe a senha do servidor central neste primeiro acesso. Ela ficara protegida pelo Windows.",
         "CENTRAL_CREDENTIAL_REQUIRED"
       );
     }
-    await centralSync.login(username, centralPassword);
-    if (suppliedPassword?.trim()) centralCredentials.save(username, suppliedPassword);
+    await centralSync.login(centralUsername, centralPassword);
+    if (suppliedPassword?.trim()) centralCredentials.save(centralUsername, suppliedPassword);
   };
   const handle = <T>(channel: string, listener: (event: IpcMainInvokeEvent, payload?: unknown) => T | Promise<T>): void => {
     ipcMain.handle(channel, async (event, payload) => {

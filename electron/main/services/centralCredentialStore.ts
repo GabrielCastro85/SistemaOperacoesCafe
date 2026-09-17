@@ -7,6 +7,11 @@ interface StoredCredentials {
   passwords: Record<string, string>;
 }
 
+export interface CentralCredential {
+  username: string;
+  password: string;
+}
+
 function normalizeUsername(username: string): string {
   return username.trim().toLocaleLowerCase("pt-BR");
 }
@@ -18,12 +23,19 @@ export class CentralCredentialStore {
     this.path = join(settingsDir, "central-credentials.json");
   }
 
-  load(username: string): string | null {
+  load(username: string): CentralCredential | null {
     if (!safeStorage.isEncryptionAvailable()) return null;
-    const encrypted = this.read().passwords[normalizeUsername(username)];
-    if (!encrypted) return null;
+    const passwords = this.read().passwords;
+    const normalized = normalizeUsername(username);
+    const entry = passwords[normalized]
+      ? [normalized, passwords[normalized]] as const
+      : Object.entries(passwords)[0];
+    if (!entry) return null;
     try {
-      return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+      return {
+        username: entry[0],
+        password: safeStorage.decryptString(Buffer.from(entry[1], "base64"))
+      };
     } catch {
       return null;
     }
