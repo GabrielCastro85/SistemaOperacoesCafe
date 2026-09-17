@@ -14,7 +14,7 @@ const setupSchema = z.object({
 
 const resetPasswordSchema = z.object({
   username: z.string().trim().min(1).max(100),
-  password: z.string().min(8).max(200)
+  password: z.string().min(1).max(200)
 });
 
 const normalizeUsername = (value: string) => value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
