@@ -34,10 +34,15 @@ const rowKey = (row) => {
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function request(path, init = {}, maxAttempts = 6) {
+  const requestInit = { ...init };
+  const contentType = new Headers(requestInit.headers).get("content-type");
+  if (requestInit.method && requestInit.method !== "GET" && contentType === "application/json" && requestInit.body === undefined) {
+    requestInit.body = "{}";
+  }
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await fetch(`${apiUrl}${path}`, init);
+      const response = await fetch(`${apiUrl}${path}`, requestInit);
       const text = await response.text();
       let body = null;
       if (text) {
