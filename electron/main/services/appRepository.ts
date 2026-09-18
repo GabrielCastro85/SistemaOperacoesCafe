@@ -3415,14 +3415,44 @@ export class AppRepository {
 
   listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
     this.assertOrganizationWritable(input.organizationId);
+    const usageRows = this.db.prepare(`
+      SELECT ri.reconciliation_id, ri.fiscal_document_id, ri.source_amount_cents,
+        rr.status, rr.total_source_cents, rr.total_payments_cents
+      FROM transfer_reconciliation_invoices ri
+      JOIN transfer_reconciliations rr ON rr.id = ri.reconciliation_id
+      WHERE rr.organization_id = ? AND rr.status <> 'CANCELLED'
+        ${input.reconciliationId ? "AND rr.id <> ?" : ""}
+      ORDER BY ri.reconciliation_id, ri.created_at, ri.id
+    `).all(...(input.reconciliationId ? [input.organizationId, input.reconciliationId] : [input.organizationId])) as DbRecord[];
+    const rowsByReconciliation = new Map<string, DbRecord[]>();
+    for (const row of usageRows) {
+      const reconciliationId = String(row.reconciliation_id);
+      const group = rowsByReconciliation.get(reconciliationId) ?? [];
+      group.push(row);
+      rowsByReconciliation.set(reconciliationId, group);
+    }
+    const usedByDocument = new Map<string, number>();
+    for (const group of rowsByReconciliation.values()) {
+      const totalSource = Math.max(0, Number(group[0]?.total_source_cents ?? 0));
+      const totalPayments = Math.max(0, Number(group[0]?.total_payments_cents ?? 0));
+      const targetUsed = String(group[0]?.status) === "DRAFT" ? totalSource : Math.min(totalSource, totalPayments);
+      let assigned = 0;
+      group.forEach((row, index) => {
+        const sourceAmount = Math.max(0, Number(row.source_amount_cents ?? 0));
+        const used = index === group.length - 1
+          ? Math.min(sourceAmount, targetUsed - assigned)
+          : totalSource > 0
+            ? Number((BigInt(sourceAmount) * BigInt(targetUsed)) / BigInt(totalSource))
+            : 0;
+        assigned += used;
+        const documentId = String(row.fiscal_document_id);
+        usedByDocument.set(documentId, (usedByDocument.get(documentId) ?? 0) + used);
+      });
+    }
     const rows = this.db.prepare(`
       SELECT f.id, f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
         own.legal_name AS own_legal_name, own.trade_name AS own_trade_name,
-        partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name,
-        COALESCE((SELECT SUM(ri.source_amount_cents)
-          FROM transfer_reconciliation_invoices ri
-          JOIN transfer_reconciliations rr ON rr.id = ri.reconciliation_id
-          WHERE ri.fiscal_document_id = f.id AND rr.status <> 'CANCELLED' ${input.reconciliationId ? "AND rr.id <> ?" : ""}), 0) AS previously_used_cents
+        partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name
       FROM fiscal_documents f
       JOIN legal_entities own ON own.id = f.own_legal_entity_id
       LEFT JOIN partner_legal_entities partner ON partner.id = f.partner_legal_entity_id
@@ -3430,7 +3460,7 @@ export class AppRepository {
         AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = 'SALE'
           AND o.status <> 'CANCELED' AND o.responsible_partner_id = ?)
       ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
-    `).all(...(input.reconciliationId ? [input.reconciliationId, input.organizationId, input.clientPartnerId] : [input.organizationId, input.clientPartnerId])) as DbRecord[];
+    `).all(input.organizationId, input.clientPartnerId) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
       try {
@@ -3440,7 +3470,7 @@ export class AppRepository {
       const issuer = snapshot.issuer as Record<string, unknown> | undefined;
       const recipient = snapshot.recipient as Record<string, unknown> | undefined;
       const invoiceTotalCents = Number.isFinite(Number(row.total_amount_cents)) ? Number(row.total_amount_cents) : 0;
-      const previouslyUsedCents = Number.isFinite(Number(row.previously_used_cents)) ? Number(row.previously_used_cents) : 0;
+      const previouslyUsedCents = usedByDocument.get(String(row.id)) ?? 0;
       return {
         fiscalDocumentId: String(row.id), documentNumber: String(row.document_number), issueDate: String(row.issue_date),
         issuerName: this.stringOrNull(issuer?.legalName) ?? String(row.own_legal_name ?? row.own_trade_name ?? ""),
@@ -3503,6 +3533,7 @@ export class AppRepository {
         const document = this.getFiscalDocument(selection.fiscalDocumentId).document;
         const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
         if (!available) throw new Error("Nota indisponivel para conferencia.");
+        if (selection.sourceAmountCents > available.availableCents) throw new Error("O valor informado supera o saldo disponivel da nota.");
         insertInvoice.run(randomUUID(), id, document.id, document.documentNumber, document.issueDate, available.issuerName, available.recipientName, document.totalAmountCents, selection.sourceAmountCents, now, now);
       }
       const insertPayment = this.db.prepare(`INSERT INTO transfer_reconciliation_payments (id, reconciliation_id, beneficiary_name, beneficiary_document, description, payment_date, amount_cents, notes, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);

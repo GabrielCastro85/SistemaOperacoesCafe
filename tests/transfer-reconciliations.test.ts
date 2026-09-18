@@ -30,19 +30,20 @@ describe("transfer reconciliations", () => {
 
       const first = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-17", status: "COMPLETED", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 300_000_00 }], payments: [{ beneficiaryName: "Joao", amountCents: 280_000_00 }] });
       expect(first.reconciliation.balanceCents).toBe(20_000_00);
-      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(200_000_00);
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(220_000_00);
 
       const second = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-18", notes: "Parcela final", status: "COMPLETED", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 200_000_00 }], payments: [{ beneficiaryName: "Maria", amountCents: 210_000_00 }] });
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ creditCents: 20_000_00, debitCents: 10_000_00, netBalanceCents: 10_000_00 });
       expect(repo.getTransferReconciliation(second.reconciliation.id).payments[0]).toMatchObject({ beneficiaryName: "Maria", amountCents: 210_000_00 });
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(20_000_00);
       const draft = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-19", status: "DRAFT", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 10_000_00 }], payments: [] });
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ netBalanceCents: 10_000_00, openReconciliations: 1 });
       repo.cancelTransferReconciliation(draft.reconciliation.id);
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ netBalanceCents: 10_000_00, openReconciliations: 0 });
-      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(0);
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(20_000_00);
       repo.deleteTransferReconciliation(second.reconciliation.id);
       expect(() => repo.getTransferReconciliation(second.reconciliation.id)).toThrow("Conferencia de repasse nao encontrada");
-      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(200_000_00);
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(220_000_00);
       expect(db.prepare("SELECT COUNT(*) AS count FROM client_charges").get()).toMatchObject({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM client_ledger_entries").get()).toMatchObject({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM accounts_payable").get()).toMatchObject({ count: 0 });
