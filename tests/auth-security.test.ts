@@ -83,6 +83,25 @@ describe("local authentication and authorization", () => {
     await expect(auth.login({ username: "thadeu", password: "incorreta" })).rejects.toThrow();
   });
 
+  it("reactivates a locally locked user after a valid central provisioning", async () => {
+    const auth = createAuthService();
+    const profile = {
+      localUserId: "a9104ef0-a6b1-47b8-82b6-c56c90cebc66",
+      displayName: "Thadeu", username: "thadeu", email: null, status: "ACTIVE" as const,
+      mustChangePassword: false,
+      roleAssignments: [{ roleId: "role-employee-operacional", organizationId: null, legalEntityId: null, assignedAt: new Date().toISOString(), expiresAt: null, isActive: true }],
+      legalEntityAccess: []
+    };
+    await auth.provisionCentralUser(profile, "senha-correta");
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(auth.login({ username: "thadeu", password: "incorreta" })).rejects.toThrow();
+    }
+    await expect(auth.login({ username: "thadeu", password: "senha-correta" })).rejects.toThrow("Usuario bloqueado");
+
+    await auth.provisionCentralUser(profile, "senha-correta");
+    await expect(auth.login({ username: "thadeu", password: "senha-correta" })).resolves.toMatchObject({ user: { status: "ACTIVE" } });
+  });
+
   it("opens, locks, unlocks and logs out a local session", async () => {
     const auth = createAuthService();
     await auth.bootstrapAdministrator({ displayName: "Admin", username: "admin", password: "Senha@12345" });

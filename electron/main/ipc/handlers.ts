@@ -127,7 +127,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     try {
       session = await auth.login(payload);
     } catch (error) {
-      if (!(error instanceof AuthError) || error.code !== "INVALID_CREDENTIALS") throw error;
+      if (!(error instanceof AuthError) || !["INVALID_CREDENTIALS", "USER_LOCKED"].includes(error.code)) throw error;
       const profile = await centralSync.login(credentials.username, credentials.password);
       if (!profile) throw error;
       centralAuthenticated = true;
