@@ -51,6 +51,10 @@ import type {
   ClientPayment,
   BillingSummary,
   DashboardAlerts,
+  TransferReconciliation,
+  TransferReconciliationDetail,
+  TransferReconciliationAvailableInvoice,
+  TransferReconciliationClientBalance,
   PartnerRateSummaryRow,
   ExpenseCategory,
   CostCenter,
@@ -318,6 +322,12 @@ const IPC_CHANNELS = {
   openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",
   getDashboardAlerts: "billingDashboard:alerts",
+  listTransferReconciliations: "transferReconciliations:list",
+  listTransferReconciliationInvoices: "transferReconciliations:listInvoices",
+  getTransferReconciliation: "transferReconciliations:get",
+  saveTransferReconciliation: "transferReconciliations:save",
+  cancelTransferReconciliation: "transferReconciliations:cancel",
+  listTransferReconciliationClientBalances: "transferReconciliations:listClientBalances",
   listExpenseCategories: "expenseCategories:list",
   createExpenseCategory: "expenseCategories:create",
   updateExpenseCategory: "expenseCategories:update",
@@ -681,6 +691,12 @@ export interface OperationsCafeApi {
   openClientPaymentReceipt: (input: { paymentId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart?: string | null; periodEnd?: string | null }) => Promise<BillingSummary>;
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
+  listTransferReconciliations: (filters: { organizationId: string; clientPartnerId?: string; status?: "ALL" | "DRAFT" | "COMPLETED" | "CANCELLED" }) => Promise<TransferReconciliation[]>;
+  listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
+  getTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
+  saveTransferReconciliation: (input: unknown) => Promise<TransferReconciliationDetail>;
+  cancelTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
+  listTransferReconciliationClientBalances: (organizationId: string) => Promise<TransferReconciliationClientBalance[]>;
   listExpenseCategories: (organizationId: string) => Promise<ExpenseCategory[]>;
   createExpenseCategory: (input: unknown) => Promise<ExpenseCategory>;
   updateExpenseCategory: (id: string, input: unknown) => Promise<ExpenseCategory>;
@@ -1065,6 +1081,12 @@ const api: OperationsCafeApi = {
   openClientPaymentReceipt: (input) => ipcRenderer.invoke(IPC_CHANNELS.openClientPaymentReceipt, input) as Promise<boolean>,
   getBillingSummary: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingSummary, organizationId) as Promise<BillingSummary>,
   getDashboardAlerts: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDashboardAlerts, input) as Promise<DashboardAlerts>,
+  listTransferReconciliations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliations, filters) as Promise<TransferReconciliation[]>,
+  listTransferReconciliationInvoices: (input) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliationInvoices, input) as Promise<TransferReconciliationAvailableInvoice[]>,
+  getTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.getTransferReconciliation, id) as Promise<TransferReconciliationDetail>,
+  saveTransferReconciliation: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveTransferReconciliation, input) as Promise<TransferReconciliationDetail>,
+  cancelTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.cancelTransferReconciliation, id) as Promise<TransferReconciliationDetail>,
+  listTransferReconciliationClientBalances: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliationClientBalances, organizationId) as Promise<TransferReconciliationClientBalance[]>,
   listExpenseCategories: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listExpenseCategories, organizationId) as Promise<ExpenseCategory[]>,
   createExpenseCategory: (input) => ipcRenderer.invoke(IPC_CHANNELS.createExpenseCategory, input) as Promise<ExpenseCategory>,
   updateExpenseCategory: (id, input) => ipcRenderer.invoke(IPC_CHANNELS.updateExpenseCategory, { id, input }) as Promise<ExpenseCategory>,
@@ -1219,7 +1241,14 @@ function withLoadingTracking(target: OperationsCafeApi): OperationsCafeApi {
       if (result instanceof Promise) {
         pendingCallCount += 1;
         notifyLoadingListeners();
-        result.finally(() => {
+        // Nao use `result.finally(...)` sem consumir a Promise devolvida por
+        // finally: quando o IPC rejeita, ela cria uma segunda rejeicao nao
+        // tratada e o renderer pode terminar em tela branca mesmo que a pagina
+        // tenha seu proprio catch.
+        void result.then(() => {
+          pendingCallCount = Math.max(0, pendingCallCount - 1);
+          notifyLoadingListeners();
+        }, () => {
           pendingCallCount = Math.max(0, pendingCallCount - 1);
           notifyLoadingListeners();
         });
