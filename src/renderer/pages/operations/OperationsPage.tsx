@@ -89,6 +89,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
   const [documentSearch, setDocumentSearch] = useState("");
+  const [documentLimit, setDocumentLimit] = useState(20);
   const [documentSort, setDocumentSort] = useState<{ key: DocumentSortKey | null; direction: SortDirection }>({
     key: null,
     direction: "asc"
@@ -812,6 +813,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     "";
 
   function toggleDocumentSort(key: DocumentSortKey): void {
+    setDocumentLimit(20);
     setDocumentSort((current) => ({
       key,
       direction: current.key === key && current.direction === "asc" ? "desc" : "asc"
@@ -884,6 +886,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
     return documentSort.direction === "asc" ? comparison : -comparison;
   });
+  const visibleDocuments = sortedDocuments.slice(0, documentLimit);
 
   return (
     <section className="content-section settings">
@@ -987,16 +990,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <TextField
             label="Pesquisar notas por numero, contrato, cliente, empresa ou CNPJ"
             value={documentSearch}
-            onChange={setDocumentSearch}
+            onChange={(value) => { setDocumentSearch(value); setDocumentLimit(20); }}
           />
           {documentSearch ? (
             <button type="button" onClick={() => setDocumentSearch("")}>Limpar</button>
           ) : null}
           <span className="muted">
-            {filteredDocuments.length} de {documents.length} nota(s)
+            Exibindo {Math.min(visibleDocuments.length, filteredDocuments.length)} de {filteredDocuments.length} nota(s){filteredDocuments.length !== documents.length ? ` filtradas de ${documents.length}` : ""}
           </span>
         </div>
-        <div className="table"><div className="table-head invoice-grid"><button type="button" className={`table-sort-button${documentSort.key === "number" ? " active" : ""}`} onClick={() => toggleDocumentSort("number")} aria-label={`Ordenar notas por numero ${documentSort.key === "number" && documentSort.direction === "asc" ? "do maior para o menor" : "do menor para o maior"}`}><span>Numero</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("number")}</span></button><button type="button" className={`table-sort-button${documentSort.key === "client" ? " active" : ""}`} onClick={() => toggleDocumentSort("client")} aria-label={`Ordenar notas por cliente ${documentSort.key === "client" && documentSort.direction === "asc" ? "de Z a A" : "de A a Z"}`}><span>Cliente/corretor</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("client")}</span></button><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{sortedDocuments.map((doc) => {
+        <div className="table"><div className="table-head invoice-grid"><button type="button" className={`table-sort-button${documentSort.key === "number" ? " active" : ""}`} onClick={() => toggleDocumentSort("number")} aria-label={`Ordenar notas por numero ${documentSort.key === "number" && documentSort.direction === "asc" ? "do maior para o menor" : "do menor para o maior"}`}><span>Numero</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("number")}</span></button><button type="button" className={`table-sort-button${documentSort.key === "client" ? " active" : ""}`} onClick={() => toggleDocumentSort("client")} aria-label={`Ordenar notas por cliente ${documentSort.key === "client" && documentSort.direction === "asc" ? "de Z a A" : "de A a Z"}`}><span>Cliente/corretor</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("client")}</span></button><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{visibleDocuments.map((doc) => {
           const info = documentServiceInfo[doc.id];
           const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
           const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
@@ -1028,6 +1031,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           />
         ) : null}
         </div>
+        {visibleDocuments.length < sortedDocuments.length ? <button type="button" className="documents-show-more" onClick={() => setDocumentLimit((current) => current + 20)}>Mostrar mais notas</button> : null}
       </AdminBlock>
       {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
         <FormGrid>

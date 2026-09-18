@@ -23,7 +23,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const [notes, setNotes] = useState("");
   const [invoices, setInvoices] = useState<TransferReconciliationAvailableInvoice[]>([]);
   const [invoiceSearch, setInvoiceSearch] = useState("");
-  const [invoiceLimit, setInvoiceLimit] = useState(50);
+  const [invoiceLimit, setInvoiceLimit] = useState(10);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [payments, setPayments] = useState<PaymentDraft[]>([emptyPayment()]);
@@ -84,7 +84,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const selectedInvoices = useMemo(() => invoices.filter((invoice) => invoice.fiscalDocumentId in selected), [invoices, selected]);
 
   function startNew(): void {
-    setId(undefined); setClientId(""); setReferenceDate(today()); setTitle(""); setNotes(""); setSelected({}); setPayments([emptyPayment()]); setInvoiceSearch(""); setInvoiceLimit(50); setMessage(null); setEditorStep("INVOICES"); setEditing(true);
+    setId(undefined); setClientId(""); setReferenceDate(today()); setTitle(""); setNotes(""); setSelected({}); setPayments([emptyPayment()]); setInvoiceSearch(""); setInvoiceLimit(10); setMessage(null); setEditorStep("INVOICES"); setEditing(true);
   }
 
   async function open(row: TransferReconciliation): Promise<void> {
@@ -142,14 +142,14 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     <div className="transfer-editor">
       <section className="transfer-form">
         <div className="transfer-fields">
-          <label>Cliente<select value={clientId} disabled={Boolean(id)} onChange={(event) => { setClientId(event.target.value); setSelected({}); setInvoices([]); setInvoiceSearch(""); setInvoiceLimit(50); }}><option value="">Selecione</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}</select></label>
+          <label>Cliente<select value={clientId} disabled={Boolean(id)} onChange={(event) => { setClientId(event.target.value); setSelected({}); setInvoices([]); setInvoiceSearch(""); setInvoiceLimit(10); }}><option value="">Selecione</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}</select></label>
           <label>Data de referência<input type="date" value={referenceDate} onChange={(event) => setReferenceDate(event.target.value)} /></label>
           <label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex.: Repasse de setembro" /></label>
         </div>
         {editorStep === "INVOICES" ? <>
-        <div className="transfer-section-title"><div><h2>Selecione as notas fiscais</h2><p className="muted">Marque as notas que fazem parte deste repasse. Na próxima etapa você informará os pagamentos.</p></div>{selectedInvoices.length > 0 && <strong>{selectedInvoices.length} nota(s) selecionada(s)</strong>}</div>
+        <div className="transfer-section-title transfer-invoice-title"><div><h2>Selecione as notas fiscais</h2><p className="muted">Marque as notas que fazem parte deste repasse. Na próxima etapa você informará os pagamentos.</p></div><div className="transfer-invoice-title-actions">{selectedInvoices.length > 0 && <strong>{selectedInvoices.length} nota(s) selecionada(s)</strong>}<button className="primary" disabled={!selectedInvoices.length || loadingInvoices} onClick={continueToPayments}>Continuar para pagamentos</button></div></div>
         {!clientId ? <p className="muted">Selecione um cliente para listar as notas.</p> : loadingInvoices ? <div className="transfer-inline-loading">Carregando notas do cliente…</div> : invoices.length === 0 ? <div className="transfer-empty">Nenhuma nota de venda foi encontrada para este cliente.</div> : <>
-          <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(50); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
+          <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(10); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
           <div className="transfer-table">
           <div className="transfer-row transfer-head"><span></span><span>Nota</span><span>Emissão</span><span>Destinatário</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
           {filteredInvoices.map((invoice) => { const checked = invoice.fiscalDocumentId in selected; const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"); return <div className={`transfer-row ${used > invoice.availableCents ? "transfer-warning" : ""}`} key={invoice.fiscalDocumentId}>
@@ -158,9 +158,8 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
             <span>{checked ? <input value={selected[invoice.fiscalDocumentId]} onChange={(event) => setSelected((current) => ({ ...current, [invoice.fiscalDocumentId]: event.target.value }))} /> : "—"}{used > invoice.availableCents && <small> Acima do saldo disponível</small>}</span>
           </div>; })}
           </div>
-          {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 50)}>Mostrar mais notas</button>}
+          {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 10)}>Mostrar mais notas</button>}
         </>}
-        <div className="transfer-step-actions"><button className="primary" disabled={!selectedInvoices.length || loadingInvoices} onClick={continueToPayments}>Continuar para pagamentos</button></div>
         </> : <>
         <div className="transfer-selected-summary">
           <div className="transfer-section-title"><div><h2>Notas selecionadas</h2><p className="muted">A lista completa ficou recolhida para facilitar o lançamento dos pagamentos.</p></div><button onClick={() => setEditorStep("INVOICES")}>Alterar notas</button></div>

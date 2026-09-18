@@ -4788,8 +4788,9 @@ table tbody tr:hover {
 .transfer-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .transfer-section-title h2, .transfer-form h2 { margin: 0; }
 .transfer-section-title p { margin: 5px 0 0; }
-.transfer-step-actions { display: flex; justify-content: flex-end; padding: 4px 0 12px; }
-.transfer-step-actions .primary { min-width: 230px; }
+.transfer-invoice-title-actions { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+.transfer-invoice-title-actions .primary { min-width: 230px; }
+.documents-show-more { width: 100%; margin-top: 10px; }
 .transfer-selected-summary { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
 .transfer-selected-list { display: grid; gap: 7px; }
 .transfer-selected-list article { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 11px 13px; border-radius: 8px; background: var(--color-background); }
@@ -4810,3 +4811,4 @@ table tbody tr:hover {
 .transfer-balance-row { display: grid; grid-template-columns: minmax(220px,2fr) repeat(4,minmax(120px,1fr)); gap: 12px; padding: 13px 15px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .transfer-balance-row.head { font-size: 12px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
 @media (max-width: 1100px) { .transfer-editor { grid-template-columns: 1fr; } .transfer-summary { position: sticky; bottom: 8px; top: auto; z-index: 4; grid-template-columns: repeat(3,1fr); } .transfer-payment { grid-template-columns: repeat(2,minmax(0,1fr)); } .transfer-history article { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .transfer-invoice-title { align-items: stretch; flex-direction: column; } .transfer-invoice-title-actions { justify-content: space-between; } }
