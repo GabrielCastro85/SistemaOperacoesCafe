@@ -21,6 +21,9 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [invoices, setInvoices] = useState<TransferReconciliationAvailableInvoice[]>([]);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [invoiceLimit, setInvoiceLimit] = useState(50);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [payments, setPayments] = useState<PaymentDraft[]>([emptyPayment()]);
   const [message, setMessage] = useState<string | null>(null);
@@ -50,17 +53,36 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (!clientId || !editing) { setInvoices([]); return; }
+    let active = true;
+    setLoadingInvoices(true);
+    setMessage(null);
     void window.operationsCafe.listTransferReconciliationInvoices({ organizationId, clientPartnerId: clientId, reconciliationId: id })
-      .then(setInvoices)
-      .catch((error: unknown) => { setInvoices([]); setMessage(`Não foi possível carregar as notas: ${error instanceof Error ? error.message : "falha inesperada"}`); });
+      .then((rows) => {
+        if (!active) return;
+        setInvoices((Array.isArray(rows) ? rows : []).filter((row) => row && typeof row.fiscalDocumentId === "string").map((row) => ({
+          ...row,
+          documentNumber: String(row.documentNumber ?? ""), issueDate: String(row.issueDate ?? ""),
+          invoiceTotalCents: Number.isFinite(Number(row.invoiceTotalCents)) ? Number(row.invoiceTotalCents) : 0,
+          previouslyUsedCents: Number.isFinite(Number(row.previouslyUsedCents)) ? Number(row.previouslyUsedCents) : 0,
+          availableCents: Number.isFinite(Number(row.availableCents)) ? Number(row.availableCents) : 0
+        })));
+      })
+      .catch((error: unknown) => { if (active) { setInvoices([]); setMessage(`Não foi possível carregar as notas: ${error instanceof Error ? error.message : "falha inesperada"}`); } })
+      .finally(() => { if (active) setLoadingInvoices(false); });
+    return () => { active = false; };
   }, [clientId, editing, id, organizationId]);
 
   const totalSource = useMemo(() => Object.values(selected).reduce((sum, value) => sum + Math.max(0, parseCurrencyToCents(value || "0")), 0), [selected]);
   const totalPayments = useMemo(() => payments.reduce((sum, item) => sum + Math.max(0, parseCurrencyToCents(item.amount || "0")), 0), [payments]);
   const balance = totalSource - totalPayments;
+  const filteredInvoices = useMemo(() => {
+    const term = invoiceSearch.trim().toLocaleLowerCase("pt-BR");
+    const rows = term ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
+    return rows.slice(0, invoiceLimit);
+  }, [invoiceLimit, invoiceSearch, invoices]);
 
   function startNew(): void {
-    setId(undefined); setClientId(""); setReferenceDate(today()); setTitle(""); setNotes(""); setSelected({}); setPayments([emptyPayment()]); setMessage(null); setEditing(true);
+    setId(undefined); setClientId(""); setReferenceDate(today()); setTitle(""); setNotes(""); setSelected({}); setPayments([emptyPayment()]); setInvoiceSearch(""); setInvoiceLimit(50); setMessage(null); setEditing(true);
   }
 
   async function open(row: TransferReconciliation): Promise<void> {
@@ -101,19 +123,23 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     <div className="transfer-editor">
       <section className="transfer-form">
         <div className="transfer-fields">
-          <label>Cliente<select value={clientId} disabled={Boolean(id)} onChange={(event) => { setClientId(event.target.value); setSelected({}); }}><option value="">Selecione</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}</select></label>
+          <label>Cliente<select value={clientId} disabled={Boolean(id)} onChange={(event) => { setClientId(event.target.value); setSelected({}); setInvoices([]); setInvoiceSearch(""); setInvoiceLimit(50); }}><option value="">Selecione</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}</select></label>
           <label>Data de referência<input type="date" value={referenceDate} onChange={(event) => setReferenceDate(event.target.value)} /></label>
           <label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex.: Repasse de setembro" /></label>
         </div>
         <h2>Notas fiscais</h2>
-        {!clientId ? <p className="muted">Selecione um cliente para listar as notas.</p> : <div className="transfer-table">
+        {!clientId ? <p className="muted">Selecione um cliente para listar as notas.</p> : loadingInvoices ? <div className="transfer-inline-loading">Carregando notas do cliente…</div> : invoices.length === 0 ? <div className="transfer-empty">Nenhuma nota de venda foi encontrada para este cliente.</div> : <>
+          <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(50); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
+          <div className="transfer-table">
           <div className="transfer-row transfer-head"><span></span><span>Nota</span><span>Emissão</span><span>Destinatário</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
-          {invoices.map((invoice) => { const checked = invoice.fiscalDocumentId in selected; const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"); return <div className={`transfer-row ${used > invoice.availableCents ? "transfer-warning" : ""}`} key={invoice.fiscalDocumentId}>
+          {filteredInvoices.map((invoice) => { const checked = invoice.fiscalDocumentId in selected; const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"); return <div className={`transfer-row ${used > invoice.availableCents ? "transfer-warning" : ""}`} key={invoice.fiscalDocumentId}>
             <span><input type="checkbox" checked={checked} onChange={(event) => setSelected((current) => { const next = { ...current }; if (event.target.checked) next[invoice.fiscalDocumentId] = (Math.max(0, invoice.availableCents) / 100).toFixed(2).replace(".", ","); else delete next[invoice.fiscalDocumentId]; return next; })} /></span>
             <span>{invoice.documentNumber}</span><span>{formatDateOnlyBr(invoice.issueDate)}</span><span>{invoice.recipientName ?? "—"}</span><span>{formatCurrencyFromCents(invoice.invoiceTotalCents)}</span><span>{formatCurrencyFromCents(invoice.availableCents)}</span>
             <span>{checked ? <input value={selected[invoice.fiscalDocumentId]} onChange={(event) => setSelected((current) => ({ ...current, [invoice.fiscalDocumentId]: event.target.value }))} /> : "—"}{used > invoice.availableCents && <small> Acima do saldo disponível</small>}</span>
           </div>; })}
-        </div>}
+          </div>
+          {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 50)}>Mostrar mais notas</button>}
+        </>}
         <div className="transfer-section-title"><h2>Pagamentos da lista</h2><button onClick={() => setPayments((rows) => [...rows, emptyPayment()])}>Adicionar pagamento</button></div>
         <div className="transfer-payments">{payments.map((payment, index) => <div className="transfer-payment" key={payment.id ?? index}>
           <label>Favorecido<input value={payment.beneficiaryName} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, beneficiaryName: event.target.value } : row))} /></label>

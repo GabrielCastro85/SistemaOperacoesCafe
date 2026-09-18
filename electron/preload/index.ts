@@ -1241,7 +1241,14 @@ function withLoadingTracking(target: OperationsCafeApi): OperationsCafeApi {
       if (result instanceof Promise) {
         pendingCallCount += 1;
         notifyLoadingListeners();
-        result.finally(() => {
+        // Nao use `result.finally(...)` sem consumir a Promise devolvida por
+        // finally: quando o IPC rejeita, ela cria uma segunda rejeicao nao
+        // tratada e o renderer pode terminar em tela branca mesmo que a pagina
+        // tenha seu proprio catch.
+        void result.then(() => {
+          pendingCallCount = Math.max(0, pendingCallCount - 1);
+          notifyLoadingListeners();
+        }, () => {
           pendingCallCount = Math.max(0, pendingCallCount - 1);
           notifyLoadingListeners();
         });

@@ -1,14 +1,31 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "../design-system";
 import { registerDialogListener, type DialogRequest } from "../utils/dialogs";
 
 export function AppProviders({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <DialogProvider>
-      {children}
-      <LoadingOverlay />
-    </DialogProvider>
+    <RendererErrorBoundary>
+      <DialogProvider>
+        {children}
+        <LoadingOverlay />
+      </DialogProvider>
+    </RendererErrorBoundary>
   );
+}
+
+class RendererErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo): void { console.error("Erro de renderização", error, info); }
+  render(): ReactNode {
+    if (!this.state.error) return this.props.children;
+    return <main className="content-section renderer-error-page">
+      <h1>Não foi possível exibir esta tela</h1>
+      <p>O restante do programa e seus dados continuam preservados.</p>
+      <pre>{this.state.error.message}</pre>
+      <button className="primary" onClick={() => window.location.reload()}>Reabrir o programa</button>
+    </main>;
+  }
 }
 
 // Acende sozinho sempre que alguma chamada de window.operationsCafe demora --

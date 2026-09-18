@@ -3433,11 +3433,14 @@ export class AppRepository {
     `).all(...(input.reconciliationId ? [input.reconciliationId, input.organizationId, input.clientPartnerId] : [input.organizationId, input.clientPartnerId])) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
-      try { snapshot = row.fiscal_snapshot_json ? JSON.parse(String(row.fiscal_snapshot_json)) as Record<string, unknown> : {}; } catch { snapshot = {}; }
+      try {
+        const parsed = row.fiscal_snapshot_json ? JSON.parse(String(row.fiscal_snapshot_json)) as unknown : {};
+        snapshot = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+      } catch { snapshot = {}; }
       const issuer = snapshot.issuer as Record<string, unknown> | undefined;
       const recipient = snapshot.recipient as Record<string, unknown> | undefined;
-      const invoiceTotalCents = Number(row.total_amount_cents ?? 0);
-      const previouslyUsedCents = Number(row.previously_used_cents ?? 0);
+      const invoiceTotalCents = Number.isFinite(Number(row.total_amount_cents)) ? Number(row.total_amount_cents) : 0;
+      const previouslyUsedCents = Number.isFinite(Number(row.previously_used_cents)) ? Number(row.previously_used_cents) : 0;
       return {
         fiscalDocumentId: String(row.id), documentNumber: String(row.document_number), issueDate: String(row.issue_date),
         issuerName: this.stringOrNull(issuer?.legalName) ?? String(row.own_legal_name ?? row.own_trade_name ?? ""),
