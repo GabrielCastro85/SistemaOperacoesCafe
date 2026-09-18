@@ -237,6 +237,7 @@ export const IPC_CHANNELS = {
   getTransferReconciliation: "transferReconciliations:get",
   saveTransferReconciliation: "transferReconciliations:save",
   cancelTransferReconciliation: "transferReconciliations:cancel",
+  deleteTransferReconciliation: "transferReconciliations:delete",
   listTransferReconciliationClientBalances: "transferReconciliations:listClientBalances",
   listExpenseCategories: "expenseCategories:list",
   createExpenseCategory: "expenseCategories:create",

@@ -28,7 +28,7 @@ describe("transfer reconciliations", () => {
       repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: partner.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-09-17", quantitySacks: "1", manualRateValueCents: null, manualOverrideReason: null, notes: null });
       repo.confirmFiscalDocument(doc.document.id);
 
-      const first = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-17", notes: "Parcela inicial", status: "COMPLETED", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 300_000_00 }], payments: [{ beneficiaryName: "Joao", amountCents: 280_000_00 }] });
+      const first = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-17", status: "COMPLETED", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 300_000_00 }], payments: [{ beneficiaryName: "Joao", amountCents: 280_000_00 }] });
       expect(first.reconciliation.balanceCents).toBe(20_000_00);
       expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(200_000_00);
 
@@ -40,6 +40,9 @@ describe("transfer reconciliations", () => {
       repo.cancelTransferReconciliation(draft.reconciliation.id);
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ netBalanceCents: 10_000_00, openReconciliations: 0 });
       expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(0);
+      repo.deleteTransferReconciliation(second.reconciliation.id);
+      expect(() => repo.getTransferReconciliation(second.reconciliation.id)).toThrow("Conferencia de repasse nao encontrada");
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(200_000_00);
       expect(db.prepare("SELECT COUNT(*) AS count FROM client_charges").get()).toMatchObject({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM client_ledger_entries").get()).toMatchObject({ count: 0 });
       expect(db.prepare("SELECT COUNT(*) AS count FROM accounts_payable").get()).toMatchObject({ count: 0 });

@@ -3487,7 +3487,6 @@ export class AppRepository {
     const totalPayments = input.payments.reduce((sum, item) => sum + item.amountCents, 0);
     const balance = totalSource - totalPayments;
     const status = input.status ?? "DRAFT";
-    if (status === "COMPLETED" && balance !== 0 && !input.notes?.trim()) throw new Error("Informe uma observacao para concluir uma conferencia com credito ou debito.");
     const run = this.db.transaction(() => {
       const existing = this.db.prepare("SELECT id, created_at FROM transfer_reconciliations WHERE id = ?").get(id) as { id: string; created_at: string } | undefined;
       const row = [id, input.organizationId, input.clientPartnerId, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
@@ -3518,6 +3517,16 @@ export class AppRepository {
     const now = new Date().toISOString();
     this.db.prepare("UPDATE transfer_reconciliations SET status = 'CANCELLED', cancelled_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
     return this.getTransferReconciliation(current.id);
+  }
+
+  deleteTransferReconciliation(id: string): void {
+    const current = this.getTransferReconciliation(id).reconciliation;
+    this.assertOrganizationWritable(current.organizationId);
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM transfer_reconciliation_payments WHERE reconciliation_id = ?").run(id);
+      this.db.prepare("DELETE FROM transfer_reconciliation_invoices WHERE reconciliation_id = ?").run(id);
+      this.db.prepare("DELETE FROM transfer_reconciliations WHERE id = ?").run(id);
+    })();
   }
 
   listTransferReconciliationClientBalances(organizationId: string): TransferReconciliationClientBalance[] {

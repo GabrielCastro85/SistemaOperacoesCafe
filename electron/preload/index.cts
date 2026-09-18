@@ -327,6 +327,7 @@ const IPC_CHANNELS = {
   getTransferReconciliation: "transferReconciliations:get",
   saveTransferReconciliation: "transferReconciliations:save",
   cancelTransferReconciliation: "transferReconciliations:cancel",
+  deleteTransferReconciliation: "transferReconciliations:delete",
   listTransferReconciliationClientBalances: "transferReconciliations:listClientBalances",
   listExpenseCategories: "expenseCategories:list",
   createExpenseCategory: "expenseCategories:create",
@@ -696,6 +697,7 @@ export interface OperationsCafeApi {
   getTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
   saveTransferReconciliation: (input: unknown) => Promise<TransferReconciliationDetail>;
   cancelTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
+  deleteTransferReconciliation: (id: string) => Promise<void>;
   listTransferReconciliationClientBalances: (organizationId: string) => Promise<TransferReconciliationClientBalance[]>;
   listExpenseCategories: (organizationId: string) => Promise<ExpenseCategory[]>;
   createExpenseCategory: (input: unknown) => Promise<ExpenseCategory>;
@@ -1086,6 +1088,7 @@ const api: OperationsCafeApi = {
   getTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.getTransferReconciliation, id) as Promise<TransferReconciliationDetail>,
   saveTransferReconciliation: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveTransferReconciliation, input) as Promise<TransferReconciliationDetail>,
   cancelTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.cancelTransferReconciliation, id) as Promise<TransferReconciliationDetail>,
+  deleteTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteTransferReconciliation, id) as Promise<void>,
   listTransferReconciliationClientBalances: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliationClientBalances, organizationId) as Promise<TransferReconciliationClientBalance[]>,
   listExpenseCategories: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listExpenseCategories, organizationId) as Promise<ExpenseCategory[]>,
   createExpenseCategory: (input) => ipcRenderer.invoke(IPC_CHANNELS.createExpenseCategory, input) as Promise<ExpenseCategory>,

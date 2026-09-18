@@ -899,6 +899,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     }).parse(payload)
   ));
   handle(IPC_CHANNELS.cancelTransferReconciliation, (_event, payload: unknown) => repository.cancelTransferReconciliation(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.deleteTransferReconciliation, (_event, payload: unknown) => repository.deleteTransferReconciliation(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listTransferReconciliationClientBalances, (_event, payload: unknown) => repository.listTransferReconciliationClientBalances(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listExpenseCategories, (_event, payload: unknown) => repository.listExpenseCategories(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.createExpenseCategory, (_event, payload: unknown) => repository.createExpenseCategory(payload));

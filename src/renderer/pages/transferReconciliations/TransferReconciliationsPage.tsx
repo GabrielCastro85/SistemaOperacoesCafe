@@ -105,7 +105,6 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     if (!clientId) { setMessage("Selecione o cliente."); return; }
     if (!invoiceRows.length) { setMessage("Selecione pelo menos uma nota e informe o valor usado."); return; }
     if (paymentRows.some((item) => !item.beneficiaryName.trim() || item.amountCents <= 0)) { setMessage("Preencha o favorecido e o valor de cada pagamento."); return; }
-    if (status === "COMPLETED" && balance !== 0 && !notes.trim()) { setMessage("Explique nas observações o crédito ou débito antes de concluir."); return; }
     setBusy(true);
     try {
       await window.operationsCafe.saveTransferReconciliation({ id, organizationId, clientPartnerId: clientId, referenceDate, title: title || null, notes: notes || null, status, invoices: invoiceRows, payments: paymentRows });
@@ -130,6 +129,18 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   async function cancel(rowId: string): Promise<void> {
     if (!window.confirm("Cancelar esta conferência? Ela deixará de compor o saldo do cliente.")) return;
     await window.operationsCafe.cancelTransferReconciliation(rowId); await refresh();
+  }
+
+  async function remove(row: TransferReconciliation): Promise<void> {
+    if (!window.confirm(`Excluir definitivamente esta conferência de ${row.clientName}? Os valores usados voltarão a ficar disponíveis nas respectivas notas.`)) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await window.operationsCafe.deleteTransferReconciliation(row.id);
+      await refresh();
+      setMessage("Conferência excluída. Os valores das notas voltaram a ficar disponíveis.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível excluir a conferência."); }
+    finally { setBusy(false); }
   }
 
   if (editing) return <main className="content-section transfer-page">
@@ -175,7 +186,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
           <label>Observação<input value={payment.notes} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, notes: event.target.value } : row))} /></label>
           <button className="danger-action" onClick={() => setPayments((rows) => rows.length === 1 ? [emptyPayment()] : rows.filter((_, i) => i !== index))}>Remover</button>
         </div>)}</div>
-        <label className="transfer-notes">Observações gerais<textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Obrigatória quando houver crédito ou débito." /></label>
+        <label className="transfer-notes">Observações gerais (opcional)<textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Inclua alguma observação se desejar." /></label>
         </>}
       </section>
       <aside className={`transfer-summary ${balance > 0 ? "is-credit" : balance < 0 ? "is-debit" : "is-balanced"}`}>
@@ -197,7 +208,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
         <span>{row.status === "DRAFT" ? "Rascunho" : row.status === "COMPLETED" ? "Concluída" : "Cancelada"}</span>
         <span>Notas: <b>{formatCurrencyFromCents(row.totalSourceCents)}</b></span><span>Pagamentos: <b>{formatCurrencyFromCents(row.totalPaymentsCents)}</b></span>
         <span className={row.balanceCents > 0 ? "credit" : row.balanceCents < 0 ? "debit" : ""}>Saldo: <b>{formatCurrencyFromCents(row.balanceCents)}</b></span>
-        <div><button disabled={busy || row.status === "CANCELLED"} onClick={() => void open(row)}>{row.status === "CANCELLED" ? "Cancelada" : "Abrir"}</button>{row.status !== "CANCELLED" && <button className="danger-action" onClick={() => void cancel(row.id)}>Cancelar</button>}</div>
+        <div><button disabled={busy || row.status === "CANCELLED"} onClick={() => void open(row)}>{row.status === "CANCELLED" ? "Cancelada" : "Editar"}</button>{row.status !== "CANCELLED" && <button className="danger-action" disabled={busy} onClick={() => void cancel(row.id)}>Cancelar</button>}<button className="danger-action" disabled={busy} onClick={() => void remove(row)}>Excluir</button></div>
       </article>)}
     </div> : <div className="transfer-balances"><div className="transfer-balance-row head"><span>Cliente</span><span>Crédito</span><span>Débito</span><span>Saldo líquido</span><span>Rascunhos</span></div>{balances.map((row) => <div className="transfer-balance-row" key={row.clientPartnerId}><strong>{row.clientName}</strong><span className="credit">{formatCurrencyFromCents(row.creditCents)}</span><span className="debit">{formatCurrencyFromCents(row.debitCents)}</span><strong className={row.netBalanceCents >= 0 ? "credit" : "debit"}>{formatCurrencyFromCents(row.netBalanceCents)}</strong><span>{row.openReconciliations}</span></div>)}</div>}
   </main>;
