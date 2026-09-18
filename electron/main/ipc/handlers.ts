@@ -137,7 +137,6 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     }
     try {
       if (!centralAuthenticated) await loginCentral(credentials.username, credentials.centralPassword, credentials.password);
-      if (session.permissions.includes("users.manage")) await centralSync.publishLocalUsers();
       return session;
     } catch (error) {
       auth.logout();
