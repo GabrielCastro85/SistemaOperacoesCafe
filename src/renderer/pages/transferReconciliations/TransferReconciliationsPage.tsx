@@ -15,6 +15,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const [history, setHistory] = useState<TransferReconciliation[]>([]);
   const [balances, setBalances] = useState<TransferReconciliationClientBalance[]>([]);
   const [editing, setEditing] = useState(false);
+  const [editorStep, setEditorStep] = useState<"INVOICES" | "PAYMENTS">("INVOICES");
   const [id, setId] = useState<string>();
   const [clientId, setClientId] = useState("");
   const [referenceDate, setReferenceDate] = useState(today());
@@ -80,9 +81,10 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     const rows = term ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
     return rows.slice(0, invoiceLimit);
   }, [invoiceLimit, invoiceSearch, invoices]);
+  const selectedInvoices = useMemo(() => invoices.filter((invoice) => invoice.fiscalDocumentId in selected), [invoices, selected]);
 
   function startNew(): void {
-    setId(undefined); setClientId(""); setReferenceDate(today()); setTitle(""); setNotes(""); setSelected({}); setPayments([emptyPayment()]); setInvoiceSearch(""); setInvoiceLimit(50); setMessage(null); setEditing(true);
+    setId(undefined); setClientId(""); setReferenceDate(today()); setTitle(""); setNotes(""); setSelected({}); setPayments([emptyPayment()]); setInvoiceSearch(""); setInvoiceLimit(50); setMessage(null); setEditorStep("INVOICES"); setEditing(true);
   }
 
   async function open(row: TransferReconciliation): Promise<void> {
@@ -92,7 +94,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
       setId(row.id); setClientId(row.clientPartnerId); setReferenceDate(row.referenceDate); setTitle(row.title ?? ""); setNotes(row.notes ?? "");
       setSelected(Object.fromEntries(detail.invoices.map((item) => [item.fiscalDocumentId, (item.sourceAmountCents / 100).toFixed(2).replace(".", ",")])));
       setPayments(detail.payments.length ? detail.payments.map((item) => ({ id: item.id, beneficiaryName: item.beneficiaryName, beneficiaryDocument: item.beneficiaryDocument ?? "", description: item.description ?? "", paymentDate: item.paymentDate ?? "", amount: (item.amountCents / 100).toFixed(2).replace(".", ","), notes: item.notes ?? "" })) : [emptyPayment()]);
-      setEditing(true);
+      setEditorStep("PAYMENTS"); setEditing(true);
     } finally { setBusy(false); }
   }
 
@@ -112,6 +114,19 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     finally { setBusy(false); }
   }
 
+  function continueToPayments(): void {
+    setMessage(null);
+    if (!clientId) { setMessage("Selecione o cliente."); return; }
+    if (!selectedInvoices.length || totalSource <= 0) { setMessage("Selecione pelo menos uma nota e informe o valor usado."); return; }
+    const invalid = selectedInvoices.find((invoice) => {
+      const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0");
+      return used <= 0 || used > invoice.availableCents;
+    });
+    if (invalid) { setMessage(`Confira o valor usado na nota ${invalid.documentNumber}. Ele deve ser maior que zero e não pode ultrapassar o disponível.`); return; }
+    setEditorStep("PAYMENTS");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function cancel(rowId: string): Promise<void> {
     if (!window.confirm("Cancelar esta conferência? Ela deixará de compor o saldo do cliente.")) return;
     await window.operationsCafe.cancelTransferReconciliation(rowId); await refresh();
@@ -120,6 +135,10 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   if (editing) return <main className="content-section transfer-page">
     <PageHeader eyebrow="Recebimentos" title={id ? "Editar conferência de repasse" : "Nova conferência de repasse"} description="Ferramenta de conferência. Este lançamento não altera cobranças, contas a receber ou o financeiro." actions={<button onClick={() => setEditing(false)}>Voltar</button>} />
     {message && <div className="transfer-message">{message}</div>}
+    <div className="transfer-steps" aria-label="Etapas da conferência">
+      <button className={editorStep === "INVOICES" ? "active" : "complete"} onClick={() => setEditorStep("INVOICES")}><span>1</span> Selecionar notas</button>
+      <button className={editorStep === "PAYMENTS" ? "active" : ""} disabled={editorStep === "INVOICES"} onClick={() => setEditorStep("PAYMENTS")}><span>2</span> Informar pagamentos</button>
+    </div>
     <div className="transfer-editor">
       <section className="transfer-form">
         <div className="transfer-fields">
@@ -127,7 +146,8 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
           <label>Data de referência<input type="date" value={referenceDate} onChange={(event) => setReferenceDate(event.target.value)} /></label>
           <label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex.: Repasse de setembro" /></label>
         </div>
-        <h2>Notas fiscais</h2>
+        {editorStep === "INVOICES" ? <>
+        <div className="transfer-section-title"><div><h2>Selecione as notas fiscais</h2><p className="muted">Marque as notas que fazem parte deste repasse. Na próxima etapa você informará os pagamentos.</p></div>{selectedInvoices.length > 0 && <strong>{selectedInvoices.length} nota(s) selecionada(s)</strong>}</div>
         {!clientId ? <p className="muted">Selecione um cliente para listar as notas.</p> : loadingInvoices ? <div className="transfer-inline-loading">Carregando notas do cliente…</div> : invoices.length === 0 ? <div className="transfer-empty">Nenhuma nota de venda foi encontrada para este cliente.</div> : <>
           <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(50); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
           <div className="transfer-table">
@@ -140,6 +160,12 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
           </div>
           {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 50)}>Mostrar mais notas</button>}
         </>}
+        <div className="transfer-step-actions"><button className="primary" disabled={!selectedInvoices.length || loadingInvoices} onClick={continueToPayments}>Continuar para pagamentos</button></div>
+        </> : <>
+        <div className="transfer-selected-summary">
+          <div className="transfer-section-title"><div><h2>Notas selecionadas</h2><p className="muted">A lista completa ficou recolhida para facilitar o lançamento dos pagamentos.</p></div><button onClick={() => setEditorStep("INVOICES")}>Alterar notas</button></div>
+          <div className="transfer-selected-list">{selectedInvoices.map((invoice) => <article key={invoice.fiscalDocumentId}><div><strong>Nota {invoice.documentNumber}</strong><small>{formatDateOnlyBr(invoice.issueDate)} · {invoice.recipientName ?? "Destinatário não informado"}</small></div><strong>{formatCurrencyFromCents(parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"))}</strong></article>)}</div>
+        </div>
         <div className="transfer-section-title"><h2>Pagamentos da lista</h2><button onClick={() => setPayments((rows) => [...rows, emptyPayment()])}>Adicionar pagamento</button></div>
         <div className="transfer-payments">{payments.map((payment, index) => <div className="transfer-payment" key={payment.id ?? index}>
           <label>Favorecido<input value={payment.beneficiaryName} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, beneficiaryName: event.target.value } : row))} /></label>
@@ -151,12 +177,13 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
           <button className="danger-action" onClick={() => setPayments((rows) => rows.length === 1 ? [emptyPayment()] : rows.filter((_, i) => i !== index))}>Remover</button>
         </div>)}</div>
         <label className="transfer-notes">Observações gerais<textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Obrigatória quando houver crédito ou débito." /></label>
+        </>}
       </section>
       <aside className={`transfer-summary ${balance > 0 ? "is-credit" : balance < 0 ? "is-debit" : "is-balanced"}`}>
         <small>VALOR DAS NOTAS</small><strong>{formatCurrencyFromCents(totalSource)}</strong>
         <small>PAGAMENTOS INFORMADOS</small><strong>{formatCurrencyFromCents(totalPayments)}</strong>
         <small>{balance > 0 ? "CRÉDITO DO CLIENTE" : balance < 0 ? "DÉBITO DO CLIENTE" : "SALDO"}</small><strong>{formatCurrencyFromCents(balance)}</strong>
-        <div className="transfer-actions"><button disabled={busy} onClick={() => void save("DRAFT")}>Salvar rascunho</button><button className="primary" disabled={busy} onClick={() => void save("COMPLETED")}>Concluir conferência</button></div>
+        {editorStep === "PAYMENTS" && <div className="transfer-actions"><button disabled={busy} onClick={() => void save("DRAFT")}>Salvar rascunho</button><button className="primary" disabled={busy} onClick={() => void save("COMPLETED")}>Concluir conferência</button></div>}
       </aside>
     </div>
   </main>;
