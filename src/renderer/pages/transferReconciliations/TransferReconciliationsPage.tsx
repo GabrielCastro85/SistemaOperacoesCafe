@@ -28,20 +28,31 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
 
   const refresh = useCallback(async () => {
     if (!organizationId) return;
-    const [clients, rows, clientBalances] = await Promise.all([
-      window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" }),
+    // A lista de clientes e' essencial para iniciar uma conferencia. Ela deve
+    // continuar disponivel mesmo se o historico ou o resumo ainda estiverem
+    // aguardando a primeira sincronizacao/migracao neste computador.
+    try {
+      setPartners(await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" }));
+    } catch (error) {
+      setPartners([]);
+      setMessage(`Não foi possível carregar os clientes: ${error instanceof Error ? error.message : "falha inesperada"}`);
+    }
+    const [rowsResult, balancesResult] = await Promise.allSettled([
       window.operationsCafe.listTransferReconciliations({ organizationId, status: "ALL" }),
       window.operationsCafe.listTransferReconciliationClientBalances(organizationId)
     ]);
-    setPartners(clients);
-    setHistory(rows);
-    setBalances(clientBalances);
+    if (rowsResult.status === "fulfilled") setHistory(rowsResult.value);
+    if (balancesResult.status === "fulfilled") setBalances(balancesResult.value);
+    const failure = rowsResult.status === "rejected" ? rowsResult.reason : balancesResult.status === "rejected" ? balancesResult.reason : null;
+    if (failure) setMessage(`Clientes carregados, mas parte das conferências ainda não pôde ser consultada: ${failure instanceof Error ? failure.message : "falha inesperada"}`);
   }, [organizationId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (!clientId || !editing) { setInvoices([]); return; }
-    void window.operationsCafe.listTransferReconciliationInvoices({ organizationId, clientPartnerId: clientId, reconciliationId: id }).then(setInvoices);
+    void window.operationsCafe.listTransferReconciliationInvoices({ organizationId, clientPartnerId: clientId, reconciliationId: id })
+      .then(setInvoices)
+      .catch((error: unknown) => { setInvoices([]); setMessage(`Não foi possível carregar as notas: ${error instanceof Error ? error.message : "falha inesperada"}`); });
   }, [clientId, editing, id, organizationId]);
 
   const totalSource = useMemo(() => Object.values(selected).reduce((sum, value) => sum + Math.max(0, parseCurrencyToCents(value || "0")), 0), [selected]);
