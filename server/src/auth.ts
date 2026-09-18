@@ -145,11 +145,12 @@ export function registerAuthRoutes(app: FastifyInstance, pool: pg.Pool, config: 
     const session = await resolveSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
     const input = changePasswordSchema.parse(request.body);
-    const credential = await pool.query<{ password_hash: string }>("SELECT password_hash FROM user_credentials WHERE user_id = $1", [session.userId]);
-    if (!credential.rows[0] || !(await bcrypt.compare(input.currentPassword, credential.rows[0].password_hash))) {
+    const credential = await pool.query<{ password_hash: string; credential_format: string }>("SELECT password_hash, credential_format FROM user_credentials WHERE user_id = $1", [session.userId]);
+    if (!credential.rows[0] || !(await verifyCredential(input.currentPassword, credential.rows[0].credential_format, credential.rows[0].password_hash))) {
       return reply.code(401).send({ error: "INVALID_CREDENTIALS", message: "Senha atual invalida." });
     }
-    await pool.query("UPDATE user_credentials SET password_hash = $1, password_changed_at = now() WHERE user_id = $2", [await bcrypt.hash(input.newPassword, 12), session.userId]);
+    await pool.query("UPDATE user_credentials SET credential_format = 'bcrypt', password_hash = $1, password_changed_at = now() WHERE user_id = $2", [await bcrypt.hash(input.newPassword, 12), session.userId]);
+    await pool.query("UPDATE app_users SET must_change_password = false, desktop_profile = jsonb_set(COALESCE(desktop_profile, '{}'::jsonb), '{mustChangePassword}', 'false'::jsonb, true), updated_at = now() WHERE id = $1", [session.userId]);
     await pool.query("INSERT INTO server_audit_events(id, actor_user_id, device_id, action, result) VALUES ($1, $2, $3, 'PASSWORD_CHANGED', 'SUCCESS')", [randomUUID(), session.userId, session.deviceId]);
     return reply.code(204).send();
   });

@@ -152,8 +152,9 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return auth.logout();
   });
   handle(IPC_CHANNELS.authChangePassword, async (_event, payload: unknown) => {
+    const passwords = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(1) }).parse(payload);
+    await centralSync.changePassword(passwords.currentPassword, passwords.newPassword);
     await auth.changePassword(payload);
-    await centralSync.publishLocalUsers();
   });
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());
   handle(IPC_CHANNELS.createUser, async (_event, payload: unknown) => {
