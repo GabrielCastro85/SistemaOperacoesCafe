@@ -84,7 +84,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     await window.operationsCafe.cancelTransferReconciliation(rowId); await refresh();
   }
 
-  if (editing) return <main className="transfer-page">
+  if (editing) return <main className="content-section transfer-page">
     <PageHeader eyebrow="Recebimentos" title={id ? "Editar conferência de repasse" : "Nova conferência de repasse"} description="Ferramenta de conferência. Este lançamento não altera cobranças, contas a receber ou o financeiro." actions={<button onClick={() => setEditing(false)}>Voltar</button>} />
     {message && <div className="transfer-message">{message}</div>}
     <div className="transfer-editor">
@@ -124,7 +124,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     </div>
   </main>;
 
-  return <main className="transfer-page">
+  return <main className="content-section transfer-page">
     <PageHeader eyebrow="Recebimentos" title="Conferência de repasses" description="Confira listas de pagamentos contra o valor das notas sem gerar cobrança ou movimentação financeira." actions={<button className="primary" onClick={startNew}>Nova conferência</button>} />
     {message && <div className="transfer-message">{message}</div>}
     <div className="settings-tabs"><button className={tab === "LIST" ? "active" : ""} onClick={() => setTab("LIST")}>Conferências</button><button className={tab === "BALANCES" ? "active" : ""} onClick={() => setTab("BALANCES")}>Saldos por cliente</button></div>
