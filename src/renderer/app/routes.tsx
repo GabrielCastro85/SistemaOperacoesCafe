@@ -8,6 +8,7 @@ export type AppRouteId =
   | "purchaseRates"
   | "purchaseSettlements"
   | "charges"
+  | "transferReconciliations"
   | "ledger"
   | "confirmations"
   | "finance"
@@ -30,6 +31,7 @@ export const routeTitleById: Record<AppRouteId, string> = {
   purchaseRates: "Regras de entrada",
   purchaseSettlements: "Acertos de entrada",
   charges: "Cobranças",
+  transferReconciliations: "Conferência de repasses",
   ledger: "Conta-corrente",
   confirmations: "Confirmações de negócio",
   finance: "Financeiro",

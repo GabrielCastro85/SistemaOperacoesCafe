@@ -111,6 +111,12 @@ import type {
   ClientLedgerEntry,
   ClientPayment,
   BillingSummary,
+  TransferReconciliation,
+  TransferReconciliationDetail,
+  TransferReconciliationAvailableInvoice,
+  TransferReconciliationClientBalance,
+  TransferReconciliationInvoice,
+  TransferReconciliationPayment,
   DashboardAlerts,
   PartnerRateSummaryRow,
   ExpenseCategory,
@@ -3392,6 +3398,145 @@ export class AppRepository {
       unbilledOperations: unbilledRows.length,
       unbilledSacks: unbilledRows.length ? sumDecimalTexts(unbilledRows.map((item) => item.quantitySacks)) : "0",
       billedSacks: "0"
+    };
+  }
+
+  listTransferReconciliations(filters: { organizationId: string; clientPartnerId?: string; status?: string }): TransferReconciliation[] {
+    this.assertOrganizationWritable(filters.organizationId);
+    const clauses = ["r.organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.clientPartnerId) { clauses.push("r.client_partner_id = ?"); params.push(filters.clientPartnerId); }
+    if (filters.status && filters.status !== "ALL") { clauses.push("r.status = ?"); params.push(filters.status); }
+    const rows = this.db.prepare(`SELECT r.*, p.display_name AS client_name
+      FROM transfer_reconciliations r JOIN business_partners p ON p.id = r.client_partner_id
+      WHERE ${clauses.join(" AND ")} ORDER BY r.reference_date DESC, r.created_at DESC`).all(...params) as DbRecord[];
+    return rows.map((row) => this.mapTransferReconciliation(row));
+  }
+
+  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
+    this.assertOrganizationWritable(input.organizationId);
+    const rows = this.db.prepare(`
+      SELECT f.id, f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
+        own.legal_name AS own_legal_name, own.trade_name AS own_trade_name,
+        partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name,
+        COALESCE((SELECT SUM(ri.source_amount_cents)
+          FROM transfer_reconciliation_invoices ri
+          JOIN transfer_reconciliations rr ON rr.id = ri.reconciliation_id
+          WHERE ri.fiscal_document_id = f.id AND rr.status <> 'CANCELLED' ${input.reconciliationId ? "AND rr.id <> ?" : ""}), 0) AS previously_used_cents
+      FROM fiscal_documents f
+      JOIN legal_entities own ON own.id = f.own_legal_entity_id
+      LEFT JOIN partner_legal_entities partner ON partner.id = f.partner_legal_entity_id
+      WHERE f.organization_id = ? AND f.status <> 'CANCELED'
+        AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = 'SALE'
+          AND o.status <> 'CANCELED' AND o.responsible_partner_id = ?)
+      ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
+    `).all(...(input.reconciliationId ? [input.reconciliationId, input.organizationId, input.clientPartnerId] : [input.organizationId, input.clientPartnerId])) as DbRecord[];
+    return rows.map((row) => {
+      let snapshot: Record<string, unknown> = {};
+      try { snapshot = row.fiscal_snapshot_json ? JSON.parse(String(row.fiscal_snapshot_json)) as Record<string, unknown> : {}; } catch { snapshot = {}; }
+      const issuer = snapshot.issuer as Record<string, unknown> | undefined;
+      const recipient = snapshot.recipient as Record<string, unknown> | undefined;
+      const invoiceTotalCents = Number(row.total_amount_cents ?? 0);
+      const previouslyUsedCents = Number(row.previously_used_cents ?? 0);
+      return {
+        fiscalDocumentId: String(row.id), documentNumber: String(row.document_number), issueDate: String(row.issue_date),
+        issuerName: this.stringOrNull(issuer?.legalName) ?? String(row.own_legal_name ?? row.own_trade_name ?? ""),
+        recipientName: this.stringOrNull(recipient?.legalName) ?? this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name),
+        invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents
+      };
+    });
+  }
+
+  getTransferReconciliation(id: string): TransferReconciliationDetail {
+    const row = this.db.prepare(`SELECT r.*, p.display_name AS client_name FROM transfer_reconciliations r
+      JOIN business_partners p ON p.id = r.client_partner_id WHERE r.id = ?`).get(id) as DbRecord | undefined;
+    if (!row) throw new Error("Conferencia de repasse nao encontrada.");
+    const reconciliation = this.mapTransferReconciliation(row);
+    this.assertOrganizationWritable(reconciliation.organizationId);
+    const invoices = (this.db.prepare("SELECT * FROM transfer_reconciliation_invoices WHERE reconciliation_id = ? ORDER BY issue_date_snapshot, CAST(document_number_snapshot AS INTEGER), document_number_snapshot").all(id) as DbRecord[])
+      .map((item): TransferReconciliationInvoice => ({
+        id: String(item.id), reconciliationId: String(item.reconciliation_id), fiscalDocumentId: String(item.fiscal_document_id),
+        documentNumber: String(item.document_number_snapshot), issueDate: String(item.issue_date_snapshot),
+        issuerName: this.stringOrNull(item.issuer_name_snapshot), recipientName: this.stringOrNull(item.recipient_name_snapshot),
+        invoiceTotalCents: Number(item.invoice_total_cents_snapshot), sourceAmountCents: Number(item.source_amount_cents)
+      }));
+    const payments = (this.db.prepare("SELECT * FROM transfer_reconciliation_payments WHERE reconciliation_id = ? ORDER BY sort_order, created_at").all(id) as DbRecord[])
+      .map((item): TransferReconciliationPayment => ({
+        id: String(item.id), reconciliationId: String(item.reconciliation_id), beneficiaryName: String(item.beneficiary_name),
+        beneficiaryDocument: this.stringOrNull(item.beneficiary_document), description: this.stringOrNull(item.description),
+        paymentDate: this.stringOrNull(item.payment_date), amountCents: Number(item.amount_cents), notes: this.stringOrNull(item.notes), sortOrder: Number(item.sort_order)
+      }));
+    return { reconciliation, invoices, payments };
+  }
+
+  saveTransferReconciliation(input: {
+    id?: string; organizationId: string; clientPartnerId: string; referenceDate: string; title?: string | null; notes?: string | null;
+    status?: "DRAFT" | "COMPLETED"; invoices: Array<{ fiscalDocumentId: string; sourceAmountCents: number }>;
+    payments: Array<{ id?: string; beneficiaryName: string; beneficiaryDocument?: string | null; description?: string | null; paymentDate?: string | null; amountCents: number; notes?: string | null }>;
+  }): TransferReconciliationDetail {
+    this.assertOrganizationWritable(input.organizationId);
+    if (!input.invoices.length) throw new Error("Selecione pelo menos uma nota fiscal.");
+    if (input.invoices.some((item) => !Number.isInteger(item.sourceAmountCents) || item.sourceAmountCents <= 0)) throw new Error("Informe um valor valido para cada nota.");
+    if (input.payments.some((item) => !item.beneficiaryName.trim() || !Number.isInteger(item.amountCents) || item.amountCents <= 0)) throw new Error("Preencha favorecido e valor em todos os pagamentos.");
+    const id = input.id ?? randomUUID();
+    const now = new Date().toISOString();
+    const totalSource = input.invoices.reduce((sum, item) => sum + item.sourceAmountCents, 0);
+    const totalPayments = input.payments.reduce((sum, item) => sum + item.amountCents, 0);
+    const balance = totalSource - totalPayments;
+    const status = input.status ?? "DRAFT";
+    if (status === "COMPLETED" && balance !== 0 && !input.notes?.trim()) throw new Error("Informe uma observacao para concluir uma conferencia com credito ou debito.");
+    const run = this.db.transaction(() => {
+      const existing = this.db.prepare("SELECT id, created_at FROM transfer_reconciliations WHERE id = ?").get(id) as { id: string; created_at: string } | undefined;
+      const row = [id, input.organizationId, input.clientPartnerId, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
+      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id, client_partner_id=excluded.client_partner_id, reference_date=excluded.reference_date,
+          title=excluded.title, notes=excluded.notes, status=excluded.status, total_source_cents=excluded.total_source_cents,
+          total_payments_cents=excluded.total_payments_cents, balance_cents=excluded.balance_cents, completed_at=excluded.completed_at, cancelled_at=NULL, updated_at=excluded.updated_at`).run(...row);
+      this.db.prepare("DELETE FROM transfer_reconciliation_invoices WHERE reconciliation_id = ?").run(id);
+      this.db.prepare("DELETE FROM transfer_reconciliation_payments WHERE reconciliation_id = ?").run(id);
+      const insertInvoice = this.db.prepare(`INSERT INTO transfer_reconciliation_invoices (id, reconciliation_id, fiscal_document_id, document_number_snapshot, issue_date_snapshot, issuer_name_snapshot, recipient_name_snapshot, invoice_total_cents_snapshot, source_amount_cents, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const selection of input.invoices) {
+        const document = this.getFiscalDocument(selection.fiscalDocumentId).document;
+        const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
+        if (!available) throw new Error("Nota indisponivel para conferencia.");
+        insertInvoice.run(randomUUID(), id, document.id, document.documentNumber, document.issueDate, available.issuerName, available.recipientName, document.totalAmountCents, selection.sourceAmountCents, now, now);
+      }
+      const insertPayment = this.db.prepare(`INSERT INTO transfer_reconciliation_payments (id, reconciliation_id, beneficiary_name, beneficiary_document, description, payment_date, amount_cents, notes, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      input.payments.forEach((payment, index) => insertPayment.run(payment.id ?? randomUUID(), id, payment.beneficiaryName.trim(), payment.beneficiaryDocument?.trim() || null, payment.description?.trim() || null, payment.paymentDate || null, payment.amountCents, payment.notes?.trim() || null, index, now, now));
+    });
+    run();
+    return this.getTransferReconciliation(id);
+  }
+
+  cancelTransferReconciliation(id: string): TransferReconciliationDetail {
+    const current = this.getTransferReconciliation(id).reconciliation;
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE transfer_reconciliations SET status = 'CANCELLED', cancelled_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
+    return this.getTransferReconciliation(current.id);
+  }
+
+  listTransferReconciliationClientBalances(organizationId: string): TransferReconciliationClientBalance[] {
+    this.assertOrganizationWritable(organizationId);
+    const rows = this.db.prepare(`SELECT p.id AS client_partner_id, p.display_name AS client_name,
+        COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' AND r.balance_cents > 0 THEN r.balance_cents ELSE 0 END), 0) AS credit_cents,
+        COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' AND r.balance_cents < 0 THEN -r.balance_cents ELSE 0 END), 0) AS debit_cents,
+        COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' THEN r.balance_cents ELSE 0 END), 0) AS net_balance_cents,
+        SUM(CASE WHEN r.status = 'DRAFT' THEN 1 ELSE 0 END) AS open_reconciliations
+      FROM business_partners p LEFT JOIN transfer_reconciliations r ON r.client_partner_id = p.id AND r.organization_id = ?
+      WHERE p.organization_id = ? AND p.is_active = 1
+        AND EXISTS (SELECT 1 FROM business_partner_roles role WHERE role.business_partner_id = p.id AND role.role = 'CLIENT')
+      GROUP BY p.id, p.display_name HAVING COUNT(r.id) > 0 ORDER BY ABS(net_balance_cents) DESC, p.display_name`).all(organizationId, organizationId) as DbRecord[];
+    return rows.map((row) => ({ clientPartnerId: String(row.client_partner_id), clientName: String(row.client_name), creditCents: Number(row.credit_cents), debitCents: Number(row.debit_cents), netBalanceCents: Number(row.net_balance_cents), openReconciliations: Number(row.open_reconciliations) }));
+  }
+
+  private mapTransferReconciliation(row: DbRecord): TransferReconciliation {
+    return {
+      id: String(row.id), organizationId: String(row.organization_id), clientPartnerId: String(row.client_partner_id), clientName: String(row.client_name ?? ""),
+      referenceDate: String(row.reference_date), title: this.stringOrNull(row.title), notes: this.stringOrNull(row.notes),
+      status: String(row.status) as TransferReconciliation["status"], totalSourceCents: Number(row.total_source_cents), totalPaymentsCents: Number(row.total_payments_cents),
+      balanceCents: Number(row.balance_cents), completedAt: this.stringOrNull(row.completed_at), cancelledAt: this.stringOrNull(row.cancelled_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
     };
   }
 

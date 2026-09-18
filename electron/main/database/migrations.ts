@@ -3427,4 +3427,60 @@ export const migrations: Migration[] = [
       );
     `)
   }
+  ,{
+    name: "051_transfer_reconciliations",
+    up: (db) => db.exec(`
+      CREATE TABLE transfer_reconciliations (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id),
+        client_partner_id TEXT NOT NULL REFERENCES business_partners(id),
+        reference_date TEXT NOT NULL,
+        title TEXT,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','COMPLETED','CANCELLED')),
+        total_source_cents INTEGER NOT NULL DEFAULT 0,
+        total_payments_cents INTEGER NOT NULL DEFAULT 0,
+        balance_cents INTEGER NOT NULL DEFAULT 0,
+        completed_at TEXT,
+        cancelled_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_transfer_reconciliations_organization ON transfer_reconciliations(organization_id);
+      CREATE INDEX idx_transfer_reconciliations_client ON transfer_reconciliations(client_partner_id);
+      CREATE INDEX idx_transfer_reconciliations_status ON transfer_reconciliations(status);
+
+      CREATE TABLE transfer_reconciliation_invoices (
+        id TEXT PRIMARY KEY,
+        reconciliation_id TEXT NOT NULL REFERENCES transfer_reconciliations(id) ON DELETE CASCADE,
+        fiscal_document_id TEXT NOT NULL REFERENCES fiscal_documents(id),
+        document_number_snapshot TEXT NOT NULL,
+        issue_date_snapshot TEXT NOT NULL,
+        issuer_name_snapshot TEXT,
+        recipient_name_snapshot TEXT,
+        invoice_total_cents_snapshot INTEGER NOT NULL,
+        source_amount_cents INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(reconciliation_id, fiscal_document_id)
+      );
+      CREATE INDEX idx_transfer_reconciliation_invoices_reconciliation ON transfer_reconciliation_invoices(reconciliation_id);
+      CREATE INDEX idx_transfer_reconciliation_invoices_document ON transfer_reconciliation_invoices(fiscal_document_id);
+
+      CREATE TABLE transfer_reconciliation_payments (
+        id TEXT PRIMARY KEY,
+        reconciliation_id TEXT NOT NULL REFERENCES transfer_reconciliations(id) ON DELETE CASCADE,
+        beneficiary_name TEXT NOT NULL,
+        beneficiary_document TEXT,
+        description TEXT,
+        payment_date TEXT,
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_transfer_reconciliation_payments_reconciliation ON transfer_reconciliation_payments(reconciliation_id, sort_order);
+    `)
+  }
 ];

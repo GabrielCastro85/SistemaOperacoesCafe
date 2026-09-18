@@ -13,6 +13,7 @@ const SYNCED_TABLES = [
   "fiscal_document_returns", "fiscal_document_merge_history", "operations", "third_party_operations",
   "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history",
   "client_ledger_entries", "client_credit_allocations", "client_payments", "client_payment_allocations",
+  "transfer_reconciliations", "transfer_reconciliation_invoices", "transfer_reconciliation_payments",
   "expense_categories", "cost_centers", "financial_accounts", "accounts_payable", "account_payable_operations",
   "account_payable_allocations", "payable_recurring_templates", "payable_installment_groups", "payable_payments",
   "payable_payment_allocations", "payable_status_history", "deal_clause_templates", "deal_confirmation_templates",

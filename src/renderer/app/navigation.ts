@@ -35,6 +35,7 @@ export const navigationGroups: NavigationGroup[] = [
     title: "Recebimentos",
     items: [
       { id: "charges", label: "Cobranças", legacyMenu: "Cobrancas", path: "/charges", icon: "$" },
+      { id: "transferReconciliations", label: "Conferência de repasses", legacyMenu: "Conferencia de repasses", path: "/transfer-reconciliations", icon: "≋" },
       { id: "ledger", label: "Conta-corrente", legacyMenu: "Conta-corrente", path: "/client-ledger", icon: "↔" }
     ]
   },
@@ -83,6 +84,7 @@ export function legacyMenuFromPath(path: string): string {
   if (normalized.startsWith("/imports/xml")) return "Notas e operacoes";
   if (normalized.startsWith("/confirmations")) return "Confirmacoes";
   if (normalized.startsWith("/charges")) return "Cobrancas";
+  if (normalized.startsWith("/transfer-reconciliations")) return "Conferencia de repasses";
   if (normalized.startsWith("/client-ledger")) return "Conta-corrente";
   if (normalized.startsWith("/finance/purchase-settlements")) return "Acertos de entrada";
   if (normalized.startsWith("/finance/purchase-rates")) return "Regras de entrada";

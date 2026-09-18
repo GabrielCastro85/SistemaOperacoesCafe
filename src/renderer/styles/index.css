@@ -4759,3 +4759,34 @@ table tbody tr:hover {
 .professional-shell.is-collapsed .app-sidebar::after {
   display: none;
 }
+/* Conferencia de repasses: modulo operacional sem reflexo financeiro. */
+.transfer-page { display: grid; gap: 20px; }
+.transfer-message { padding: 12px 16px; border: 1px solid var(--color-border); border-radius: 10px; background: #fff8dc; }
+.transfer-editor { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 22px; align-items: start; }
+.transfer-form { display: grid; gap: 18px; min-width: 0; }
+.transfer-fields { display: grid; grid-template-columns: 2fr 1fr 2fr; gap: 12px; }
+.transfer-fields label, .transfer-payment label, .transfer-notes { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
+.transfer-fields input, .transfer-fields select, .transfer-payment input, .transfer-notes textarea, .transfer-row input:not([type=checkbox]) { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: white; }
+.transfer-table, .transfer-payments, .transfer-history, .transfer-balances { display: grid; gap: 8px; }
+.transfer-table { overflow-x: auto; }
+.transfer-row { display: grid; grid-template-columns: 34px 70px 90px minmax(180px,1fr) 120px 120px 170px; gap: 10px; align-items: center; min-width: 940px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+.transfer-head { font-size: 11px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
+.transfer-warning { border-color: #c47d17; background: #fff4dc; }
+.transfer-warning small { display: block; color: #9b3e16; }
+.transfer-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.transfer-section-title h2, .transfer-form h2 { margin: 0; }
+.transfer-payment { display: grid; grid-template-columns: 1.3fr 1fr 1.4fr 140px 130px 1.3fr auto; gap: 10px; align-items: end; padding: 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); }
+.transfer-summary { position: sticky; top: 18px; display: grid; gap: 7px; padding: 20px; border: 2px solid var(--color-border); border-radius: 14px; background: white; box-shadow: 0 16px 38px rgb(43 31 18 / 10%); }
+.transfer-summary strong { font-size: 24px; margin-bottom: 10px; }
+.transfer-summary.is-credit { border-color: #2f9c65; background: #effbf4; }
+.transfer-summary.is-debit { border-color: #c34d45; background: #fff1ef; }
+.transfer-summary.is-balanced { border-color: #4b8c70; }
+.transfer-actions { display: grid; gap: 8px; margin-top: 8px; }
+.transfer-history article { display: grid; grid-template-columns: minmax(190px,1.5fr) 100px repeat(3,minmax(130px,1fr)) auto; gap: 16px; align-items: center; padding: 15px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); }
+.transfer-history article > div:first-child { display: grid; gap: 4px; }
+.transfer-history article small { color: var(--muted); }
+.transfer-history article > div:last-child { display: flex; gap: 8px; }
+.credit { color: #167348; } .debit { color: #b1372f; }
+.transfer-balance-row { display: grid; grid-template-columns: minmax(220px,2fr) repeat(4,minmax(120px,1fr)); gap: 12px; padding: 13px 15px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+.transfer-balance-row.head { font-size: 12px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
+@media (max-width: 1100px) { .transfer-editor { grid-template-columns: 1fr; } .transfer-summary { position: sticky; bottom: 8px; top: auto; z-index: 4; grid-template-columns: repeat(3,1fr); } .transfer-payment { grid-template-columns: repeat(2,minmax(0,1fr)); } .transfer-history article { grid-template-columns: 1fr 1fr; } }

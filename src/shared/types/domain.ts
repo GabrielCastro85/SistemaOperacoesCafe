@@ -1782,3 +1782,73 @@ export interface Diagnostics {
   centralSyncLastSuccessAt?: string | null;
   centralSyncError?: string | null;
 }
+
+export type TransferReconciliationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
+
+export interface TransferReconciliation {
+  id: string;
+  organizationId: string;
+  clientPartnerId: string;
+  clientName: string;
+  referenceDate: string;
+  title: string | null;
+  notes: string | null;
+  status: TransferReconciliationStatus;
+  totalSourceCents: number;
+  totalPaymentsCents: number;
+  balanceCents: number;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TransferReconciliationInvoice {
+  id: string;
+  reconciliationId: string;
+  fiscalDocumentId: string;
+  documentNumber: string;
+  issueDate: string;
+  issuerName: string | null;
+  recipientName: string | null;
+  invoiceTotalCents: number;
+  sourceAmountCents: number;
+}
+
+export interface TransferReconciliationPayment {
+  id: string;
+  reconciliationId: string;
+  beneficiaryName: string;
+  beneficiaryDocument: string | null;
+  description: string | null;
+  paymentDate: string | null;
+  amountCents: number;
+  notes: string | null;
+  sortOrder: number;
+}
+
+export interface TransferReconciliationDetail {
+  reconciliation: TransferReconciliation;
+  invoices: TransferReconciliationInvoice[];
+  payments: TransferReconciliationPayment[];
+}
+
+export interface TransferReconciliationAvailableInvoice {
+  fiscalDocumentId: string;
+  documentNumber: string;
+  issueDate: string;
+  issuerName: string | null;
+  recipientName: string | null;
+  invoiceTotalCents: number;
+  previouslyUsedCents: number;
+  availableCents: number;
+}
+
+export interface TransferReconciliationClientBalance {
+  clientPartnerId: string;
+  clientName: string;
+  creditCents: number;
+  debitCents: number;
+  netBalanceCents: number;
+  openReconciliations: number;
+}
