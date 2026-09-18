@@ -33,7 +33,7 @@ const loginSchema = z.object({
 });
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1).max(200),
-  newPassword: z.string().min(8).max(200)
+  newPassword: z.string().min(1).max(200)
 });
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
