@@ -34,9 +34,12 @@ interface OpenNoteRow {
   hasPendingIssues: boolean;
 }
 
-function currentYearRange(): { start: string; end: string } {
-  const year = new Date().getFullYear();
-  return { start: `${year}-01-01`, end: `${year}-12-31` };
+function currentMonthToTodayRange(): { start: string; end: string } {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return { start: `${year}-${month}-01`, end: `${year}-${month}-${day}` };
 }
 
 function decimalBr(value: string): string {
@@ -45,7 +48,7 @@ function decimalBr(value: string): string {
 }
 
 export function ChargesTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
-  const initial = currentYearRange();
+  const initial = currentMonthToTodayRange();
   const [periodStart, setPeriodStart] = useState(initial.start);
   const [periodEnd, setPeriodEnd] = useState(initial.end);
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
