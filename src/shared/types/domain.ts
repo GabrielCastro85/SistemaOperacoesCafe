@@ -1025,6 +1025,7 @@ export interface ClientChargeAdjustment {
   adjustmentType: ChargeAdjustmentType;
   effect: LedgerEffect;
   description: string;
+  reason: string | null;
   amountCents: number;
   sortOrder: number;
   createdAt: string;

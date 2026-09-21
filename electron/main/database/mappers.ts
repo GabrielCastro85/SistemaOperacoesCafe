@@ -720,6 +720,7 @@ export function mapClientChargeAdjustment(row: DbRecord): ClientChargeAdjustment
     adjustmentType: String(row.adjustment_type) as ClientChargeAdjustment["adjustmentType"],
     effect: String(row.effect) as ClientChargeAdjustment["effect"],
     description: String(row.description),
+    reason: textOrNull(row.reason),
     amountCents: Number(row.amount_cents),
     sortOrder: Number(row.sort_order),
     createdAt: String(row.created_at),

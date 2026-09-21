@@ -43,12 +43,6 @@ function chargeOperationCompanyName(operation: ChargeOperationSnapshot): string 
     || "-";
 }
 
-function chargeAdjustmentLine(adjustment: ChargeAdjustmentSnapshot): string {
-  const sign = adjustment.effect === "INCREASE_RECEIVABLE" ? "+" : "-";
-  const dateText = adjustment.ledgerEntryDate ? `${formatDate(adjustment.ledgerEntryDate)} - ` : "";
-  return `${sign} ${dateText}${adjustment.description}: R$ ${formatCents(adjustment.amountCents)}`;
-}
-
 export async function generateChargeDocuments(input: ChargeDocumentsInput): Promise<ChargeDocumentResult> {
   const number = sanitizeSegment(input.detail.charge.id);
   const year = (input.detail.charge.issueDate ?? input.detail.charge.createdAt).slice(0, 4);
@@ -122,11 +116,11 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   drawInfoBox(page, "PERIODO", [`${formatDate(charge.periodStart)} a ${formatDate(charge.periodEnd)}`, `Periodicidade: ${translatePeriodicity(charge.periodicity)}`], margin + boxWidth + boxGap, y, boxWidth, 88, { font, bold, ink, muted, border, paper, gold });
 
   y -= 102;
-  const chargeCount = 1 + (input.relatedOpenChargeDetails?.length ?? 0);
-  const totalOpenCents = [detail, ...(input.relatedOpenChargeDetails ?? [])].reduce((total, item) => total + item.charge.openAmountCents, 0);
-  drawSectionTitle(page, chargeCount > 1 ? `Operacoes em ${chargeCount} cobrancas abertas` : "Operacoes cobradas", margin, y, bold, ink, green);
+  const chargeCount = 1;
+  const totalOpenCents = detail.charge.openAmountCents;
+  drawSectionTitle(page, "Operacoes do periodo", margin, y, bold, ink, green);
   y -= 16;
-  const sections = summaryImageSections(input);
+  const sections = summaryImageSections({ ...input, relatedOpenChargeDetails: [] });
   const columns = [
     { title: "PERIODO", x: margin + 8, width: 68 },
     { title: "NF", x: margin + 84, width: 38 },
@@ -135,7 +129,7 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
     { title: "SACAS", x: margin + 390, width: 48 },
     { title: "VALOR", x: margin + 452, width: 78 }
   ];
-  ({ page, y } = drawChargeOperationSectionsPdf(doc, page, sections, columns, margin, y, contentWidth, {
+  ({ page, y } = drawChargeOperationSectionsPdf(doc, page, sections, detail.adjustments, chargePeriodLabel(charge, true), columns, margin, y, contentWidth, {
     font,
     bold,
     ink,
@@ -148,20 +142,6 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   }));
   y -= 20;
 
-  const paidNotes = (input.relatedPaidChargeDetails ?? []).flatMap((paidDetail) =>
-    paidDetail.operations.map((operation) => ({
-      chargeNumber: chargePeriodLabel(paidDetail.charge, true),
-      operation,
-      clientName: client.displayName
-    }))
-  );
-  if (paidNotes.length > 0) {
-    ({ page, y } = drawPaidNotesPdf(doc, page, paidNotes, margin, y, contentWidth, {
-      font, bold, ink, muted, border, paper, gold, green
-    }));
-    y -= 18;
-  }
-
   if (y < 238) {
     page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
     y = pageHeight - margin - 70;
@@ -172,17 +152,13 @@ async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> 
   drawPaymentBox(page, ownLegalEntity, margin, y, paymentWidth, 118, { font, bold, ink, muted, border, paper, gold, green });
   drawTotalsBox(page, detail, margin + paymentWidth + boxGap, y, summaryWidth, 118, { font, bold, ink, muted, border, paper, gold, green }, { chargeCount, totalOpenCents });
 
-  y -= 136;
-  drawSectionTitle(page, "Ajustes e pagamentos", margin, y, bold, ink, green);
-  y -= 16;
-  const leftLines = detail.adjustments.length
-    ? detail.adjustments.slice(0, 4).map(chargeAdjustmentLine)
-    : ["Sem ajustes nesta cobranca."];
-  const rightLines = detail.payments.length
-    ? detail.payments.slice(0, 4).map((item) => `Pagamento alocado: R$ ${formatCents(item.amountCents)}`)
-    : ["Sem pagamentos registrados."];
-  drawInfoBox(page, "AJUSTES", leftLines, margin, y, boxWidth, 64, { font, bold, ink, muted, border, paper, gold });
-  drawInfoBox(page, "PAGAMENTOS", rightLines, margin + boxWidth + boxGap, y, boxWidth, 64, { font, bold, ink, muted, border, paper, gold });
+  if (detail.payments.length > 0) {
+    y -= 136;
+    drawSectionTitle(page, "Pagamentos", margin, y, bold, ink, green);
+    y -= 16;
+    const paymentLines = detail.payments.slice(0, 5).map((item) => `Pagamento alocado: R$ ${formatCents(item.amountCents)}`);
+    drawInfoBox(page, "PAGAMENTOS", paymentLines, margin, y, contentWidth, 64, { font, bold, ink, muted, border, paper, gold });
+  }
 
   page.drawText(`Gerado pelo Sistema de Operacoes de Cafe em ${formatDateTime(new Date().toISOString())}`, { x: margin, y: 22, size: 6.5, font, color: muted });
   page.drawText(isInternalPreview ? `${organization.appDisplayName} | PREVIA INTERNA - NAO ENVIAR COMO COBRANCA` : `${organization.appDisplayName} | Documento local`, { x: pageWidth - margin - 250, y: 22, size: 6.5, font: bold, color: gold });
@@ -259,6 +235,8 @@ function drawChargeOperationSectionsPdf(
   doc: PDFDocument,
   page: PDFPage,
   sections: SummarySection[],
+  adjustments: ChargeAdjustmentSnapshot[],
+  periodLabel: string,
   columns: Array<{ title: string; x: number; width: number }>,
   margin: number,
   startY: number,
@@ -285,7 +263,7 @@ function drawChargeOperationSectionsPdf(
   };
 
   drawHeader();
-  if (sections.length === 0) {
+  if (sections.length === 0 && adjustments.length === 0) {
     currentPage.drawRectangle({ x: margin, y: cursorY - 22, width: contentWidth, height: 34, color: style.paper, borderColor: style.border, borderWidth: 0.45 });
     currentPage.drawText("Nenhuma operacao vinculada a esta cobranca.", { x: margin + 8, y: cursorY - 4, size: 6.8, font: style.font, color: style.ink });
     return { page: currentPage, y: cursorY - 34 };
@@ -328,49 +306,35 @@ function drawChargeOperationSectionsPdf(
     drawRightText(currentPage, `R$ ${formatCents(section.amountCents)}`, columns[5].x, subtotalY, columns[5].width, style.bold, 5.8, style.ink);
     cursorY -= 15;
   });
-  return { page: currentPage, y: cursorY };
-}
 
-function drawPaidNotesPdf(
-  doc: PDFDocument,
-  page: PDFPage,
-  rows: Array<{ chargeNumber: string; operation: ChargeOperationSnapshot; clientName: string }>,
-  margin: number,
-  startY: number,
-  contentWidth: number,
-  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; border: PdfColor; paper: PdfColor; gold: PdfColor; green: PdfColor }
-): { page: PDFPage; y: number } {
-  const pageWidth = page.getWidth();
-  const pageHeight = page.getHeight();
-  let currentPage = page;
-  let y = startY;
-  const startSection = () => {
-    drawSectionTitle(currentPage, "Notas pagas no periodo", margin, y, style.bold, style.ink, style.green);
-    y -= 16;
-    currentPage.drawRectangle({ x: margin, y: y - 18, width: contentWidth, height: 18, color: style.paper, borderColor: style.border, borderWidth: 0.45 });
-    currentPage.drawText("NF", { x: margin + 8, y: y - 12, size: 6.4, font: style.bold, color: style.muted });
-    currentPage.drawText("CLIENTE", { x: margin + 82, y: y - 12, size: 6.4, font: style.bold, color: style.muted });
-    currentPage.drawText("PERIODO", { x: margin + 335, y: y - 12, size: 6.4, font: style.bold, color: style.muted });
-    drawRightText(currentPage, "VALOR PAGO", margin + contentWidth - 110, y - 12, 100, style.bold, 6.4, style.muted);
-    y -= 26;
-  };
-  const newPage = () => {
-    currentPage = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, rgb(0.07, 0.055, 0.04), style.gold, style.bold, rgb(1, 0.96, 0.88));
-    y = pageHeight - margin - 56;
-    startSection();
-  };
+  if (adjustments.length > 0) {
+    ensureSpace(35);
+    currentPage.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
+    currentPage.drawText("AJUSTES", { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
+    cursorY -= 13;
 
-  if (y < 105) newPage(); else startSection();
-  for (const row of rows) {
-    if (y < 68) newPage();
-    currentPage.drawRectangle({ x: margin, y: y - 14, width: contentWidth, height: 17, color: style.paper });
-    currentPage.drawText(truncate(row.operation.fiscalDocumentNumberSnapshot ?? "-", style.font, 6.2, 62), { x: margin + 8, y: y - 8, size: 6.2, font: style.font, color: style.ink });
-    currentPage.drawText(truncate(row.clientName, style.font, 6.2, 238), { x: margin + 82, y: y - 8, size: 6.2, font: style.font, color: style.ink });
-    currentPage.drawText(truncate(row.chargeNumber, style.font, 6.2, 92), { x: margin + 335, y: y - 8, size: 6.2, font: style.font, color: style.ink });
-    drawRightText(currentPage, `R$ ${formatCents(row.operation.serviceAmountCentsSnapshot)}`, margin + contentWidth - 110, y - 8, 100, style.bold, 6.2, style.green);
-    y -= 18;
+    adjustments.forEach((adjustment) => {
+      const reasonLines = adjustment.reason?.trim()
+        ? wrapText(`Obs.: ${adjustment.reason.trim()}`, style.font, 5.8, contentWidth - 20).slice(0, 3)
+        : [];
+      ensureSpace(15 + reasonLines.length * 10);
+      currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: rgb(0.985, 0.965, 0.89) });
+      currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: style.gold });
+      currentPage.drawText(truncate(adjustment.ledgerEntryDate ? formatDate(adjustment.ledgerEntryDate) : periodLabel, style.font, 5.8, columns[0].width), { x: columns[0].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+      currentPage.drawText("AJUSTE", { x: columns[1].x, y: cursorY, size: 5.8, font: style.bold, color: style.ink });
+      currentPage.drawText(truncate(adjustment.description, style.font, 5.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+      currentPage.drawText(adjustment.effect === "INCREASE_RECEIVABLE" ? "Acrescimo" : "Desconto", { x: columns[3].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+      drawRightText(currentPage, "-", columns[4].x, cursorY, columns[4].width, style.font, 5.8, style.ink);
+      const sign = adjustment.effect === "INCREASE_RECEIVABLE" ? "+" : "-";
+      drawRightText(currentPage, `R$ ${sign} ${formatCents(adjustment.amountCents)}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
+      cursorY -= 12;
+      reasonLines.forEach((line) => {
+        currentPage.drawText(line, { x: margin + 10, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+        cursorY -= 10;
+      });
+    });
   }
-  return { page: currentPage, y };
+  return { page: currentPage, y: cursorY };
 }
 
 function drawInfoBox(
@@ -409,7 +373,7 @@ function drawPaymentBox(
   drawTextBox(page, bankLines.join("\n"), x + 10, topY - 24, width - 20, height - 32, { font: style.font, bold: style.bold, size: 7.5, minSize: 5.8, lineHeight: 1.18, maxLines: 5, color: style.ink });
 }
 
-function clientLines(client: BusinessPartner, entity?: BusinessPartnerLegalEntity | null): string[] {
+function clientLines(client: BusinessPartner, _entity?: BusinessPartnerLegalEntity | null): string[] {
   return [client.displayName];
 }
 

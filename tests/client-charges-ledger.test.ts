@@ -420,8 +420,19 @@ describe("client charges and ledger", () => {
       createConfirmedOperation(repo, partnerId, productId, "6823", "200");
       const openOperation = repo.findEligibleOperations(filters)[0];
       const openDraft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [openOperation.id] });
+      const adjustedDraft = repo.addChargeAdjustment({
+        clientChargeId: openDraft.charge.id,
+        ledgerEntryId: null,
+        adjustmentType: "DISCOUNT",
+        effect: "REDUCE_RECEIVABLE",
+        description: "Desconto",
+        reason: "Ajuste de qualidade informado pelo cliente",
+        amountCents: 5000,
+        sortOrder: 20
+      });
+      expect(adjustedDraft.adjustments[0].reason).toBe("Ajuste de qualidade informado pelo cliente");
       const openCharge = await repo.issueClientCharge(openDraft.charge.id);
-      expect(openCharge.charge.openAmountCents).toBe(100000);
+      expect(openCharge.charge.openAmountCents).toBe(95000);
 
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(openCharge.charge.excelFilePath!);

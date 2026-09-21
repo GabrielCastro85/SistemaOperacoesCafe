@@ -3483,4 +3483,10 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_transfer_reconciliation_payments_reconciliation ON transfer_reconciliation_payments(reconciliation_id, sort_order);
     `)
   }
+  ,{
+    name: "052_client_charge_adjustment_reason",
+    up: (db) => db.exec(`
+      ALTER TABLE client_charge_adjustments ADD COLUMN reason TEXT;
+    `)
+  }
 ];

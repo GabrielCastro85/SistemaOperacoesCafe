@@ -2978,8 +2978,8 @@ export class AppRepository {
     if (data.adjustmentType === "MANUAL_ADJUSTMENT" && !data.reason?.trim()) throw new Error("Ajuste manual exige justificativa.");
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO client_charge_adjustments (id, client_charge_id, ledger_entry_id, adjustment_type, effect, description, amount_cents, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(id, data.clientChargeId, data.ledgerEntryId, data.adjustmentType, data.effect, data.description, data.amountCents, data.sortOrder, now, now);
+    this.db.prepare("INSERT INTO client_charge_adjustments (id, client_charge_id, ledger_entry_id, adjustment_type, effect, description, reason, amount_cents, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, data.clientChargeId, data.ledgerEntryId, data.adjustmentType, data.effect, data.description, data.reason?.trim() || null, data.amountCents, data.sortOrder, now, now);
     this.recalculateClientCharge(data.clientChargeId);
     return this.getClientCharge(data.clientChargeId);
   }
@@ -3041,7 +3041,7 @@ export class AppRepository {
     const trx = this.db.transaction(() => {
       this.db.prepare("INSERT INTO client_credit_allocations (id, ledger_entry_id, client_charge_id, amount_cents, allocated_at) VALUES (?, ?, ?, ?, ?)").run(id, data.ledgerEntryId, data.clientChargeId, data.amountCents, now);
       this.db.prepare("UPDATE client_ledger_entries SET available_amount_cents = available_amount_cents - ?, updated_at = ? WHERE id = ?").run(data.amountCents, now, data.ledgerEntryId);
-      this.db.prepare("INSERT INTO client_charge_adjustments (id, client_charge_id, ledger_entry_id, adjustment_type, effect, description, amount_cents, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 100, ?, ?)").run(randomUUID(), data.clientChargeId, data.ledgerEntryId, adjustmentType, sourceEntry.effect, `${descriptionPrefix}: ${sourceEntry.description}`, data.amountCents, now, now);
+      this.db.prepare("INSERT INTO client_charge_adjustments (id, client_charge_id, ledger_entry_id, adjustment_type, effect, description, reason, amount_cents, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 100, ?, ?)").run(randomUUID(), data.clientChargeId, data.ledgerEntryId, adjustmentType, sourceEntry.effect, `${descriptionPrefix}: ${sourceEntry.description}`, data.amountCents, now, now);
       this.recalculateClientCharge(data.clientChargeId);
     });
     trx();
