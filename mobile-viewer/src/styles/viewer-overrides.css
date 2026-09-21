@@ -204,6 +204,19 @@
   display: none;
 }
 
+.app-sidebar__brand > div:not(.brand-mark) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-sidebar__brand strong,
+.app-sidebar__brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-sidebar__context {
   display: grid;
   gap: 10px;
