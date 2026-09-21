@@ -195,7 +195,7 @@ function writeReleaseFiles(dir, currentVariant, releaseVersion, channel) {
     artifactSha256: installer ? sha256Path(installer) : null,
     signed: false,
     signingSubject: null,
-    databaseMigrationVersion: "016_unified_company_context",
+    databaseMigrationVersion: latestDatabaseMigrationVersion(),
     backupFormatVersion: 1,
     confirmationDocumentVersion: 1,
     buildCommit: gitCommit(),
@@ -234,6 +234,12 @@ function sizeOfPath(path) {
 function gitCommit() {
   const result = spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8", shell: process.platform === "win32" });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function latestDatabaseMigrationVersion() {
+  const source = readFileSync(join(root, "electron", "main", "database", "migrations.ts"), "utf8");
+  const names = Array.from(source.matchAll(/^\s*name:\s*"([^"]+)",?\s*$/gm), (match) => match[1]);
+  return names.at(-1) ?? null;
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
