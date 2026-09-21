@@ -14,10 +14,10 @@ export interface NavigationGroup {
 
 export const navigationGroups: NavigationGroup[] = [
   { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard" }] },
-  { title: "Recebimentos", items: [{ id: "charges", label: "Cobranças" }] }
+  { title: "Recebimentos", items: [{ id: "charges", label: "Notas em aberto" }] }
 ];
 
 export const pageTitleById: Record<PageId, string> = {
   dashboard: "Dashboard",
-  charges: "Cobranças"
+  charges: "Notas em aberto"
 };

@@ -86,14 +86,65 @@
    azul = terceiros (nao identificada como uma das duas). */
 .viewer-company-accent--grao {
   border-left: 4px solid #2f7d4f;
+  background: linear-gradient(135deg, #eaf7ee 0%, #fffdf8 72%);
 }
 
 .viewer-company-accent--villa {
   border-left: 4px solid #6b4226;
+  background: linear-gradient(135deg, #f7ecdd 0%, #fffdf8 72%);
 }
 
 .viewer-company-accent--other {
   border-left: 4px solid #2f6598;
+  background: linear-gradient(135deg, #eaf1f8 0%, #fffdf8 72%);
+}
+
+.viewer-open-note-grid {
+  margin-top: var(--space-4);
+}
+
+.viewer-open-note__status {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: var(--space-2);
+  padding: 3px 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.viewer-open-note__client {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.viewer-open-note__numbers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.viewer-open-note__numbers span {
+  display: grid;
+  gap: 3px;
+}
+
+.viewer-open-note__numbers small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.viewer-open-note__numbers strong {
+  font-size: 13px;
 }
 
 .viewer-nf-row__main {

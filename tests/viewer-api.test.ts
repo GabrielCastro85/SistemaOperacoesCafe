@@ -30,10 +30,19 @@ const chargeId = "charge";
 function fixture(): Record<string, Row[]> {
   return {
     organizations: [{ id: organizationId, slug: "villa", display_name: "Villa", app_display_name: "Villa Coffee", is_active: 1, primary_color: "#17130f", secondary_color: "#f8f5ed", accent_color: "#1d7a4c" }],
-    legal_entities: [{ id: legalEntityId, organization_id: organizationId, legal_name: "Villa Coffee LTDA", trade_name: "Villa Coffee Minas Gerais", cnpj: "44963370000523", state_registration: "123", is_active: 1, default_bank_name: "Banco", default_bank_agency: "1", default_bank_account: "2", default_pix_key: "44963370000523" }],
+    legal_entities: [
+      { id: legalEntityId, organization_id: organizationId, legal_name: "Villa Coffee LTDA", trade_name: "Villa Coffee Minas Gerais", cnpj: "44963370000523", state_registration: "123", is_active: 1, default_bank_name: "Banco", default_bank_agency: "1", default_bank_account: "2", default_pix_key: "44963370000523" },
+      { id: "third-party", organization_id: organizationId, legal_name: "Emitente Terceiro LTDA", trade_name: "Emitente Terceiro", cnpj: "22222222000122", document_prefix: "TERC-XML", is_active: 1 }
+    ],
     business_partners: [{ id: clientId, display_name: "Cliente Teste" }],
-    operations: [{ id: "operation", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, fiscal_document_id: "document", operation_date: "2026-09-10", operation_type: "SALE", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "500", service_amount_cents: 150000 }],
-    fiscal_documents: [{ id: "document", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Villa Coffee LTDA", cnpjCpf: "44963370000523" }, recipient: { legalName: "Cliente Teste", cnpjCpf: "11111111000111" } }) }],
+    operations: [
+      { id: "operation", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, fiscal_document_id: "document", operation_date: "2026-09-10", operation_type: "SALE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "500", applied_rate_value_cents: 400, service_amount_cents: 150000 },
+      { id: "third-operation", organization_id: organizationId, own_legal_entity_id: "third-party", responsible_partner_id: clientId, fiscal_document_id: "third-document", operation_date: "2026-09-11", operation_type: "SALE", operation_scope: "EXTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "100", applied_rate_value_cents: 800, service_amount_cents: 80000 }
+    ],
+    fiscal_documents: [
+      { id: "document", document_number: "123", status: "CONFIRMED", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Villa Coffee LTDA", cnpjCpf: "44963370000523" }, recipient: { legalName: "Cliente Teste", cnpjCpf: "11111111000111" } }) },
+      { id: "third-document", document_number: "5201", status: "CONFIRMED", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Emitente Terceiro LTDA", cnpjCpf: "22222222000122" }, recipient: { legalName: "Destino Final LTDA", cnpjCpf: "33333333000133" } }) }
+    ],
     client_charges: [{ id: chargeId, organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2026-10-05", status: "ISSUED", subtotal_services_cents: 200000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 200000, paid_amount_cents: 0, open_amount_cents: 200000, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" }],
     client_charge_operations: [{ id: "charge-operation", client_charge_id: chargeId, operation_id: "operation", own_legal_entity_id_snapshot: legalEntityId, own_legal_entity_name_snapshot: "Villa Coffee LTDA", operation_date_snapshot: "2026-09-10", fiscal_document_number_snapshot: "123", issuer_name_snapshot: "Villa Coffee LTDA", destination_name_snapshot: "Cliente Teste", product_name_snapshot: "Cafe", operation_scope_snapshot: "INTERNAL", quantity_sacks_decimal_snapshot: "500", service_rate_cents_snapshot: 400, service_amount_cents_snapshot: 200000, created_at: "2026-09-30T12:00:00Z" }],
     client_charge_adjustments: [], client_payment_allocations: [], client_ledger_entries: [], partner_legal_entities: [],
@@ -49,6 +58,13 @@ describe("viewer API", () => {
     const dashboard = await app.inject({ method: "GET", url: `/v1/viewer/dashboard?${query}`, headers: { authorization: "Bearer test" } });
     expect(dashboard.statusCode).toBe(200);
     expect(dashboard.json()).toMatchObject({ sacks: 500, receivableCents: 350000, receivedCents: 50000, unbilledCount: 1 });
+
+    const notes = await app.inject({ method: "GET", url: `/v1/viewer/open-notes?${query}`, headers: { authorization: "Bearer test" } });
+    expect(notes.statusCode).toBe(200);
+    expect(notes.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ documentNumber: "123", companyTone: "villa", billingStatus: "UNBILLED" }),
+      expect.objectContaining({ documentNumber: "5201", companyTone: "other", companyContext: "Operacao terceirizada", issuerName: "Emitente Terceiro LTDA" })
+    ]));
 
     const pdf = await app.inject({ method: "GET", url: `/v1/viewer/charges/${chargeId}/pdf`, headers: { authorization: "Bearer test" } });
     expect(pdf.statusCode).toBe(200);

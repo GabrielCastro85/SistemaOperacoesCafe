@@ -19,6 +19,10 @@ const chargeListSchema = filterSchema.extend({
   status: z.enum(["OPEN", "PAID", "ALL"]).default("ALL")
 });
 
+const openNoteListSchema = filterSchema.extend({
+  clientId: z.string().min(1).optional()
+});
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -164,6 +168,47 @@ function digits(value: unknown): string {
   return text(value).replace(/\D/g, "");
 }
 
+function normalized(value: unknown): string {
+  return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function isThirdPartyEntity(row: JsonRecord | undefined): boolean {
+  if (!row) return false;
+  return text(row.document_prefix) === "TERC-XML"
+    || normalized(`${text(row.trade_name)} ${text(row.legal_name)}`).includes("terceirizad");
+}
+
+function operationPartyLabels(
+  operation: JsonRecord,
+  document: JsonRecord,
+  own: JsonRecord,
+  partners: Map<string, JsonRecord>,
+  partnerEntities: Map<string, JsonRecord>
+): { issuer: string | null; destination: string | null } {
+  const issuerParty = snapshotParty(document, "issuer");
+  const recipientParty = snapshotParty(document, "recipient");
+  const issuer = partyName(issuerParty);
+  if (document.secondary_responsible_partner_id) {
+    return {
+      issuer,
+      destination: nullableText(partners.get(text(operation.responsible_partner_id))?.display_name) ?? partyName(recipientParty)
+    };
+  }
+  const linked = partnerEntities.get(text(document.partner_legal_entity_id));
+  if (linked) {
+    return { issuer, destination: nullableText(linked.legal_name) ?? nullableText(linked.trade_name) };
+  }
+  const issuerDocument = digits(issuerParty?.cnpjCpf) || text(document.access_key).slice(6, 20);
+  const recipientDocument = digits(recipientParty?.cnpjCpf);
+  const ownDocument = digits(own.cnpj);
+  const issuerName = partyName(issuerParty);
+  const recipientName = partyName(recipientParty);
+  if (ownDocument && issuerDocument === ownDocument) return { issuer, destination: recipientName ?? issuerName };
+  if (ownDocument && recipientDocument === ownDocument) return { issuer, destination: issuerName ?? recipientName };
+  if (document.direction === "INBOUND") return { issuer, destination: issuerName ?? recipientName };
+  return { issuer, destination: recipientName ?? issuerName };
+}
+
 function refreshedOperationSnapshots(
   row: JsonRecord,
   sourceOperations: Map<string, JsonRecord>,
@@ -244,12 +289,15 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     if (!session) return;
     const filters = filterSchema.parse(request.query);
     if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
-    const [partners, operations, charges, payments] = await Promise.all([
-      records(pool, "business_partners"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments")
+    const [partners, operations, charges, payments, entities] = await Promise.all([
+      records(pool, "business_partners"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments"), records(pool, "legal_entities")
     ]);
     const partnerMap = new Map(partners.map((row) => [text(row.id), text(row.display_name)]));
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
     const ids = new Set<string>();
-    const scopedOperations = operations.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELED" && text(row.operation_type) !== "PURCHASE" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
+    const scopedOperations = operations.filter((row) => text(row.organization_id) === filters.organizationId
+      && (!filters.legalEntityId || text(row.own_legal_entity_id) === filters.legalEntityId || isThirdPartyEntity(entityMap.get(text(row.own_legal_entity_id))))
+      && text(row.status) !== "CANCELED" && text(row.operation_type) !== "PURCHASE" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
     const scopedCharges = charges.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd));
     const scopedPayments = payments.filter((row) => inScope(row, filters) && text(row.status) === "CONFIRMED" && inPeriod(row.payment_date, filters.periodStart, filters.periodEnd));
     [...scopedOperations, ...scopedCharges, ...scopedPayments].forEach((row) => ids.add(text(row.responsible_partner_id || row.client_partner_id)));
@@ -260,6 +308,50 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
         + scopedOperations.filter((row) => text(row.responsible_partner_id) === id && text(row.billing_status) === "UNBILLED").reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       receivedCents: scopedPayments.filter((row) => text(row.client_partner_id) === id).reduce((sum, row) => sum + numberValue(row.amount_cents), 0)
     })).sort((a, b) => a.displayName.localeCompare(b.displayName, "pt-BR"));
+  });
+
+  app.get("/v1/viewer/open-notes", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = openNoteListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [operations, documents, entities, partners, partnerEntities] = await Promise.all([
+      records(pool, "operations"), records(pool, "fiscal_documents"), records(pool, "legal_entities"),
+      records(pool, "business_partners"), records(pool, "partner_legal_entities")
+    ]);
+    const documentMap = new Map(documents.map((row) => [text(row.id), row]));
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
+    const partnerMap = new Map(partners.map((row) => [text(row.id), row]));
+    const partnerEntityMap = new Map(partnerEntities.map((row) => [text(row.id), row]));
+    return operations
+      .filter((row) => text(row.organization_id) === filters.organizationId)
+      .filter((row) => {
+        if (!filters.legalEntityId) return true;
+        const own = entityMap.get(text(row.own_legal_entity_id));
+        return text(row.own_legal_entity_id) === filters.legalEntityId || isThirdPartyEntity(own);
+      })
+      .filter((row) => text(row.operation_type) === "SALE" && ["DRAFT", "CONFIRMED"].includes(text(row.status)))
+      .filter((row) => text(row.billing_status) === "UNBILLED" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd))
+      .filter((row) => !filters.clientId || text(row.responsible_partner_id) === filters.clientId)
+      .flatMap((row) => {
+        const document = documentMap.get(text(row.fiscal_document_id));
+        const own = entityMap.get(text(row.own_legal_entity_id));
+        if (!document || !own || text(document.status) === "CANCELED") return [];
+        const triangulated = Boolean(document.secondary_responsible_partner_id);
+        const thirdParty = triangulated || isThirdPartyEntity(own);
+        const labels = operationPartyLabels(row, document, own, partnerMap, partnerEntityMap);
+        const ownName = nullableText(own.trade_name) ?? nullableText(own.legal_name) ?? "Empresa";
+        const tone = thirdParty ? "other" : normalized(ownName).startsWith("villa coffee") ? "villa" : normalized(ownName).startsWith("grao & grao") || normalized(ownName).startsWith("grao e grao") ? "grao" : "other";
+        return [{
+          id: text(row.id), fiscalDocumentId: text(row.fiscal_document_id), documentNumber: text(document.document_number), series: nullableText(document.series),
+          operationDate: text(row.operation_date), clientId: text(row.responsible_partner_id), clientName: nullableText(partnerMap.get(text(row.responsible_partner_id))?.display_name) ?? "Cliente",
+          ownLegalEntityName: ownName, issuerName: labels.issuer, destinationName: labels.destination,
+          companyContext: thirdParty ? "Operacao terceirizada" : ownName, companyTone: tone,
+          operationScope: text(row.operation_scope), quantitySacks: text(row.quantity_sacks_decimal), rateCents: numberValue(row.applied_rate_value_cents),
+          serviceAmountCents: numberValue(row.service_amount_cents), billingStatus: text(row.billing_status), hasPendingIssues: booleanValue(document.has_pending_issues)
+        }];
+      })
+      .sort((left, right) => left.operationDate.localeCompare(right.operationDate) || left.documentNumber.localeCompare(right.documentNumber, "pt-BR", { numeric: true }));
   });
 
   app.get("/v1/viewer/charges", async (request, reply) => {
