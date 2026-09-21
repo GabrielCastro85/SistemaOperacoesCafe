@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.13
+
+- O PDF de cobranca passa a incluir somente as notas vinculadas ao periodo da propria cobranca, sem misturar notas antigas ja pagas.
+- Descontos e acrescimos aparecem na tabela de operacoes como ajustes, com valor e justificativa.
+- A justificativa informada ao criar um ajuste passa a ser preservada no banco de dados e nos documentos gerados.
+- Mantida para todos os clientes a identificacao correta do emitente e do destino nas notas terceirizadas e trianguladas.
+
 ## 1.1.12
 
 - Corrigida a identificacao do destino comercial em notas trianguladas/terceirizadas na tela de cobrancas.

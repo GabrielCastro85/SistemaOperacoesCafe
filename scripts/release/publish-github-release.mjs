@@ -11,7 +11,9 @@ const token = tokenMatch[1].trim().replace(/^[\"']|[\"']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.12'
+const releaseNotes = version === '1.1.13'
+  ? 'O PDF de cobranca agora inclui somente as notas do periodo selecionado, sem misturar notas antigas ja pagas. Descontos e acrescimos aparecem junto das notas, com valor e justificativa. A identificacao correta de emitente e destino nas notas terceirizadas vale para todos os clientes.'
+  : version === '1.1.12'
   ? 'Corrige o sentido comercial das notas trianguladas e terceirizadas nas cobrancas. A tela e os documentos gerados agora mostram o emitente real da nota e o cliente responsavel como destino, evitando apresentar a empresa interna como participante da NF fisica.'
   : version === '1.0.81'
   ? 'Substitui o card de confirmacoes do dashboard pelo valor recebido no periodo. O novo indicador aparece ao lado do valor a receber e segue automaticamente as datas selecionadas no filtro superior.'
