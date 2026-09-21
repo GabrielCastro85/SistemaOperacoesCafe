@@ -2,7 +2,7 @@ name: Deploy mobile-viewer to GitHub Pages
 
 on:
   push:
-    branches: [master]
+    branches: [master, codex/central-server-neon]
     paths:
       - "mobile-viewer/**"
       - ".github/workflows/mobile-viewer-pages.yml"
