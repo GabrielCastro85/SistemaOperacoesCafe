@@ -3277,13 +3277,17 @@ export class AppRepository {
         fiscal_document_number_snapshot,
         created_at`).all(id) as DbRecord[]).map((operationRow) => {
       const operation = mapClientChargeOperation(operationRow);
-      if (operation.destinationNameSnapshot && operation.destinationNameSnapshot !== operation.ownLegalEntityNameSnapshot) return operation;
       try {
         const sourceOperation = this.getOperation(operation.operationId);
         const document = this.getFiscalDocument(sourceOperation.fiscalDocumentId).document;
         const ownLegalEntity = this.getLegalEntity(sourceOperation.ownLegalEntityId);
-        const companyName = this.fiscalDocumentCompanyName(document, ownLegalEntity);
-        if (companyName) operation.destinationNameSnapshot = companyName;
+        const mustRefreshDestination = document.secondaryResponsiblePartnerId
+          || !operation.destinationNameSnapshot
+          || operation.destinationNameSnapshot === operation.ownLegalEntityNameSnapshot;
+        if (mustRefreshDestination) {
+          const companyName = this.fiscalDocumentChargeDestinationName(document, sourceOperation, ownLegalEntity);
+          if (companyName) operation.destinationNameSnapshot = companyName;
+        }
         const issuerName = this.fiscalSnapshotPartyName(document, "issuer");
         if (issuerName) operation.issuerNameSnapshot = issuerName;
       } catch {
@@ -4581,6 +4585,17 @@ export class AppRepository {
     return issuerName ?? recipientName;
   }
 
+  private fiscalDocumentChargeDestinationName(document: FiscalDocument, operation: Operation, ownLegalEntity: LegalEntity): string | null {
+    // Numa nota triangulada, partnerLegalEntityId representa o emissor fisico
+    // da NF. Para a cobranca da ponta de venda, o destino comercial e' o
+    // cliente responsavel pela operacao (ex.: MUNIZ -> UNI GRAO), nao o
+    // emissor nem o CNPJ proprio usado para contabilizar a corretagem.
+    if (document.secondaryResponsiblePartnerId && operation.operationType === "SALE") {
+      return this.getBusinessPartner(operation.responsiblePartnerId).displayName;
+    }
+    return this.fiscalDocumentCompanyName(document, ownLegalEntity);
+  }
+
   private reserveOperationsForCharge(clientChargeId: string, operationIds: string[]): void {
     const charge = this.getClientCharge(clientChargeId).charge;
     const now = new Date().toISOString();
@@ -4610,7 +4625,7 @@ export class AppRepository {
       const product = operation.productId ? this.getProduct(operation.productId) : null;
       const ownLegalEntity = this.getLegalEntity(operation.ownLegalEntityId);
       const issuerName = this.fiscalSnapshotPartyName(doc, "issuer") ?? (ownLegalEntity.legalName || ownLegalEntity.tradeName);
-      const companyName = this.fiscalDocumentCompanyName(doc, ownLegalEntity) ?? issuerName;
+      const companyName = this.fiscalDocumentChargeDestinationName(doc, operation, ownLegalEntity) ?? issuerName;
       this.db.prepare(`INSERT INTO client_charge_operations (
         id, client_charge_id, operation_id, own_legal_entity_id_snapshot, own_legal_entity_name_snapshot, operation_date_snapshot, fiscal_document_number_snapshot,
         fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,

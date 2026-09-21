@@ -328,6 +328,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   // segundo plano.
   function counterpartyLabel(operation: Operation): string {
     const document = operationDocument(operation);
+    // Nas operacoes trianguladas/terceirizadas, partnerLegalEntityId aponta
+    // para quem emitiu a NF fisica. O destino comercial da linha de venda e'
+    // o cliente/corretor responsavel pela cobranca.
+    if (document?.secondaryResponsiblePartnerId) {
+      const responsible = partners.find((item) => item.id === operation.responsiblePartnerId);
+      if (responsible) return responsible.displayName;
+    }
     const entityId = document?.partnerLegalEntityId;
     if (entityId) {
       const entity = partnerLegalEntities.find((item) => item.id === entityId);
@@ -986,10 +993,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 {eligible.map((op) => {
                   const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                   const issuerLabel = triangulatedIssuerLabel(op);
+                  const companyContextLabel = issuerLabel ? "Operacao terceirizada" : companyLabel;
                   return (
                     <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
                       <span><label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={selectedNoteIds.has(op.fiscalDocumentId)} onChange={() => toggleNote(op.fiscalDocumentId)} aria-label={`Selecionar ${operationNoteLabel(op)}`} /> <strong>{operationNoteLabel(op)}</strong></label><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
-                      <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
+                      <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
                       <span>{formatStatusLabel(op.billingStatus)}</span>
@@ -1013,10 +1021,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   {diagnosticOperations.map((op) => {
                     const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                     const issuerLabel = triangulatedIssuerLabel(op);
+                    const companyContextLabel = issuerLabel ? "Operacao terceirizada" : companyLabel;
                     return (
                       <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
                         <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
-                        <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
+                        <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
                         <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
                         <span>
                           <strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong>

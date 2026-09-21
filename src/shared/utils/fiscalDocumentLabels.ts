@@ -34,6 +34,17 @@ export function fiscalDocumentCounterpartyNameFromSnapshot(document: FiscalDocum
   }
 }
 
+export function fiscalDocumentIssuerNameFromSnapshot(document: FiscalDocument): string | null {
+  if (!document.fiscalSnapshotJson) return null;
+  try {
+    const snapshot = JSON.parse(document.fiscalSnapshotJson) as Record<string, unknown>;
+    const issuer = snapshot.issuer && typeof snapshot.issuer === "object" ? snapshot.issuer as FiscalSnapshotParty : null;
+    return partyName(issuer);
+  } catch {
+    return null;
+  }
+}
+
 function partyName(party: FiscalSnapshotParty | null): string | null {
   const name = (party?.legalName || party?.tradeName) as string | undefined;
   return name?.trim() || null;

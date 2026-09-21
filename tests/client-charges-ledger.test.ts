@@ -453,6 +453,36 @@ describe("client charges and ledger", () => {
     } finally { db.close(); }
   });
 
+  it("uses the billed client as the destination of a triangulated third-party invoice", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      const supplier = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Corretor do emitente", notes: null, roles: ["SUPPLIER"], isActive: true });
+      createConfirmedOperation(repo, partnerId, productId, "TRI-428", "500");
+      const operation = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })[0];
+      db.prepare(`UPDATE fiscal_documents SET secondary_responsible_partner_id = ?, secondary_operation_type = 'PURCHASE',
+        fiscal_snapshot_json = ? WHERE id = ?`).run(supplier.id, JSON.stringify({
+          issuer: { legalName: "MUNIZ COMERCIO DE GRAOS LTDA", cnpjCpf: "11111111000111" },
+          recipient: { legalName: "JH CAFE LTDA", cnpjCpf: "22222222000122" }
+        }), operation.fiscalDocumentId);
+
+      const report = getPartnerPeriodReport(repo, {
+        organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId,
+        periodStart: "2026-07-01", periodEnd: "2026-07-31", includeAlreadyBilled: true
+      });
+      expect(report.rows[0].issuer).toBe("MUNIZ COMERCIO DE GRAOS LTDA");
+      expect(report.rows[0].destination).toBe("Cliente Cobranca");
+
+      const draft = repo.createClientChargeDraft({
+        organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null,
+        periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31",
+        dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id]
+      });
+
+      expect(draft.operations[0].issuerNameSnapshot).toBe("MUNIZ COMERCIO DE GRAOS LTDA");
+      expect(draft.operations[0].destinationNameSnapshot).toBe("Cliente Cobranca");
+    } finally { db.close(); }
+  });
+
   it("refreshes a stale unbilled note from the current value of its linked rule while searching charges", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {

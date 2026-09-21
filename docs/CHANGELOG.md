@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.12
+
+- Corrigida a identificacao do destino comercial em notas trianguladas/terceirizadas na tela de cobrancas.
+- A linha da cobranca agora apresenta o cliente responsavel como destino e identifica separadamente o emitente real da nota.
+- PDFs, imagens, planilhas e relatorios de periodo passam a preservar o fluxo correto de emitente para cliente cobrado.
+- Adicionado teste de regressao para impedir que notas emitidas por terceiros voltem a aparecer com o sentido comercial invertido.
+
 ## 1.0.0-rc.1
 
 - Criado release candidate de homologacao da primeira versao.

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { partnerRateSummaryInputSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { formatCurrencyFromCents, formatDateOnlyBr } from "../../../src/shared/utils/format.js";
 import { sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
-import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../src/shared/utils/fiscalDocumentLabels.js";
+import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentIssuerNameFromSnapshot } from "../../../src/shared/utils/fiscalDocumentLabels.js";
 import type { ClientChargeDetail, Organization } from "../../../src/shared/types/domain.js";
 import type { AppRepository } from "./appRepository.js";
 
@@ -40,13 +40,16 @@ export function getPartnerPeriodReport(repository: AppRepository, input: unknown
       if (document.status === "CANCELED") return [];
       const entity = entities.find((item) => item.id === operation.ownLegalEntityId);
       const snapshot = activeCharge ? detail?.operations.find((item) => item.operationId === operation.id && !item.releasedAt) : undefined;
+      const triangulatedDestination = document.secondaryResponsiblePartnerId
+        ? repository.getBusinessPartner(operation.responsiblePartnerId).displayName
+        : null;
       const status = !activeCharge ? "Nao cobrada" : activeCharge.openAmountCents === 0 ? "Quitada" :
         activeCharge.paidAmountCents > 0 ? "Cobranca parcial" : ["DRAFT", "PENDING_REVIEW"].includes(activeCharge.status) ? "Em rascunho" : "Em aberto";
       return [{
         operationId: operation.id, fiscalDocumentId: document.id, number: document.documentNumber, series: document.series,
-        issuer: snapshot?.issuerNameSnapshot ?? entity?.legalName ?? "Empresa nao registrada",
+        issuer: snapshot?.issuerNameSnapshot ?? fiscalDocumentIssuerNameFromSnapshot(document) ?? entity?.legalName ?? "Empresa nao registrada",
         date: operation.operationDate, company: snapshot?.ownLegalEntityNameSnapshot ?? entity?.legalName ?? "Empresa nao registrada",
-        destination: snapshot?.destinationNameSnapshot ?? fiscalDocumentCounterpartyNameFromSnapshot(document, entity?.cnpj) ?? "-",
+        destination: snapshot?.destinationNameSnapshot ?? triangulatedDestination ?? fiscalDocumentCounterpartyNameFromSnapshot(document, entity?.cnpj) ?? "-",
         sacks: snapshot?.quantitySacksDecimalSnapshot ?? operation.quantitySacks,
         amountCents: snapshot?.serviceAmountCentsSnapshot ?? operation.serviceAmountCents,
         scope: operation.operationScope === "INTERNAL" ? "Mesma UF" : "Outra UF", status,
