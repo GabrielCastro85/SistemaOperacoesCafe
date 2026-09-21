@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
-import { formatCurrencyBr, formatDateBr, openStorageFile } from "./storage";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, downloadChargePdf, queryString } from "./api";
+import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
 import { Card } from "./renderer/design-system/components/Card";
@@ -10,242 +10,84 @@ import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { companyColorClass } from "./companyColor";
-import type { ClientCharge, ClientChargeStatus, UnbilledOperationRow } from "./types";
-
-const OPEN_STATUSES: ClientChargeStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
-const PAGE_SIZE = 200;
-const UNBILLED_LIMIT = 3000;
 
 type FilterMode = "OPEN" | "PAID" | "ALL";
+interface ClientSummary { id: string; displayName: string; sacks: number; receivableCents: number; receivedCents: number }
+interface ChargeRow { id: string; clientId: string; clientName: string; legalEntityName: string; periodStart: string; periodEnd: string; dueDate: string | null; status: string; finalAmountCents: number; paidAmountCents: number; openAmountCents: number }
 
-const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", PAID: "Pagas", ALL: "Todas" };
-
-function sameStateLabel(row: UnbilledOperationRow): string {
-  const partnerState = row.responsible_partner?.state?.trim().toUpperCase();
-  const ownState = row.own_legal_entity?.state?.trim().toUpperCase();
-  if (!partnerState || !ownState) return "UF não identificada";
-  return partnerState === ownState ? "Mesma UF" : "UF diferente";
+function currentYearRange(): { start: string; end: string } {
+  const year = new Date().getFullYear();
+  return { start: `${year}-01-01`, end: `${year}-12-31` };
 }
 
-export function ChargesTab(): JSX.Element {
-  const [charges, setCharges] = useState<ClientCharge[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+export function ChargesTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
+  const initial = currentYearRange();
+  const [periodStart, setPeriodStart] = useState(initial.start);
+  const [periodEnd, setPeriodEnd] = useState(initial.end);
+  const [clients, setClients] = useState<ClientSummary[] | null>(null);
+  const [charges, setCharges] = useState<ChargeRow[] | null>(null);
+  const [clientId, setClientId] = useState("");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterMode>("OPEN");
-  const [pendingRows, setPendingRows] = useState<UnbilledOperationRow[] | null>(null);
-  const [pendingError, setPendingError] = useState<string | null>(null);
-  const [pendingSearch, setPendingSearch] = useState("");
+  const [status, setStatus] = useState<FilterMode>("ALL");
+  const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
-  useEffect(() => {
-    void load(0);
-    void loadPendingBilling();
-  }, []);
+  const loadClients = useCallback(async (): Promise<void> => {
+    try { setClients(await apiJson(`/v1/viewer/clients?${queryString({ organizationId, legalEntityId, periodStart, periodEnd })}`)); }
+    catch (value) { setError(value instanceof Error ? value.message : "Falha ao carregar clientes."); }
+  }, [organizationId, legalEntityId, periodStart, periodEnd]);
+  const loadCharges = useCallback(async (): Promise<void> => {
+    setError(null); setCharges(null);
+    try { setCharges(await apiJson(`/v1/viewer/charges?${queryString({ organizationId, legalEntityId, periodStart, periodEnd, clientId: clientId || undefined, status })}`)); }
+    catch (value) { setError(value instanceof Error ? value.message : "Falha ao carregar cobranças."); }
+  }, [organizationId, legalEntityId, periodStart, periodEnd, clientId, status]);
 
-  async function loadPendingBilling(): Promise<void> {
-    setPendingError(null);
-    const { data, error: loadError } = await supabase
-      .from("operations")
-      .select(
-        `id, operation_date, service_amount_cents, quantity_sacks_decimal, applied_rate_value_cents,
-         fiscal_document:fiscal_documents(document_number, series),
-         responsible_partner:business_partners(display_name, state),
-         own_legal_entity:legal_entities(trade_name, state)`
-      )
-      .eq("billing_status", "UNBILLED")
-      .neq("status", "CANCELED")
-      .order("operation_date")
-      .limit(UNBILLED_LIMIT);
-    if (loadError) {
-      setPendingError(loadError.message);
-      return;
-    }
-    setPendingRows((data ?? []) as unknown as UnbilledOperationRow[]);
-  }
-
-  const filteredPendingRows = useMemo(() => {
-    if (!pendingRows) return [];
-    const term = pendingSearch.trim().toLowerCase();
-    if (!term) return pendingRows;
-    return pendingRows.filter((row) => (row.responsible_partner?.display_name ?? "").toLowerCase().includes(term));
-  }, [pendingRows, pendingSearch]);
-
-  const pendingTotalCents = useMemo(
-    () => filteredPendingRows.reduce((sum, row) => sum + (row.service_amount_cents ?? 0), 0),
-    [filteredPendingRows]
-  );
-
-  async function load(offset: number): Promise<void> {
-    setError(null);
-    if (offset === 0) setCharges(null);
-    else setLoadingMore(true);
-    const { data, error: loadError } = await supabase
-      .from("client_charges")
-      .select(
-        `id, charge_number, reference_code, period_start, period_end, due_date, status,
-         final_amount_cents, paid_amount_cents, open_amount_cents,
-         client:business_partners(display_name),
-         own_legal_entity:legal_entities(trade_name),
-         documents:charge_document_versions(id, version, pdf_storage_object_path, excel_storage_object_path)`
-      )
-      .order("period_start", { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
-    setLoadingMore(false);
-    if (loadError) {
-      setError(loadError.message);
-      return;
-    }
-    const page = (data ?? []) as unknown as ClientCharge[];
-    setHasMore(page.length === PAGE_SIZE);
-    setCharges((prev) => (offset === 0 ? page : [...(prev ?? []), ...page]));
+  useEffect(() => { if (organizationId) void loadClients(); }, [organizationId, loadClients]);
+  useEffect(() => { if (organizationId) void loadCharges(); }, [organizationId, loadCharges]);
+  async function generatePdf(charge: ChargeRow): Promise<void> {
+    setDownloading(charge.id); setError(null);
+    try {
+      const client = charge.clientName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-");
+      await downloadChargePdf(charge.id, `${client}-${charge.periodStart}-a-${charge.periodEnd}.pdf`);
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao gerar o PDF."); }
+    finally { setDownloading(null); }
   }
 
   const filtered = useMemo(() => {
-    if (!charges) return [];
     const term = search.trim().toLowerCase();
-    return charges.filter((charge) => {
-      if (filter === "OPEN" && !OPEN_STATUSES.includes(charge.status)) return false;
-      if (filter === "PAID" && charge.status !== "PAID") return false;
-      if (term && !(charge.client?.display_name ?? "").toLowerCase().includes(term)) return false;
-      return true;
-    });
-  }, [charges, search, filter]);
+    return (charges ?? []).filter((charge) => !term || charge.clientName.toLowerCase().includes(term));
+  }, [charges, search]);
+  const selectedClient = clients?.find((client) => client.id === clientId);
 
   return (
     <>
-      <PageHeader eyebrow="Recebimentos" title="Cobranças" description="Planilhas e PDFs de cobrança gerados pelo PC principal, incluindo as ainda em aberto." />
-
-      <Card eyebrow="Ainda não cobrado" title="Em andamento">
-        {pendingError ? <Alert tone="danger" title="Falha ao carregar operações em andamento">{pendingError}</Alert> : null}
-        {!pendingError && !pendingRows ? <LoadingState label="Carregando operações em andamento..." /> : null}
-        {pendingRows && pendingRows.length === 0 ? (
-          <p className="viewer-card-line viewer-card-line--muted">Nenhuma nota pendente de cobrança no momento — tudo já foi agrupado numa cobrança.</p>
-        ) : null}
-        {pendingRows && pendingRows.length > 0 ? (
-          <>
-            <input
-              type="search"
-              className="ui-input"
-              placeholder="Buscar cliente..."
-              value={pendingSearch}
-              onChange={(event) => setPendingSearch(event.target.value)}
-            />
-            <p className="viewer-pending-total">
-              {pendingSearch.trim() ? "Total do cliente (ainda não cobrado)" : "Total a receber (ainda não cobrado)"}:{" "}
-              <strong>{formatCurrencyBr(pendingTotalCents)}</strong>
-              <span className="viewer-card-line viewer-card-line--muted"> · {filteredPendingRows.length} nota(s)</span>
-            </p>
-            {filteredPendingRows.length === 0 ? (
-              <p className="viewer-card-line viewer-card-line--muted">Nenhuma nota pendente encontrada para essa busca.</p>
-            ) : (
-              <ul className="viewer-nf-list">
-                {filteredPendingRows
-                  .slice()
-                  .sort((a, b) => a.operation_date.localeCompare(b.operation_date))
-                  .map((operation) => (
-                    <li key={operation.id} className={`viewer-nf-row ${companyColorClass(operation.own_legal_entity?.trade_name)}`}>
-                      <div className="viewer-nf-row__main">
-                        <strong>
-                          {operation.fiscal_document
-                            ? `NF ${operation.fiscal_document.document_number}${operation.fiscal_document.series ? `/${operation.fiscal_document.series}` : ""}`
-                            : "Sem número"}
-                        </strong>
-                        <span>{formatDateBr(operation.operation_date)}</span>
-                      </div>
-                      <p className="viewer-nf-row__client">{operation.responsible_partner?.display_name ?? "Cliente não identificado"}</p>
-                      <div className="viewer-nf-row__meta">
-                        <span>{sameStateLabel(operation)}</span>
-                        <span>
-                          {Number(operation.quantity_sacks_decimal).toLocaleString("pt-BR")} sacas ·{" "}
-                          {formatCurrencyBr(operation.applied_rate_value_cents)}/saca
-                        </span>
-                      </div>
-                      <strong className="viewer-nf-row__amount">{formatCurrencyBr(operation.service_amount_cents)}</strong>
-                    </li>
-                  ))}
-              </ul>
-            )}
-          </>
-        ) : null}
-      </Card>
-
+      <PageHeader eyebrow="Recebimentos" title="Cobranças" description="Consulte o cliente, confira os valores e gere o mesmo PDF usado no aplicativo." />
+      <div className="viewer-period-filter">
+        <label>Início<input className="ui-input" type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
+        <label>Fim<input className="ui-input" type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
+      </div>
+      <FilterBar activeCount={(clientId ? 1 : 0) + (status !== "ALL" ? 1 : 0) + (search ? 1 : 0)} onClear={() => { setClientId(""); setStatus("ALL"); setSearch(""); }}>
+        <select className="ui-input" value={clientId} onChange={(event) => setClientId(event.target.value)}>
+          <option value="">Todos os clientes</option>
+          {(clients ?? []).map((client) => <option key={client.id} value={client.id}>{client.displayName}</option>)}
+        </select>
+        <input className="ui-input" type="search" placeholder="Buscar cliente..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className="viewer-chip-row">
+          {(["ALL", "OPEN", "PAID"] as FilterMode[]).map((item) => <Button key={item} variant={status === item ? "primary" : "secondary"} onClick={() => setStatus(item)}>{item === "ALL" ? "Todas" : item === "OPEN" ? "Em aberto" : "Pagas"}</Button>)}
+        </div>
+      </FilterBar>
+      {selectedClient ? <Card eyebrow="Cliente selecionado" title={selectedClient.displayName}><p className="viewer-card-line">{selectedClient.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} sacas · A receber: {formatCurrencyBr(selectedClient.receivableCents)} · Recebido: {formatCurrencyBr(selectedClient.receivedCents)}</p></Card> : null}
       {error ? <Alert tone="danger" title="Falha ao carregar cobranças">{error}</Alert> : null}
       {!error && !charges ? <LoadingState label="Carregando cobranças..." /> : null}
-      {charges ? (
-        <>
-          <FilterBar
-            activeCount={(filter !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
-            onClear={() => {
-              setSearch("");
-              setFilter("ALL");
-            }}
-          >
-            <input type="search" className="ui-input" placeholder="Buscar cliente..." value={search} onChange={(event) => setSearch(event.target.value)} />
-            <div className="viewer-chip-row">
-              {(Object.keys(FILTER_LABELS) as FilterMode[]).map((mode) => (
-                <Button key={mode} variant={filter === mode ? "primary" : "secondary"} onClick={() => setFilter(mode)}>
-                  {FILTER_LABELS[mode]}
-                </Button>
-              ))}
-            </div>
-          </FilterBar>
-          {filtered.length === 0 ? (
-            <EmptyState title="Nenhuma cobrança encontrada" description="Ajuste a busca ou o filtro para ver outros resultados." />
-          ) : (
-            <div className="viewer-card-grid">
-              {filtered.map((charge) => {
-                const latestDocument =
-                  charge.documents.length > 0 ? charge.documents.reduce((a, b) => (a.version > b.version ? a : b)) : null;
-                return (
-                  <Card
-                    key={charge.id}
-                    title={charge.client?.display_name ?? "Cliente"}
-                    actions={<StatusBadge status={charge.status} />}
-                    className={companyColorClass(charge.own_legal_entity?.trade_name)}
-                  >
-                    <p className="viewer-card-line">{charge.own_legal_entity?.trade_name ?? ""}</p>
-                    <p className="viewer-card-line">
-                      {charge.charge_number ? `Cobrança ${charge.charge_number}` : "Sem número"} · {formatDateBr(charge.period_start)} a{" "}
-                      {formatDateBr(charge.period_end)}
-                    </p>
-                    <p className="viewer-card-line">
-                      Total: {formatCurrencyBr(charge.final_amount_cents)}
-                      {charge.open_amount_cents > 0 ? ` · Em aberto: ${formatCurrencyBr(charge.open_amount_cents)}` : ""}
-                    </p>
-                    {!latestDocument ? <p className="viewer-card-line viewer-card-line--muted">Planilha ainda não gerada</p> : null}
-                    <div className="viewer-card-actions">
-                      <Button
-                        variant="secondary"
-                        disabled={!latestDocument?.pdf_storage_object_path}
-                        onClick={() => latestDocument?.pdf_storage_object_path && void openStorageFile(latestDocument.pdf_storage_object_path)}
-                      >
-                        Baixar PDF
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        disabled={!latestDocument?.excel_storage_object_path}
-                        onClick={() =>
-                          latestDocument?.excel_storage_object_path && void openStorageFile(latestDocument.excel_storage_object_path)
-                        }
-                      >
-                        Baixar planilha
-                      </Button>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-          {hasMore ? (
-            <div className="viewer-load-more">
-              <Button variant="ghost" loading={loadingMore} onClick={() => void load(charges.length)}>
-                Carregar mais
-              </Button>
-            </div>
-          ) : null}
-        </>
-      ) : null}
+      {charges && filtered.length === 0 ? <EmptyState title="Nenhuma cobrança encontrada" description="Ajuste o cliente, período ou situação." /> : null}
+      {filtered.length > 0 ? <div className="viewer-card-grid">{filtered.map((charge) => (
+        <Card key={charge.id} title={charge.clientName} actions={<StatusBadge status={charge.status} />} className={companyColorClass(charge.legalEntityName)}>
+          <p className="viewer-card-line">{charge.legalEntityName}</p>
+          <p className="viewer-card-line">{formatDateBr(charge.periodStart)} a {formatDateBr(charge.periodEnd)}</p>
+          <p className="viewer-card-line">Total: {formatCurrencyBr(charge.finalAmountCents)} · Recebido: {formatCurrencyBr(charge.paidAmountCents)} · Em aberto: {formatCurrencyBr(charge.openAmountCents)}</p>
+          <div className="viewer-card-actions"><Button variant="primary" loading={downloading === charge.id} onClick={() => void generatePdf(charge)}>Gerar PDF</Button></div>
+        </Card>
+      ))}</div> : null}
     </>
   );
 }

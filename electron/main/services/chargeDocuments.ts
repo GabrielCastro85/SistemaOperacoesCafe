@@ -17,7 +17,7 @@ export interface ChargeDocumentResult {
   imageFileHash: string;
 }
 
-type ChargeDocumentsInput = {
+export type ChargeDocumentsInput = {
   directories: AppDirectories;
   organization: Organization;
   ownLegalEntity: LegalEntity;
@@ -68,7 +68,7 @@ export async function generateChargeDocuments(input: ChargeDocumentsInput): Prom
 type PdfColor = ReturnType<typeof rgb>;
 const SUMMARY_IMAGE_WIDTH = 1100;
 
-async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> {
+export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8Array> {
   const { organization, ownLegalEntity, client, clientLegalEntity, detail } = input;
   const { charge } = detail;
   const isInternalPreview = charge.status === "DRAFT" && charge.notes === "PREVIA INTERNA";

@@ -1,17 +1,6 @@
 import { useMemo, useState } from "react";
 import { buildUiTheme, themeToCssVariables } from "./renderer/design-system/theme/theme";
-import {
-  CheckCircleIcon,
-  CoinsIcon,
-  DashboardIcon,
-  HandshakeIcon,
-  InvoiceIcon,
-  LedgerIcon,
-  PackageIcon,
-  RateIcon,
-  ReportIcon,
-  WalletIcon
-} from "./renderer/design-system/components/Icons";
+import { CoinsIcon, DashboardIcon } from "./renderer/design-system/components/Icons";
 import { formatCnpj } from "./shared/utils/format";
 import { assetUrl } from "./assetUrl";
 import { navigationGroups, pageTitleById, type NavigationItem, type PageId } from "./navigation";
@@ -24,26 +13,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
   switch (item.id) {
     case "dashboard":
       return <DashboardIcon />;
-    case "invoices":
-      return <InvoiceIcon />;
-    case "partners":
-      return <HandshakeIcon />;
-    case "products":
-      return <PackageIcon />;
-    case "rates":
-    case "purchaseRates":
-      return <RateIcon />;
-    case "purchaseSettlements":
-    case "finance":
-      return <WalletIcon />;
-    case "confirmations":
-      return <CheckCircleIcon />;
     case "charges":
       return <CoinsIcon />;
-    case "ledger":
-      return <LedgerIcon />;
-    case "reports":
-      return <ReportIcon />;
     default:
       return <DashboardIcon />;
   }
@@ -208,7 +179,7 @@ export function AppShell({
         </header>
         {children}
         <footer className="app-statusbar">
-          <span>Dados sincronizados do PC principal</span>
+          <span>Consulta central atualizada pelo aplicativo</span>
           <strong>Operações Café — Consulta</strong>
         </footer>
       </section>

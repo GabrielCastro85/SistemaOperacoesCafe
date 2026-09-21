@@ -4,12 +4,17 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist-server",
-    "rootDir": "server",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["server/**/*.ts"]
+  "include": [
+    "server/**/*.ts",
+    "electron/main/services/chargeDocuments.ts",
+    "src/shared/types/domain.ts",
+    "src/shared/utils/chargeLabel.ts",
+    "src/shared/utils/operationLabels.ts"
+  ]
 }
-

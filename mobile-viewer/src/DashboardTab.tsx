@@ -1,106 +1,62 @@
-import { useEffect, useState } from "react";
-import { supabase } from "./supabaseClient";
-import { formatCurrencyBr } from "./storage";
+import { useCallback, useEffect, useState } from "react";
+import { apiJson, queryString } from "./api";
+import { formatCurrencyBr } from "./viewerFormat";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { Card } from "./renderer/design-system/components/Card";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
-import { CheckCircleIcon, CoinsIcon, InvoiceIcon, WalletIcon } from "./renderer/design-system/components/Icons";
-
-const OPEN_CHARGE_STATUSES = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
-const OPEN_CONFIRMATION_STATUSES = ["DRAFT", "PENDING_REVIEW", "ISSUED", "SENT_FOR_SIGNATURE"];
-const OPEN_PAYABLE_STATUSES = ["DRAFT", "SCHEDULED", "OPEN", "PARTIALLY_PAID", "OVERDUE", "CONTESTED"];
-const AGGREGATE_LIMIT = 2000;
-const RECENT_DAYS = 30;
+import { CoinsIcon, InvoiceIcon, PackageIcon, WalletIcon } from "./renderer/design-system/components/Icons";
 
 interface DashboardSummary {
-  openChargesCount: number;
-  openChargesAmountCents: number;
-  openConfirmationsCount: number;
-  waitingSignatureCount: number;
-  openPayablesCount: number;
-  openPayablesAmountCents: number;
-  recentInvoicesCount: number;
+  sacks: number;
+  operationCount: number;
+  receivableCents: number;
+  receivedCents: number;
+  generatedServiceCents: number;
+  unbilledCount: number;
+  overdueCents: number;
 }
 
-export function DashboardTab(): JSX.Element {
+function currentMonth(): { start: string; end: string } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
+  return { start: `${year}-${month}-01`, end: `${year}-${month}-${String(lastDay).padStart(2, "0")}` };
+}
+
+export function DashboardTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
+  const initial = currentMonth();
+  const [periodStart, setPeriodStart] = useState(initial.start);
+  const [periodEnd, setPeriodEnd] = useState(initial.end);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void load();
-  }, []);
-
-  async function load(): Promise<void> {
+  const load = useCallback(async (): Promise<void> => {
     setError(null);
-    const recentSince = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const [chargesResult, confirmationsResult, payablesResult, invoicesResult] = await Promise.all([
-      supabase.from("client_charges").select("status, open_amount_cents").limit(AGGREGATE_LIMIT),
-      supabase.from("deal_confirmations").select("status").limit(AGGREGATE_LIMIT),
-      supabase.from("accounts_payable").select("status, open_amount_cents").limit(AGGREGATE_LIMIT),
-      supabase.from("fiscal_documents").select("id", { count: "exact", head: true }).neq("status", "CANCELED").gte("issue_date", recentSince)
-    ]);
-    const firstError =
-      chargesResult.error?.message ?? confirmationsResult.error?.message ?? payablesResult.error?.message ?? invoicesResult.error?.message;
-    if (firstError) {
-      setError(firstError);
-      return;
-    }
+    setSummary(null);
+    try {
+      setSummary(await apiJson(`/v1/viewer/dashboard?${queryString({ organizationId, legalEntityId, periodStart, periodEnd })}`));
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao carregar o dashboard."); }
+  }, [organizationId, legalEntityId, periodStart, periodEnd]);
 
-    const openCharges = (chargesResult.data ?? []).filter((row) => OPEN_CHARGE_STATUSES.includes(row.status));
-    const openConfirmations = (confirmationsResult.data ?? []).filter((row) => OPEN_CONFIRMATION_STATUSES.includes(row.status));
-    const openPayables = (payablesResult.data ?? []).filter((row) => OPEN_PAYABLE_STATUSES.includes(row.status));
-
-    setSummary({
-      openChargesCount: openCharges.length,
-      openChargesAmountCents: openCharges.reduce((sum, row) => sum + (row.open_amount_cents ?? 0), 0),
-      openConfirmationsCount: openConfirmations.length,
-      waitingSignatureCount: (confirmationsResult.data ?? []).filter((row) => row.status === "SENT_FOR_SIGNATURE").length,
-      openPayablesCount: openPayables.length,
-      openPayablesAmountCents: openPayables.reduce((sum, row) => sum + (row.open_amount_cents ?? 0), 0),
-      recentInvoicesCount: invoicesResult.count ?? 0
-    });
-  }
+  useEffect(() => { if (organizationId) void load(); }, [organizationId, load]);
 
   return (
     <>
-      <PageHeader eyebrow="Visão geral" title="Dashboard" description="Resumo do que está em aberto agora, com base nos dados sincronizados do PC principal." />
+      <PageHeader eyebrow="Visão geral" title="Dashboard" description="Sacas, valores a receber e recebimentos do período selecionado." />
+      <div className="viewer-period-filter">
+        <label>Início<input className="ui-input" type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
+        <label>Fim<input className="ui-input" type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
+      </div>
       {error ? <Alert tone="danger" title="Falha ao carregar o dashboard">{error}</Alert> : null}
       {!error && !summary ? <LoadingState label="Carregando indicadores..." /> : null}
       {summary ? (
         <div className="dashboard-grid dashboard-grid--hero">
-          <Card>
-            <span className="kpi-icon">
-              <WalletIcon />
-            </span>
-            <span>Cobranças em aberto</span>
-            <strong>{formatCurrencyBr(summary.openChargesAmountCents)}</strong>
-            <small>{summary.openChargesCount} cobrança(s) ainda não pagas</small>
-          </Card>
-          <Card>
-            <span className="kpi-icon">
-              <CheckCircleIcon />
-            </span>
-            <span>Confirmações em aberto</span>
-            <strong>{summary.openConfirmationsCount}</strong>
-            <small>{summary.waitingSignatureCount} aguardando assinatura</small>
-          </Card>
-          <Card>
-            <span className="kpi-icon">
-              <CoinsIcon />
-            </span>
-            <span>Contas a pagar em aberto</span>
-            <strong>{formatCurrencyBr(summary.openPayablesAmountCents)}</strong>
-            <small>{summary.openPayablesCount} conta(s) a pagar</small>
-          </Card>
-          <Card>
-            <span className="kpi-icon">
-              <InvoiceIcon />
-            </span>
-            <span>Notas lançadas</span>
-            <strong>{summary.recentInvoicesCount}</strong>
-            <small>Últimos {RECENT_DAYS} dias</small>
-          </Card>
+          <Card><span className="kpi-icon"><PackageIcon /></span><span>Sacas no período</span><strong>{summary.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</strong><small>{summary.operationCount} operação(ões)</small></Card>
+          <Card><span className="kpi-icon"><WalletIcon /></span><span>Total a receber</span><strong>{formatCurrencyBr(summary.receivableCents)}</strong><small>{summary.unbilledCount} nota(s) ainda não cobradas</small></Card>
+          <Card><span className="kpi-icon"><CoinsIcon /></span><span>Recebido no período</span><strong>{formatCurrencyBr(summary.receivedCents)}</strong><small>Pagamentos confirmados nas datas selecionadas</small></Card>
+          <Card><span className="kpi-icon"><InvoiceIcon /></span><span>Serviços gerados</span><strong>{formatCurrencyBr(summary.generatedServiceCents)}</strong><small>Vencido: {formatCurrencyBr(summary.overdueCents)}</small></Card>
         </div>
       ) : null}
     </>

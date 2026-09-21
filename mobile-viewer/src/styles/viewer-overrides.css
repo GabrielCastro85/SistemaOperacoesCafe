@@ -128,3 +128,18 @@
     align-items: start;
   }
 }
+.viewer-period-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.viewer-period-filter label {
+  display: grid;
+  gap: 5px;
+  min-width: 180px;
+  color: var(--color-text-muted, #6e6253);
+  font-size: 0.78rem;
+  font-weight: 600;
+}

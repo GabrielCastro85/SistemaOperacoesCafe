@@ -8,14 +8,18 @@ import { registerAuthRoutes } from "./auth.js";
 import { registerBootstrapRoutes } from "./bootstrap.js";
 import { registerSqliteImportRoutes } from "./sqliteImport.js";
 import { registerSyncRoutes } from "./sync.js";
+import { registerViewerRoutes } from "./viewer.js";
 
 const config = loadConfig();
 const pool = createPool(config);
 await runCentralMigrations(pool);
 
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 2 * 1024 * 1024 });
-await app.register(helmet);
-await app.register(cors, { origin: config.corsOrigins, credentials: false });
+await app.register(helmet, { crossOriginResourcePolicy: { policy: "cross-origin" } });
+await app.register(cors, {
+  origin: Array.from(new Set([...config.corsOrigins, "https://gabrielcastro85.github.io"])),
+  credentials: false
+});
 
 app.get("/health", async () => ({
   status: "ok",
@@ -35,6 +39,7 @@ registerAuthRoutes(app, pool, config);
 registerBootstrapRoutes(app, pool, config);
 registerSqliteImportRoutes(app, pool);
 registerSyncRoutes(app, pool);
+registerViewerRoutes(app, pool);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });
