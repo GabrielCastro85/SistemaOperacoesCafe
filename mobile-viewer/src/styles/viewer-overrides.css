@@ -194,3 +194,177 @@
   font-size: 0.78rem;
   font-weight: 600;
 }
+/* The consultation header keeps only the active company identity. Context
+   controls live in the sidebar so the notes start closer to the top. */
+.app-sidebar {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.app-sidebar::after {
+  display: none;
+}
+
+.app-sidebar__context {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--brand-secondary) 24%, transparent);
+  border-radius: var(--radius-lg);
+  background: rgb(0 0 0 / 18%);
+}
+
+.app-sidebar__context .context-select span,
+.app-sidebar__session span {
+  color: color-mix(in srgb, var(--color-sidebar-text) 64%, transparent);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.app-sidebar__context select {
+  min-height: 36px;
+  color: var(--color-sidebar-text);
+  border-color: color-mix(in srgb, var(--brand-secondary) 30%, transparent);
+  background: color-mix(in srgb, var(--color-sidebar) 78%, black);
+  font-size: 12px;
+}
+
+.app-sidebar__session {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.app-sidebar__session > div {
+  display: grid;
+  min-width: 0;
+}
+
+.app-sidebar__session strong {
+  overflow: hidden;
+  color: var(--color-sidebar-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar__session button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border-color: color-mix(in srgb, var(--brand-secondary) 34%, transparent);
+  color: var(--color-sidebar-text);
+  background: rgb(0 0 0 / 22%);
+}
+
+.app-topbar {
+  display: flex;
+  min-height: 64px;
+  padding: 8px 18px;
+}
+
+.app-topbar__brandline {
+  display: flex;
+  flex: none;
+}
+
+.app-topbar__brandline img,
+.app-topbar__brandline .brand-mark {
+  width: 44px;
+  height: 44px;
+}
+
+.app-topbar__company-badge {
+  width: min(420px, calc(100% - 64px));
+  min-height: 44px;
+  margin-left: auto;
+  padding: 5px 72px 5px 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+}
+
+.app-topbar__company-badge::before {
+  display: none;
+}
+
+.app-topbar__company-badge > * {
+  grid-column: 1;
+}
+
+.app-topbar__company-badge strong,
+.app-topbar__company-badge small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-topbar__company-badge .context-pill__state-flag {
+  left: auto;
+  width: 68px;
+  opacity: 0.92;
+}
+
+.professional-shell.is-collapsed .app-sidebar__context {
+  display: none;
+}
+
+@media (max-width: 880px) {
+  .app-sidebar {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .app-sidebar__context,
+  .professional-shell.is-collapsed .app-sidebar__context {
+    display: grid;
+    order: 2;
+  }
+
+  .app-sidebar__nav {
+    order: 3;
+  }
+
+  .app-sidebar__footer {
+    order: 4;
+  }
+
+  .app-topbar {
+    flex-wrap: nowrap;
+    min-height: 58px;
+    padding: 7px 12px;
+  }
+
+  .app-topbar__brandline {
+    flex: none;
+    gap: 7px;
+  }
+
+  .app-topbar__brandline img,
+  .app-topbar__brandline .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .app-topbar__company-badge {
+    flex: 1 1 auto;
+    width: auto;
+    min-height: 40px;
+    padding: 4px 56px 4px 9px;
+  }
+
+  .app-topbar__company-badge strong {
+    font-size: 12px;
+  }
+
+  .app-topbar__company-badge small {
+    font-size: 10px;
+  }
+
+  .app-topbar__company-badge .context-pill__state-flag {
+    width: 52px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-topbar__company-badge small {
+    display: none;
+  }
+}

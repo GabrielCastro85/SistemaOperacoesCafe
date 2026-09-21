@@ -3,7 +3,7 @@ import { buildUiTheme, themeToCssVariables } from "./renderer/design-system/them
 import { CoinsIcon, DashboardIcon } from "./renderer/design-system/components/Icons";
 import { formatCnpj } from "./shared/utils/format";
 import { assetUrl } from "./assetUrl";
-import { navigationGroups, pageTitleById, type NavigationItem, type PageId } from "./navigation";
+import { navigationGroups, type NavigationItem, type PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 import flagEspiritoSanto from "./renderer/assets/flags/bandeira-espirito-santo.svg";
 import flagMinasGerais from "./renderer/assets/flags/bandeira-minas-gerais.svg";
@@ -99,6 +99,39 @@ export function AppShell({
         >
           {collapsed ? "→" : "←"}
         </button>
+        <div className="app-sidebar__context">
+          <label className="context-select">
+            <span>Grupo</span>
+            <select value={activeOrganizationId} onChange={(event) => onOrganizationChange(event.target.value)}>
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          {legalEntities.length > 1 ? (
+            <label className="context-select">
+              <span>Empresa/CNPJ</span>
+              <select value={activeLegalEntityId} onChange={(event) => onLegalEntityChange(event.target.value)}>
+                {legalEntities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.tradeName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <div className="app-sidebar__session">
+            <div>
+              <span>Usuário</span>
+              <strong>{userDisplayName}</strong>
+            </div>
+            <button type="button" onClick={onLogout}>
+              Sair
+            </button>
+          </div>
+        </div>
         <nav className="app-sidebar__nav">
           {navigationGroups.map((group) => (
             <section key={group.title}>
@@ -132,49 +165,11 @@ export function AppShell({
               ☰
             </button>
             {logoSrc ? <img src={logoSrc} alt="" /> : <div className="brand-mark">{theme.organizationName.slice(0, 2).toUpperCase()}</div>}
-            <div className="page-context">
-              <span>{theme.appName}</span>
-              <strong>{pageTitleById[activePage]}</strong>
-              <small>Início / {pageTitleById[activePage]}</small>
-            </div>
           </div>
-          <label className="context-select">
-            <span>Grupo</span>
-            <select value={activeOrganizationId} onChange={(event) => onOrganizationChange(event.target.value)}>
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          {legalEntities.length > 1 ? (
-            <label className="context-select">
-              <span>Empresa/CNPJ</span>
-              <select value={activeLegalEntityId} onChange={(event) => onLegalEntityChange(event.target.value)}>
-                {legalEntities.map((entity) => (
-                  <option key={entity.id} value={entity.id}>
-                    {entity.tradeName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <div className={`context-pill context-pill--active-company ${stateFlagClass(activeLegalEntity?.state)}`}>
+          <div className={`context-pill context-pill--active-company app-topbar__company-badge ${stateFlagClass(activeLegalEntity?.state)}`}>
             {activeStateFlagSrc ? <img className="context-pill__state-flag" src={activeStateFlagSrc} alt="" aria-hidden="true" /> : null}
-            <span>Vendo</span>
             <strong>{activeLegalEntity?.tradeName ?? activeOrganization?.displayName ?? "Empresa não selecionada"}</strong>
             <small>{activeLegalEntity ? formatCnpj(activeLegalEntity.cnpj) : "CNPJ pendente"}</small>
-          </div>
-          <div className="context-pill context-pill--user">
-            <span>Usuário</span>
-            <strong>{userDisplayName}</strong>
-            <small>Somente visualização</small>
-          </div>
-          <div className="topbar-actions">
-            <button type="button" onClick={onLogout}>
-              Sair
-            </button>
           </div>
         </header>
         {children}
