@@ -102,25 +102,61 @@ export function ChargesTab({ organizationId, legalEntityId }: { organizationId: 
         </select>
         <input className="ui-input" type="search" placeholder="Buscar cliente, emitente, destino ou NF..." value={search} onChange={(event) => setSearch(event.target.value)} />
       </FilterBar>
-      {selectedClient ? <Card eyebrow="Cliente selecionado" title={selectedClient.displayName}><p className="viewer-card-line">{selectedClient.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} sacas · A receber: {formatCurrencyBr(selectedClient.receivableCents)} · Recebido: {formatCurrencyBr(selectedClient.receivedCents)}</p></Card> : null}
-      {notes && filtered.length > 0 ? <Card eyebrow="Notas não cobradas" title={`${filtered.length} nota(s)`}><p className="viewer-card-line"><strong>{totals.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} sacas</strong> · {formatCurrencyBr(totals.amountCents)} em serviços</p></Card> : null}
+      {notes && filtered.length > 0 ? (
+        <Card
+          eyebrow={selectedClient ? "Total do cliente no período" : "Total do filtro atual"}
+          title={selectedClient?.displayName ?? "Todos os clientes"}
+          className="viewer-open-notes-summary"
+        >
+          <div className="viewer-open-notes-summary__metrics">
+            <span><small>Notas em aberto</small><strong>{filtered.length}</strong></span>
+            <span><small>Sacas</small><strong>{totals.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</strong></span>
+            <span><small>Valor a pagar</small><strong>{formatCurrencyBr(totals.amountCents)}</strong></span>
+          </div>
+        </Card>
+      ) : null}
       {error ? <Alert tone="danger" title="Falha ao carregar notas">{error}</Alert> : null}
       {!error && !notes ? <LoadingState label="Carregando notas em aberto..." /> : null}
       {notes && filtered.length === 0 ? <EmptyState title="Nenhuma nota em aberto encontrada" description="Ajuste o cliente ou o período. Notas já cobradas não aparecem nesta lista." /> : null}
-      {filtered.length > 0 ? <div className="viewer-card-grid viewer-open-note-grid">{filtered.map((note) => (
-        <Card key={note.id} eyebrow={formatDateBr(note.operationDate)} title={`NF ${note.documentNumber}`} className={`viewer-company-accent--${note.companyTone}`}>
-          <div className="viewer-open-note__status">Não cobrada{note.hasPendingIssues ? " · Com pendências" : ""}</div>
-          <p className="viewer-open-note__client">{note.clientName}</p>
-          {note.issuerName ? <p className="viewer-card-line">Emitida por <strong>{note.issuerName}</strong></p> : null}
-          <p className="viewer-card-line">Destino: <strong>{note.destinationName ?? "Não identificado"}</strong></p>
-          <p className="viewer-card-line viewer-card-line--muted">{note.companyContext}</p>
-          <div className="viewer-open-note__numbers">
-            <span><small>{note.operationScope === "INTERNAL" ? "Mesma UF" : "Outra UF"}</small><strong>{decimalBr(note.quantitySacks)} sacas</strong></span>
-            <span><small>Tarifa</small><strong>{formatCurrencyBr(note.rateCents)}/saca</strong></span>
-            <span><small>Valor</small><strong>{formatCurrencyBr(note.serviceAmountCents)}</strong></span>
+      {filtered.length > 0 ? (
+        <div className="viewer-open-note-list" role="table" aria-label="Notas em aberto">
+          <div className="viewer-open-note-list__head" role="row">
+            <span>Nota</span>
+            <span>Cliente</span>
+            <span>Emissão</span>
+            <span>Operação</span>
+            <span>Valor</span>
+            <span>Status</span>
           </div>
-        </Card>
-      ))}</div> : null}
+          {filtered.map((note) => (
+            <div key={note.id} className={`viewer-open-note-row viewer-company-accent--${note.companyTone}`} role="row">
+              <span className="viewer-open-note-row__note" role="cell">
+                <strong>NF {note.documentNumber}</strong>
+                <small>{formatDateBr(note.operationDate)}</small>
+              </span>
+              <span role="cell">
+                <strong>{note.clientName}</strong>
+                <small>{note.companyContext}</small>
+              </span>
+              <span role="cell">
+                <strong>{note.issuerName ?? "Emitente não identificado"}</strong>
+                <small>Destino: {note.destinationName ?? "Não identificado"}</small>
+              </span>
+              <span role="cell">
+                <strong>{note.operationScope === "INTERNAL" ? "Mesma UF" : "Outra UF"}</strong>
+                <small>{decimalBr(note.quantitySacks)} sacas · {formatCurrencyBr(note.rateCents)}/saca</small>
+              </span>
+              <span className="viewer-open-note-row__amount" role="cell">
+                <strong>{formatCurrencyBr(note.serviceAmountCents)}</strong>
+                <small>{decimalBr(note.quantitySacks)} sacas</small>
+              </span>
+              <span role="cell">
+                <span className="viewer-open-note__status">Não cobrada{note.hasPendingIssues ? " · Com pendências" : ""}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </>
   );
 }
