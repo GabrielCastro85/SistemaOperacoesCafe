@@ -17,7 +17,12 @@ await runCentralMigrations(pool);
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 2 * 1024 * 1024 });
 await app.register(helmet, { crossOriginResourcePolicy: { policy: "cross-origin" } });
 await app.register(cors, {
-  origin: Array.from(new Set([...config.corsOrigins, "https://gabrielcastro85.github.io"])),
+  origin: Array.from(new Set([
+    ...config.corsOrigins,
+    "https://gabrielcastro85.github.io",
+    "https://graobase.com.br",
+    "https://www.graobase.com.br"
+  ])),
   credentials: false
 });
 
