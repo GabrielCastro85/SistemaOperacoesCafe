@@ -31,8 +31,6 @@ jobs:
         working-directory: mobile-viewer
       - run: npm run build
         working-directory: mobile-viewer
-        env:
-          GITHUB_PAGES: "true"
       - uses: actions/configure-pages@v5
         with:
           enablement: true
