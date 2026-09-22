@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.14
+
+- Corrigida a sincronizacao central de lotes grandes: registros relacionados agora sao aplicados juntos antes da validacao, evitando que um computador fique preso em uma revisao antiga.
+- O total a receber do Dashboard tenta atualizar os dados centrais antes do calculo e e recalculado automaticamente a cada 15 segundos.
+- Credenciais do servidor central passam a ser guardadas separadamente por usuario e sao atualizadas depois da troca de senha.
+- Adicionado teste de regressao para alteracoes relacionadas divididas em varias paginas de sincronizacao.
+
 ## 1.1.13
 
 - O PDF de cobranca passa a incluir somente as notas vinculadas ao periodo da propria cobranca, sem misturar notas antigas ja pagas.

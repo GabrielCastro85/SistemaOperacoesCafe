@@ -24,16 +24,15 @@ export class CentralCredentialStore {
   }
 
   isConfigured(): boolean {
-    return this.load("") !== null;
+    return Object.keys(this.read().passwords).length > 0;
   }
 
   load(username: string): CentralCredential | null {
     if (!safeStorage.isEncryptionAvailable()) return null;
     const passwords = this.read().passwords;
     const normalized = normalizeUsername(username);
-    const entry = passwords[normalized]
-      ? [normalized, passwords[normalized]] as const
-      : Object.entries(passwords)[0];
+    const encryptedPassword = passwords[normalized];
+    const entry = encryptedPassword ? [normalized, encryptedPassword] as const : null;
     if (!entry) return null;
     try {
       return {

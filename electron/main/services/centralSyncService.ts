@@ -235,17 +235,24 @@ export class CentralSyncService {
   private async pullRemoteChanges(): Promise<void> {
     let revision = this.getServerRevision();
     let sequence = 0;
+    const changes: CentralChange[] = [];
+    let currentRevision = revision;
     while (true) {
       const page: { currentRevision: number; changes: CentralChange[]; next: { revision: number; sequence: number } | null } =
         await this.request(`/v1/sync/changes?after=${revision}&sequence=${sequence}&limit=1000`);
-      if (page.changes.length) this.applyRemoteChanges(page.changes);
+      changes.push(...page.changes);
+      currentRevision = page.currentRevision;
       if (!page.next) {
-        this.setServerRevision(page.currentRevision);
-        return;
+        break;
       }
       revision = page.next.revision;
       sequence = page.next.sequence;
     }
+    // Uma revisao pode ocupar varias paginas. Validar as chaves estrangeiras
+    // por pagina rejeita temporariamente filhos cujo pai chega na pagina
+    // seguinte, deixando computadores diferentes presos em revisoes distintas.
+    if (changes.length) this.applyRemoteChanges(changes);
+    this.setServerRevision(currentRevision);
   }
 
   private async pushLocalChanges(): Promise<void> {

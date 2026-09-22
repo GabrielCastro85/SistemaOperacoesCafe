@@ -361,6 +361,20 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
 
   useEffect(() => {
     if (!organizationId) return;
+    const refreshBilling = (): void => {
+      void window.operationsCafe.getBillingSummary({
+        organizationId,
+        includeAllCompanies: true,
+        periodStart: periodStart || null,
+        periodEnd: periodEnd || null
+      }).then(setBillingSummary).catch(() => undefined);
+    };
+    const timer = window.setInterval(refreshBilling, 15_000);
+    return () => window.clearInterval(timer);
+  }, [organizationId, periodStart, periodEnd]);
+
+  useEffect(() => {
+    if (!organizationId) return;
     void window.operationsCafe.getMonthlyOperationTotals({ organizationId, ownLegalEntityId, year: chartYear }).then(setMonthlyTotals);
   }, [organizationId, ownLegalEntityId, chartYear]);
 

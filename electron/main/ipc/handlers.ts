@@ -69,7 +69,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   const loginCentral = async (username: string, suppliedPassword?: string, localPassword?: string): Promise<void> => {
     const storedCredential = centralCredentials.load(username);
     const centralUsername = storedCredential?.username ?? username;
-    const centralPassword = suppliedPassword?.trim() ? suppliedPassword : storedCredential?.password;
+    const centralPassword = suppliedPassword?.trim() ? suppliedPassword : storedCredential?.password ?? localPassword;
     if (!centralPassword) {
       throw new AuthError(
         "Informe a senha do servidor central neste primeiro acesso. Ela ficara protegida pelo Windows.",
@@ -78,7 +78,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     }
     try {
       await centralSync.login(centralUsername, centralPassword);
-      if (suppliedPassword?.trim()) centralCredentials.save(centralUsername, suppliedPassword);
+      if (suppliedPassword?.trim() || !storedCredential) centralCredentials.save(centralUsername, centralPassword);
     } catch (error) {
       const invalidStoredCredential = !suppliedPassword?.trim() && localPassword && error instanceof Error && error.message.includes("(401)");
       if (!invalidStoredCredential) throw error;
@@ -152,8 +152,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.authChangePassword, async (_event, payload: unknown) => {
     const passwords = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(1) }).parse(payload);
+    const session = auth.requireSession();
     await centralSync.changePassword(passwords.currentPassword, passwords.newPassword);
     await auth.changePassword(payload);
+    centralCredentials.save(session.user.username, passwords.newPassword);
   });
   handle(IPC_CHANNELS.listUsers, () => auth.listUsers());
   handle(IPC_CHANNELS.createUser, async (_event, payload: unknown) => {
@@ -875,9 +877,13 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     if (error) throw new Error(error);
     return true;
   });
-  handle(IPC_CHANNELS.getBillingSummary, (_event, payload: unknown) =>
-    repository.getBillingSummary(z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), includeAllCompanies: z.boolean().optional(), periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() })]).parse(payload))
-  );
+  handle(IPC_CHANNELS.getBillingSummary, async (_event, payload: unknown) => {
+    const input = z.union([z.string().uuid(), z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), includeAllCompanies: z.boolean().optional(), periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() })]).parse(payload);
+    // Tenta trazer a revisao mais recente antes do calculo. Se o computador
+    // estiver offline, o modo local continua disponivel e o rodape exibe o erro.
+    await centralSync.synchronize().catch(() => undefined);
+    return repository.getBillingSummary(input);
+  });
   handle(IPC_CHANNELS.getDashboardAlerts, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload);
     return repository.getDashboardAlerts(data.organizationId, data.ownLegalEntityId);
