@@ -110,12 +110,14 @@ export class CentralSyncService {
       })
     }, false);
     this.token = response.token;
-    this.start();
     try {
       await this.synchronize();
     } catch (error) {
+      this.stop();
       log.warn("Central sync during login failed", error instanceof Error ? error.message : String(error));
+      throw new Error(`Nao foi possivel carregar os dados do servidor central. Tente entrar novamente. Detalhe: ${error instanceof Error ? error.message : String(error)}`);
     }
+    this.start();
     return response.user?.desktopProfile ?? null;
   }
 
@@ -315,8 +317,11 @@ export class CentralSyncService {
     try {
       const transaction = this.db.transaction(() => {
         callback();
-        const violations = this.db.pragma("foreign_key_check") as unknown[];
-        if (violations.length) throw new Error(`A sincronizacao produziria ${violations.length} violacao(oes) de relacionamento.`);
+        const violations = this.db.pragma("foreign_key_check") as Array<{ table: string; parent: string }>;
+        if (violations.length) {
+          const relationships = [...new Set(violations.map((item) => `${item.table} -> ${item.parent}`))].join(", ");
+          throw new Error(`A sincronizacao produziria ${violations.length} violacao(oes) de relacionamento: ${relationships}.`);
+        }
       });
       transaction();
     } finally {

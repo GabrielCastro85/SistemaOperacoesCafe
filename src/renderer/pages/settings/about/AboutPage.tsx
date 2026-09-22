@@ -27,6 +27,16 @@ export function AboutPage(): JSX.Element {
           ]}
         />
       </PageSection>
+      <PageSection title="Servidor central">
+        <DefinitionList
+          items={[
+            { label: "Sincronizacao", value: diagnostics?.centralSyncStatus ?? "-" },
+            { label: "Revisao recebida", value: String(diagnostics?.centralSyncRevision ?? "-") },
+            { label: "Ultima sincronizacao", value: diagnostics?.centralSyncLastSuccessAt ?? "Ainda nao concluida" },
+            { label: "Detalhe da falha", value: diagnostics?.centralSyncError ?? "Nenhuma falha registrada" }
+          ]}
+        />
+      </PageSection>
       <PageSection title="Dados locais">
         <DefinitionList
           items={[

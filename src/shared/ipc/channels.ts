@@ -50,6 +50,7 @@ export const IPC_CHANNELS = {
   updateInstallationProfile: "app:updateInstallationProfile",
   getActiveContext: "app:getActiveContext",
   getDiagnostics: "app:getDiagnostics",
+  copyText: "app:copyText",
   getUpdateStatus: "app:getUpdateStatus",
   checkForUpdates: "app:checkForUpdates",
   quitAndInstallUpdate: "app:quitAndInstallUpdate",

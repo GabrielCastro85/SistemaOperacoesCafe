@@ -30,6 +30,104 @@ function createDatabase(): Database.Database {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CentralSyncService", () => {
+  it("substitui dados antigos do segundo PC pelos dados centrais antes de liberar o login", async () => {
+    const db = createDatabase();
+    db.prepare("UPDATE installation_profiles SET id = 'second-pc'").run();
+    db.prepare("UPDATE organizations SET display_name = 'Dados antigos'").run();
+    const paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      paths.push(path);
+      if (path === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (path === "/v1/sync/status") return jsonResponse({ revision: 1, sourceInstallationId: "install-source", recordCount: 1 });
+      if (path === "/v1/sync/bootstrap") return jsonResponse({
+        revision: 1, nextCursor: null,
+        records: [{ table: "organizations", key: "org-1", data: { display_name: "Grao & Grao", id: "org-1" }, sha256: "32f79fb1e77c40a2f14cfd4114f48587ce66be99194a393489860014ee4e6b5c", revision: 1 }]
+      });
+      if (path === "/v1/sync/changes") return jsonResponse({ currentRevision: 1, changes: [], next: null });
+      throw new Error(`Rota inesperada: ${path}`);
+    }));
+    const service = new CentralSyncService(db, "test");
+    try {
+      await service.login("Gabriel", "senha-teste");
+      expect(db.prepare("SELECT display_name FROM organizations").get()).toEqual({ display_name: "Grao & Grao" });
+      expect(service.getStatus()).toMatchObject({ status: "ONLINE", revision: 1, error: null });
+      expect(paths).not.toContain("/v1/sync/push");
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
+  it("recusa login se o download falhar, preserva a base e permite tentar novamente", async () => {
+    const db = createDatabase();
+    db.prepare("UPDATE installation_profiles SET id = 'second-pc'").run();
+    let unavailable = true;
+    const fetchMock = vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      if (path === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (path === "/v1/sync/status") return jsonResponse({ revision: 1, sourceInstallationId: "install-source", recordCount: 1 });
+      if (path === "/v1/sync/bootstrap") {
+        if (unavailable) return jsonResponse({ message: "Servico indisponivel" }, 503);
+        return jsonResponse({ revision: 1, nextCursor: null, records: [{
+          table: "organizations", key: "org-1", data: { display_name: "Grao & Grao", id: "org-1" },
+          sha256: "32f79fb1e77c40a2f14cfd4114f48587ce66be99194a393489860014ee4e6b5c", revision: 1
+        }] });
+      }
+      if (path === "/v1/sync/changes") return jsonResponse({ currentRevision: 1, changes: [], next: null });
+      throw new Error(`Rota inesperada: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new CentralSyncService(db, "test");
+    try {
+      await expect(service.login("Gabriel", "senha-teste")).rejects.toThrow("Nao foi possivel carregar os dados do servidor central");
+      expect(service.getStatus()).toMatchObject({ status: "ERROR", revision: 0, lastSuccessAt: null });
+      expect(db.prepare("SELECT display_name FROM organizations").get()).toEqual({ display_name: "Grao & Grao" });
+      expect(db.prepare("SELECT COUNT(*) AS total FROM central_sync_baseline").get()).toEqual({ total: 0 });
+      const requestCount = fetchMock.mock.calls.length;
+      await service.synchronize();
+      expect(fetchMock).toHaveBeenCalledTimes(requestCount);
+      unavailable = false;
+      await service.login("Gabriel", "senha-teste");
+      expect(service.getStatus()).toMatchObject({ status: "ONLINE", revision: 1, error: null });
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
+  it("informa relacionamentos locais que impedem a carga sem apagar dados ou enviar alteracoes", async () => {
+    const db = createDatabase();
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      UPDATE installation_profiles SET id = 'second-pc';
+      CREATE TABLE users (id TEXT PRIMARY KEY, organization_id TEXT REFERENCES organizations(id));
+      INSERT INTO users VALUES ('local-user', 'org-1');
+    `);
+    const paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      paths.push(path);
+      if (path === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (path === "/v1/sync/status") return jsonResponse({ revision: 1, sourceInstallationId: "install-source", recordCount: 1 });
+      if (path === "/v1/sync/bootstrap") return jsonResponse({ revision: 1, nextCursor: null, records: [{
+        table: "organizations", key: "org-new", data: { id: "org-new", display_name: "Servidor" }, sha256: "hash", revision: 1
+      }] });
+      throw new Error(`Rota inesperada: ${path}`);
+    }));
+    const service = new CentralSyncService(db, "test");
+    try {
+      await expect(service.login("Gabriel", "senha-teste")).rejects.toThrow("users -> organizations");
+      expect(db.prepare("SELECT id FROM organizations").all()).toEqual([{ id: "org-1" }]);
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+      expect(service.getStatus().revision).toBe(0);
+      expect(paths).not.toContain("/v1/sync/push");
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("inicializa a origem, envia alteracao e avanca a revisao sem perder o registro", async () => {
     const db = createDatabase();
     const requests: Array<{ path: string; body: unknown }> = [];

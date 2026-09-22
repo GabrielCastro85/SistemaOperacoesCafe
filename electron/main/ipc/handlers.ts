@@ -1,4 +1,4 @@
-import { dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import { clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -117,8 +117,14 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.authBootstrapAdmin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
     const session = await auth.bootstrapAdministrator(payload);
-    await loginCentral(credentials.username, credentials.centralPassword, credentials.password);
-    return session;
+    try {
+      await loginCentral(credentials.username, credentials.centralPassword, credentials.password);
+      return session;
+    } catch (error) {
+      centralSync.stop();
+      auth.logout();
+      throw error;
+    }
   });
   handle(IPC_CHANNELS.authLogin, async (_event, payload: unknown) => {
     const credentials = z.object({ username: z.string().min(1), password: z.string().min(1), centralPassword: z.string().optional() }).passthrough().parse(payload);
@@ -139,6 +145,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       if (!centralAuthenticated) await loginCentral(credentials.username, credentials.centralPassword, credentials.password);
       return session;
     } catch (error) {
+      centralSync.stop();
       auth.logout();
       throw error;
     }
@@ -238,6 +245,9 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.updateInstallationProfile, (_event, payload: unknown) => repository.updateInstallationProfile(payload));
   handle(IPC_CHANNELS.getActiveContext, () => repository.getActiveContext());
   handle(IPC_CHANNELS.getDiagnostics, () => createDiagnostics(context, repository, centralSync));
+  handle(IPC_CHANNELS.copyText, (_event, payload: unknown) => {
+    clipboard.writeText(z.string().max(1_000_000).parse(payload));
+  });
   handle(IPC_CHANNELS.getUpdateStatus, () => getUpdateStatus());
   handle(IPC_CHANNELS.checkForUpdates, () => {
     checkForUpdates();

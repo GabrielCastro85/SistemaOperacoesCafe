@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { formatDateOnlyBr } from "../../../shared/utils/format";
 import { Button } from "./Button";
 import { Input } from "./Input";
@@ -57,8 +57,20 @@ export function DefinitionList({ items }: { items: Array<{ label: string; value:
   return <dl className="ui-definition-list">{items.map((item) => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>;
 }
 
-export function CopyButton({ value, children = "Copiar" }: ButtonHTMLAttributes<HTMLButtonElement> & { value: string }): JSX.Element {
-  return <Button type="button" onClick={() => void navigator.clipboard?.writeText(value)}>{children}</Button>;
+export function CopyButton({ value, children = "Copiar", disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { value: string }): JSX.Element {
+  const [status, setStatus] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  async function copy(): Promise<void> {
+    setStatus("copying");
+    try {
+      await window.operationsCafe.copyText(value);
+      setStatus("copied");
+    } catch {
+      setStatus("error");
+    }
+  }
+  return <Button {...props} type="button" disabled={disabled || status === "copying"} onClick={() => void copy()} aria-live="polite">
+    {status === "copied" ? "Copiado!" : status === "error" ? "Falha ao copiar. Tentar novamente" : children}
+  </Button>;
 }
 
 export function PageSection({ title, description, children, actions }: { title: string; description?: string; children: ReactNode; actions?: ReactNode }): JSX.Element {

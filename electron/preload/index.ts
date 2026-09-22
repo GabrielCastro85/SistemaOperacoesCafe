@@ -140,6 +140,7 @@ const IPC_CHANNELS = {
   updateInstallationProfile: "app:updateInstallationProfile",
   getActiveContext: "app:getActiveContext",
   getDiagnostics: "app:getDiagnostics",
+  copyText: "app:copyText",
   getUpdateStatus: "app:getUpdateStatus",
   checkForUpdates: "app:checkForUpdates",
   quitAndInstallUpdate: "app:quitAndInstallUpdate",
@@ -508,6 +509,7 @@ export interface OperationsCafeApi {
   updateInstallationProfile: (profile: SaveInstallationProfileInput & { confirmVariantChange?: boolean }) => Promise<InstallationProfile>;
   getActiveContext: () => Promise<ActiveContext>;
   getDiagnostics: () => Promise<Diagnostics>;
+  copyText: (text: string) => Promise<void>;
   getUpdateStatus: () => Promise<UpdateStatus>;
   checkForUpdates: () => Promise<UpdateStatus>;
   quitAndInstallUpdate: () => Promise<null>;
@@ -877,6 +879,7 @@ const api: OperationsCafeApi = {
     ipcRenderer.invoke(IPC_CHANNELS.updateInstallationProfile, profile) as Promise<InstallationProfile>,
   getActiveContext: () => ipcRenderer.invoke(IPC_CHANNELS.getActiveContext) as Promise<ActiveContext>,
   getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.getDiagnostics) as Promise<Diagnostics>,
+  copyText: (text) => ipcRenderer.invoke(IPC_CHANNELS.copyText, text) as Promise<void>,
   getUpdateStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getUpdateStatus) as Promise<UpdateStatus>,
   checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.checkForUpdates) as Promise<UpdateStatus>,
   quitAndInstallUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.quitAndInstallUpdate) as Promise<null>,
