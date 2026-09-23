@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.16
+
+- Corrigido travamento do Dashboard: o resumo "todas as empresas" (atualizado automaticamente a cada 15 segundos nessa tela) parou de disparar o recalculo de tarifa de toda operacao nao cobrada de cada organizacao a cada leitura. Esse recalculo continua acontecendo nos pontos que de fato mudam regra ou preco.
+
+## 1.1.15
+
+- Adicionado painel web de consulta somente-leitura (`graobase.com.br`), publicado pela branch central e reconfigurado para dominio personalizado com Node 24 no runtime do site.
+- Listadas notas abertas no site de consulta, com total por cliente e cabecalho compactado.
+- Corrigida sincronizacao central entre computadores para nao rejeitar temporariamente registros filhos cujo pai chega numa pagina seguinte da mesma revisao.
+- Permitido acesso a consulta pelo dominio graobase.com.br.
+- Notas passam a iniciar no mes atual ate hoje por padrao.
+
 ## 1.1.14
 
 - Corrigida a sincronizacao central de lotes grandes: registros relacionados agora sao aplicados juntos antes da validacao, evitando que um computador fique preso em uma revisao antiga.

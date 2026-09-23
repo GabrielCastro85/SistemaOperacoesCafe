@@ -3336,8 +3336,13 @@ export class AppRepository {
     const periodStart = typeof input === "string" ? null : input.periodStart;
     const periodEnd = typeof input === "string" ? null : input.periodEnd;
     this.assertOrganizationWritable(organizationId);
-    if (includeAllCompanies) this.refreshAllOrganizationOperationServiceRates({});
-    else this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
+    // O resumo "todas as empresas" e' consultado por um timer de 15s no
+    // Dashboard (ver AppStatePages.tsx). Recalcular tarifa de toda operacao
+    // nao cobrada de cada organizacao a cada 15s trava o processo principal
+    // (sincrono) enquanto o usuario fica na tela -- esse backfill ja roda
+    // nos pontos que de fato mudam regra/preco (salvar regra de tarifa,
+    // reprecificar cobranca), nao precisa (e nao deve) rodar so' pra leitura.
+    if (!includeAllCompanies) this.refreshOperationServiceRates({ organizationId, ownLegalEntityId });
     const chargeWhere = includeAllCompanies ? "status != 'CANCELLED'" : `organization_id = ? ${ownLegalEntityId ? "AND own_legal_entity_id = ?" : ""} AND status != 'CANCELLED'`;
     const chargeParams = includeAllCompanies ? [] : ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
     const charges = (this.db.prepare(`SELECT * FROM client_charges WHERE ${chargeWhere}`).all(...chargeParams) as DbRecord[]).map(mapClientCharge)
