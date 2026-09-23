@@ -12,7 +12,7 @@ const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
 const releaseNotes = version === '1.1.18'
-  ? 'Corrige o bloqueio de login em outro computador causado por relacoes de arquivos e historicos locais durante a carga dos dados centrais. Os arquivos locais sao preservados, referencias a jobs locais de XML nao entram na copia central e as relacoes realmente centrais continuam validadas.'
+  ? 'Corrige o bloqueio de login em outro computador causado por relacoes de arquivos e historicos locais durante a carga dos dados centrais. Tambem impede que as atualizacoes automaticas do diagnostico e do resumo financeiro cubram e bloqueiem o Dashboard. Os arquivos locais sao preservados e as relacoes realmente centrais continuam validadas.'
   : version === '1.1.17'
   ? 'Corrige o erro SYNC_CONFLICT que bloqueava o login ao sincronizar historicos locais de importacao XML entre computadores. Jobs, caminhos e arquivos intermediarios permanecem locais; notas, eventos e operacoes resultantes continuam sincronizados normalmente. O servidor mantem compatibilidade com computadores ainda na versao 1.1.16.'
   : version === '1.1.15'

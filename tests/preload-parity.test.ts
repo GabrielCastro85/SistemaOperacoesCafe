@@ -7,5 +7,7 @@ describe("electron preload parity", () => {
     const runtime = readFileSync(new URL("../electron/preload/index.cts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     expect(runtime).toBe(typed);
     expect(runtime).toContain("listTransferReconciliationInvoices");
+    expect(runtime).toContain('new Set(["getDiagnostics", "getBillingSummary"])');
+    expect(runtime).toContain("nonBlockingLoadingMethods.has(key)");
   });
 });

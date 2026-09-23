@@ -1229,6 +1229,10 @@ export interface OperationsCafeLoadingApi {
 
 let pendingCallCount = 0;
 const loadingListeners = new Set<(pendingCount: number) => void>();
+// Consultas periodicas atualizam indicadores em segundo plano. Inclui-las no
+// contador global cobre a janela com o overlay a cada ciclo e impede o uso do
+// Dashboard enquanto o banco responde.
+const nonBlockingLoadingMethods = new Set(["getDiagnostics", "getBillingSummary"]);
 
 function notifyLoadingListeners(): void {
   for (const listener of loadingListeners) listener(pendingCallCount);
@@ -1240,6 +1244,10 @@ function withLoadingTracking(target: OperationsCafeApi): OperationsCafeApi {
     const value = (target as unknown as Record<string, unknown>)[key];
     if (typeof value !== "function") {
       wrapped[key] = value;
+      continue;
+    }
+    if (nonBlockingLoadingMethods.has(key)) {
+      wrapped[key] = (...args: unknown[]) => (value as (...fnArgs: unknown[]) => unknown)(...args);
       continue;
     }
     wrapped[key] = (...args: unknown[]) => {

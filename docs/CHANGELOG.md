@@ -4,6 +4,7 @@
 
 - Corrigida a validacao que bloqueava o login de outro computador ao encontrar arquivos e historicos locais ligados a dados centrais substituidos durante a sincronizacao.
 - Referencias a jobs locais de importacao XML deixam de fazer parte do historico central. Os arquivos locais permanecem preservados e as demais relacoes centrais continuam sendo validadas.
+- As atualizacoes automaticas do diagnostico e do resumo financeiro passam a rodar em segundo plano, sem cobrir e bloquear o Dashboard a cada ciclo.
 
 ## 1.1.17
 
