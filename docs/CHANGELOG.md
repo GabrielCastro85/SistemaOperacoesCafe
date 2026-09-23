@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.18
+
+- Corrigida a validacao que bloqueava o login de outro computador ao encontrar arquivos e historicos locais ligados a dados centrais substituidos durante a sincronizacao.
+- Referencias a jobs locais de importacao XML deixam de fazer parte do historico central. Os arquivos locais permanecem preservados e as demais relacoes centrais continuam sendo validadas.
+
 ## 1.1.17
 
 - Corrigido o conflito de sincronizacao que bloqueava o login com `SYNC_CONFLICT` em `xml_import_jobs`. O historico e os arquivos intermediarios de importacao XML permanecem no computador que realizou a leitura; notas, eventos e operacoes resultantes continuam sincronizados normalmente.

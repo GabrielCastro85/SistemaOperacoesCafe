@@ -23,6 +23,14 @@ export const CENTRAL_SYNCED_TABLES = [
   "deal_confirmation_status_history", "deal_payment_terms", "spreadsheet_mapping_templates"
 ] as const;
 const centralSyncedTableSet = new Set<string>(CENTRAL_SYNCED_TABLES);
+const localOnlyRelationshipSet = new Set([
+  "xml_import_files\u0000xml_import_jobs",
+  "xml_import_files\u0000fiscal_documents",
+  "xml_import_files\u0000fiscal_document_events",
+  "deal_confirmation_document_versions\u0000deal_confirmations",
+  "charge_document_versions\u0000client_charges",
+  "fiscal_document_merge_history\u0000xml_import_jobs"
+]);
 
 type JsonRecord = Record<string, unknown>;
 type CentralRecord = { table: string; key: string; data: JsonRecord; sha256: string; revision: number };
@@ -54,6 +62,16 @@ function sqliteValue(value: unknown): unknown {
 
 function normalizedRow(row: JsonRecord): JsonRecord {
   return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, jsonValue(value)]));
+}
+
+function centralDataForTable(table: string, row: JsonRecord): JsonRecord {
+  const data = normalizedRow(row);
+  // O job de importacao existe apenas no computador que leu o XML. O historico
+  // da mesclagem e' central, mas nao pode carregar uma chave estrangeira local.
+  if (table === "fiscal_document_merge_history" && data.xml_import_job_id != null) {
+    return { ...data, xml_import_job_id: null };
+  }
+  return data;
 }
 
 function stableJson(value: JsonRecord): string {
@@ -293,7 +311,7 @@ export class CentralSyncService {
         if (this.tableExists(table)) this.db.prepare(`DELETE FROM ${quoteIdentifier(table)}`).run();
       }
       for (const record of records) {
-        if (centralSyncedTableSet.has(record.table)) this.upsertRow(record.table, record.data);
+        if (centralSyncedTableSet.has(record.table)) this.upsertRow(record.table, centralDataForTable(record.table, record.data));
       }
     });
   }
@@ -302,7 +320,7 @@ export class CentralSyncService {
     this.withForeignKeysSuspended(() => {
       for (const change of changes) {
         if (!centralSyncedTableSet.has(change.table)) continue;
-        if (change.operation === "UPSERT" && change.data) this.upsertRow(change.table, change.data);
+        if (change.operation === "UPSERT" && change.data) this.upsertRow(change.table, centralDataForTable(change.table, change.data));
         else this.deleteRow(change.table, change.key);
       }
     });
@@ -315,7 +333,7 @@ export class CentralSyncService {
       for (const change of changes) {
         if (!centralSyncedTableSet.has(change.table)) continue;
         if (change.operation === "DELETE") remove.run(change.table, change.key);
-        else statement.run(change.table, change.key, change.sha256 ?? hashRow(change.data ?? {}));
+        else statement.run(change.table, change.key, hashRow(centralDataForTable(change.table, change.data ?? {})));
       }
     });
     update();
@@ -326,7 +344,8 @@ export class CentralSyncService {
     try {
       const transaction = this.db.transaction(() => {
         callback();
-        const violations = this.db.pragma("foreign_key_check") as Array<{ table: string; parent: string }>;
+        const violations = (this.db.pragma("foreign_key_check") as Array<{ table: string; parent: string }>)
+          .filter((item) => !localOnlyRelationshipSet.has(`${item.table}\u0000${item.parent}`));
         if (violations.length) {
           const relationships = [...new Set(violations.map((item) => `${item.table} -> ${item.parent}`))].join(", ");
           throw new Error(`A sincronizacao produziria ${violations.length} violacao(oes) de relacionamento: ${relationships}.`);
@@ -370,7 +389,7 @@ export class CentralSyncService {
     for (const table of CENTRAL_SYNCED_TABLES) {
       if (!this.tableExists(table)) continue;
       for (const raw of this.db.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all() as JsonRecord[]) {
-        const data = normalizedRow(raw);
+        const data = centralDataForTable(table, raw);
         const key = rowKey(data);
         result.set(`${table}\u0000${key}`, { table, key, data, sha256: hashRow(data) });
       }
@@ -383,7 +402,9 @@ export class CentralSyncService {
     const transaction = this.db.transaction(() => {
       this.db.prepare("DELETE FROM central_sync_baseline").run();
       for (const record of records) {
-        if (centralSyncedTableSet.has(record.table)) insert.run(record.table, record.key, record.sha256);
+        if (centralSyncedTableSet.has(record.table)) {
+          insert.run(record.table, record.key, hashRow(centralDataForTable(record.table, record.data)));
+        }
       }
     });
     transaction();

@@ -163,6 +163,63 @@ describe("CentralSyncService", () => {
     }
   });
 
+  it("nao bloqueia a carga por arquivos e historicos que pertencem somente ao computador", async () => {
+    const db = createDatabase();
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      UPDATE installation_profiles SET id = 'second-pc';
+      CREATE TABLE fiscal_documents (id TEXT PRIMARY KEY);
+      INSERT INTO fiscal_documents VALUES ('documento-local-antigo');
+      CREATE TABLE xml_import_jobs (id TEXT PRIMARY KEY);
+      INSERT INTO xml_import_jobs VALUES ('job-local');
+      CREATE TABLE xml_import_files (
+        id TEXT PRIMARY KEY,
+        import_job_id TEXT REFERENCES xml_import_jobs(id),
+        fiscal_document_id TEXT REFERENCES fiscal_documents(id)
+      );
+      INSERT INTO xml_import_files VALUES ('arquivo-local', 'job-local', 'documento-local-antigo');
+      CREATE TABLE deal_confirmations (id TEXT PRIMARY KEY);
+      INSERT INTO deal_confirmations VALUES ('confirmacao-local-antiga');
+      CREATE TABLE deal_confirmation_document_versions (
+        id TEXT PRIMARY KEY,
+        deal_confirmation_id TEXT REFERENCES deal_confirmations(id)
+      );
+      INSERT INTO deal_confirmation_document_versions VALUES ('pdf-local', 'confirmacao-local-antiga');
+      CREATE TABLE fiscal_document_merge_history (
+        id TEXT PRIMARY KEY,
+        xml_import_job_id TEXT REFERENCES xml_import_jobs(id)
+      );
+    `);
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      if (path === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (path === "/v1/sync/status") return jsonResponse({ revision: 1, sourceInstallationId: "install-source", recordCount: 3 });
+      if (path === "/v1/sync/bootstrap") return jsonResponse({
+        revision: 1,
+        nextCursor: null,
+        records: [
+          { table: "organizations", key: "org-new", data: { id: "org-new", display_name: "Servidor" }, sha256: "org-hash", revision: 1 },
+          { table: "fiscal_documents", key: "documento-central", data: { id: "documento-central" }, sha256: "document-hash", revision: 1 },
+          { table: "fiscal_document_merge_history", key: "merge-central", data: { id: "merge-central", xml_import_job_id: "job-de-outro-pc" }, sha256: "merge-hash", revision: 1 }
+        ]
+      });
+      if (path === "/v1/sync/changes") return jsonResponse({ currentRevision: 1, changes: [], next: null });
+      throw new Error(`Rota inesperada: ${path}`);
+    }));
+
+    const service = new CentralSyncService(db, "test");
+    try {
+      await service.login("Gabriel", "senha-teste");
+      expect(db.prepare("SELECT xml_import_job_id AS jobId FROM fiscal_document_merge_history").get()).toEqual({ jobId: null });
+      expect(db.prepare("SELECT id FROM xml_import_files").get()).toEqual({ id: "arquivo-local" });
+      expect(db.prepare("SELECT id FROM deal_confirmation_document_versions").get()).toEqual({ id: "pdf-local" });
+      expect(service.getStatus()).toMatchObject({ status: "ONLINE", revision: 1, error: null });
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("inicializa a origem, envia alteracao e avanca a revisao sem perder o registro", async () => {
     const db = createDatabase();
     const requests: Array<{ path: string; body: unknown }> = [];
