@@ -5,6 +5,7 @@ import { ChargesTab } from "./ChargesTab";
 import { DashboardTab } from "./DashboardTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { assetUrl } from "./assetUrl";
+import { selectDefaultLegalEntity, selectDefaultOrganization } from "./defaultCompany";
 import type { PageId } from "./navigation";
 import type { LegalEntityLite, OrganizationLite } from "./types";
 
@@ -31,10 +32,13 @@ export function App(): JSX.Element {
   async function loadContext(): Promise<void> {
     try {
       const loaded = await apiJson<ViewerContext>("/v1/viewer/context");
+      const defaultOrganization = selectDefaultOrganization(loaded.organizations);
+      const defaultLegalEntity = selectDefaultLegalEntity(loaded.legalEntities, defaultOrganization?.id ?? "");
       setContext(loaded);
-      // Empresa padrao ao logar: Grao & Grao (slug "grao"), caindo pra primeira
-      // da lista se essa organizacao nao estiver acessivel pro usuario logado.
-      setActiveOrganizationId((current) => current || (loaded.organizations.find((org) => org.slug === "grao") ?? loaded.organizations[0])?.id || "");
+      // Cada login comeca em Grao MG, mesmo quando a sessao anterior terminou
+      // com outra empresa selecionada. A troca manual continua livre depois disso.
+      setActiveOrganizationId(defaultOrganization?.id ?? "");
+      setActiveLegalEntityId(defaultLegalEntity?.id ?? "");
     } catch {
       clearSession();
       setContext(null);
