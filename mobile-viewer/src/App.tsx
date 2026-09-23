@@ -32,7 +32,9 @@ export function App(): JSX.Element {
     try {
       const loaded = await apiJson<ViewerContext>("/v1/viewer/context");
       setContext(loaded);
-      setActiveOrganizationId((current) => current || loaded.organizations[0]?.id || "");
+      // Empresa padrao ao logar: Grao & Grao (slug "grao"), caindo pra primeira
+      // da lista se essa organizacao nao estiver acessivel pro usuario logado.
+      setActiveOrganizationId((current) => current || (loaded.organizations.find((org) => org.slug === "grao") ?? loaded.organizations[0])?.id || "");
     } catch {
       clearSession();
       setContext(null);
@@ -42,7 +44,11 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!context) return;
     const candidates = context.legalEntities.filter((entity) => entity.organizationId === activeOrganizationId);
-    setActiveLegalEntityId((current) => candidates.some((entity) => entity.id === current) ? current : candidates[0]?.id || "");
+    // Dentro da organizacao ativa, prefere a empresa de Minas Gerais como padrao
+    // (Grao & Grao MG e' a combinacao pedida pro primeiro acesso).
+    setActiveLegalEntityId((current) => candidates.some((entity) => entity.id === current)
+      ? current
+      : (candidates.find((entity) => entity.state === "MG") ?? candidates[0])?.id || "");
   }, [context, activeOrganizationId]);
 
   if (context === undefined) return <div className="auth-shell"><LoadingState label="Carregando..." /></div>;

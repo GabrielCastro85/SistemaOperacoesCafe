@@ -54,8 +54,8 @@ export function DashboardTab({ organizationId, legalEntityId }: { organizationId
       {summary ? (
         <div className="dashboard-grid dashboard-grid--hero">
           <Card><span className="kpi-icon"><PackageIcon /></span><span>Sacas no período</span><strong>{summary.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</strong><small>{summary.operationCount} operação(ões)</small></Card>
-          <Card><span className="kpi-icon"><WalletIcon /></span><span>Total a receber</span><strong>{formatCurrencyBr(summary.receivableCents)}</strong><small>{summary.unbilledCount} nota(s) ainda não cobradas</small></Card>
-          <Card><span className="kpi-icon"><CoinsIcon /></span><span>Recebido no período</span><strong>{formatCurrencyBr(summary.receivedCents)}</strong><small>Pagamentos confirmados nas datas selecionadas</small></Card>
+          <Card><span className="kpi-icon"><WalletIcon /></span><span>Total a receber</span><strong>{formatCurrencyBr(summary.receivableCents)}</strong><small>Todas as empresas · {summary.unbilledCount} operação(ões) sem cobrança</small></Card>
+          <Card><span className="kpi-icon"><CoinsIcon /></span><span>Recebido no período</span><strong>{formatCurrencyBr(summary.receivedCents)}</strong><small>Todas as empresas</small></Card>
           <Card><span className="kpi-icon"><InvoiceIcon /></span><span>Serviços gerados</span><strong>{formatCurrencyBr(summary.generatedServiceCents)}</strong><small>Vencido: {formatCurrencyBr(summary.overdueCents)}</small></Card>
         </div>
       ) : null}

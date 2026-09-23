@@ -263,23 +263,36 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     if (!session) return;
     const filters = filterSchema.parse(request.query);
     if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
-    const [allOperations, allCharges, allPayments] = await Promise.all([
-      records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments")
+    const [allOperations, allCharges] = await Promise.all([
+      records(pool, "operations"), records(pool, "client_charges")
     ]);
     const operations = allOperations.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELED" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
     const sales = operations.filter((row) => text(row.operation_type) !== "PURCHASE");
     const charges = allCharges.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd));
-    const payments = allPayments.filter((row) => inScope(row, filters) && text(row.status) === "CONFIRMED" && inPeriod(row.payment_date, filters.periodStart, filters.periodEnd));
-    const unbilled = sales.filter((row) => text(row.billing_status) === "UNBILLED");
+    // "A receber" e "Recebido" replicam getBillingSummary({ includeAllCompanies: true })
+    // do app desktop (electron/main/services/appRepository.ts) -- la' esses dois cards
+    // do Dashboard somam todas as organizacoes de proposito (rotulados "Todas as
+    // empresas" na tela), diferente do resto deste endpoint que e' escopado pela
+    // empresa selecionada. Sem isso o site mostrava um numero por-empresa que nunca
+    // bate com o card do app pro mesmo periodo.
+    const globalCharges = allCharges.filter((row) => text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd));
+    const globalUnbilled = allOperations.filter((row) => text(row.operation_type) !== "PURCHASE" && text(row.status) !== "CANCELED"
+      && text(row.billing_status) === "UNBILLED" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
+    const chargeById = new Map(allCharges.map((row) => [text(row.id), row]));
+    const globalReceivedForOperationsPeriodCents = allOperations
+      .filter((row) => text(row.operation_type) === "SALE" && ["DRAFT", "CONFIRMED"].includes(text(row.status))
+        && text(chargeById.get(text(row.client_charge_id))?.status) === "PAID"
+        && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd))
+      .reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0);
     return {
       periodStart: filters.periodStart,
       periodEnd: filters.periodEnd,
       sacks: operations.reduce((sum, row) => sum + numberValue(row.quantity_sacks_decimal), 0),
       operationCount: operations.length,
-      receivableCents: charges.reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0) + unbilled.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
-      receivedCents: payments.reduce((sum, row) => sum + numberValue(row.amount_cents), 0),
+      receivableCents: globalCharges.reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0) + globalUnbilled.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
+      receivedCents: globalReceivedForOperationsPeriodCents,
       generatedServiceCents: sales.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
-      unbilledCount: unbilled.length,
+      unbilledCount: globalUnbilled.length,
       overdueCents: charges.filter((row) => text(row.status) === "OVERDUE").reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0)
     };
   });
