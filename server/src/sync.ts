@@ -19,10 +19,16 @@ const SYNCED_TABLES = [
   "payable_payment_allocations", "payable_status_history", "deal_clause_templates", "deal_confirmation_templates",
   "deal_confirmations", "deal_confirmation_parties", "deal_confirmation_signers", "deal_confirmation_items",
   "deal_confirmation_clauses", "deal_confirmation_operations", "deal_confirmation_fiscal_documents",
-  "deal_confirmation_status_history", "deal_payment_terms", "spreadsheet_mapping_templates", "xml_import_jobs",
-  "xml_import_files"
+  "deal_confirmation_status_history", "deal_payment_terms", "spreadsheet_mapping_templates"
 ] as const;
 const syncedTableSet = new Set<string>(SYNCED_TABLES);
+// Compatibilidade com desktops 1.1.16 e anteriores. Esses registros descrevem
+// uma execucao local (incluindo caminhos de arquivo do PC), portanto o servidor
+// aceita o lote antigo, mas descarta essas alteracoes sem gerar conflito.
+const legacyLocalOnlyTableSet = new Set(["xml_import_jobs", "xml_import_files"]);
+const acceptedTableSet = new Set([...syncedTableSet, ...legacyLocalOnlyTableSet]);
+export const isCentralSynchronizedTable = (table: string): boolean => syncedTableSet.has(table);
+export const isAcceptedSyncTable = (table: string): boolean => acceptedTableSet.has(table);
 const tableNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/);
 const rowKeySchema = z.string().min(1).max(500);
 const changeSchema = z.object({
@@ -31,7 +37,7 @@ const changeSchema = z.object({
   operation: z.enum(["UPSERT", "DELETE"]),
   data: z.record(z.string(), z.unknown()).nullable().optional()
 }).superRefine((change, context) => {
-  if (!syncedTableSet.has(change.table)) {
+  if (!isAcceptedSyncTable(change.table)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: `Tabela nao sincronizavel: ${change.table}` });
   }
   if (change.operation === "UPSERT" && !change.data) {
@@ -171,6 +177,7 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
     const session = await requireSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
     const input = pushSchema.parse(request.body);
+    const synchronizedChanges = input.changes.filter((change) => isCentralSynchronizedTable(change.table));
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -181,7 +188,15 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
       }
       const state = await client.query<{ revision: string }>("SELECT revision::text FROM central_sync_state WHERE singleton = true FOR UPDATE");
       const currentRevision = Number(state.rows[0]?.revision ?? 0);
-      const keys = input.changes.map((change) => ({ table_name: change.table, row_key: change.key }));
+      if (!synchronizedChanges.length) {
+        await client.query(`
+          INSERT INTO central_sync_batches(idempotency_key, user_id, device_id, base_revision, committed_revision, change_count)
+          VALUES ($1, $2, $3, $4, $5, 0)
+        `, [input.idempotencyKey, session.userId, session.deviceId, input.baseRevision, currentRevision]);
+        await client.query("COMMIT");
+        return { revision: currentRevision, reused: false, ignoredLocalOnlyChanges: input.changes.length };
+      }
+      const keys = synchronizedChanges.map((change) => ({ table_name: change.table, row_key: change.key }));
       const conflicts = await client.query<{ table_name: string; row_key: string; revision: string }>(`
         SELECT record.table_name, record.row_key, record.revision::text
         FROM central_records record
@@ -198,7 +213,7 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
         });
       }
       const revision = currentRevision + 1;
-      for (const [index, change] of input.changes.entries()) {
+      for (const [index, change] of synchronizedChanges.entries()) {
         const data = change.operation === "UPSERT" ? change.data! : null;
         const sha256 = data ? rowHash(data) : null;
         await client.query(`
@@ -218,7 +233,7 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
       await client.query(`
         INSERT INTO central_sync_batches(idempotency_key, user_id, device_id, base_revision, committed_revision, change_count)
         VALUES ($1, $2, $3, $4, $5, $6)
-      `, [input.idempotencyKey, session.userId, session.deviceId, input.baseRevision, revision, input.changes.length]);
+      `, [input.idempotencyKey, session.userId, session.deviceId, input.baseRevision, revision, synchronizedChanges.length]);
       await client.query("COMMIT");
       return { revision, reused: false };
     } catch (error) {

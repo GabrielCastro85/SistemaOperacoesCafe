@@ -30,6 +30,41 @@ function createDatabase(): Database.Database {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CentralSyncService", () => {
+  it("mantem jobs de importacao XML locais e ignora copias legadas vindas do servidor", async () => {
+    const db = createDatabase();
+    db.exec(`
+      CREATE TABLE xml_import_jobs (id TEXT PRIMARY KEY, status TEXT NOT NULL);
+      INSERT INTO xml_import_jobs VALUES ('local-job', 'COMPLETED');
+      UPDATE central_sync_state SET server_revision = 1, source_installation_id = 'install-source' WHERE singleton = 1;
+      INSERT INTO central_sync_baseline VALUES ('organizations', 'org-1', '32f79fb1e77c40a2f14cfd4114f48587ce66be99194a393489860014ee4e6b5c');
+      INSERT INTO central_sync_baseline VALUES ('xml_import_jobs', 'old-remote-job', 'old-hash');
+    `);
+    const paths: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const url = new URL(input);
+      paths.push(url.pathname);
+      if (url.pathname === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (url.pathname === "/v1/sync/status") return jsonResponse({ revision: 2, sourceInstallationId: "install-source", recordCount: 2 });
+      if (url.pathname === "/v1/sync/changes") return jsonResponse({
+        currentRevision: 2,
+        changes: [{ revision: 2, sequence: 1, table: "xml_import_jobs", key: "remote-job", operation: "UPSERT", data: { id: "remote-job", status: "FAILED" }, sha256: "remote-hash" }],
+        next: null
+      });
+      throw new Error(`Rota inesperada: ${url.pathname}`);
+    }));
+
+    const service = new CentralSyncService(db, "test");
+    try {
+      await service.login("Gabriel", "senha-teste");
+      expect(db.prepare("SELECT * FROM xml_import_jobs").all()).toEqual([{ id: "local-job", status: "COMPLETED" }]);
+      expect(paths).not.toContain("/v1/sync/push");
+      expect(service.getStatus()).toMatchObject({ status: "ONLINE", revision: 2, error: null });
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("substitui dados antigos do segundo PC pelos dados centrais antes de liberar o login", async () => {
     const db = createDatabase();
     db.prepare("UPDATE installation_profiles SET id = 'second-pc'").run();

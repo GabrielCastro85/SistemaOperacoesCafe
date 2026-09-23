@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.17
+
+- Corrigido o conflito de sincronizacao que bloqueava o login com `SYNC_CONFLICT` em `xml_import_jobs`. O historico e os arquivos intermediarios de importacao XML permanecem no computador que realizou a leitura; notas, eventos e operacoes resultantes continuam sincronizados normalmente.
+- O servidor aceita e ignora esses registros enviados por versoes antigas, permitindo que computadores ainda na 1.1.16 voltem a entrar assim que a correcao do servidor for implantada.
+
 ## 1.1.16
 
 - Corrigido travamento do Dashboard: o resumo "todas as empresas" (atualizado automaticamente a cada 15 segundos nessa tela) parou de disparar o recalculo de tarifa de toda operacao nao cobrada de cada organizacao a cada leitura. Esse recalculo continua acontecendo nos pontos que de fato mudam regra ou preco.

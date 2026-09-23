@@ -20,9 +20,9 @@ export const CENTRAL_SYNCED_TABLES = [
   "payable_payment_allocations", "payable_status_history", "deal_clause_templates", "deal_confirmation_templates",
   "deal_confirmations", "deal_confirmation_parties", "deal_confirmation_signers", "deal_confirmation_items",
   "deal_confirmation_clauses", "deal_confirmation_operations", "deal_confirmation_fiscal_documents",
-  "deal_confirmation_status_history", "deal_payment_terms", "spreadsheet_mapping_templates", "xml_import_jobs",
-  "xml_import_files"
+  "deal_confirmation_status_history", "deal_payment_terms", "spreadsheet_mapping_templates"
 ] as const;
+const centralSyncedTableSet = new Set<string>(CENTRAL_SYNCED_TABLES);
 
 type JsonRecord = Record<string, unknown>;
 type CentralRecord = { table: string; key: string; data: JsonRecord; sha256: string; revision: number };
@@ -260,7 +260,12 @@ export class CentralSyncService {
   private async pushLocalChanges(): Promise<void> {
     const local = this.scanLocalRows();
     const baselineRows = this.db.prepare("SELECT table_name AS tableName, row_key AS rowKey, row_sha256 AS sha256 FROM central_sync_baseline").all() as Array<{ tableName: string; rowKey: string; sha256: string }>;
-    const baseline = new Map(baselineRows.map((row) => [`${row.tableName}\u0000${row.rowKey}`, row.sha256]));
+    // Versoes anteriores sincronizavam o historico local de importacao de XML,
+    // incluindo caminhos de arquivo especificos do computador. Ignore qualquer
+    // baseline legado dessas tabelas para nao transforma-lo em DELETE remoto.
+    const baseline = new Map(baselineRows
+      .filter((row) => centralSyncedTableSet.has(row.tableName))
+      .map((row) => [`${row.tableName}\u0000${row.rowKey}`, row.sha256]));
     const changes: Array<{ table: string; key: string; operation: "UPSERT" | "DELETE"; data?: JsonRecord }> = [];
     for (const row of local.values()) {
       const identity = `${row.table}\u0000${row.key}`;
@@ -287,13 +292,16 @@ export class CentralSyncService {
       for (const table of [...CENTRAL_SYNCED_TABLES].reverse()) {
         if (this.tableExists(table)) this.db.prepare(`DELETE FROM ${quoteIdentifier(table)}`).run();
       }
-      for (const record of records) this.upsertRow(record.table, record.data);
+      for (const record of records) {
+        if (centralSyncedTableSet.has(record.table)) this.upsertRow(record.table, record.data);
+      }
     });
   }
 
   private applyRemoteChanges(changes: CentralChange[]): void {
     this.withForeignKeysSuspended(() => {
       for (const change of changes) {
+        if (!centralSyncedTableSet.has(change.table)) continue;
         if (change.operation === "UPSERT" && change.data) this.upsertRow(change.table, change.data);
         else this.deleteRow(change.table, change.key);
       }
@@ -305,6 +313,7 @@ export class CentralSyncService {
     const remove = this.db.prepare("DELETE FROM central_sync_baseline WHERE table_name = ? AND row_key = ?");
     const update = this.db.transaction(() => {
       for (const change of changes) {
+        if (!centralSyncedTableSet.has(change.table)) continue;
         if (change.operation === "DELETE") remove.run(change.table, change.key);
         else statement.run(change.table, change.key, change.sha256 ?? hashRow(change.data ?? {}));
       }
@@ -373,7 +382,9 @@ export class CentralSyncService {
     const insert = this.db.prepare("INSERT INTO central_sync_baseline(table_name, row_key, row_sha256) VALUES (?, ?, ?)");
     const transaction = this.db.transaction(() => {
       this.db.prepare("DELETE FROM central_sync_baseline").run();
-      for (const record of records) insert.run(record.table, record.key, record.sha256);
+      for (const record of records) {
+        if (centralSyncedTableSet.has(record.table)) insert.run(record.table, record.key, record.sha256);
+      }
     });
     transaction();
   }
