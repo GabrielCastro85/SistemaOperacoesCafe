@@ -4635,3 +4635,9 @@ table tbody tr:hover {
     padding: 12px;
   }
 }
+
+@media (min-width: 1181px) {
+  .dashboard-grid--hero {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
