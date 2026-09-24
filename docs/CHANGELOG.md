@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.21
+
+- A confirmação passa a ser marcada como emitida somente depois que o PDF definitivo foi gravado e registrado com sucesso.
+- O estado `ISSUED`, o vínculo com a versão definitiva e o histórico de emissão agora são concluídos juntos, evitando fechamentos que aparecem novamente como rascunho.
+
 ## 1.1.20
 
 - Corrigida a perda da observação entre a tela de revisão e o PDF: os campos do fechamento agora seguem no mesmo comando que gera a prévia ou emite a confirmação.

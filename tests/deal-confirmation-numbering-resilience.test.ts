@@ -171,4 +171,26 @@ describe("bateria obrigatoria: numeracao atomica de confirmacoes", () => {
     expect(reloaded.documents.filter((doc) => doc.documentType === "ISSUED_ORIGINAL")).toHaveLength(1);
     db.close();
   });
+
+  it("so marca como emitida depois de gravar o PDF definitivo", async () => {
+    const { repo, db, seller, buyer, product } = await setup();
+    const draft = buildMinimalDraft(repo, seller.id, buyer.id, product.id);
+    const repository = repo as unknown as {
+      generateDealDocumentVersion: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalGenerate = repository.generateDealDocumentVersion.bind(repo);
+    let statusWhileGenerating: string | null = null;
+    repository.generateDealDocumentVersion = async (...args: unknown[]) => {
+      statusWhileGenerating = repo.getDealConfirmation(draft.confirmation.id).confirmation.status;
+      return originalGenerate(...args);
+    };
+
+    const issued = await repo.issueDealConfirmation(draft.confirmation.id);
+
+    expect(statusWhileGenerating).toBe("DRAFT");
+    expect(issued.confirmation.status).toBe("ISSUED");
+    expect(issued.confirmation.issuedDocumentVersionId).toBeTruthy();
+    expect(issued.documents.filter((document) => document.documentType === "ISSUED_ORIGINAL")).toHaveLength(1);
+    db.close();
+  });
 });

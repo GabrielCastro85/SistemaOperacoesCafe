@@ -6255,18 +6255,22 @@ export class AppRepository {
     if (!["DRAFT", "PENDING_REVIEW"].includes(initial.confirmation.status)) throw new Error("Confirmacao ja emitida ou encerrada.");
     const number = await this.ensureDealConfirmationNumber(id);
     const before = this.getDealConfirmation(id);
-    const now = new Date().toISOString();
-    let versionId = "";
-    const trx = this.db.transaction(() => {
+    const preparedAt = new Date().toISOString();
+    const prepare = this.db.transaction(() => {
       this.refreshDealTotals(id);
-      this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, status = 'ISSUED', signature_status = 'NOT_SENT', issued_at = ?, updated_at = ?, pending_issues_json = ?, template_snapshot_json = COALESCE(template_snapshot_json, ?) WHERE id = ?")
-        .run(number, now, now, JSON.stringify(issues), JSON.stringify(this.getDefaultDealTemplate(before.confirmation.organizationId, before.confirmation.ownLegalEntityId)), id);
-      this.recordDealStatus(id, before.confirmation.status, "ISSUED", "Confirmacao emitida");
-      versionId = randomUUID();
+      this.db.prepare("UPDATE deal_confirmations SET confirmation_number = ?, updated_at = ?, pending_issues_json = ?, template_snapshot_json = COALESCE(template_snapshot_json, ?) WHERE id = ?")
+        .run(number, preparedAt, JSON.stringify(issues), JSON.stringify(this.getDefaultDealTemplate(before.confirmation.organizationId, before.confirmation.ownLegalEntityId)), id);
     });
-    trx();
+    prepare();
+    const versionId = randomUUID();
     const generated = await this.generateDealDocumentVersion(id, "ISSUED_ORIGINAL", versionId, false, "Documento original emitido");
-    this.db.prepare("UPDATE deal_confirmations SET issued_document_version_id = ?, updated_at = ? WHERE id = ?").run(generated.id, new Date().toISOString(), id);
+    const issuedAt = new Date().toISOString();
+    const finalize = this.db.transaction(() => {
+      this.db.prepare("UPDATE deal_confirmations SET status = 'ISSUED', signature_status = 'NOT_SENT', issued_at = ?, issued_document_version_id = ?, updated_at = ? WHERE id = ?")
+        .run(issuedAt, generated.id, issuedAt, id);
+      this.recordDealStatus(id, before.confirmation.status, "ISSUED", "Confirmacao emitida");
+    });
+    finalize();
     return this.getDealConfirmation(id);
   }
 
