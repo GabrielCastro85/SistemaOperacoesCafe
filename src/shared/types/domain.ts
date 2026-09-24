@@ -1685,6 +1685,8 @@ export interface DealConfirmationDetail {
   signers: DealConfirmationSigner[];
   documents: DealConfirmationDocumentVersion[];
   history: DealConfirmationStatusHistory[];
+  /** Status da confirmacao substituta, quando esta foi substituida. */
+  replacementStatus: DealConfirmationStatus | null;
   pendingIssues: Array<{ code: string; severity: "critical" | "warning"; message: string }>;
 }
 

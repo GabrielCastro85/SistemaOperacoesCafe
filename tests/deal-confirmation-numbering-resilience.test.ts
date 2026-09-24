@@ -116,6 +116,22 @@ describe("bateria obrigatoria: numeracao atomica de confirmacoes", () => {
     db.close();
   });
 
+  it("substituida so' pode ser cancelada depois que a substituta for cancelada", async () => {
+    const { repo, db, seller, buyer, product } = await setup();
+    const draft = buildMinimalDraft(repo, seller.id, buyer.id, product.id);
+    const issued = await repo.issueDealConfirmation(draft.confirmation.id);
+    const replacement = repo.replaceDealConfirmation(issued.confirmation.id, "Erro de digitacao");
+
+    expect(repo.getDealConfirmation(issued.confirmation.id).replacementStatus).toBe("DRAFT");
+    expect(() => repo.cancelDealConfirmation(issued.confirmation.id, "Desistencia")).toThrow(/substituta estiver ativa/);
+
+    repo.cancelDealConfirmation(replacement.confirmation.id, "Desistencia");
+    const cancelled = repo.cancelDealConfirmation(issued.confirmation.id, "Desistencia");
+    expect(cancelled.confirmation.status).toBe("CANCELLED");
+    expect(cancelled.confirmation.confirmationNumber).toBe("VCMG 0001");
+    db.close();
+  });
+
   it("clique duplo em gerar previa: chamadas sequenciais sao idempotentes (mesmo numero)", async () => {
     const { repo, db, seller, buyer, product } = await setup();
     const draft = buildMinimalDraft(repo, seller.id, buyer.id, product.id);

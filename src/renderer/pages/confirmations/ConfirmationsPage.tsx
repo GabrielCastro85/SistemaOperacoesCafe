@@ -630,7 +630,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const detailIsEditable = detailStatus === "DRAFT" || detailStatus === "PENDING_REVIEW";
   const detailCanBeSentForSignature = detailStatus === "ISSUED" || detailStatus === "SENT_FOR_SIGNATURE";
   const detailCanImportSigned = detailStatus === "ISSUED" || detailStatus === "SENT_FOR_SIGNATURE" || detailStatus === "SIGNED";
-  const detailCanCancel = detailStatus !== null && !["CANCELLED", "REPLACED"].includes(detailStatus);
+  const detailCanCancel = detailStatus !== null && detailStatus !== "CANCELLED" && (detailStatus !== "REPLACED" || detail?.replacementStatus === "CANCELLED" || detail?.replacementStatus === null);
   const detailCanReplace = detailStatus !== null && ["ISSUED", "SENT_FOR_SIGNATURE", "SIGNED"].includes(detailStatus);
   const detailCanDelete = detailStatus === "DRAFT" && !detail?.confirmation.confirmationNumber;
 

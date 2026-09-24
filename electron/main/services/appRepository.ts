@@ -5829,7 +5829,10 @@ export class AppRepository {
     const signers = (this.db.prepare("SELECT * FROM deal_confirmation_signers WHERE deal_confirmation_id = ? ORDER BY signature_order").all(id) as DbRecord[]).map(mapDealConfirmationSigner);
     const documents = (this.db.prepare("SELECT * FROM deal_confirmation_document_versions WHERE deal_confirmation_id = ? ORDER BY version_number").all(id) as DbRecord[]).map(mapDealConfirmationDocumentVersion);
     const history = (this.db.prepare("SELECT * FROM deal_confirmation_status_history WHERE deal_confirmation_id = ? ORDER BY changed_at").all(id) as DbRecord[]).map(mapDealConfirmationStatusHistory);
-    return { confirmation, parties, items, operations, fiscalDocuments, clauses, paymentTerms, signers, documents, history, pendingIssues: parseDealIssues(confirmation.pendingIssuesJson) };
+    const replacement = confirmation.replacedByConfirmationId
+      ? this.db.prepare("SELECT status FROM deal_confirmations WHERE id = ?").get(confirmation.replacedByConfirmationId) as { status: DealConfirmationDetail["replacementStatus"] } | undefined
+      : undefined;
+    return { confirmation, parties, items, operations, fiscalDocuments, clauses, paymentTerms, signers, documents, history, replacementStatus: replacement?.status ?? null, pendingIssues: parseDealIssues(confirmation.pendingIssuesJson) };
   }
 
   createDealConfirmationDraft(input: unknown): DealConfirmationDetail {
@@ -6336,7 +6339,12 @@ export class AppRepository {
     if (!reason.trim()) throw new Error("Motivo de cancelamento obrigatorio.");
     const detail = this.getDealConfirmation(id);
     if (detail.confirmation.status === "CANCELLED") return detail;
-    if (detail.confirmation.status === "REPLACED") throw new Error("Confirmacao substituida nao pode ser cancelada novamente.");
+    // Substituida so' pode ser cancelada quando a substituta foi cancelada (ou
+    // nao existe mais): nesse caso o negocio morreu e a original deve constar
+    // como cancelada, nao como substituida por algo que nao vale.
+    if (detail.confirmation.status === "REPLACED" && detail.replacementStatus !== "CANCELLED" && detail.replacementStatus !== null) {
+      throw new Error("Confirmacao substituida nao pode ser cancelada enquanto a substituta estiver ativa.");
+    }
     const now = new Date().toISOString();
     // signature_status precisa sair de WAITING_SIGNATURE/PARTIALLY_SIGNED junto
     // com o status -- senao uma confirmacao cancelada que ja estava em processo
