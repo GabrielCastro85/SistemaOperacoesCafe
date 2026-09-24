@@ -124,7 +124,13 @@ for (const filename of filenames) {
 
 await request(`${api}/releases/${release.id}`, {
   method: 'PATCH',
-  body: JSON.stringify({ draft: false, prerelease: false, make_latest: 'true' }),
+  body: JSON.stringify({
+    name: `Sistema Operações Café ${version}`,
+    body: releaseNotes,
+    draft: false,
+    prerelease: false,
+    make_latest: 'true',
+  }),
 });
 
 console.log(`Versão ${version} publicada com sucesso.`);
