@@ -232,6 +232,24 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("releases the fiscal document for a new confirmation once the previous one is cancelled", async () => {
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Liberacao Cafe", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "NF-951", series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
+    const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 500000, sacksQuantity: "5" });
+    repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: buyer.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-17", quantitySacks: "5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(doc.document.id);
+
+    const first = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    repo.cancelDealConfirmation(first.confirmation.id, "Desistencia");
+
+    const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+    expect(second.confirmation.id).not.toBe(first.confirmation.id);
+    expect(second.fiscalDocuments.map((document) => document.id)).toEqual([doc.document.id]);
+    expect(await repo.findConflictingDealConfirmationLabel(doc.document.id)).toBe(second.confirmation.temporaryReference);
+    db.close();
+  });
+
   it("recomputes the aggregate signature status after a signer is removed", async () => {
     const { repo, db, seller, buyer, product } = await setup();
     const draft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-07-17", paymentTermsSnapshot: "A vista", deliveryLocationSnapshot: "Armazem", qualityTermsSnapshot: "Padrao", generalTermsSnapshot: "Revisado" });

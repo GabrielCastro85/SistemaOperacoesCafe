@@ -254,6 +254,7 @@ export class AppRepository {
       FROM deal_confirmation_fiscal_documents dcfd
       JOIN deal_confirmations dc ON dc.id = dcfd.deal_confirmation_id
       WHERE dcfd.fiscal_document_id = ? AND dcfd.is_active = 1
+        AND dc.status NOT IN ('CANCELLED', 'REPLACED')
       LIMIT 1
     `).get(fiscalDocumentId) as { confirmationNumber: string | null; temporaryReference: string | null; id: string } | undefined;
     if (!link) return null;
@@ -6759,12 +6760,14 @@ export class AppRepository {
     if (document.ownLegalEntityId !== deal.ownLegalEntityId) throw new Error("Nota pertence a outro CNPJ proprio.");
     // So' um indice normal (nao UNIQUE) protege deal_confirmation_fiscal_documents
     // localmente -- essa checagem e' quem de fato impede a MESMA nota ficar
-    // reivindicada por duas confirmacoes ativas ao mesmo tempo.
+    // reivindicada por duas confirmacoes ativas ao mesmo tempo. Cancelada ou
+    // substituida libera a nota; o vinculo antigo fica so' como historico.
     const claim = this.db.prepare(`
       SELECT dc.confirmation_number AS confirmationNumber, dc.temporary_reference AS temporaryReference, dc.id AS id
       FROM deal_confirmation_fiscal_documents dcfd
       JOIN deal_confirmations dc ON dc.id = dcfd.deal_confirmation_id
       WHERE dcfd.fiscal_document_id = ? AND dcfd.deal_confirmation_id != ? AND dcfd.is_active = 1
+        AND dc.status NOT IN ('CANCELLED', 'REPLACED')
       LIMIT 1
     `).get(fiscalDocumentId, dealConfirmationId) as { confirmationNumber: string | null; temporaryReference: string | null; id: string } | undefined;
     if (claim) {
