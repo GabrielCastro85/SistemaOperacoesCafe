@@ -427,8 +427,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     // sem nenhum erro visivel (bug real reportado em producao: "clico em
     // salvar e nao acontece nada").
     try {
-      await saveCurrentDraftFields();
-      const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id);
+      const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id, currentDraftFields());
       if (!updated) {
         setMessage("Geracao cancelada. Nenhuma pasta foi escolhida.");
         return;
@@ -445,8 +444,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function issue(): Promise<void> {
     if (!detail) return;
     try {
-      await saveCurrentDraftFields();
-      const updated = await window.operationsCafe.issueDealConfirmation(detail.confirmation.id);
+      const updated = await window.operationsCafe.issueDealConfirmation(detail.confirmation.id, currentDraftFields());
       if (!updated) {
         setMessage("Emissao cancelada. Nenhuma pasta foi escolhida.");
         return;
@@ -483,9 +481,16 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
 
   async function saveCurrentDraftFields(): Promise<DealConfirmationDetail> {
     if (!detail) throw new Error("Confirmacao nao carregada.");
+    const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, currentDraftFields());
+    setDetail(updated);
+    loadBankFieldsFromDetail(updated);
+    return updated;
+  }
+
+  function currentDraftFields() {
     const basisPoints = brokerageInput.trim() ? Math.round(Number(brokerageInput.replace(",", ".")) * 100) : null;
     if (basisPoints !== null && !Number.isFinite(basisPoints)) throw new Error("Percentual de corretagem invalido.");
-    const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
+    return {
       deliveryLocationSnapshot: deliveryText.trim() || null,
       paymentTermsSnapshot: paymentTerms.trim() || null,
       qualityTermsSnapshot: qualityTerms.trim() || null,
@@ -501,10 +506,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       bankHolderDocument: bankHolderDocument.trim() || null,
       pixKey: pixKey.trim() || null,
       pixKeyType: pixKeyType.trim() || null
-    });
-    setDetail(updated);
-    loadBankFieldsFromDetail(updated);
-    return updated;
+    };
   }
 
   async function setDeliveryRecipient(): Promise<void> {

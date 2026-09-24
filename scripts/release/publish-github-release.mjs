@@ -12,7 +12,9 @@ const token = tokenMatch[1].trim().replace(/^["']|["']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.19'
+const releaseNotes = version === '1.1.20'
+  ? 'Corrige a perda de observações nas confirmações de negócio. Os campos da tela agora são gravados no mesmo comando que gera a prévia ou emite o PDF, e a sincronização central preserva alterações locais ainda não enviadas em vez de substituí-las por uma versão anterior.'
+  : version === '1.1.19'
   ? 'Simplifica a emissão das confirmações de negócio: a prévia e a emissão salvam automaticamente as observações e demais campos do fechamento, a mesma nota fiscal pode participar de confirmações diferentes e agora há um acesso direto para criar confirmações sem nota fiscal antes das assinaturas.'
   : version === '1.1.18'
   ? 'Corrige o bloqueio de login em outro computador causado por relacoes de arquivos e historicos locais durante a carga dos dados centrais. Tambem impede que as atualizacoes automaticas do diagnostico e do resumo financeiro cubram e bloqueiem o Dashboard. Os arquivos locais sao preservados e as relacoes realmente centrais continuam validadas.'

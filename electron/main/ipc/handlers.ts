@@ -1165,13 +1165,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return result;
   });
   handle(IPC_CHANNELS.generateDealConfirmationPreview, async (_event, payload: unknown) => {
-    const id = z.string().uuid().parse(payload);
+    const data = z.union([
+      z.string().uuid().transform((id) => ({ id, draftInput: undefined as unknown })),
+      z.object({ id: z.string().uuid(), draftInput: z.unknown().optional() })
+    ]).parse(payload);
+    const { id } = data;
     const current = repository.getDealConfirmation(id);
     const suggestedName = buildDealExportFileName(repository, current, true);
     const targetPath = await selectExportPdfPath("Salvar previa da confirmacao", suggestedName);
     if (!targetPath) return null;
 
-    const detail = await repository.generateDealConfirmationPreview(id);
+    const detail = await repository.generateDealConfirmationPreview(id, data.draftInput);
     copyCurrentDealDocumentToPath(
       repository,
       detail.confirmation.issuedDocumentVersionId ?? detail.documents.at(-1)?.id ?? null,
@@ -1180,13 +1184,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return detail;
   });
   handle(IPC_CHANNELS.issueDealConfirmation, async (_event, payload: unknown) => {
-    const id = z.string().uuid().parse(payload);
+    const data = z.union([
+      z.string().uuid().transform((id) => ({ id, draftInput: undefined as unknown })),
+      z.object({ id: z.string().uuid(), draftInput: z.unknown().optional() })
+    ]).parse(payload);
+    const { id } = data;
     const current = repository.getDealConfirmation(id);
     const suggestedName = buildDealExportFileName(repository, current, false);
     const targetPath = await selectExportPdfPath("Salvar confirmacao emitida", suggestedName);
     if (!targetPath) return null;
 
-    const detail = await repository.issueDealConfirmation(id);
+    const detail = await repository.issueDealConfirmation(id, data.draftInput);
     copyCurrentDealDocumentToPath(repository, detail.confirmation.issuedDocumentVersionId, targetPath);
     return detail;
   });

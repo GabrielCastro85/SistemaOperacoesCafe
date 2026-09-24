@@ -6241,12 +6241,14 @@ export class AppRepository {
     return this.getDealConfirmation(id);
   }
 
-  async generateDealConfirmationPreview(id: string): Promise<DealConfirmationDetail> {
+  async generateDealConfirmationPreview(id: string, draftInput?: unknown): Promise<DealConfirmationDetail> {
+    if (draftInput !== undefined) this.updateDealConfirmationDraft(id, draftInput);
     this.assertDealEditable(id);
     return this.generateDealDocument(id, true);
   }
 
-  async issueDealConfirmation(id: string): Promise<DealConfirmationDetail> {
+  async issueDealConfirmation(id: string, draftInput?: unknown): Promise<DealConfirmationDetail> {
+    if (draftInput !== undefined) this.updateDealConfirmationDraft(id, draftInput);
     const issues = this.validateDealForIssue(id);
     if (issues.some((issue) => issue.severity === "critical")) throw new Error(`Pendencias criticas impedem emissao: ${issues.map((issue) => issue.message).join("; ")}`);
     const initial = this.getDealConfirmation(id);

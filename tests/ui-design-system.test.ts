@@ -114,4 +114,14 @@ describe("renderer design system", () => {
     expect(providersSource).toContain("DialogProvider");
     expect(providersSource).toContain("registerDialogListener");
   });
+
+  it("sends the current confirmation fields in the same command that generates the PDF", () => {
+    const pageSource = readFileSync("src/renderer/pages/confirmations/ConfirmationsPage.tsx", "utf8");
+    const handlerSource = readFileSync("electron/main/ipc/handlers.ts", "utf8");
+
+    expect(pageSource).toContain("generateDealConfirmationPreview(detail.confirmation.id, currentDraftFields())");
+    expect(pageSource).toContain("issueDealConfirmation(detail.confirmation.id, currentDraftFields())");
+    expect(handlerSource).toContain("repository.generateDealConfirmationPreview(id, data.draftInput)");
+    expect(handlerSource).toContain("repository.issueDealConfirmation(id, data.draftInput)");
+  });
 });

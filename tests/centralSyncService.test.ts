@@ -274,6 +274,58 @@ describe("CentralSyncService", () => {
     db.close();
   });
 
+  it("preserva uma edicao local pendente quando o pull traz a versao anterior da mesma linha", async () => {
+    const db = createDatabase();
+    db.exec(`
+      UPDATE central_sync_state SET server_revision = 1, source_installation_id = 'install-source' WHERE singleton = 1;
+      INSERT INTO central_sync_baseline VALUES ('organizations', 'org-1', '32f79fb1e77c40a2f14cfd4114f48587ce66be99194a393489860014ee4e6b5c');
+      UPDATE organizations SET display_name = 'Observacao local recem-salva' WHERE id = 'org-1';
+    `);
+    let revision = 2;
+    let remoteName = "Grao & Grao";
+    const pushedNames: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.pathname === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (url.pathname === "/v1/sync/status") return jsonResponse({ revision, sourceInstallationId: "install-source", recordCount: 1 });
+      if (url.pathname === "/v1/sync/changes") {
+        const after = Number(url.searchParams.get("after"));
+        return jsonResponse({
+          currentRevision: revision,
+          changes: after < revision ? [{
+            revision,
+            sequence: 1,
+            table: "organizations",
+            key: "org-1",
+            operation: "UPSERT",
+            data: { id: "org-1", display_name: remoteName },
+            sha256: null
+          }] : [],
+          next: null
+        });
+      }
+      if (url.pathname === "/v1/sync/push") {
+        const body = JSON.parse(String(init?.body)) as { changes: Array<{ data: { display_name: string } }> };
+        remoteName = body.changes[0].data.display_name;
+        pushedNames.push(remoteName);
+        revision = 3;
+        return jsonResponse({ revision, reused: false });
+      }
+      throw new Error(`Rota inesperada: ${url.pathname}`);
+    }));
+
+    const service = new CentralSyncService(db, "test");
+    try {
+      await service.login("Gabriel", "senha-teste");
+      expect(pushedNames).toContain("Observacao local recem-salva");
+      expect(db.prepare("SELECT display_name AS name FROM organizations WHERE id = 'org-1'").get())
+        .toEqual({ name: "Observacao local recem-salva" });
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("aplica juntas as paginas de uma revisao antes de validar relacionamentos", async () => {
     const db = createDatabase();
     db.exec(`

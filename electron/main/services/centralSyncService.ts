@@ -317,9 +317,27 @@ export class CentralSyncService {
   }
 
   private applyRemoteChanges(changes: CentralChange[]): void {
+    // Uma alteracao feita neste PC ainda pode nao ter sido enviada quando o
+    // pull encontra uma versao anterior da mesma linha no servidor. Aplicar
+    // essa versao cegamente apaga o que o usuario acabou de salvar (por
+    // exemplo, a observacao digitada antes de gerar uma confirmacao). Compara
+    // o estado local com o ultimo baseline conhecido e preserva linhas sujas;
+    // o push seguinte as envia usando a revisao central recem-atualizada.
+    const localRows = this.scanLocalRows();
+    const baselineRows = this.db.prepare("SELECT table_name AS tableName, row_key AS rowKey, row_sha256 AS sha256 FROM central_sync_baseline").all() as Array<{ tableName: string; rowKey: string; sha256: string }>;
+    const baseline = new Map(baselineRows.map((row) => [`${row.tableName}\u0000${row.rowKey}`, row.sha256]));
+    const locallyDirty = new Set<string>();
+    for (const change of changes) {
+      const identity = `${change.table}\u0000${change.key}`;
+      const local = localRows.get(identity);
+      const baselineHash = baseline.get(identity);
+      if ((local && local.sha256 !== baselineHash) || (!local && baselineHash !== undefined)) locallyDirty.add(identity);
+    }
+
     this.withForeignKeysSuspended(() => {
       for (const change of changes) {
         if (!centralSyncedTableSet.has(change.table)) continue;
+        if (locallyDirty.has(`${change.table}\u0000${change.key}`)) continue;
         if (change.operation === "UPSERT" && change.data) this.upsertRow(change.table, centralDataForTable(change.table, change.data));
         else this.deleteRow(change.table, change.key);
       }

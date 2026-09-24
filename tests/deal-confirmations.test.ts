@@ -79,9 +79,7 @@ describe("deal confirmations", () => {
     repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: "Sr. Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
     repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: "Sra. Compradora", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
     expect(repo.calculateDealTotals(draft.confirmation.id)).toEqual({ totalQuantitySacksDecimal: "1111", totalCommercialAmountCents: 111100000 });
-    const savedBeforePreview = repo.updateDealConfirmationDraft(draft.confirmation.id, { publicNotes: "Observacao digitada imediatamente antes da previa" });
-    expect(savedBeforePreview.confirmation.publicNotes).toBe("Observacao digitada imediatamente antes da previa");
-    const preview = await repo.generateDealConfirmationPreview(draft.confirmation.id);
+    const preview = await repo.generateDealConfirmationPreview(draft.confirmation.id, { publicNotes: "Observacao digitada imediatamente antes da previa" });
     expect(preview.fiscalDocuments).toHaveLength(0);
     expect(preview.confirmation.publicNotes).toBe("Observacao digitada imediatamente antes da previa");
     expect(preview.documents[0].documentType).toBe("GENERATED_DRAFT");

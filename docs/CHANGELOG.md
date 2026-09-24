@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.20
+
+- Corrigida a perda da observação entre a tela de revisão e o PDF: os campos do fechamento agora seguem no mesmo comando que gera a prévia ou emite a confirmação.
+- A sincronização central deixa de substituir uma alteração local ainda não enviada por uma versão anterior recebida do servidor.
+- Preservados número, estado e campos recém-editados da confirmação enquanto o PDF é salvo e sincronizado.
+
 ## 1.1.19
 
 - A prévia e a emissão da confirmação agora salvam automaticamente observações, condições, corretagem e dados bancários antes de gerar o PDF.
