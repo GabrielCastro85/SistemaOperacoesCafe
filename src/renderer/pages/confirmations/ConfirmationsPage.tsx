@@ -363,14 +363,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
-      // As notas selecionadas podem ja estar vinculadas a uma confirmacao ativa -- nesse caso o backend
-      // devolve essa confirmacao existente em vez de criar outra (evita duplicar o negocio). Toda confirmacao
-      // (nova ou reaproveitada) ja vem com a parte ISSUER auto-criada pelo backend, entao NAO da pra usar
-      // "tem alguma parte" para decidir se ja foi preenchida -- precisa checar especificamente o comprador.
-      const wasReused = created.parties.some((party) => party.partyRole === "BUYER") || created.signers.some((signer) => signer.partyRole === "BUYER");
-      if (!wasReused) {
-        await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
-      }
+      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
       if (sourceSearchMode === "corretor" && selectedBuyerId) {
         setSourceClientId(selectedBuyerId);
       }
@@ -385,11 +378,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       loadBankFieldsFromDetail(refreshed);
       setPreviewBase64(null);
       setView("detail");
-      setMessage(
-        wasReused
-          ? `Notas ja vinculadas a confirmacao ${created.confirmation.confirmationNumber ?? "em rascunho"} existente -- reaproveitando em vez de criar outra.`
-          : `Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`
-      );
+      setMessage(`Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`);
       await load();
       scrollTo(detailRef);
     } catch (errorValue) {
@@ -438,6 +427,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     // sem nenhum erro visivel (bug real reportado em producao: "clico em
     // salvar e nao acontece nada").
     try {
+      await saveCurrentDraftFields();
       const updated = await window.operationsCafe.generateDealConfirmationPreview(detail.confirmation.id);
       if (!updated) {
         setMessage("Geracao cancelada. Nenhuma pasta foi escolhida.");
@@ -455,6 +445,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function issue(): Promise<void> {
     if (!detail) return;
     try {
+      await saveCurrentDraftFields();
       const updated = await window.operationsCafe.issueDealConfirmation(detail.confirmation.id);
       if (!updated) {
         setMessage("Emissao cancelada. Nenhuma pasta foi escolhida.");
@@ -473,20 +464,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function saveBankDetails(): Promise<void> {
     if (!detail) return;
     try {
-      const basisPoints = brokerageInput.trim() ? Math.round(Number(brokerageInput.replace(",", ".")) * 100) : null;
-      const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
-        brokeragePercentageBasisPoints: basisPoints,
-        bankName: bankName || null,
-        bankCode: bankCode || null,
-        bankAgency: bankAgency || null,
-        bankAccount: bankAccount || null,
-        bankAccountType: bankAccountType || null,
-        bankHolderName: bankHolderName || null,
-        bankHolderDocument: bankHolderDocument || null,
-        pixKey: pixKey || null,
-        pixKeyType: pixKeyType || null
-      });
-      setDetail(updated);
+      await saveCurrentDraftFields();
       setMessage("Dados de corretagem e banco atualizados.");
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar dados bancarios."}`);
@@ -496,19 +474,37 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   async function saveDocumentDetails(): Promise<void> {
     if (!detail) return;
     try {
-      const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
-        deliveryLocationSnapshot: deliveryText.trim() || null,
-        paymentTermsSnapshot: paymentTerms.trim() || null,
-        qualityTermsSnapshot: qualityTerms.trim() || null,
-        generalTermsSnapshot: generalTerms.trim() || null,
-        publicNotes: publicNotes.trim() || null
-      });
-      setDetail(updated);
-      loadBankFieldsFromDetail(updated);
+      await saveCurrentDraftFields();
       setMessage("Dados manuais da confirmacao atualizados.");
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar dados do documento."}`);
     }
+  }
+
+  async function saveCurrentDraftFields(): Promise<DealConfirmationDetail> {
+    if (!detail) throw new Error("Confirmacao nao carregada.");
+    const basisPoints = brokerageInput.trim() ? Math.round(Number(brokerageInput.replace(",", ".")) * 100) : null;
+    if (basisPoints !== null && !Number.isFinite(basisPoints)) throw new Error("Percentual de corretagem invalido.");
+    const updated = await window.operationsCafe.updateDealConfirmationDraft(detail.confirmation.id, {
+      deliveryLocationSnapshot: deliveryText.trim() || null,
+      paymentTermsSnapshot: paymentTerms.trim() || null,
+      qualityTermsSnapshot: qualityTerms.trim() || null,
+      generalTermsSnapshot: generalTerms.trim() || null,
+      publicNotes: publicNotes.trim() || null,
+      brokeragePercentageBasisPoints: basisPoints,
+      bankName: bankName.trim() || null,
+      bankCode: bankCode.trim() || null,
+      bankAgency: bankAgency.trim() || null,
+      bankAccount: bankAccount.trim() || null,
+      bankAccountType: bankAccountType.trim() || null,
+      bankHolderName: bankHolderName.trim() || null,
+      bankHolderDocument: bankHolderDocument.trim() || null,
+      pixKey: pixKey.trim() || null,
+      pixKeyType: pixKeyType.trim() || null
+    });
+    setDetail(updated);
+    loadBankFieldsFromDetail(updated);
+    return updated;
   }
 
   async function setDeliveryRecipient(): Promise<void> {
@@ -667,7 +663,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
         <>
           <div className="page-title-row">
             <p className="muted">Confirmações já criadas nesta empresa/CNPJ.</p>
-            <button className="primary" onClick={() => setView("new")}>+ Nova confirmação</button>
+            <div className="actions">
+              <button className="primary" onClick={() => { setCreationMode("notes"); setView("new"); }}>+ Criar com notas fiscais</button>
+              <button onClick={() => { setCreationMode("manual"); setView("new"); }}>+ Criar sem nota fiscal</button>
+            </div>
           </div>
           <div className="table">
             <div className="table-head confirmation-grid"><span>Numero</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
@@ -685,7 +684,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           </div>
           <div className="settings-tabs">
             <button className={creationMode === "notes" ? "active" : ""} onClick={() => setCreationMode("notes")}>A partir de notas fiscais</button>
-            <button className={creationMode === "manual" ? "active" : ""} onClick={() => setCreationMode("manual")}>Criação manual</button>
+            <button className={creationMode === "manual" ? "active" : ""} onClick={() => setCreationMode("manual")}>Sem nota fiscal</button>
           </div>
           {creationMode === "notes" && (
             <AdminBlock title="Criar a partir de notas fiscais">
@@ -828,15 +827,15 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
             </AdminBlock>
           )}
           {creationMode === "manual" && (
-            <AdminBlock title="Criacao manual">
-              <p className="muted">Use quando ainda não existe nota fiscal emitida para este negócio.</p>
-              <p className="muted">Vendedor: <strong>{ownEntityName}</strong> (empresa/CNPJ propio selecionado no topo).</p>
+            <AdminBlock title="Criar confirmação sem nota fiscal">
+              <p className="muted">Use quando a confirmação precisa ser assinada antes da emissão da nota fiscal. Informe os dados do negócio e gere o PDF normalmente.</p>
+              <p className="muted">Vendedor: <strong>{ownEntityName}</strong> (empresa/CNPJ próprio selecionado no topo).</p>
               <FormGrid>
                 <PartnerQuickSearch label="Comprador (cliente)" value={buyerId} onChange={setBuyerId} partners={clientPartners} legalEntities={partnerLegalEntities} />
                 <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
                 <TextField label="Sacas" value={quantity} onChange={setQuantity} />
                 <TextField label="Preco por saca" value={price} onChange={setPrice} />
-                <button className="primary" onClick={() => void createManual()}>Criar confirmacao</button>
+                <button className="primary" onClick={() => void createManual()}>Continuar para o fechamento</button>
               </FormGrid>
             </AdminBlock>
           )}
@@ -860,7 +859,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                 </FormGrid>
 
                 <h3>Dados manuais do documento</h3>
-                <p className="muted">Use estes campos para ajustar o texto que aparece no PDF antes de gerar a previa ou emitir a confirmacao.</p>
+                <p className="muted">As alterações destes campos são salvas automaticamente ao gerar a prévia ou emitir a confirmação.</p>
                 <FormGrid>
                   <Textarea label="Local de descarga no PDF" rows={3} value={deliveryText} onChange={(event) => setDeliveryText(event.target.value)} />
                   <Textarea label="Condicao de pagamento" rows={3} value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} />
@@ -924,8 +923,8 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   {detail.pendingIssues.length ? <p className="charge-blocked-note">Existem pendencias nesta confirmacao. Revise antes de emitir definitivamente.</p> : null}
                 </div>
                 <div className="actions">
-                  {detailIsEditable ? <button onClick={() => void generatePreview()}>Gerar previa</button> : null}
-                  {detailIsEditable ? <button className="primary" onClick={() => void issue()}>Emitir</button> : null}
+                  {detailIsEditable ? <button onClick={() => void generatePreview()}>Salvar e gerar prévia</button> : null}
+                  {detailIsEditable ? <button className="primary" onClick={() => void issue()}>Salvar e emitir confirmação</button> : null}
                   {detailCanBeSentForSignature ? <button onClick={() => void window.operationsCafe.markDealConfirmationSentForSignature(detail.confirmation.id).then(setDetail)}>Enviada para assinatura</button> : null}
                   {detailCanImportSigned ? <button onClick={() => void importSigned()}>Importar assinada</button> : null}
                   {detailCanCancel ? <button onClick={() => void cancelDeal()}>Cancelar</button> : null}
@@ -942,7 +941,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                 {previewBase64 ? (
                   <embed src={`data:application/pdf;base64,${previewBase64}`} type="application/pdf" className="confirmation-pdf-embed" />
                 ) : (
-                  <EmptyState title="Sem previa gerada" description="Clique em 'Gerar previa' ou 'Emitir' para ver o documento aqui." />
+                  <EmptyState title="Sem previa gerada" description="Clique em 'Salvar e gerar prévia' ou 'Salvar e emitir confirmação' para ver o documento aqui." />
                 )}
               </div>
             </div>

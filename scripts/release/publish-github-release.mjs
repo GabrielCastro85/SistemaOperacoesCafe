@@ -1,3 +1,4 @@
+/* global console, fetch, process */
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,11 +8,13 @@ if (!version) throw new Error('Informe a versão a publicar.');
 const env = fs.readFileSync('.env', 'utf8');
 const tokenMatch = env.match(/^(?:GH_TOKEN|GITHUB_TOKEN)=(.+)$/m);
 if (!tokenMatch) throw new Error('Token GitHub não encontrado no .env');
-const token = tokenMatch[1].trim().replace(/^[\"']|[\"']$/g, '');
+const token = tokenMatch[1].trim().replace(/^["']|["']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.18'
+const releaseNotes = version === '1.1.19'
+  ? 'Simplifica a emissão das confirmações de negócio: a prévia e a emissão salvam automaticamente as observações e demais campos do fechamento, a mesma nota fiscal pode participar de confirmações diferentes e agora há um acesso direto para criar confirmações sem nota fiscal antes das assinaturas.'
+  : version === '1.1.18'
   ? 'Corrige o bloqueio de login em outro computador causado por relacoes de arquivos e historicos locais durante a carga dos dados centrais. Tambem impede que as atualizacoes automaticas do diagnostico e do resumo financeiro cubram e bloqueiem o Dashboard. Os arquivos locais sao preservados e as relacoes realmente centrais continuam validadas.'
   : version === '1.1.17'
   ? 'Corrige o erro SYNC_CONFLICT que bloqueava o login ao sincronizar historicos locais de importacao XML entre computadores. Jobs, caminhos e arquivos intermediarios permanecem locais; notas, eventos e operacoes resultantes continuam sincronizados normalmente. O servidor mantem compatibilidade com computadores ainda na versao 1.1.16.'

@@ -3180,10 +3180,9 @@ export const migrations: Migration[] = [
     }
   }
   ,{
-    // A migration Supabase 0027_fiscal_document_claim_uniqueness.sql
-    // adicionou is_active em deal_confirmation_fiscal_documents (indice
-    // unico parcial contra nota fiscal duplicada entre confirmacoes) --
-    // esqueci de espelhar a coluna aqui tambem. Resultado: TODA linha
+    // A migration remota que introduziu o ciclo de vida dos vínculos
+    // adicionou is_active em deal_confirmation_fiscal_documents -- faltava
+    // espelhar a coluna aqui também. Resultado: TODA linha
     // sincronizada dessa tabela (em qualquer sentido) falhava com "table
     // deal_confirmation_fiscal_documents has no column named is_active",
     // silenciosamente (so' warn no log), bug real em producao logo apos a

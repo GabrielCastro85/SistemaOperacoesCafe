@@ -46,11 +46,13 @@ describe("deal confirmations", () => {
       expect(result.items).toHaveLength(1);
       expect(result.items[0]).toMatchObject({ productId: null, productNameSnapshot: "Cafe arabica da NF", quantitySacksDecimal: "550", totalAmountCents: 109780000 });
       expect(repo.getFiscalDocument(doc.document.id).items[0].productId).toBe(otherProduct.id);
-      expect(repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] }).confirmation.id).toBe(result.confirmation.id);
+      const another = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
+      expect(another.confirmation.id).not.toBe(result.confirmation.id);
+      expect(another.fiscalDocuments.map((document) => document.id)).toEqual([doc.document.id]);
     } finally { db.close(); }
   });
 
-  it("creates manual confirmation with exact 685 + 426 sacks and issues immutable PDF", async () => {
+  it("creates a confirmation without a fiscal document and issues an immutable PDF", async () => {
     const { repo, db, seller, buyer, product } = await setup();
     const template = repo.createDealConfirmationTemplate(templateInput());
     const draft = repo.createDealConfirmationDraft({
@@ -77,7 +79,11 @@ describe("deal confirmations", () => {
     repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: "Sr. Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
     repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: "Sra. Compradora", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
     expect(repo.calculateDealTotals(draft.confirmation.id)).toEqual({ totalQuantitySacksDecimal: "1111", totalCommercialAmountCents: 111100000 });
+    const savedBeforePreview = repo.updateDealConfirmationDraft(draft.confirmation.id, { publicNotes: "Observacao digitada imediatamente antes da previa" });
+    expect(savedBeforePreview.confirmation.publicNotes).toBe("Observacao digitada imediatamente antes da previa");
     const preview = await repo.generateDealConfirmationPreview(draft.confirmation.id);
+    expect(preview.fiscalDocuments).toHaveLength(0);
+    expect(preview.confirmation.publicNotes).toBe("Observacao digitada imediatamente antes da previa");
     expect(preview.documents[0].documentType).toBe("GENERATED_DRAFT");
     expect(preview.confirmation.confirmationNumber).toBe("VCMG 0001");
     const issued = await repo.issueDealConfirmation(draft.confirmation.id);
@@ -204,7 +210,7 @@ describe("deal confirmations", () => {
     db.close();
   });
 
-  it("reuses the active confirmation already linked to a fiscal document instead of creating a duplicate", async () => {
+  it("allows the same fiscal document in different active confirmations", async () => {
     const { repo, db, product } = await setup();
     const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Reaproveitamento Cafe", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
     const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "NF-950", series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
@@ -214,21 +220,14 @@ describe("deal confirmations", () => {
 
     const first = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
     expect(first.items).toHaveLength(1);
-    // createDealConfirmationDraft ja semeia uma parte ISSUER por padrao -- simula o app completando
-    // com a parte/signatario do vendedor uma unica vez, como o formulario faz apos a primeira chamada.
-    repo.addDealConfirmationParty({ dealConfirmationId: first.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
-    repo.addDealSigner({ dealConfirmationId: first.confirmation.id, partyRole: "SELLER", name: "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
-    const partiesAfterFirstPopulation = repo.getDealConfirmation(first.confirmation.id).parties.length;
-    const signersAfterFirstPopulation = repo.getDealConfirmation(first.confirmation.id).signers.length;
-
-    // O usuario seleciona a mesma nota de novo e manda gerar confirmacao outra vez. Deve reaproveitar
-    // a confirmacao existente, sem duplicar itens, partes ou signatarios.
+    // O mesmo documento pode representar etapas/fechamentos comerciais
+    // independentes, e cada selecao deve criar seu proprio rascunho.
     const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
-    expect(second.confirmation.id).toBe(first.confirmation.id);
+    expect(second.confirmation.id).not.toBe(first.confirmation.id);
     expect(second.items).toHaveLength(1);
-    expect(second.parties).toHaveLength(partiesAfterFirstPopulation);
-    expect(second.signers).toHaveLength(signersAfterFirstPopulation);
-    expect(repo.listDealConfirmations({ organizationId: villaId })).toHaveLength(1);
+    expect(first.fiscalDocuments.map((document) => document.id)).toEqual([doc.document.id]);
+    expect(second.fiscalDocuments.map((document) => document.id)).toEqual([doc.document.id]);
+    expect(repo.listDealConfirmations({ organizationId: villaId })).toHaveLength(2);
     db.close();
   });
 
@@ -246,7 +245,6 @@ describe("deal confirmations", () => {
     const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
     expect(second.confirmation.id).not.toBe(first.confirmation.id);
     expect(second.fiscalDocuments.map((document) => document.id)).toEqual([doc.document.id]);
-    expect(await repo.findConflictingDealConfirmationLabel(doc.document.id)).toBe(second.confirmation.temporaryReference);
     db.close();
   });
 
@@ -359,10 +357,7 @@ describe("deal confirmations", () => {
     repo.updateDealConfirmationDraft(confirmation.confirmation.id, { deliveryLocationSnapshot: "Armazem", paymentTermsSnapshot: "A vista", generalTermsSnapshot: "Padrao" });
     repo.addDealConfirmationClause({ dealConfirmationId: confirmation.confirmation.id, clauseNumber: "1", title: "Conferencia", clauseText: "Clausula revisada.", sortOrder: 0, isVisible: true });
     const preview = await repo.generateDealConfirmationPreview(confirmation.confirmation.id);
-    const reused = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
-    expect(reused.confirmation.id).toBe(confirmation.confirmation.id);
-    expect(reused.confirmation.confirmationNumber).toBe(preview.confirmation.confirmationNumber);
-    const issued = await repo.issueDealConfirmation(reused.confirmation.id);
+    const issued = await repo.issueDealConfirmation(confirmation.confirmation.id);
     expect(issued.confirmation.confirmationNumber).toBe(preview.confirmation.confirmationNumber);
     db.close();
   });

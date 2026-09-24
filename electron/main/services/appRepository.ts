@@ -240,27 +240,6 @@ export class AppRepository {
     return result;
   }
 
-  /**
-   * Usado so' pra melhorar a mensagem de erro do indice unico parcial (ver
-   * 0027_fiscal_document_claim_uniqueness.sql, migrado pra local na 043):
-   * "esta nota ja foi usada" sozinho obrigava o usuario a adivinhar/procurar
-   * em qual confirmacao -- relatado como confuso ("abro outra confirmacao e
-   * nao encontro"). Busca local qual confirmacao ativa hoje reivindica esta
-   * nota, pra citar o numero dela na mensagem.
-   */
-  async findConflictingDealConfirmationLabel(fiscalDocumentId: string): Promise<string | null> {
-    const link = this.db.prepare(`
-      SELECT dc.confirmation_number AS confirmationNumber, dc.temporary_reference AS temporaryReference, dc.id AS id
-      FROM deal_confirmation_fiscal_documents dcfd
-      JOIN deal_confirmations dc ON dc.id = dcfd.deal_confirmation_id
-      WHERE dcfd.fiscal_document_id = ? AND dcfd.is_active = 1
-        AND dc.status NOT IN ('CANCELLED', 'REPLACED')
-      LIMIT 1
-    `).get(fiscalDocumentId) as { confirmationNumber: string | null; temporaryReference: string | null; id: string } | undefined;
-    if (!link) return null;
-    return link.confirmationNumber ?? link.temporaryReference ?? link.id;
-  }
-
   getBootstrapData(version: string): BootstrapData {
     return {
       version,
@@ -5918,8 +5897,6 @@ export class AppRepository {
     const fiscalDocuments = data.fiscalDocumentIds.map((documentId) => this.getFiscalDocument(documentId).document);
     const documentOwnIds = [...new Set(fiscalDocuments.map((document) => document.ownLegalEntityId))];
     if (documentOwnIds.length > 1) throw new Error("Selecione notas do mesmo CNPJ proprio para gerar uma confirmacao.");
-    const reusable = this.findActiveDealConfirmationForFiscalDocuments(data.fiscalDocumentIds);
-    if (reusable) return reusable;
     const draft = this.createDealConfirmationDraft({ organizationId: data.organizationId, ownLegalEntityId: documentOwnIds[0] ?? data.ownLegalEntityId, confirmationDate: new Date().toISOString().slice(0, 10) });
     const trx = this.db.transaction(() => {
       data.fiscalDocumentIds.forEach((documentId) => {
@@ -5964,8 +5941,7 @@ export class AppRepository {
     } catch (error) {
       // O rascunho (draft) ja foi commitado por createDealConfirmationDraft
       // ANTES desta transacao (que so' cobre os vinculos/itens) -- se ela
-      // falhar (ex: nota ja reivindicada por outra confirmacao, ver
-      // linkDealFiscalDocumentInternal), desfaz o rascunho orfao em vez de
+      // falhar, desfaz o rascunho orfao em vez de
       // deixar uma confirmacao vazia solta no banco.
       this.deleteDealConfirmation(draft.confirmation.id);
       throw error;
@@ -6069,27 +6045,27 @@ export class AppRepository {
       WHERE id = @id`)
       .run({
         id,
-        templateId: data.templateId ?? current.templateId,
-        confirmationDate: data.confirmationDate ?? current.confirmationDate,
-        negotiationDate: data.negotiationDate ?? current.negotiationDate,
-        deliveryLocationSnapshot: data.deliveryLocationSnapshot ?? current.deliveryLocationSnapshot,
-        deliveryStartDate: data.deliveryStartDate ?? current.deliveryStartDate,
-        deliveryEndDate: data.deliveryEndDate ?? current.deliveryEndDate,
-        paymentTermsSnapshot: data.paymentTermsSnapshot ?? current.paymentTermsSnapshot,
-        qualityTermsSnapshot: data.qualityTermsSnapshot ?? current.qualityTermsSnapshot,
-        generalTermsSnapshot: data.generalTermsSnapshot ?? current.generalTermsSnapshot,
-        publicNotes: data.publicNotes ?? current.publicNotes,
-        internalNotes: data.internalNotes ?? current.internalNotes,
-        brokeragePercentageBasisPoints: data.brokeragePercentageBasisPoints ?? current.brokeragePercentageBasisPoints,
-        bankName: data.bankName ?? current.bankName,
-        bankCode: data.bankCode ?? current.bankCode,
-        bankAgency: data.bankAgency ?? current.bankAgency,
-        bankAccount: data.bankAccount ?? current.bankAccount,
-        bankAccountType: data.bankAccountType ?? current.bankAccountType,
-        bankHolderName: data.bankHolderName ?? current.bankHolderName,
-        bankHolderDocument: data.bankHolderDocument ?? current.bankHolderDocument,
-        pixKey: data.pixKey ?? current.pixKey,
-        pixKeyType: data.pixKeyType ?? current.pixKeyType,
+        templateId: data.templateId !== undefined ? data.templateId : current.templateId,
+        confirmationDate: data.confirmationDate !== undefined ? data.confirmationDate : current.confirmationDate,
+        negotiationDate: data.negotiationDate !== undefined ? data.negotiationDate : current.negotiationDate,
+        deliveryLocationSnapshot: data.deliveryLocationSnapshot !== undefined ? data.deliveryLocationSnapshot : current.deliveryLocationSnapshot,
+        deliveryStartDate: data.deliveryStartDate !== undefined ? data.deliveryStartDate : current.deliveryStartDate,
+        deliveryEndDate: data.deliveryEndDate !== undefined ? data.deliveryEndDate : current.deliveryEndDate,
+        paymentTermsSnapshot: data.paymentTermsSnapshot !== undefined ? data.paymentTermsSnapshot : current.paymentTermsSnapshot,
+        qualityTermsSnapshot: data.qualityTermsSnapshot !== undefined ? data.qualityTermsSnapshot : current.qualityTermsSnapshot,
+        generalTermsSnapshot: data.generalTermsSnapshot !== undefined ? data.generalTermsSnapshot : current.generalTermsSnapshot,
+        publicNotes: data.publicNotes !== undefined ? data.publicNotes : current.publicNotes,
+        internalNotes: data.internalNotes !== undefined ? data.internalNotes : current.internalNotes,
+        brokeragePercentageBasisPoints: data.brokeragePercentageBasisPoints !== undefined ? data.brokeragePercentageBasisPoints : current.brokeragePercentageBasisPoints,
+        bankName: data.bankName !== undefined ? data.bankName : current.bankName,
+        bankCode: data.bankCode !== undefined ? data.bankCode : current.bankCode,
+        bankAgency: data.bankAgency !== undefined ? data.bankAgency : current.bankAgency,
+        bankAccount: data.bankAccount !== undefined ? data.bankAccount : current.bankAccount,
+        bankAccountType: data.bankAccountType !== undefined ? data.bankAccountType : current.bankAccountType,
+        bankHolderName: data.bankHolderName !== undefined ? data.bankHolderName : current.bankHolderName,
+        bankHolderDocument: data.bankHolderDocument !== undefined ? data.bankHolderDocument : current.bankHolderDocument,
+        pixKey: data.pixKey !== undefined ? data.pixKey : current.pixKey,
+        pixKeyType: data.pixKeyType !== undefined ? data.pixKeyType : current.pixKeyType,
         updatedAt: new Date().toISOString()
       });
     return this.getDealConfirmation(id);
@@ -6758,22 +6734,9 @@ export class AppRepository {
     const document = this.getFiscalDocument(fiscalDocumentId).document;
     if (document.organizationId !== deal.organizationId) throw new Error("Nota pertence a outra organizacao.");
     if (document.ownLegalEntityId !== deal.ownLegalEntityId) throw new Error("Nota pertence a outro CNPJ proprio.");
-    // So' um indice normal (nao UNIQUE) protege deal_confirmation_fiscal_documents
-    // localmente -- essa checagem e' quem de fato impede a MESMA nota ficar
-    // reivindicada por duas confirmacoes ativas ao mesmo tempo. Cancelada ou
-    // substituida libera a nota; o vinculo antigo fica so' como historico.
-    const claim = this.db.prepare(`
-      SELECT dc.confirmation_number AS confirmationNumber, dc.temporary_reference AS temporaryReference, dc.id AS id
-      FROM deal_confirmation_fiscal_documents dcfd
-      JOIN deal_confirmations dc ON dc.id = dcfd.deal_confirmation_id
-      WHERE dcfd.fiscal_document_id = ? AND dcfd.deal_confirmation_id != ? AND dcfd.is_active = 1
-        AND dc.status NOT IN ('CANCELLED', 'REPLACED')
-      LIMIT 1
-    `).get(fiscalDocumentId, dealConfirmationId) as { confirmationNumber: string | null; temporaryReference: string | null; id: string } | undefined;
-    if (claim) {
-      const label = claim.confirmationNumber ?? claim.temporaryReference ?? claim.id;
-      throw new Error(`Esta nota fiscal ja foi usada na confirmacao ${label}. Abra "${label}" na lista de confirmacoes pra ver ou editar.`);
-    }
+    // A mesma nota pode documentar fechamentos comerciais diferentes. A
+    // chave composta da tabela ainda impede repetir a nota dentro da mesma
+    // confirmacao, mas nao bloqueia seu uso em outra confirmacao.
     this.db.prepare("INSERT OR IGNORE INTO deal_confirmation_fiscal_documents (id, deal_confirmation_id, fiscal_document_id, created_at) VALUES (?, ?, ?, ?)").run(randomUUID(), dealConfirmationId, fiscalDocumentId, new Date().toISOString());
   }
 
@@ -6958,21 +6921,6 @@ export class AppRepository {
       results.push(await this.setDealConfirmationSequenceFloor(entity.id, floor));
     }
     return results;
-  }
-
-  private findActiveDealConfirmationForFiscalDocuments(fiscalDocumentIds: string[]): DealConfirmationDetail | null {
-    const placeholders = fiscalDocumentIds.map(() => "?").join(", ");
-    const rows = this.db.prepare(`
-      SELECT dc.id AS id, COUNT(DISTINCT dcfd.fiscal_document_id) AS linkedCount
-      FROM deal_confirmations dc
-      JOIN deal_confirmation_fiscal_documents dcfd ON dcfd.deal_confirmation_id = dc.id
-      WHERE dc.status NOT IN ('CANCELLED', 'REPLACED')
-        AND dcfd.fiscal_document_id IN (${placeholders})
-      GROUP BY dc.id
-      ORDER BY dc.created_at ASC
-    `).all(...fiscalDocumentIds) as Array<{ id: string; linkedCount: number }>;
-    const match = rows.find((row) => Number(row.linkedCount) === fiscalDocumentIds.length) ?? rows[0];
-    return match ? this.getDealConfirmation(match.id) : null;
   }
 
   private defaultDealConfirmationPrefix(organizationId: string, ownLegalEntityId: string): string {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.19
+
+- A prévia e a emissão da confirmação agora salvam automaticamente observações, condições, corretagem e dados bancários antes de gerar o PDF.
+- A mesma nota fiscal pode ser vinculada a fechamentos diferentes, mantendo cada confirmação como um documento independente.
+- A criação sem nota fiscal ganhou acesso direto na lista de confirmações para negócios em que a NF será emitida somente depois das assinaturas.
+- Campos opcionais apagados na tela passam a ser removidos corretamente do fechamento e dos próximos PDFs.
+
 ## 1.1.18
 
 - Corrigida a validacao que bloqueava o login de outro computador ao encontrar arquivos e historicos locais ligados a dados centrais substituidos durante a sincronizacao.
