@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.23
+
+- O PDF de cobranca deixa de repetir o numero da nota fiscal ao lado do valor de cada operacao; a NF permanece identificada somente na coluna propria.
+
 ## 1.1.22
 
 - Contas a pagar abertas ou parcialmente pagas agora podem ser corrigidas pela lista ou pela tela de detalhes, preservando pagamentos e demais dados do lancamento.

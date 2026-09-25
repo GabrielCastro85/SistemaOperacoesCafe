@@ -290,7 +290,7 @@ function drawChargeOperationSectionsPdf(
       currentPage.drawText(truncate(companyName, style.font, 5.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       currentPage.drawText(formatOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       drawRightText(currentPage, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 5.8, style.ink);
-      drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)} x NF ${item.fiscalDocumentNumberSnapshot ?? "-"}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
+      drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
       cursorY -= 12;
       for (const line of contract) {
         ensureSpace(11);
