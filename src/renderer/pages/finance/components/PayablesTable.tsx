@@ -2,7 +2,7 @@ import type { AccountPayable, CostCenter, ExpenseCategory, LegalEntity, Location
 import { formatCurrencyFromCents, formatDateOnlyBr } from "../../../../shared/utils/format";
 import { DataTable, StatusBadge } from "../../../design-system";
 
-export function PayablesTable({ payables, categories, legalEntities, locations, onOpen, onConfirm, onPay, onCancel }: { payables: AccountPayable[]; categories: ExpenseCategory[]; costCenters?: CostCenter[]; legalEntities: LegalEntity[]; locations: Location[]; onOpen?: (id: string) => void; onConfirm?: (id: string) => void; onPay?: (id: string) => void; onCancel?: (id: string) => void }): JSX.Element {
+export function PayablesTable({ payables, categories, legalEntities, locations, onOpen, onEdit, onConfirm, onPay, onCancel }: { payables: AccountPayable[]; categories: ExpenseCategory[]; costCenters?: CostCenter[]; legalEntities: LegalEntity[]; locations: Location[]; onOpen?: (id: string) => void; onEdit?: (id: string) => void; onConfirm?: (id: string) => void; onPay?: (id: string) => void; onCancel?: (id: string) => void }): JSX.Element {
   return (
     <DataTable
       rows={payables}
@@ -19,7 +19,7 @@ export function PayablesTable({ payables, categories, legalEntities, locations, 
         { key: "paid", header: "Pago", align: "right", render: (row) => formatCurrencyFromCents(row.paidAmountCents) },
         { key: "open", header: "Saldo", align: "right", render: (row) => formatCurrencyFromCents(row.openAmountCents ?? 0) },
         { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} label={row.status} /> },
-        { key: "actions", header: "Acoes", render: (row) => <div className="row-actions"><button onClick={() => onOpen?.(row.id)}>Abrir</button>{row.status === "DRAFT" ? <button onClick={() => onConfirm?.(row.id)}>Confirmar</button> : null}{(row.openAmountCents ?? 0) > 0 ? <button onClick={() => onPay?.(row.id)}>Registrar pagamento</button> : null}{row.status !== "CANCELLED" ? <button onClick={() => onCancel?.(row.id)}>Cancelar</button> : null}</div> }
+        { key: "actions", header: "Acoes", render: (row) => <div className="row-actions"><button onClick={() => onOpen?.(row.id)}>Abrir</button>{!["PAID", "CANCELLED"].includes(row.status) ? <button onClick={() => onEdit?.(row.id)}>Editar</button> : null}{row.status === "DRAFT" ? <button onClick={() => onConfirm?.(row.id)}>Confirmar</button> : null}{(row.openAmountCents ?? 0) > 0 ? <button onClick={() => onPay?.(row.id)}>Registrar pagamento</button> : null}{row.status !== "CANCELLED" ? <button onClick={() => onCancel?.(row.id)}>Cancelar</button> : null}</div> }
       ]}
     />
   );

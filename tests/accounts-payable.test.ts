@@ -43,8 +43,14 @@ describe("accounts payable", () => {
     const category = (await repo.listExpenseCategories(villaId))[0];
     const center = repo.createCostCenter({ organizationId: villaId, ownLegalEntityId, locationId: null, parentCostCenterId: null, name: "Administrativo", code: null, description: null, isActive: true });
     const futureDueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Imobiliaria", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: center.id, defaultLocationId: null, source: "MANUAL", description: "Aluguel", documentType: "BOLETO", documentNumber: "A-1", competenceDate: "2026-08-01", issueDate: null, dueDate: futureDueDate, originalAmountCents: 100000, discountCents: 5000, interestCents: 1000, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", notes: null, internalNotes: null });
+    const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Imobiliaria", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: center.id, defaultLocationId: null, source: "MANUAL", description: "Aluguel", documentType: "BOLETO", documentNumber: "A-1", competenceDate: "2026-08-01", issueDate: null, dueDate: futureDueDate, originalAmountCents: 100000, discountCents: 5000, interestCents: 1000, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", plannedPaymentMethod: "PIX", pixKey: "financeiro@imobiliaria.com.br", notes: null, internalNotes: null });
     expect(draft.payable.finalAmountCents).toBe(96000);
+    expect(draft.payable.plannedPaymentMethod).toBe("PIX");
+    expect(draft.payable.pixKey).toBe("financeiro@imobiliaria.com.br");
+    const edited = repo.updateAccountPayable(draft.payable.id, { organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Imobiliaria", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: center.id, defaultLocationId: null, source: "MANUAL", description: "Aluguel corrigido", documentType: "BOLETO", documentNumber: "A-1", competenceDate: "2026-08-01", issueDate: null, dueDate: futureDueDate, originalAmountCents: 100000, discountCents: 5000, interestCents: 1000, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", plannedPaymentMethod: "BOLETO", pixKey: null, notes: null, internalNotes: null });
+    expect(edited.payable.description).toBe("Aluguel corrigido");
+    expect(edited.payable.plannedPaymentMethod).toBe("BOLETO");
+    expect(edited.payable.pixKey).toBeNull();
     repo.addPayableAllocation({ accountPayableId: draft.payable.id, costCenterId: center.id, locationId: null, allocationAmountCents: 96000, allocationBasisPoints: 10000, description: "Administrativo" });
     const confirmed = repo.confirmAccountPayable(draft.payable.id);
     expect(confirmed.payable.status).toBe("OPEN");

@@ -45,7 +45,7 @@ describe("backups, restore preparation and integrity", () => {
     expect(job.documentCount).toBeGreaterThan(0);
     const inspection = backups.verify({ path: job.storedFilePath });
     expect(inspection.valid).toBe(true);
-    expect(inspection.manifest?.databaseMigrationVersion).toBe("052_client_charge_adjustment_reason");
+    expect(inspection.manifest?.databaseMigrationVersion).toBe("053_payable_planned_payment");
     expect(inspection.manifest?.totalFileCount).toBe(job.fileCount);
   });
 

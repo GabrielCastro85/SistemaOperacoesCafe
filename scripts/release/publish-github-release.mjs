@@ -12,7 +12,9 @@ const token = tokenMatch[1].trim().replace(/^["']|["']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.21'
+const releaseNotes = version === '1.1.22'
+  ? 'Melhora o lancamento de contas a pagar: permite editar contas abertas, selecionar e vincular anexos durante o cadastro, informar o meio de pagamento previsto e registrar a chave quando for PIX. Tambem reorganiza os cards do resumo financeiro para dar mais espaco entre as informacoes.'
+  : version === '1.1.21'
   ? 'Corrige confirmações que voltavam a aparecer como rascunho depois da emissão. O aplicativo agora só marca o fechamento como emitido após gravar e registrar o PDF definitivo; o estado emitido, o vínculo com o documento e o histórico são concluídos juntos.'
   : version === '1.1.20'
   ? 'Corrige a perda de observações nas confirmações de negócio. Os campos da tela agora são gravados no mesmo comando que gera a prévia ou emite o PDF, e a sincronização central preserva alterações locais ainda não enviadas em vez de substituí-las por uma versão anterior.'

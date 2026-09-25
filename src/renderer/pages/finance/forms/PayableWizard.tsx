@@ -19,9 +19,9 @@ export function PayableWizard({ form, categories, costCenters, onChange, onSubmi
       {active === "identificacao" ? <PayableIdentificationStep form={form} onChange={onChange} /> : null}
       {active === "valores" ? <PayableValuesStep form={form} onChange={onChange} /> : null}
       {active === "rateio" ? <PayableAllocationStep form={form} categories={categories} costCenters={costCenters} onChange={onChange} /> : null}
-      {active === "anexos" ? <PayableAttachmentsStep /> : null}
+      {active === "anexos" ? <PayableAttachmentsStep form={form} onChange={onChange} /> : null}
       {active === "revisao" ? <PayableReviewStep form={form} /> : null}
-      <div className="actions"><Button disabled={index === 0} onClick={() => setIndex(index - 1)}>Voltar</Button>{index < steps.length - 1 ? <Button variant="primary" onClick={() => setIndex(index + 1)}>Avancar</Button> : <Button variant="primary" onClick={onSubmit}>Confirmar conta</Button>}</div>
+      <div className="actions"><Button disabled={index === 0} onClick={() => setIndex(index - 1)}>Voltar</Button>{index < steps.length - 1 ? <Button variant="primary" onClick={() => setIndex(index + 1)}>Avancar</Button> : <Button variant="primary" disabled={form.plannedPaymentMethod === "PIX" && !form.pixKey.trim()} onClick={onSubmit}>Confirmar conta</Button>}</div>
     </div>
   );
 }

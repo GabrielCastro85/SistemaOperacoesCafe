@@ -1,19 +1,8 @@
-import type { CSSProperties } from "react";
 import type { FinancialSummary } from "../../../../shared/types/domain";
 import { formatCurrencyFromCents } from "../../../../shared/utils/format";
 import { Card } from "../../../design-system";
 
-const gridStyle: CSSProperties = {
-  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-  alignItems: "stretch"
-};
-
-const wrapperStyle: CSSProperties = {
-  minWidth: 0,
-  overflow: "hidden"
-};
-
-const valueStyle: CSSProperties = {
+const valueStyle = {
   display: "block",
   minWidth: 0,
   maxWidth: "100%",
@@ -23,7 +12,7 @@ const valueStyle: CSSProperties = {
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis"
-};
+} as const;
 
 function SummaryCard({
   label,
@@ -35,7 +24,7 @@ function SummaryCard({
   description?: string;
 }): JSX.Element {
   return (
-    <div style={wrapperStyle}>
+    <div className="finance-summary-card">
       <Card>
         <span>{label}</span>
         <strong style={valueStyle} title={value}>
@@ -49,7 +38,7 @@ function SummaryCard({
 
 export function FinancialSummaryCards({ summary }: { summary: FinancialSummary | null }): JSX.Element {
   return (
-    <div className="cards" style={gridStyle}>
+    <div className="cards finance-summary-cards">
       <SummaryCard
         label="Total a pagar no mes"
         value={formatCurrencyFromCents(summary?.payableThisMonthCents ?? 0)}

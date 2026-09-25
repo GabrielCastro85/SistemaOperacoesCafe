@@ -1263,6 +1263,8 @@ export interface AccountPayable {
   paidAmountCents: number;
   openAmountCents: number | null;
   amountStatus: PayableAmountStatus;
+  plannedPaymentMethod: PayablePaymentMethod | null;
+  pixKey: string | null;
   status: AccountPayableStatus;
   notes: string | null;
   internalNotes: string | null;

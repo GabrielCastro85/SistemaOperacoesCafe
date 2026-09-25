@@ -729,8 +729,14 @@ export const accountPayableInputSchema = z.object({
   penaltyCents: nonNegativeCents,
   otherAdditionsCents: nonNegativeCents,
   amountStatus: payableAmountStatusSchema,
+  plannedPaymentMethod: payablePaymentMethodSchema.nullable().default(null),
+  pixKey: nullableText.default(null),
   notes: nullableText,
   internalNotes: nullableText
+}).superRefine((data, context) => {
+  if (data.plannedPaymentMethod === "PIX" && !data.pixKey?.trim()) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["pixKey"], message: "Informe a chave PIX prevista para o pagamento." });
+  }
 });
 
 export const accountPayableAllocationInputSchema = z.object({

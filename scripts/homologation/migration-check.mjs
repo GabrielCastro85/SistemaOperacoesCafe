@@ -6,7 +6,7 @@ import process from "node:process";
 
 const source = readFileSync(join(process.cwd(), "electron/main/database/migrations.ts"), "utf8");
 const migrations = [...source.matchAll(/name:\s*"(0\d{2}_[^"]+)"/g)].map((match) => match[1]);
-const expectedLast = "018_legal_entity_confirmation_defaults";
+const expectedLast = "053_payable_planned_payment";
 const errors = [];
 
 if (migrations.at(-1) !== expectedLast) {
@@ -16,7 +16,7 @@ if (migrations.at(-1) !== expectedLast) {
 const duplicates = migrations.filter((name, index) => migrations.indexOf(name) !== index);
 if (duplicates.length > 0) errors.push(`Migrations duplicadas: ${duplicates.join(", ")}.`);
 
-if (migrations.length !== 16) errors.push(`Quantidade esperada de migrations: 16. Encontrada: ${migrations.length}.`);
+if (migrations.length !== 53) errors.push(`Quantidade esperada de migrations: 53. Encontrada: ${migrations.length}.`);
 
 if (errors.length > 0) {
   console.error(errors.join("\n"));

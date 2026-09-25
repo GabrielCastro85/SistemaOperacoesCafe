@@ -28,9 +28,14 @@ export async function createPayableFromForm(data: BootstrapData, form: PayableDr
     penaltyCents: 0,
     otherAdditionsCents: 0,
     amountStatus: "CONFIRMED",
+    plannedPaymentMethod: form.plannedPaymentMethod,
+    pixKey: form.plannedPaymentMethod === "PIX" ? form.pixKey : null,
     notes: null,
     internalNotes: null
   });
+  for (const attachment of form.attachments) {
+    await window.operationsCafe.addPayableAttachment({ token: attachment.token, accountPayableId: detail.payable.id, attachmentType: "BILL", description: "Documento anexado no lancamento da conta" });
+  }
   if (confirm) await window.operationsCafe.confirmAccountPayable(detail.payable.id);
 }
 

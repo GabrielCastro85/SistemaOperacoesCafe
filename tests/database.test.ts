@@ -31,7 +31,7 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("052_client_charge_adjustment_reason");
+    expect(getCurrentMigration(db)).toBe("053_payable_planned_payment");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });
@@ -42,6 +42,7 @@ describe("database foundation", () => {
     expect(db.prepare("PRAGMA table_info(client_charge_operations)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "own_legal_entity_name_snapshot" })]));
     expect(db.prepare("PRAGMA table_info(business_partners)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "document_number" }), expect.objectContaining({ name: "mobile" })]));
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accounts_payable'").get()).toMatchObject({ name: "accounts_payable" });
+    expect(db.prepare("PRAGMA table_info(accounts_payable)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "planned_payment_method" }), expect.objectContaining({ name: "pix_key" })]));
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'financial_report_generations'").get()).toMatchObject({ name: "financial_report_generations" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'deal_confirmations'").get()).toMatchObject({ name: "deal_confirmations" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'deal_confirmation_document_versions'").get()).toMatchObject({ name: "deal_confirmation_document_versions" });

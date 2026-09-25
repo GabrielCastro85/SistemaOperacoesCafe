@@ -3488,4 +3488,11 @@ export const migrations: Migration[] = [
       ALTER TABLE client_charge_adjustments ADD COLUMN reason TEXT;
     `)
   }
+  ,{
+    name: "053_payable_planned_payment",
+    up: (db) => db.exec(`
+      ALTER TABLE accounts_payable ADD COLUMN planned_payment_method TEXT CHECK (planned_payment_method IN ('PIX','BANK_TRANSFER','BOLETO','CASH','CHECK','CARD','DIRECT_DEBIT','OFFSET','OTHER'));
+      ALTER TABLE accounts_payable ADD COLUMN pix_key TEXT;
+    `)
+  }
 ];

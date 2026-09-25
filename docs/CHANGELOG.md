@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.22
+
+- Contas a pagar abertas ou parcialmente pagas agora podem ser corrigidas pela lista ou pela tela de detalhes, preservando pagamentos e demais dados do lancamento.
+- O cadastro de contas ganhou selecao funcional de anexos; os arquivos escolhidos sao copiados e vinculados antes da confirmacao da conta.
+- Adicionado meio de pagamento previsto, com opcoes como dinheiro, boleto e PIX; ao selecionar PIX, a chave passa a ser obrigatoria e fica visivel no resumo.
+- Os cards do resumo financeiro receberam mais espacamento e melhor distribuicao entre linhas e colunas.
+
 ## 1.1.21
 
 - A confirmação passa a ser marcada como emitida somente depois que o PDF definitivo foi gravado e registrado com sucesso.

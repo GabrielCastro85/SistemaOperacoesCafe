@@ -237,6 +237,7 @@ function renderRoute(
   if (path.startsWith("/finance/purchase-settlements")) return <PurchaseSettlementsPage data={data} />;
   if (path.startsWith("/finance/purchase-rates")) return <PurchaseRateRulesPage data={data} />;
   if (path.startsWith("/finance/payables/new")) return <PayableCreatePage data={data} />;
+  if (/^\/finance\/payables\/[^/]+\/edit$/.test(path)) return <PayableDetailsPage data={data} id={path.split("/")[3] ?? null} initialEditing />;
   if (path.startsWith("/finance/payables/")) return <PayableDetailsPage data={data} id={routeTail(path, "/finance/payables/")} />;
   if (path.startsWith("/finance/payables")) return <PayablesPage data={data} />;
   if (path.startsWith("/finance/recurring/new")) return <RecurringPayablesPage data={data} />;

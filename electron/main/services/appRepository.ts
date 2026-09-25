@@ -4902,9 +4902,9 @@ export class AppRepository {
       id, organization_id, own_legal_entity_id, supplier_partner_id, supplier_legal_entity_id, payee_name_snapshot, payee_tax_id_snapshot,
       category_id, default_cost_center_id, default_location_id, source, description, document_type, document_number,
       competence_date, issue_date, due_date, original_amount_cents, discount_cents, interest_cents, penalty_cents, other_additions_cents,
-      final_amount_cents, paid_amount_cents, open_amount_cents, amount_status, status, notes, internal_notes, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, status, data.notes, data.internalNotes, now, now);
+      final_amount_cents, paid_amount_cents, open_amount_cents, amount_status, planned_payment_method, pix_key, status, notes, internal_notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, data.plannedPaymentMethod, data.plannedPaymentMethod === "PIX" ? data.pixKey : null, status, data.notes, data.internalNotes, now, now);
     this.recordPayableStatus(id, null, status, "Rascunho criado");
     return this.getAccountPayable(id);
   }
@@ -4919,8 +4919,8 @@ export class AppRepository {
     this.db.prepare(`UPDATE accounts_payable SET supplier_partner_id = ?, supplier_legal_entity_id = ?, payee_name_snapshot = ?, payee_tax_id_snapshot = ?,
       category_id = ?, default_cost_center_id = ?, default_location_id = ?, source = ?, description = ?, document_type = ?, document_number = ?,
       competence_date = ?, issue_date = ?, due_date = ?, original_amount_cents = ?, discount_cents = ?, interest_cents = ?, penalty_cents = ?,
-      other_additions_cents = ?, final_amount_cents = ?, open_amount_cents = ?, amount_status = ?, notes = ?, internal_notes = ?, updated_at = ? WHERE id = ?`)
-      .run(data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, data.notes, data.internalNotes, new Date().toISOString(), id);
+      other_additions_cents = ?, final_amount_cents = ?, open_amount_cents = ?, amount_status = ?, planned_payment_method = ?, pix_key = ?, notes = ?, internal_notes = ?, updated_at = ? WHERE id = ?`)
+      .run(data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, data.plannedPaymentMethod, data.plannedPaymentMethod === "PIX" ? data.pixKey : null, data.notes, data.internalNotes, new Date().toISOString(), id);
     this.refreshPayableStatus(id);
     return this.getAccountPayable(id);
   }
@@ -5138,6 +5138,8 @@ export class AppRepository {
       penaltyCents: original.penaltyCents,
       otherAdditionsCents: original.otherAdditionsCents,
       amountStatus: original.amountStatus,
+      plannedPaymentMethod: original.plannedPaymentMethod,
+      pixKey: original.pixKey,
       notes: original.notes,
       internalNotes: original.internalNotes
     });

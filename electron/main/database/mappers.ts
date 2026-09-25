@@ -915,6 +915,8 @@ export function mapAccountPayable(row: DbRecord): AccountPayable {
     paidAmountCents: Number(row.paid_amount_cents),
     openAmountCents: typeof row.open_amount_cents === "number" ? row.open_amount_cents : null,
     amountStatus: String(row.amount_status) as AccountPayable["amountStatus"],
+    plannedPaymentMethod: textOrNull(row.planned_payment_method) as AccountPayable["plannedPaymentMethod"],
+    pixKey: textOrNull(row.pix_key),
     status: String(row.status) as AccountPayable["status"],
     notes: textOrNull(row.notes),
     internalNotes: textOrNull(row.internal_notes),
