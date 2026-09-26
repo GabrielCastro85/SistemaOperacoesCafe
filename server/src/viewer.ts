@@ -263,8 +263,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     if (!session) return;
     const filters = filterSchema.parse(request.query);
     if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
-    const [allOperations, allCharges] = await Promise.all([
-      records(pool, "operations"), records(pool, "client_charges")
+    const [allOperations, allCharges, allPartners] = await Promise.all([
+      records(pool, "operations"), records(pool, "client_charges"), records(pool, "business_partners")
     ]);
     const operations = allOperations.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELED" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
     const sales = operations.filter((row) => text(row.operation_type) !== "PURCHASE");
@@ -284,6 +284,25 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
         && text(chargeById.get(text(row.client_charge_id))?.status) === "PAID"
         && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd))
       .reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0);
+    const today = new Date().toISOString().slice(0, 10);
+    const partnerNameById = new Map(allPartners.map((row) => [text(row.id), text(row.display_name) || "Cliente"]));
+    const overdueCharges = allCharges
+      .filter((row) => inScope(row, filters) && text(row.status) === "OVERDUE" && numberValue(row.open_amount_cents) > 0)
+      .map((row) => {
+        const dueDate = nullableText(row.due_date);
+        const daysOverdue = dueDate
+          ? Math.max(0, Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${dueDate}T00:00:00Z`)) / 86_400_000))
+          : 0;
+        return {
+          chargeId: text(row.id),
+          chargeNumber: nullableText(row.charge_number),
+          partnerName: partnerNameById.get(text(row.client_partner_id)) ?? "Cliente",
+          dueDate,
+          daysOverdue,
+          openAmountCents: numberValue(row.open_amount_cents)
+        };
+      })
+      .sort((left, right) => right.daysOverdue - left.daysOverdue || left.partnerName.localeCompare(right.partnerName, "pt-BR"));
     return {
       periodStart: filters.periodStart,
       periodEnd: filters.periodEnd,
@@ -293,7 +312,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       receivedCents: globalReceivedForOperationsPeriodCents,
       generatedServiceCents: sales.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       unbilledCount: globalUnbilled.length,
-      overdueCents: charges.filter((row) => text(row.status) === "OVERDUE").reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0)
+      overdueCents: charges.filter((row) => text(row.status) === "OVERDUE").reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0),
+      overdueCharges
     };
   });
 

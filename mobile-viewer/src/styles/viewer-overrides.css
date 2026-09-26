@@ -295,6 +295,36 @@
   font-size: 0.78rem;
   font-weight: 600;
 }
+
+.viewer-overdue-charges {
+  margin-top: var(--space-4);
+}
+
+.viewer-overdue-charges .alert-item {
+  cursor: default;
+}
+
+.viewer-overdue-charges .alert-item:hover {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+.viewer-overdue-charges .alert-item > span:last-child {
+  min-width: 0;
+}
+
+.viewer-overdue-charges .alert-item small {
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 620px) {
+  .viewer-overdue-charges .alert-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+}
 /* The consultation header keeps only the active company identity. Context
    controls live in the sidebar so the notes start closer to the top. */
 .app-sidebar {

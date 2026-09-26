@@ -55,7 +55,7 @@ function fixture(): Record<string, Row[]> {
       { id: "third-document", document_number: "5201", status: "CONFIRMED", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Emitente Terceiro LTDA", cnpjCpf: "22222222000122" }, recipient: { legalName: "Destino Final LTDA", cnpjCpf: "33333333000133" } }) }
     ],
     client_charges: [
-      { id: chargeId, organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2026-10-05", status: "ISSUED", subtotal_services_cents: 200000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 200000, paid_amount_cents: 0, open_amount_cents: 200000, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" },
+      { id: chargeId, organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2000-01-01", status: "OVERDUE", subtotal_services_cents: 200000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 200000, paid_amount_cents: 0, open_amount_cents: 200000, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" },
       { id: "charge-paid", organization_id: "org2", own_legal_entity_id: "entity2", client_partner_id: "client2", periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2026-10-05", status: "PAID", subtotal_services_cents: 45000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 45000, paid_amount_cents: 45000, open_amount_cents: 0, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" }
     ],
     client_charge_operations: [{ id: "charge-operation", client_charge_id: chargeId, operation_id: "operation", own_legal_entity_id_snapshot: legalEntityId, own_legal_entity_name_snapshot: "Villa Coffee LTDA", operation_date_snapshot: "2026-09-10", fiscal_document_number_snapshot: "123", issuer_name_snapshot: "Villa Coffee LTDA", destination_name_snapshot: "Cliente Teste", product_name_snapshot: "Cafe", operation_scope_snapshot: "INTERNAL", quantity_sacks_decimal_snapshot: "500", service_rate_cents_snapshot: 400, service_amount_cents_snapshot: 200000, created_at: "2026-09-30T12:00:00Z" }],
@@ -77,7 +77,13 @@ describe("viewer API", () => {
     // empresas" do app: receivableCents = 200000 (charge aberta) + 150000+80000+20000
     // (3 operacoes UNBILLED em ambas organizacoes); receivedCents = 45000 (unica
     // operacao SALE ligada a uma cobranca PAID no periodo).
-    expect(dashboard.json()).toMatchObject({ sacks: 500, receivableCents: 450000, receivedCents: 45000, unbilledCount: 3 });
+    expect(dashboard.json()).toMatchObject({
+      sacks: 500,
+      receivableCents: 450000,
+      receivedCents: 45000,
+      unbilledCount: 3,
+      overdueCharges: [expect.objectContaining({ chargeId, partnerName: "Cliente Teste", openAmountCents: 200000 })]
+    });
 
     const notes = await app.inject({ method: "GET", url: `/v1/viewer/open-notes?${query}`, headers: { authorization: "Bearer test" } });
     expect(notes.statusCode).toBe(200);

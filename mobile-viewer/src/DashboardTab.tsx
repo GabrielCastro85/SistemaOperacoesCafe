@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiJson, queryString } from "./api";
-import { formatCurrencyBr } from "./viewerFormat";
+import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { Card } from "./renderer/design-system/components/Card";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
+import { Badge } from "./renderer/design-system/components/Badge";
 import { CoinsIcon, PackageIcon, WalletIcon } from "./renderer/design-system/components/Icons";
 
 interface DashboardSummary {
@@ -15,6 +16,14 @@ interface DashboardSummary {
   generatedServiceCents: number;
   unbilledCount: number;
   overdueCents: number;
+  overdueCharges?: Array<{
+    chargeId: string;
+    chargeNumber: string | null;
+    partnerName: string;
+    dueDate: string | null;
+    daysOverdue: number;
+    openAmountCents: number;
+  }>;
 }
 
 function currentMonth(): { start: string; end: string } {
@@ -52,11 +61,28 @@ export function DashboardTab({ organizationId, legalEntityId }: { organizationId
       {error ? <Alert tone="danger" title="Falha ao carregar o dashboard">{error}</Alert> : null}
       {!error && !summary ? <LoadingState label="Carregando indicadores..." /> : null}
       {summary ? (
-        <div className="dashboard-grid dashboard-grid--hero">
-          <Card><span className="kpi-icon"><PackageIcon /></span><span>Sacas no período</span><strong>{summary.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</strong><small>{summary.operationCount} operação(ões)</small></Card>
-          <Card><span className="kpi-icon"><WalletIcon /></span><span>Total a receber</span><strong>{formatCurrencyBr(summary.receivableCents)}</strong><small>Todas as empresas · {summary.unbilledCount} operação(ões) sem cobrança</small></Card>
-          <Card><span className="kpi-icon"><CoinsIcon /></span><span>Recebido no período</span><strong>{formatCurrencyBr(summary.receivedCents)}</strong><small>Todas as empresas</small></Card>
-        </div>
+        <>
+          <div className="dashboard-grid dashboard-grid--hero">
+            <Card><span className="kpi-icon"><PackageIcon /></span><span>Sacas no período</span><strong>{summary.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</strong><small>{summary.operationCount} operação(ões)</small></Card>
+            <Card><span className="kpi-icon"><WalletIcon /></span><span>Total a receber</span><strong>{formatCurrencyBr(summary.receivableCents)}</strong><small>Todas as empresas · {summary.unbilledCount} operação(ões) sem cobrança</small></Card>
+            <Card><span className="kpi-icon"><CoinsIcon /></span><span>Recebido no período</span><strong>{formatCurrencyBr(summary.receivedCents)}</strong><small>Todas as empresas</small></Card>
+          </div>
+          {(summary.overdueCharges?.length ?? 0) > 0 ? (
+            <Card eyebrow="Atenção" title="Cobranças vencidas em aberto" className="viewer-overdue-charges">
+              <div className="alert-list">
+                {(summary.overdueCharges ?? []).map((charge) => (
+                  <div key={charge.chargeId} className="alert-item">
+                    <Badge tone="danger">Cobrança vencida</Badge>
+                    <span>
+                      <strong>{charge.partnerName}</strong> — {formatCurrencyBr(charge.openAmountCents)} em aberto há {charge.daysOverdue} dia(s)
+                      {charge.dueDate ? <small> · Vencimento {formatDateBr(charge.dueDate)}</small> : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+        </>
       ) : null}
     </>
   );
