@@ -286,8 +286,17 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       .reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0);
     const today = new Date().toISOString().slice(0, 10);
     const partnerNameById = new Map(allPartners.map((row) => [text(row.id), text(row.display_name) || "Cliente"]));
+    const isOverdueCharge = (row: Record<string, unknown>): boolean => {
+      const dueDate = nullableText(row.due_date);
+      return ["ISSUED", "PARTIALLY_PAID", "OVERDUE"].includes(text(row.status))
+        && numberValue(row.open_amount_cents) > 0
+        && Boolean(dueDate && dueDate < today);
+    };
     const overdueCharges = allCharges
-      .filter((row) => inScope(row, filters) && text(row.status) === "OVERDUE" && numberValue(row.open_amount_cents) > 0)
+      // O desktop calcula OVERDUE ao ler uma cobranca ISSUED cuja data venceu.
+      // O servidor central pode ainda guardar ISSUED quando essa atualizacao local
+      // nao sincronizou, portanto a consulta web precisa aplicar a mesma regra.
+      .filter((row) => inScope(row, filters) && isOverdueCharge(row))
       .map((row) => {
         const dueDate = nullableText(row.due_date);
         const daysOverdue = dueDate
@@ -312,7 +321,7 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       receivedCents: globalReceivedForOperationsPeriodCents,
       generatedServiceCents: sales.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       unbilledCount: globalUnbilled.length,
-      overdueCents: charges.filter((row) => text(row.status) === "OVERDUE").reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0),
+      overdueCents: charges.filter(isOverdueCharge).reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0),
       overdueCharges
     };
   });
