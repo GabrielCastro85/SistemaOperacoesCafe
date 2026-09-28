@@ -35,6 +35,69 @@ afterEach(() => {
 });
 
 describe("deal confirmations", () => {
+  it("uses complete NF company data without associating it to a client", async () => {
+    const { repo, db } = await setup();
+    try {
+      const standaloneCompany = await repo.createPartnerLegalEntity({
+        organizationId: villaId,
+        businessPartnerId: null,
+        legalName: "GARDINGO TRADE IMPORTACAO E EXPORTACAO LTDA",
+        tradeName: "GARDINGO TRADE",
+        cnpj: "00681184000100",
+        stateRegistration: "4099632320017",
+        municipalRegistration: null,
+        email: null,
+        phone: null,
+        addressLine: "FAZENDA SANTA MARIA",
+        addressNumber: "03",
+        addressComplement: null,
+        district: "ZONA RURAL",
+        city: "MATIPO",
+        state: "MG",
+        postalCode: "35367000",
+        isPrimary: false,
+        isActive: true,
+        isDraft: false
+      });
+      const draft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-09-28" });
+
+      const buyer = repo.addDealConfirmationParty({
+        dealConfirmationId: draft.confirmation.id,
+        partyRole: "BUYER",
+        businessPartnerId: null,
+        partnerLegalEntityId: standaloneCompany.id,
+        ownLegalEntityId: null,
+        manualName: null,
+        representativeName: null,
+        sortOrder: 2
+      });
+
+      expect(buyer.businessPartnerId).toBeNull();
+      expect(buyer.partnerLegalEntityId).toBe(standaloneCompany.id);
+      expect(JSON.parse(buyer.snapshotJson)).toMatchObject({
+        legalName: "GARDINGO TRADE IMPORTACAO E EXPORTACAO LTDA",
+        taxId: "00681184000100",
+        stateRegistration: "4099632320017",
+        addressLine: "FAZENDA SANTA MARIA",
+        addressNumber: "03",
+        district: "ZONA RURAL",
+        city: "MATIPO",
+        state: "MG",
+        postalCode: "35367000"
+      });
+
+      const replacementDraft = repo.duplicateDealConfirmationAsDraft(draft.confirmation.id);
+      const duplicatedBuyer = replacementDraft.parties.find((party) => party.partyRole === "BUYER");
+      expect(JSON.parse(duplicatedBuyer?.snapshotJson ?? "{}")).toMatchObject({
+        taxId: "00681184000100",
+        stateRegistration: "4099632320017",
+        addressLine: "FAZENDA SANTA MARIA",
+        city: "MATIPO",
+        state: "MG"
+      });
+    } finally { db.close(); }
+  });
+
   it("creates a confirmation from a Villa note classified with a Grao product", async () => {
     const { repo, db, buyer, product } = await setup();
     try {

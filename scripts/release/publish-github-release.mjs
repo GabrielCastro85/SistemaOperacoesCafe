@@ -12,7 +12,9 @@ const token = tokenMatch[1].trim().replace(/^["']|["']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.23'
+const releaseNotes = version === '1.1.24'
+  ? 'Corrige os dados das empresas nas confirmacoes de negocio geradas por nota fiscal. CNPJ, inscricao estadual e endereco agora sao preenchidos a partir da empresa identificada no XML, mesmo sem associacao com um cliente ou corretor.'
+  : version === '1.1.23'
   ? 'O PDF de cobranca deixa de repetir o numero da nota fiscal ao lado do valor. A NF continua aparecendo na coluna propria, enquanto a coluna Valor passa a exibir somente o valor monetario.'
   : version === '1.1.22'
   ? 'Melhora o lancamento de contas a pagar: permite editar contas abertas, selecionar e vincular anexos durante o cadastro, informar o meio de pagamento previsto e registrar a chave quando for PIX. Tambem reorganiza os cards do resumo financeiro para dar mais espaco entre as informacoes.'

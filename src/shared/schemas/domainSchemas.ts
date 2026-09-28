@@ -896,7 +896,7 @@ export const dealConfirmationPartyInputSchema = z.object({
   manualName: nullableText.optional(),
   representativeName: nullableText.optional(),
   sortOrder: z.number().int().min(0).default(0)
-}).refine((data) => Boolean(data.ownLegalEntityId || data.businessPartnerId || data.manualName), "Informe cadastro ou participante manual.");
+}).refine((data) => Boolean(data.ownLegalEntityId || data.businessPartnerId || data.partnerLegalEntityId || data.manualName), "Informe cadastro ou participante manual.");
 
 export const dealConfirmationItemInputSchema = z.object({
   dealConfirmationId: z.string().uuid(),

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.24
+
+- Confirmacoes criadas a partir de notas fiscais passam a usar CNPJ, inscricao estadual e endereco da empresa da NF mesmo quando ela ainda nao esta associada a um cliente ou corretor.
+- Ao substituir uma confirmacao antiga, o novo rascunho atualiza esses dados a partir do cadastro independente criado pelo XML.
+
 ## 1.1.23
 
 - O PDF de cobranca deixa de repetir o numero da nota fiscal ao lado do valor de cada operacao; a NF permanece identificada somente na coluna propria.

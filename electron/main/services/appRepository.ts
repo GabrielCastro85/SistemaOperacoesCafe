@@ -6668,6 +6668,14 @@ export class AppRepository {
       if (own.organizationId !== organizationId || data.ownLegalEntityId !== ownLegalEntityId) throw new Error("CNPJ proprio incompativel com a confirmacao.");
       return { name: own.legalName || own.tradeName, legalName: own.legalName, taxId: own.cnpj, stateRegistration: own.stateRegistration, addressLine: own.addressLine, addressNumber: own.addressNumber, addressComplement: own.addressComplement, district: own.district, city: own.city, state: own.state, postalCode: own.postalCode, phone: own.phone, email: own.email, representativeName: data.representativeName ?? null, role: data.partyRole };
     }
+    // Empresas identificadas pela NF podem existir sem estarem associadas a um
+    // cliente/corretor. Nesse caso, a confirmacao deve usar o cadastro criado a
+    // partir do XML, em vez de reduzir o participante ao nome manual.
+    if (data.partnerLegalEntityId && !data.businessPartnerId) {
+      const entity = this.getPartnerLegalEntity(data.partnerLegalEntityId);
+      if (entity.organizationId !== organizationId) throw new Error("Empresa da NF pertence a outra organizacao.");
+      return { name: entity.legalName || entity.tradeName, legalName: entity.legalName, taxId: entity.cnpj, stateRegistration: entity.stateRegistration, addressLine: entity.addressLine, addressNumber: entity.addressNumber, addressComplement: entity.addressComplement, district: entity.district, city: entity.city, state: entity.state, postalCode: entity.postalCode, phone: entity.phone, email: entity.email, representativeName: data.representativeName ?? null, role: data.partyRole };
+    }
     if (data.businessPartnerId) {
       const partner = this.getBusinessPartner(data.businessPartnerId);
       const entity = data.partnerLegalEntityId ? this.getPartnerLegalEntity(data.partnerLegalEntityId) : this.listPartnerLegalEntities(partner.id).find((item) => item.isPrimary) ?? null;
