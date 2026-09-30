@@ -398,6 +398,45 @@ describe("xml imports", () => {
     db.close();
   });
 
+  it("keeps an existing third-party issuer billing-only even when its CNPJ is linked to a supplier", async () => {
+    const { repo, db, partnerId, productId, dir } = await setup();
+    const thirdPartyCnpj = "68359026000164";
+    const supplier = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Fornecedor terceirizado", notes: null, roles: ["SUPPLIER"], isActive: true });
+    const supplierEntity = await repo.createPartnerLegalEntity({
+      organizationId: villaId, businessPartnerId: supplier.id, legalName: "Terceirizada Cafe Ltda", tradeName: "Terceirizada Cafe Ltda", cnpj: thirdPartyCnpj,
+      stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: null, addressNumber: null, addressComplement: null,
+      district: null, city: null, state: "MG", postalCode: null, isPrimary: true, isActive: true, isDraft: false
+    });
+    const thirdParty = repo.resolveIssuerLegalEntityFromPartner(villaId, supplierEntity.id);
+    const key = makeAccessKey();
+    const filePath = join(dir, "nfe-existing-third-party.xml");
+    writeFileSync(filePath, nfeXml(key)
+      .replace(`<CNPJ>${ownCnpj}</CNPJ>`, `<CNPJ>${thirdPartyCnpj}</CNPJ>`)
+      .replace("<xNome>Emitente Cafe Ltda</xNome>", "<xNome>Terceirizada Cafe Ltda</xNome>"), "utf8");
+    const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111129");
+    const job = repo.createXmlImportDraft({
+      organizationId: villaId,
+      sourceType: "FILE",
+      selectedFolder: null,
+      includeSubfolders: false,
+      settings: { ownLegalEntityId: thirdParty.id, clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true }
+    });
+    const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+    repo.setXmlImportFileStoredPath(file.id, filePath);
+    const result = await repo.executeXmlImportJob(job.id);
+    const detail = repo.getFiscalDocument(result.files[0].fiscalDocumentId as string);
+    expect(detail.document.secondaryResponsiblePartnerId).toBeNull();
+    expect(detail.document.notes).toContain("Nota terceirizada");
+    expect(detail.operations).toHaveLength(1);
+    expect(detail.operations[0].operationType).toBe("SALE");
+
+    // Abrir o fluxo de acertos de fornecedor tambem nao pode completar esta
+    // nota como triangulada depois da importacao.
+    expect(repo.findEligiblePurchaseOperations({ organizationId: villaId, ownLegalEntityId: thirdParty.id, supplierPartnerId: supplier.id, periodStart: "2026-01-01", periodEnd: "2026-12-31" })).toHaveLength(0);
+    expect(repo.getFiscalDocument(detail.document.id).operations).toHaveLength(1);
+    db.close();
+  });
+
   it("generates the same third-party placeholder legal entity id on two independent PCs, so they don't collide when both sync to Supabase", async () => {
     // Reproduz o bug real: dois PCs importam, cada um por conta propria (antes
     // de sincronizar entre si), uma nota do MESMO terceiro (mesmo CNPJ

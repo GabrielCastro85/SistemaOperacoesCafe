@@ -3811,8 +3811,9 @@ export class AppRepository {
       if (existing) {
         const existingDetail = this.getFiscalDocument(existing.id);
         const primaryOperation = existingDetail.operations.find((operation) => operation.status !== "CANCELED");
+        const existingOwnEntity = this.getLegalEntity(existingDetail.document.ownLegalEntityId);
         const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
-        const autoSecondary = explicitSecondaryPartnerId || !primaryOperation || existingDetail.document.secondaryResponsiblePartnerId
+        const autoSecondary = explicitSecondaryPartnerId || !primaryOperation || existingDetail.document.secondaryResponsiblePartnerId || this.isThirdPartyLegalEntity(existingOwnEntity)
           ? null
           : this.resolveTriangulatedSecondaryPartner(extracted, existingDetail.document.responsiblePartnerId, primaryOperation.operationType);
         const secondaryPartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
@@ -3826,7 +3827,8 @@ export class AppRepository {
     const own = this.resolveOwnLegalEntityForXml(job.organizationId, extracted, resolution);
     if (!own.ownLegalEntityId) throw new Error(own.errorMessage ?? "CNPJ proprio nao identificado.");
     const ownEntity = this.getLegalEntity(own.ownLegalEntityId);
-    const documentOrganizationId = this.isThirdPartyLegalEntity(ownEntity) ? job.organizationId : ownEntity.organizationId;
+    const isThirdPartyDocument = this.isThirdPartyLegalEntity(ownEntity);
+    const documentOrganizationId = isThirdPartyDocument ? job.organizationId : ownEntity.organizationId;
     const explicitClientPartnerId = typeof resolution.clientPartnerId === "string" ? resolution.clientPartnerId : null;
     const autoMatchedPartnerId = explicitClientPartnerId ? null : this.resolveCounterpartyPartnerForXml(documentOrganizationId, extracted, own.ownLegalEntityId, own.direction);
     const responsiblePartnerId = explicitClientPartnerId ?? autoMatchedPartnerId;
@@ -3847,7 +3849,12 @@ export class AppRepository {
     // Se o revisor manual ja indicou o parceiro secundario (resolution.secondaryPartnerId),
     // usa esse em vez de tentar detectar de novo.
     const explicitSecondaryPartnerId = typeof resolution.secondaryPartnerId === "string" ? resolution.secondaryPartnerId : null;
-    const autoSecondary = explicitSecondaryPartnerId ? null : this.resolveTriangulatedSecondaryPartner(extracted, responsiblePartnerId, operationType);
+    // Uma emissora marcada como TERC-XML representa uma nota terceirizada de
+    // cobranca. Mesmo que o CNPJ dela tambem esteja ligado a um fornecedor,
+    // nao deve virar automaticamente uma nota triangulada com perna de compra.
+    const autoSecondary = explicitSecondaryPartnerId || isThirdPartyDocument
+      ? null
+      : this.resolveTriangulatedSecondaryPartner(extracted, responsiblePartnerId, operationType);
     const secondaryResponsiblePartnerId = explicitSecondaryPartnerId ?? autoSecondary?.partnerId ?? null;
     const secondaryOperationType: "PURCHASE" | "SALE" | null = secondaryResponsiblePartnerId ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null;
     const pending: string[] = [];
@@ -3871,7 +3878,7 @@ export class AppRepository {
       pendingNotes: pending.length ? pending.join(" ") : null,
       contractNumber: typeof fileResolution.contractNumber === "string" ? fileResolution.contractNumber : (typeof resolution.contractNumber === "string" ? resolution.contractNumber : this.stringOrNull(extracted.contractNumber)),
       billingObservations: typeof fileResolution.billingObservations === "string" ? fileResolution.billingObservations : (typeof resolution.billingObservations === "string" ? resolution.billingObservations : null),
-      notes: [String(extracted.nature ?? ""), own.isThirdParty ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
+      notes: [String(extracted.nature ?? ""), isThirdPartyDocument ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
     this.db.prepare(`UPDATE fiscal_documents SET source = 'XML', xml_file_path = ?, xml_file_hash = ?, protocol_number = ?, protocol_date = ?, authorization_status_code = ?, authorization_status_message = ?, xml_import_job_id = ?, direction = ?, fiscal_snapshot_json = ?, updated_at = ? WHERE id = ?`)
@@ -5021,6 +5028,7 @@ export class AppRepository {
         let snapshot: Record<string, unknown>;
         try { snapshot = JSON.parse(row.fiscal_snapshot_json) as Record<string, unknown>; } catch { continue; }
         const detail = this.getFiscalDocument(row.id);
+        if (this.isThirdPartyLegalEntity(this.getLegalEntity(detail.document.ownLegalEntityId))) continue;
         const operations = detail.operations.filter((op) => op.status !== "CANCELED");
         if (!operations.length || operations.some((op) => op.operationType !== "SALE")) continue;
         const secondary = this.resolveTriangulatedSecondaryPartner(snapshot, detail.document.responsiblePartnerId, "SALE");

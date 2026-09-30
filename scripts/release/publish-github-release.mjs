@@ -12,7 +12,9 @@ const token = tokenMatch[1].trim().replace(/^["']|["']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.24'
+const releaseNotes = version === '1.1.25'
+  ? 'Corrige a importacao de notas terceirizadas quando o CNPJ emissor tambem esta cadastrado como fornecedor. Essas notas permanecem somente no fluxo de cobranca do cliente e nao geram automaticamente uma segunda operacao de compra ou um acerto de fornecedor.'
+  : version === '1.1.24'
   ? 'Corrige os dados das empresas nas confirmacoes de negocio geradas por nota fiscal. CNPJ, inscricao estadual e endereco agora sao preenchidos a partir da empresa identificada no XML, mesmo sem associacao com um cliente ou corretor.'
   : version === '1.1.23'
   ? 'O PDF de cobranca deixa de repetir o numero da nota fiscal ao lado do valor. A NF continua aparecendo na coluna propria, enquanto a coluna Valor passa a exibir somente o valor monetario.'
