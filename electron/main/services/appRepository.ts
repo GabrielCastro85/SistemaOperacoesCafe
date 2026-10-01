@@ -2652,6 +2652,7 @@ export class AppRepository {
   findEligibleOperations(input: unknown): Operation[] {
     const data = eligibleOperationsInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
+    this.reconcileClientChargeOperationLinks();
     if (data.includeAllCompanies) {
       this.refreshAllOrganizationOperationServiceRates({ responsiblePartnerId: data.clientPartnerId, periodStart: data.periodStart, periodEnd: data.periodEnd, repriceExisting: true });
     } else {
@@ -4592,6 +4593,13 @@ export class AppRepository {
     const charge = this.getClientCharge(clientChargeId).charge;
     const now = new Date().toISOString();
 
+    // A sincronizacao trabalha tabela por tabela. Se uma previa interna foi
+    // criada e removida entre dois ciclos, uma versao antiga podia reaparecer
+    // apenas em client_charge_operations, enquanto operations continuava como
+    // UNBILLED. Repara esse estado antes de tentar reservar para evitar a
+    // mensagem tecnica de UNIQUE constraint e, principalmente, dupla cobranca.
+    this.reconcileClientChargeOperationLinks();
+
     // Garante a mesma conversao usada na tela de notas antes de congelar o
     // snapshot da cobranca. E' uma segunda barreira para rascunhos criados por
     // fluxos que nao passaram pela busca de operacoes da tela.
@@ -4626,6 +4634,55 @@ export class AppRepository {
         .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
     });
+  }
+
+  private reconcileClientChargeOperationLinks(): void {
+    const now = new Date().toISOString();
+    const stalePreviewRows = this.db.prepare(`
+      SELECT DISTINCT cc.id
+      FROM client_charges cc
+      JOIN client_charge_operations cco ON cco.client_charge_id = cc.id AND cco.released_at IS NULL
+      JOIN operations o ON o.id = cco.operation_id
+      WHERE cc.status = 'DRAFT'
+        AND cc.notes = 'PREVIA INTERNA'
+        AND (o.billing_status = 'UNBILLED' OR o.client_charge_id IS NULL OR o.client_charge_id <> cc.id)
+    `).all() as Array<{ id: string }>;
+
+    const run = this.db.transaction(() => {
+      for (const row of stalePreviewRows) {
+        this.db.prepare("UPDATE client_charge_operations SET released_at = ? WHERE client_charge_id = ? AND released_at IS NULL").run(now, row.id);
+        this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE client_charge_id = ?").run(now, row.id);
+        this.db.prepare(`UPDATE client_charges
+          SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ?
+          WHERE id = ? AND status = 'DRAFT'`)
+          .run(now, "Previa interna temporaria liberada automaticamente apos sincronizacao incompleta.", now, row.id);
+        this.recordChargeStatus(row.id, "DRAFT", "CANCELLED", "Previa interna temporaria liberada automaticamente apos sincronizacao incompleta.");
+      }
+
+      const activeLinks = this.db.prepare(`
+        SELECT cco.id AS linkId, cco.client_charge_id AS chargeId, o.id AS operationId,
+          o.billing_status AS billingStatus, o.client_charge_id AS operationChargeId, cc.status AS chargeStatus
+        FROM client_charge_operations cco
+        JOIN operations o ON o.id = cco.operation_id
+        JOIN client_charges cc ON cc.id = cco.client_charge_id
+        WHERE cco.released_at IS NULL
+      `).all() as Array<{ linkId: string; chargeId: string; operationId: string; billingStatus: string; operationChargeId: string | null; chargeStatus: ClientCharge["status"] }>;
+
+      for (const link of activeLinks) {
+        if (["CANCELLED", "REPLACED"].includes(link.chargeStatus)) {
+          this.db.prepare("UPDATE client_charge_operations SET released_at = ? WHERE id = ?").run(now, link.linkId);
+          this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE id = ? AND client_charge_id = ?")
+            .run(now, link.operationId, link.chargeId);
+          continue;
+        }
+        const expectedBillingStatus = ["DRAFT", "PENDING_REVIEW"].includes(link.chargeStatus) ? "RESERVED" : "BILLED";
+        if (link.billingStatus !== expectedBillingStatus || link.operationChargeId !== link.chargeId) {
+          this.db.prepare("UPDATE operations SET billing_status = ?, client_charge_id = ?, updated_at = ? WHERE id = ?")
+            .run(expectedBillingStatus, link.chargeId, now, link.operationId);
+        }
+      }
+    });
+    run();
   }
 
   private recalculateClientCharge(id: string): void {

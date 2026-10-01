@@ -266,6 +266,50 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("repairs a stale internal preview reservation before creating another charge", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "STALE-PREVIEW", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const preview = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: "PREVIA INTERNA", internalNotes: null, operationIds: [operation.id] });
+
+      db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL WHERE id = ?").run(operation.id);
+
+      const repairedEligible = repo.findEligibleOperations(filters);
+      expect(repairedEligible.map((item) => item.id)).toContain(operation.id);
+      expect(repo.getClientCharge(preview.charge.id).charge.status).toBe("CANCELLED");
+      const activeOldLink = db.prepare("SELECT id FROM client_charge_operations WHERE client_charge_id = ? AND released_at IS NULL").get(preview.charge.id);
+      expect(activeOldLink).toBeUndefined();
+
+      const next = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      expect(next.operations).toHaveLength(1);
+      expect(next.operations[0].operationId).toBe(operation.id);
+    } finally { db.close(); }
+  });
+
+  it("restores billed status when a paid charge link is newer than an inconsistent operation row", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "PAID-LINK", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: issued.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: issued.charge.finalAmountCents });
+
+      db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL WHERE id = ?").run(operation.id);
+
+      expect(repo.findEligibleOperations(filters)).toHaveLength(0);
+      const repaired = repo.listOperations({ organizationId: villaId, responsiblePartnerId: partnerId, billingStatus: "all" }).find((item) => item.id === operation.id);
+      expect(repaired).toBeDefined();
+      if (!repaired) throw new Error("Operacao reparada nao encontrada.");
+      expect(repaired.billingStatus).toBe("BILLED");
+      expect(repaired.clientChargeId).toBe(issued.charge.id);
+    } finally { db.close(); }
+  });
+
   it("includes CT-e transport fees in the charge total and generated PDF", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {
