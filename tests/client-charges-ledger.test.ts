@@ -153,6 +153,7 @@ describe("client charges and ledger", () => {
       createConfirmedOperation(repo, partnerId, productId, "QA-500", "500");
       const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
       const document = repo.getFiscalDocument(eligible[0].fiscalDocumentId).document;
+      db.prepare("UPDATE operations SET operation_date = '2026-07-20' WHERE id = ?").run(eligible[0].id);
       repo.updateFiscalDocument(document.id, { ...document, contractNumber: "MCU-103265", billingObservations: "Lote 123\nContrato complementar ABC-456" });
       db.prepare("UPDATE fiscal_documents SET status = 'DRAFT' WHERE id = ?").run(document.id);
       db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(document.id);
@@ -160,13 +161,24 @@ describe("client charges and ledger", () => {
       const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
       const issued = await repo.issueClientCharge(draft.charge.id);
       expect(issued.charge.subtotalServicesCents).toBe(250000);
+      expect(issued.operations[0].operationDateSnapshot).toBe("2026-07-16");
       expect(issued.operations[0].billingObservationsSnapshot).toBe("Lote 123\nContrato complementar ABC-456");
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(issued.charge.excelFilePath!);
       const sheet = workbook.getWorksheet("Operacoes");
+      expect(sheet?.getRow(1).getCell(2).value).toBe("Data de emissao da NF");
+      expect(sheet?.getRow(2).getCell(2).value).toBe("2026-07-16");
+      expect(sheet?.getRow(2).getCell(6).value).toBe("Externo");
       expect(sheet?.getRow(2).getCell(10).value).toBe("MCU-103265");
       expect(sheet?.getRow(2).getCell(11).value).toBe("Lote 123\nContrato complementar ABC-456");
       expect(sheet?.getRow(2).getCell(9).value).toBe(2500);
+      if (extname(issued.charge.imageFilePath ?? "") === ".svg") {
+        const imageText = readFileSync(issued.charge.imageFilePath!, "utf8");
+        expect(imageText).toContain("DATA NF");
+        expect(imageText).toContain("16/07/2026");
+        expect(imageText).toContain("Externo");
+        expect(imageText).not.toContain("Outra UF");
+      }
       if (process.env.CAFE_QA_REPORT_DIR) {
         mkdirSync(process.env.CAFE_QA_REPORT_DIR, { recursive: true });
         copyFileSync(issued.charge.pdfFilePath!, join(process.env.CAFE_QA_REPORT_DIR, "cobranca-exemplo.pdf"));

@@ -3262,6 +3262,7 @@ export class AppRepository {
         const sourceOperation = this.getOperation(operation.operationId);
         const document = this.getFiscalDocument(sourceOperation.fiscalDocumentId).document;
         const ownLegalEntity = this.getLegalEntity(sourceOperation.ownLegalEntityId);
+        operation.operationDateSnapshot = document.issueDate;
         const mustRefreshDestination = document.secondaryResponsiblePartnerId
           || !operation.destinationNameSnapshot
           || operation.destinationNameSnapshot === operation.ownLegalEntityNameSnapshot;
@@ -4631,7 +4632,7 @@ export class AppRepository {
         fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
         service_rate_cents_snapshot, service_amount_cents_snapshot, created_at, contract_number_snapshot, billing_observations_snapshot
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
+        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, doc.issueDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
     });
   }
