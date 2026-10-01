@@ -104,6 +104,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [advanceInput, setAdvanceInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [surchargeInput, setSurchargeInput] = useState("");
+  const [cteQuantityInput, setCteQuantityInput] = useState("");
+  const [cteUnitValueInput, setCteUnitValueInput] = useState("1,50");
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [clientCredits, setClientCredits] = useState<ClientLedgerEntry[]>([]);
   const [clientSurcharges, setClientSurcharges] = useState<ClientLedgerEntry[]>([]);
@@ -165,6 +167,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setAdvanceInput("");
     setDiscountInput("");
     setSurchargeInput("");
+    setCteQuantityInput("");
+    setCteUnitValueInput("1,50");
     setAdjustmentReason("");
     ledgerAutofillChargeIdRef.current = null;
     ledgerAutofillClientIdRef.current = null;
@@ -420,14 +424,19 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const advanceCents = parseCurrencyToCents(advanceInput);
   const discountCents = parseCurrencyToCents(discountInput);
   const surchargeCents = parseCurrencyToCents(surchargeInput);
+  const cteQuantity = /^\d+$/.test(cteQuantityInput.trim()) ? Number(cteQuantityInput.trim()) : 0;
+  const cteUnitValueCents = parseCurrencyToCents(cteUnitValueInput);
+  const cteTotalCents = cteQuantity * cteUnitValueCents;
   const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
   const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
   const eligibleSacks = selectedOperations.length ? sumDecimalTexts(selectedOperations.map((operation) => operation.quantitySacks)) : "0";
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const paidSacks = paidOperations.length ? sumDecimalTexts(paidOperations.map((operation) => operation.quantitySacks)) : "0";
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents;
-  const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents, discountCents, advanceCents);
-  const hasPendingAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
+  const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents + cteTotalCents, discountCents, advanceCents);
+  const hasPendingManualAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
+  const hasPendingCte = cteTotalCents > 0;
+  const hasPendingAdjustments = hasPendingManualAdjustments || hasPendingCte;
   const visibleFinalCents = previewFinalCents;
   const draftDisabledReason = draftGenerationBlockedReason();
   const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
@@ -504,7 +513,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function issue(): Promise<void> {
     if (!detail) return;
 
-    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
       return;
     }
@@ -528,6 +537,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setAdvanceInput("");
         setDiscountInput("");
         setSurchargeInput("");
+        setCteQuantityInput("");
+        setCteUnitValueInput("1,50");
         setAdjustmentReason("");
       }
 
@@ -584,23 +595,36 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: adjustmentReason.trim() || "Ajuste manual" });
       }
     }
+    if (hasPendingCte) {
+      const unitValue = formatCurrencyFromCents(cteUnitValueCents);
+      current = await window.operationsCafe.addChargeAdjustment({
+        clientChargeId: current.charge.id,
+        ledgerEntryId: null,
+        adjustmentType: "SURCHARGE",
+        effect: "INCREASE_RECEIVABLE",
+        description: `CT-e (${cteQuantity} x ${unitValue})`,
+        amountCents: cteTotalCents,
+        sortOrder: 40,
+        reason: `${cteQuantity} transporte(s) cobrados a ${unitValue} cada.`
+      });
+    }
     return shouldRegenerateDocuments && hasPendingAdjustments ? window.operationsCafe.regenerateChargeDocuments(current.charge.id) : current;
   }
 
   async function applyAdjustments(): Promise<void> {
     if (!detail) {
       if (!hasPendingAdjustments) {
-        setMessage("Informe ao menos um adiantamento, desconto ou acrescimo.");
+        setMessage("Informe ao menos um adiantamento, desconto, acrescimo ou CT-e.");
         return;
       }
-      if (!adjustmentReason.trim()) {
+      if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
         setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
         return;
       }
       setMessage("Ajustes aplicados na previa. O valor final e os documentos internos ja consideram esses valores.");
       return;
     }
-    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
       return;
     }
@@ -612,6 +636,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
+      setCteQuantityInput("");
+      setCteUnitValueInput("1,50");
       setAdjustmentReason("");
       setMessage(shouldRegenerateDocuments ? "Ajustes aplicados. Escolha PDF ou Imagem para salvar uma nova copia." : "Ajustes aplicados.");
       await load();
@@ -770,7 +796,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage("Selecione o cliente e marque as notas antes de gerar a previa.");
       return;
     }
-    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
       return;
     }
@@ -1060,6 +1086,14 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                       <span>Previa</span><span>Aumenta o valor final</span>
                     </div>
                   ) : null}
+                  {!detail && hasPendingCte ? (
+                    <div className="table-row charge-operation-grid charge-row--adjustment">
+                      <span><strong>CT-e</strong><small>{cteQuantity} transporte(s) x {formatCurrencyFromCents(cteUnitValueCents)}</small></span>
+                      <span>CT-E</span><span>Transporte</span>
+                      <span>+ {formatCurrencyFromCents(cteTotalCents)}</span>
+                      <span>Previa</span><span>Aumenta o valor final</span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1074,6 +1108,24 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" /></dd></div>
               <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" /></dd></div>
+            </div>
+            <div className="charge-cte-card">
+              <div>
+                <strong>CT-e / transportes</strong>
+                <small>Informe quantos transportes serao cobrados e o valor unitario.</small>
+              </div>
+              <label>
+                <span>Quantidade</span>
+                <input type="number" min="0" step="1" value={cteQuantityInput} onChange={(event) => setCteQuantityInput(event.target.value)} placeholder="0" />
+              </label>
+              <label>
+                <span>Valor por transporte</span>
+                <input value={cteUnitValueInput} onChange={(event) => setCteUnitValueInput(event.target.value)} onBlur={() => formatMoneyState(cteUnitValueInput, setCteUnitValueInput)} placeholder="R$ 1,50" />
+              </label>
+              <div className="charge-cte-total">
+                <span>Total de CT-e</span>
+                <strong>{formatCurrencyFromCents(cteTotalCents)}</strong>
+              </div>
             </div>
             <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
               <span>Motivo do ajuste</span>
@@ -1091,10 +1143,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
               <strong aria-live="polite">{loadingPeriod ? "Calculando..." : formatCurrencyFromCents(visibleFinalCents)}</strong>
-              {!detail && clientPeriodOperations.length > 0 && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Notas lancadas no periodo + acrescimos - descontos - adiantamentos.</small> : null}
-              {!detail && clientPeriodOperations.length > 0 && advanceCents === 0 && discountCents === 0 && surchargeCents === 0 ? <small>Soma das notas lancadas no periodo, incluindo rascunhos.</small> : null}
+              {!detail && clientPeriodOperations.length > 0 && hasPendingAdjustments ? <small>Notas lancadas no periodo + CT-e e acrescimos - descontos - adiantamentos.</small> : null}
+              {!detail && clientPeriodOperations.length > 0 && !hasPendingAdjustments ? <small>Soma das notas lancadas no periodo, incluindo rascunhos.</small> : null}
               {!detail ? <small>Somente notas selecionadas, com os ajustes informados.</small> : null}
-              {detail && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
+              {detail && hasPendingAdjustments ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
               {!detail ? (
                 <>
                   <div className="inline-actions">
@@ -1203,6 +1255,22 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             );
           })}
         </div>
+        {detail.adjustments.length > 0 ? (
+          <div className="charge-adjustments-detail">
+            <h4>Valores adicionais e descontos</h4>
+            <div className="table">
+              <div className="table-head charge-adjustment-detail-grid"><span>Descricao</span><span>Detalhe</span><span>Tipo</span><span>Valor</span></div>
+              {detail.adjustments.map((adjustment) => (
+                <div key={adjustment.id} className="table-row charge-adjustment-detail-grid">
+                  <span><strong>{adjustment.description}</strong></span>
+                  <span>{adjustment.reason ?? "-"}</span>
+                  <span>{adjustment.effect === "INCREASE_RECEIVABLE" ? "Acrescimo" : "Desconto"}</span>
+                  <span>{adjustment.effect === "INCREASE_RECEIVABLE" ? "+" : "-"} {formatCurrencyFromCents(adjustment.amountCents)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {detail.payments.some((allocation) => !allocation.cancelledAt) ? (
           <div className="charge-payment-history">
             <h4>Pagamentos e recibos</h4>

@@ -266,6 +266,36 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("includes CT-e transport fees in the charge total and generated PDF", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "CTE-7002", "10");
+      const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+      const withCte = repo.addChargeAdjustment({
+        clientChargeId: draft.charge.id,
+        ledgerEntryId: null,
+        adjustmentType: "SURCHARGE",
+        effect: "INCREASE_RECEIVABLE",
+        description: "CT-e (4 x R$ 1,50)",
+        amountCents: 600,
+        sortOrder: 40,
+        reason: "4 transporte(s) cobrados a R$ 1,50 cada."
+      });
+
+      expect(withCte.charge.subtotalServicesCents).toBe(5000);
+      expect(withCte.charge.additionsCents).toBe(600);
+      expect(withCte.charge.finalAmountCents).toBe(5600);
+      expect(withCte.adjustments).toEqual(expect.arrayContaining([
+        expect.objectContaining({ description: "CT-e (4 x R$ 1,50)", amountCents: 600, effect: "INCREASE_RECEIVABLE" })
+      ]));
+
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      expect(issued.charge.pdfFilePath).toBeTruthy();
+      expect(existsSync(issued.charge.pdfFilePath ?? "")).toBe(true);
+    } finally { db.close(); }
+  });
+
   it("listLedgerEntries filtra por periodo (entry_date)", async () => {
     const { repo, db, partnerId } = await setup();
     repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 1000, entryDate: "2026-06-15", description: "Adiantamento junho", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 1000 });
