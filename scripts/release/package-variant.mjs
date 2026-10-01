@@ -64,6 +64,10 @@ const config = {
     license: pkg.license
   },
   asar: true,
+  // O modulo nativo ja foi compilado explicitamente por rebuild:electron
+  // logo acima. Impede o electron-builder de recompila-lo novamente usando
+  // o ABI do Node que esta executando o empacotamento.
+  npmRebuild: false,
   asarUnpack: ["node_modules/better-sqlite3/**"],
   extraResources: [{ from: variant.iconPath, to: `icons/${basename(variant.iconPath)}` }],
   afterPack: "scripts/after-pack-prune.mjs",
@@ -103,6 +107,7 @@ run("npx", ["electron-builder", "--win", "--config", configPath, "--publish", sh
   VITE_APP_BUILD_VARIANT: variant.variant,
   GH_TOKEN: githubToken
 });
+run("npm", ["run", "smoke:packaged", "--", variant.variant]);
 
 if (shouldPublish) {
   // electron-builder sempre cria a release como rascunho (draft) primeiro e
