@@ -102,6 +102,32 @@ describe("client charges and ledger", () => {
     } finally { db.close(); }
   });
 
+  it("reconstructs a missing synchronized payment before generating its receipt", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "RECIBO-ORFAO", "20");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-03", amountCents: issued.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: "NF RECIBO-ORFAO", notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: issued.charge.finalAmountCents });
+
+      db.pragma("foreign_keys = OFF");
+      db.prepare("DELETE FROM client_payments WHERE id = ?").run(payment.id);
+      db.pragma("foreign_keys = ON");
+
+      const repaired = await repo.generateClientPaymentReceipt(payment.id);
+      expect(repaired.id).toBe(payment.id);
+      expect(repaired.paymentDate).toBe("2026-08-03");
+      expect(repaired.amountCents).toBe(issued.charge.finalAmountCents);
+      expect(repaired.paymentMethod).toBe("OTHER");
+      expect(repaired.transactionReference).toBe("NF RECIBO-ORFAO");
+      expect(repaired.receiptPdfFilePath && existsSync(repaired.receiptPdfFilePath)).toBe(true);
+      expect(repaired.receiptImageFilePath && existsSync(repaired.receiptImageFilePath)).toBe(true);
+    } finally { db.close(); }
+  });
+
   it("reprices an open charge, preserves partial payments and freezes paid charges", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {

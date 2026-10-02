@@ -3156,7 +3156,7 @@ export class AppRepository {
 
   async generateClientPaymentReceipt(id: string): Promise<ClientPayment> {
     if (!this.directories) throw new Error("Diretorios locais nao configurados.");
-    const payment = this.getClientPayment(id);
+    const payment = this.getOrRepairClientPayment(id);
     const allocationRows = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_payment_id = ? AND cancelled_at IS NULL ORDER BY allocated_at").all(id) as DbRecord[];
     if (!allocationRows.length) throw new Error("O pagamento ainda nao foi vinculado a nenhuma cobranca.");
     const allocations = allocationRows.map((row) => ({ amountCents: Number(row.amount_cents), charge: this.getClientCharge(String(row.client_charge_id)) }));
@@ -3170,6 +3170,69 @@ export class AppRepository {
     });
     this.db.prepare("UPDATE client_payments SET receipt_pdf_file_path = ?, receipt_image_file_path = ?, updated_at = ? WHERE id = ?")
       .run(result.pdfFilePath, result.imageFilePath, new Date().toISOString(), id);
+    return this.getClientPayment(id);
+  }
+
+  private getOrRepairClientPayment(id: string): ClientPayment {
+    const existing = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(id) as DbRecord | undefined;
+    if (existing) return mapClientPayment(existing);
+
+    // Bases sincronizadas por versoes antigas podem conter a alocacao e o
+    // lancamento financeiro, mas nao a linha-pai do pagamento. A cobranca
+    // continua quitada, porem o recibo nao pode ser refeito. Reconstroi apenas
+    // os dados comprovados pelas alocacoes existentes, sem criar nova baixa.
+    const allocations = this.db.prepare(`
+      SELECT a.amount_cents, a.allocated_at,
+             c.organization_id, c.own_legal_entity_id, c.client_partner_id, c.id AS client_charge_id
+      FROM client_payment_allocations a
+      JOIN client_charges c ON c.id = a.client_charge_id
+      WHERE a.client_payment_id = ? AND a.cancelled_at IS NULL
+      ORDER BY a.allocated_at, a.id
+    `).all(id) as Array<{
+      amount_cents: number;
+      allocated_at: string;
+      organization_id: string;
+      own_legal_entity_id: string;
+      client_partner_id: string;
+      client_charge_id: string;
+    }>;
+    if (!allocations.length) throw new Error("Pagamento nao encontrado.");
+
+    const first = allocations[0];
+    if (allocations.some((item) => item.organization_id !== first.organization_id
+      || item.own_legal_entity_id !== first.own_legal_entity_id
+      || item.client_partner_id !== first.client_partner_id)) {
+      throw new Error("As alocacoes do pagamento recuperado pertencem a escopos diferentes.");
+    }
+
+    const chargeIds = [...new Set(allocations.map((item) => item.client_charge_id))];
+    const ledgerEvidence = chargeIds.flatMap((chargeId) => {
+      const rows = this.db.prepare(`
+        SELECT entry_date, reference_number
+        FROM client_ledger_entries
+        WHERE client_charge_id = ? AND entry_type = 'PAYMENT_RECEIVED'
+          AND status = 'CONFIRMED'
+        ORDER BY created_at
+      `).all(chargeId) as Array<{ entry_date: string; reference_number: string | null }>;
+      return rows;
+    });
+    const references = ledgerEvidence.map((row) => row.reference_number?.trim() ?? "").filter(Boolean);
+    const amountCents = allocations.reduce((total, item) => total + Number(item.amount_cents), 0);
+    const createdAt = first.allocated_at;
+    const paymentDate = ledgerEvidence.map((row) => row.entry_date).sort()[0] ?? createdAt.slice(0, 10);
+    const transactionReference = [...new Set(references)].join(", ") || null;
+    this.db.prepare(`
+      INSERT OR IGNORE INTO client_payments (
+        id, organization_id, own_legal_entity_id, client_partner_id, payment_date,
+        amount_cents, payment_method, bank_account_description, transaction_reference,
+        notes, attachment_path, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'OTHER', NULL, ?, ?, NULL, 'CONFIRMED', ?, ?)
+    `).run(
+      id, first.organization_id, first.own_legal_entity_id, first.client_partner_id,
+      paymentDate, amountCents, transactionReference,
+      "Pagamento recuperado automaticamente a partir da alocacao da cobranca.",
+      createdAt, new Date().toISOString()
+    );
     return this.getClientPayment(id);
   }
 
