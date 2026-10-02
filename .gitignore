@@ -3,6 +3,8 @@ dist/
 dist-electron/
 dist-server/
 /release/
+/output/
+collector/coletor-config.json
 *.log
 .env
 .env.*

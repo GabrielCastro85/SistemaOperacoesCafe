@@ -47,6 +47,18 @@ export interface CentralDesktopProfile {
   legalEntityAccess: Array<{ organizationId: string; legalEntityId: string | null; accessMode: "ALL" | "SPECIFIC" }>;
 }
 
+export interface CollectorInboxFile {
+  id: string;
+  sourceCode: string;
+  sourceLabel: string;
+  originalFileName: string;
+  fileHash: string;
+  fileSize: number;
+  accessKey: string | null;
+  xmlType: "NFE" | "CANCELLATION";
+  receivedAt: string;
+}
+
 function jsonValue(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return { $binaryBase64: value.toString("base64") };
   if (typeof value === "bigint") return value.toString();
@@ -115,6 +127,23 @@ export class CentralSyncService {
       lastSuccessAt: row.lastSuccessAt,
       error: row.error
     };
+  }
+
+  async listCollectorInbox(sourceCode: string): Promise<CollectorInboxFile[]> {
+    const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?source=${encodeURIComponent(sourceCode)}&limit=200`);
+    return response.files;
+  }
+
+  async downloadCollectorInboxFile(id: string): Promise<Buffer> {
+    const response = await this.request<{ xmlBase64: string }>(`/v1/collector/inbox/${encodeURIComponent(id)}/content`);
+    return Buffer.from(response.xmlBase64, "base64");
+  }
+
+  async resolveCollectorInboxFile(id: string, status: "IMPORTED" | "IGNORED", note: string | null = null): Promise<void> {
+    await this.request(`/v1/collector/inbox/${encodeURIComponent(id)}/resolve`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, note })
+    });
   }
 
   async login(username: string, password: string): Promise<CentralDesktopProfile | null> {

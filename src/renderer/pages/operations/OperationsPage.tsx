@@ -60,6 +60,7 @@ function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
 
 type DocumentSortKey = "number" | "client";
 type SortDirection = "asc" | "desc";
+type VulpeDevScanResult = Awaited<ReturnType<Window["operationsCafe"]["scanVulpeDevXml"]>>;
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   function brazilDateValue(date = new Date()): string {
@@ -128,9 +129,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
   const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
+  const [xmlPartnerOverrides, setXmlPartnerOverrides] = useState<Record<string, string>>({});
+  const [xmlIgnoredSelections, setXmlIgnoredSelections] = useState<Record<string, boolean>>({});
   const [xmlContractNumbers, setXmlContractNumbers] = useState<Record<string, string>>({});
   const [xmlBillingObservations, setXmlBillingObservations] = useState<Record<string, string>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
+  const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
+  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "MG" | "ES" | "GRAO"; label: string; available: boolean }>>([]);
+  const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
   const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
   const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
   const [returnDate, setReturnDate] = useState(() => brazilDateValue());
@@ -156,6 +162,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   useEffect(() => { setXmlJob(null); }, [partnerId, operationType, scope, productId, ownLegalEntityId]);
   useEffect(() => { setReplacementPartnerId(""); }, [detail?.document.id]);
   useEffect(() => { setReturnDate(brazilDateValue()); setReturnUnit("SACKS"); setReturnQuantity(""); setReturnReason(""); }, [detail?.document.id]);
+  useEffect(() => {
+    if (typeof window.operationsCafe.getVulpeDevStatus !== "function") return;
+    void window.operationsCafe.getVulpeDevStatus()
+      .then((status) => {
+        setVulpeDevAvailable(status.available);
+        setVulpeDevSources(status.sources);
+      })
+      .catch(() => {
+        setVulpeDevAvailable(false);
+        setVulpeDevSources([]);
+      });
+  }, []);
 
   const load = useCallback(async () => {
     const roleForOperationType = operationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
@@ -532,6 +550,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function prepareXmlImport(source: "single" | "multiple" | "folder"): Promise<void> {
     try {
+      setVulpeScan(null);
       const selected =
         source === "single"
           ? await window.operationsCafe.selectXmlFile()
@@ -541,6 +560,25 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       await inspectSelectedXmlFiles(selected, source === "folder" ? "FOLDER" : selected.length === 1 ? "FILE" : "MULTIPLE_FILES");
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar XML."}`);
+    }
+  }
+
+  async function prepareVulpeDevImport(source: "MG" | "ES" | "GRAO"): Promise<void> {
+    try {
+      const result = await window.operationsCafe.scanVulpeDevXml(source);
+      setVulpeScan(result);
+      if (result.files.length === 0) {
+        setXmlSelections([]);
+        setXmlQueue([]);
+        setXmlJob(null);
+        setSelectedXmlToken(null);
+        setMessage(`${result.label}: nenhuma NF-e nova aguardando revisao em ${result.period.slice(4, 6)}/${result.period.slice(0, 4)}.`);
+        return;
+      }
+      await inspectSelectedXmlFiles(result.files, "FOLDER");
+      setMessage(`${result.label}: ${result.pendingReview} NF-e nova(s) carregada(s) para classificacao.`);
+    } catch (errorValue) {
+      setMessage(`Erro Vulpe: ${errorValue instanceof Error ? errorValue.message : "falha ao buscar notas."}`);
     }
   }
 
@@ -571,6 +609,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlQueue(inspections);
     setXmlJob(null);
     setXmlScopeOverrides({});
+    setXmlPartnerOverrides({});
+    setXmlIgnoredSelections({});
     setXmlContractNumbers({});
     setXmlBillingObservations({});
     setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
@@ -584,7 +624,21 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function validateXmlImport(): Promise<void> {
     if (xmlSelections.length === 0) return;
-    if (!partnerId) {
+    if (vulpeScan) {
+      const missingPartner = xmlQueue.find((file) =>
+        file.status !== "ERROR"
+        && !file.xmlType.startsWith("EVENT_")
+        && !xmlIgnoredSelections[file.token]
+        && !xmlPartnerOverrides[file.token]
+      );
+      if (missingPartner) {
+        setSelectedXmlToken(missingPartner.token);
+        setMessage("Escolha o cliente/corretor desta nota ou marque 'Nao cadastrar'. Cada nota precisa de uma decisao propria.");
+        scrollTo(xmlDataRef);
+        return;
+      }
+    }
+    if (!partnerId && !vulpeScan) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
       scrollTo(xmlDataRef);
       return;
@@ -599,13 +653,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       });
       const added = await window.operationsCafe.addXmlImportFiles({ jobId: job.id, tokens: xmlSelections.map((file) => file.token) });
       for (const file of added.files) {
-        const inspected = xmlQueue.find((candidate) => candidate.accessKey && candidate.accessKey === file.accessKey)
-          ?? xmlQueue.find((candidate) => candidate.originalFileName === file.originalFileName);
+        const inspected = xmlQueue.find((candidate) => candidate.originalFileName === file.originalFileName)
+          ?? xmlQueue.find((candidate) => candidate.accessKey && candidate.accessKey === file.accessKey);
         if (!inspected) continue;
         const contractNumber = xmlContractNumbers[inspected.token]?.trim() || null;
         const billingObservations = xmlBillingObservations[inspected.token]?.trim() || null;
-        if (contractNumber || billingObservations) {
-          await window.operationsCafe.updateXmlImportFileResolution(file.id, { contractNumber, billingObservations });
+        const selectedPartnerId = vulpeScan ? xmlPartnerOverrides[inspected.token] || null : null;
+        const ignore = vulpeScan ? xmlIgnoredSelections[inspected.token] === true : false;
+        if (contractNumber || billingObservations || selectedPartnerId || ignore) {
+          await window.operationsCafe.updateXmlImportFileResolution(file.id, {
+            contractNumber,
+            billingObservations,
+            clientPartnerId: selectedPartnerId,
+            ignore
+          });
         }
       }
       const validated = await window.operationsCafe.validateXmlImportJob(added.job.id);
@@ -620,7 +681,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
-    if (!partnerId) {
+    if (!partnerId && !vulpeScan) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
       scrollTo(xmlDataRef);
       return;
@@ -740,6 +801,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const selectedXmlFile = xmlQueue.find((file) => file.token === selectedXmlToken) ?? xmlQueue[0] ?? null;
+  const selectedXmlIsEvent = selectedXmlFile?.xmlType.startsWith("EVENT_") === true;
+  const selectedXmlEvent = selectedXmlIsEvent ? selectedXmlFile?.extractedData ?? null : null;
+  const selectedXmlPartnerId = selectedXmlFile && vulpeScan
+    ? xmlPartnerOverrides[selectedXmlFile.token] ?? ""
+    : partnerId;
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
     ? selectedXmlFile.extractedData.contractNumber
@@ -763,12 +829,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     const parties = resolveOwnAndCounterparty(preview, data.legalEntities);
     const firstItem = preview?.items[0] ?? null;
     const inferredScope = inferXmlOperationScope(preview);
+    const assignedPartner = partners.find((partner) => partner.id === xmlPartnerOverrides[file.token]);
     return {
       file,
       preview,
       parties,
       firstItem,
-      operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope
+      operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope,
+      classificationLabel: file.xmlType.startsWith("EVENT_")
+        ? "Cancelamento"
+        : xmlIgnoredSelections[file.token]
+          ? "Nao cadastrar"
+          : assignedPartner?.displayName ?? "Escolher cliente"
     };
   });
   const validXmlBatchRows = xmlBatchRows.filter((row) => row.file.status !== "ERROR");
@@ -1221,6 +1293,24 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       {pageTab === "xml" && <>
       <AdminBlock title="Importacao automatica de NF-e">
         <p className="muted">Leitura de XML e captura automatica dos dados.</p>
+        {vulpeDevAvailable ? (
+          <div className="operation-warning-card operation-warning-card--neutral">
+            <strong>Caixa de entrada Vulpe — teste em modo desenvolvimento</strong>
+            <span>Busca as NF-e autorizadas do mes atual, remove as chaves ja cadastradas e envia as restantes para revisao. Nenhuma nota e lancada antes da sua confirmacao.</span>
+            <div className="toolbar">
+              {vulpeDevSources.map((source) => (
+                <button key={source.source} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
+                  Buscar {source.label}
+                </button>
+              ))}
+            </div>
+            {vulpeScan ? (
+              <span>
+                {vulpeScan.label}: {vulpeScan.authorized} NF-e autorizada(s), {vulpeScan.alreadyImported} ja cadastrada(s), {vulpeScan.ignoredByUser} marcada(s) para nao cadastrar e {vulpeScan.pendingReview} arquivo(s) aguardando revisao. Cancelamentos encontrados: {vulpeScan.cancellationEvents} ({vulpeScan.cancellationsAlreadyApplied} ja aplicado(s)).
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="import-columns">
           <div className="import-column" ref={xmlDataRef}>
             <h3>Importar NF-e</h3>
@@ -1254,13 +1344,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
             )}
             <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || !partnerId}>Validar fila</button>
+              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan)}>Validar fila</button>
             </div>
           </div>
 
           <div className="import-column">
             <h3>Dados extraidos</h3>
-            {selectedXmlPreview ? (
+            {selectedXmlEvent ? (
+              <>
+                <div className="operation-warning-card operation-warning-card--neutral">
+                  <strong>Cancelamento autorizado encontrado na Vulpe</strong>
+                  <span>Este evento sera ligado a nota pela chave de acesso quando a fila for concluida.</span>
+                </div>
+                <dl className="kv-list">
+                  <div><dt>Chave da NF-e</dt><dd>{String(selectedXmlEvent.accessKey ?? selectedXmlFile?.accessKey ?? "-")}</dd></div>
+                  <div><dt>Data do evento</dt><dd>{selectedXmlEvent.eventDate ? formatDateBr(String(selectedXmlEvent.eventDate)) : "-"}</dd></div>
+                  <div><dt>Protocolo</dt><dd>{String(selectedXmlEvent.protocolNumber ?? "-")}</dd></div>
+                  <div><dt>Situacao SEFAZ</dt><dd>{String(selectedXmlEvent.statusCode ?? "-")} - {String(selectedXmlEvent.statusMessage ?? "-")}</dd></div>
+                </dl>
+              </>
+            ) : selectedXmlPreview ? (
               <>
                 {selectedXmlOwnMismatch ? (
                   <div className="operation-warning-card">
@@ -1319,23 +1422,61 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
             <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
-            <FormGrid>
-              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
-              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <SelectField
-                label="UF da venda"
-                value={selectedXmlScope}
-                onChange={(value) => {
-                  const nextScope = value as OperationScope;
-                  if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: nextScope }));
-                  setScope(nextScope);
-                }}
-                options={OPERATION_SCOPE_OPTIONS}
-              />
-            </FormGrid>
+            {selectedXmlIsEvent ? (
+              <div className="operation-warning-card operation-warning-card--neutral">
+                <strong>Evento de cancelamento</strong>
+                <span>Ao concluir a fila, o sistema registra o evento e cancela automaticamente a nota e suas operacoes, quando a chave ja estiver cadastrada.</span>
+              </div>
+            ) : (
+              <>
+                <FormGrid>
+                  <PartnerQuickSearch
+                    label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"}
+                    value={selectedXmlPartnerId}
+                    onChange={(value) => {
+                      setXmlJob(null);
+                      if (vulpeScan && selectedXmlFile) {
+                        setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: value }));
+                        if (value) setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: false }));
+                      } else {
+                        setPartnerId(value);
+                      }
+                    }}
+                    partners={partners}
+                    legalEntities={partnerLegalEntities}
+                  />
+                  <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+                  <SelectField
+                    label="UF da venda"
+                    value={selectedXmlScope}
+                    onChange={(value) => {
+                      const nextScope = value as OperationScope;
+                      if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: nextScope }));
+                      setScope(nextScope);
+                    }}
+                    options={OPERATION_SCOPE_OPTIONS}
+                  />
+                </FormGrid>
+                {vulpeScan && selectedXmlFile ? (
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={xmlIgnoredSelections[selectedXmlFile.token] === true}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setXmlJob(null);
+                        setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: checked }));
+                        if (checked) setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: "" }));
+                      }}
+                    />
+                    Nao cadastrar esta nota nem mostrar novamente nas buscas da Vulpe
+                  </label>
+                ) : null}
+              </>
+            )}
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
-              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || !partnerId}>Salvar nota</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan)}>Importar XMLs</button>
             </div>
           </div>
         </div>
@@ -1349,7 +1490,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
             </div>
             <div className="table">
-              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Status</span></div>
+              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
               {xmlBatchRows.map((row) => (
                 <button
                   key={row.file.token}
@@ -1370,7 +1511,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     )}
                   </span>
                   <span>{formatOperationScope(row.operationScope)}</span>
-                  <span><StatusBadge status={row.file.status} /></span>
+                  <span><strong>{row.classificationLabel}</strong><small><StatusBadge status={row.file.status} /></small></span>
                 </button>
               ))}
             </div>

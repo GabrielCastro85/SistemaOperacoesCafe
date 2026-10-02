@@ -1,0 +1,17 @@
+appId: br.com.graobase.coletor
+productName: Coletor GraoBase
+executableName: ColetorGraoBase
+asar: true
+directories:
+  output: output/collector
+files:
+  - collector/main.cjs
+  - package.json
+  - node_modules/fast-xml-parser/**
+extraMetadata:
+  main: collector/main.cjs
+win:
+  icon: build/icons/grao.ico
+  target:
+    - portable
+artifactName: ColetorGraoBase-${version}-portable.${ext}

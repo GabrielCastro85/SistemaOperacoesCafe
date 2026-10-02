@@ -1,4 +1,4 @@
-import { clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import { app, clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -24,8 +24,13 @@ import { CentralCredentialStore } from "../services/centralCredentialStore.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
+const collectorInboxTokens = new Map<string, string>();
 const payableAttachmentTokens = new Map<string, string>();
 const signedDealPdfTokens = new Map<string, string>();
+const vulpeDevSources = {
+  MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO" },
+  ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO" }
+} as const;
 
 function isLikelyDataMutation(channel: string): boolean {
   if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
@@ -653,6 +658,124 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const files = findXmlFiles(result.filePaths[0], data.includeSubfolders === true);
     return { folder: result.filePaths[0], files: registerXmlPaths(files) };
   });
+  handle(IPC_CHANNELS.getVulpeDevStatus, () => ({
+    available: !app.isPackaged,
+    sources: [
+      ...Object.entries(vulpeDevSources).map(([source, config]) => ({
+      source: source as keyof typeof vulpeDevSources,
+      label: config.label,
+      available: existsSync(config.root)
+      })),
+      { source: "GRAO" as const, label: "Grao & Grao (coletor)", available: centralSync.getStatus().status === "ONLINE" }
+    ]
+  }));
+  handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
+    if (app.isPackaged) throw new Error("Leitura da Vulpe disponivel somente no modo de desenvolvimento.");
+    const source = z.enum(["MG", "ES", "GRAO"]).parse(payload);
+    if (source === "GRAO") {
+      const remoteFiles = await centralSync.listCollectorInbox("GRAO_GRAO");
+      const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
+      mkdirSync(downloadDir, { recursive: true });
+      const registered: Array<{ token: string; fileName: string; sizeBytes: number }> = [];
+      for (const remoteFile of remoteFiles) {
+        const content = await centralSync.downloadCollectorInboxFile(remoteFile.id);
+        const targetPath = join(downloadDir, `${remoteFile.id}-${basename(remoteFile.originalFileName)}`);
+        writeFileSync(targetPath, content);
+        const [file] = registerXmlPaths([targetPath]);
+        if (!file) continue;
+        collectorInboxTokens.set(file.token, remoteFile.id);
+        registered.push(file);
+      }
+      const cancellationEvents = remoteFiles.filter((file) => file.xmlType === "CANCELLATION").length;
+      return {
+        source,
+        label: "Grao & Grao (coletor)",
+        period: currentBrazilYearMonth(),
+        authorized: remoteFiles.length - cancellationEvents,
+        alreadyImported: 0,
+        pendingReview: remoteFiles.length,
+        ignored: 0,
+        ignoredByUser: 0,
+        cancellationEvents,
+        cancellationsAlreadyApplied: 0,
+        files: registered
+      };
+    }
+    const config = vulpeDevSources[source];
+    if (!existsSync(config.root)) throw new Error(`Pasta da ${config.label} nao encontrada neste computador.`);
+    const period = currentBrazilYearMonth();
+    const periodFolder = join(config.root, period);
+    if (!existsSync(periodFolder)) {
+      return { source, label: config.label, period, authorized: 0, alreadyImported: 0, pendingReview: 0, ignored: 0, ignoredByUser: 0, cancellationEvents: 0, cancellationsAlreadyApplied: 0, files: [] };
+    }
+    const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
+      const name = basename(filePath);
+      return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
+    });
+    const hasAccessKey = context.db.prepare("SELECT 1 FROM fiscal_documents WHERE access_key = ? LIMIT 1");
+    const wasIgnoredByUser = context.db.prepare("SELECT 1 FROM xml_import_files WHERE access_key = ? AND status = 'SKIPPED' AND json_extract(resolution_data_json, '$.ignore') = 1 LIMIT 1");
+    const hasFiscalEvent = context.db.prepare(`
+      SELECT 1 FROM fiscal_document_events
+      WHERE access_key = ? AND event_type = ? AND sequence_number = ? AND COALESCE(protocol_number, '') = COALESCE(?, '')
+      LIMIT 1
+    `);
+    const pendingPaths: string[] = [];
+    let authorized = 0;
+    let alreadyImported = 0;
+    let ignored = 0;
+    let ignoredByUser = 0;
+    let cancellationEvents = 0;
+    let cancellationsAlreadyApplied = 0;
+    candidates.forEach((filePath) => {
+      const inspection = inspectXmlFile(filePath, randomUUID());
+      if (inspection.xmlType === "EVENT_CANCELLATION") {
+        const event = inspection.extractedData as Record<string, unknown> | null;
+        const statusCode = String(event?.statusCode ?? "");
+        const protocolNumber = String(event?.protocolNumber ?? "");
+        if (inspection.status === "ERROR" || !inspection.accessKey || !["135", "155"].includes(statusCode) || !protocolNumber) {
+          ignored += 1;
+          return;
+        }
+        cancellationEvents += 1;
+        const existing = hasFiscalEvent.get(
+          inspection.accessKey,
+          "CANCELLATION",
+          String(event?.sequenceNumber ?? "1"),
+          protocolNumber
+        );
+        if (existing) cancellationsAlreadyApplied += 1;
+        else pendingPaths.push(filePath);
+        return;
+      }
+      if (inspection.xmlType !== "NFE_PROC" && inspection.xmlType !== "NFE") {
+        ignored += 1;
+        return;
+      }
+      const protocol = inspection.extractedData?.protocol as Record<string, unknown> | undefined;
+      const statusCode = String(protocol?.statusCode ?? "");
+      if (inspection.status === "ERROR" || !inspection.accessKey || !["100", "150"].includes(statusCode)) {
+        ignored += 1;
+        return;
+      }
+      authorized += 1;
+      if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
+      else if (hasAccessKey.get(inspection.accessKey)) alreadyImported += 1;
+      else pendingPaths.push(filePath);
+    });
+    return {
+      source,
+      label: config.label,
+      period,
+      authorized,
+      alreadyImported,
+      pendingReview: pendingPaths.length,
+      ignored,
+      ignoredByUser,
+      cancellationEvents,
+      cancellationsAlreadyApplied,
+      files: registerXmlPaths(pendingPaths)
+    };
+  });
   handle(IPC_CHANNELS.registerDroppedXmlFiles, (_event, payload: unknown) => {
     const data = z.object({ paths: z.array(z.string().min(1)).min(1).max(100) }).parse(payload);
     const xmlPaths = data.paths.filter((filePath) => filePath.toLowerCase().endsWith(".xml"));
@@ -704,7 +827,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ jobId: z.string().uuid(), fileIds: z.array(z.string().uuid()), resolution: z.unknown() }).parse(payload);
     return repository.applyXmlBulkResolution(data.jobId, data.fileIds, data.resolution);
   });
-  handle(IPC_CHANNELS.executeXmlImportJob, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.executeXmlImportJob, async (_event, payload: unknown) => {
     const data = z.object({ jobId: z.string().uuid(), tokens: z.array(z.string().uuid()).optional() }).parse(payload);
     const details = repository.getXmlImportJob(data.jobId);
     const filesByHash = new Map(details.files.map((file) => [file.fileHash, file]));
@@ -720,7 +843,25 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       copyFileSync(filePath, targetPath);
       repository.setXmlImportFileStoredPath(file.id, targetPath);
     });
-    return repository.executeXmlImportJob(data.jobId);
+    const result = await repository.executeXmlImportJob(data.jobId);
+    const completedByHash = new Map(result.files.map((file) => [file.fileHash, file]));
+    const resolutions: Array<Promise<void>> = [];
+    for (const token of data.tokens ?? []) {
+      const collectorId = collectorInboxTokens.get(token);
+      const filePath = xmlTokens.get(token);
+      if (!collectorId || !filePath) continue;
+      const inspection = inspectXmlFile(filePath, token);
+      const completed = completedByHash.get(inspection.fileHash);
+      if (completed?.status === "IMPORTED") {
+        resolutions.push(centralSync.resolveCollectorInboxFile(collectorId, "IMPORTED", "Processado pelo Operacoes Cafe"));
+        collectorInboxTokens.delete(token);
+      } else if (completed?.status === "SKIPPED") {
+        resolutions.push(centralSync.resolveCollectorInboxFile(collectorId, "IGNORED", "Marcado como nao cadastrar"));
+        collectorInboxTokens.delete(token);
+      }
+    }
+    await Promise.allSettled(resolutions);
+    return result;
   });
   handle(IPC_CHANNELS.getXmlImportJobProgress, (_event, payload: unknown) => repository.getXmlImportJobProgress(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listXmlImportJobs, (_event, payload: unknown) => repository.listXmlImportJobs(z.string().uuid().parse(payload)));
@@ -1344,6 +1485,18 @@ function findXmlFiles(folder: string, includeSubfolders: boolean): string[] {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".xml")) result.push(full);
   });
   return result;
+}
+
+function currentBrazilYearMonth(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  if (!year || !month) throw new Error("Nao foi possivel determinar o periodo atual.");
+  return `${year}${month}`;
 }
 
 async function selectExportDirectory(title: string): Promise<string | null> {

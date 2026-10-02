@@ -262,6 +262,8 @@ const IPC_CHANNELS = {
   selectXmlFile: "xmlFiles:selectFile",
   selectXmlFiles: "xmlFiles:selectFiles",
   selectXmlFolder: "xmlFiles:selectFolder",
+  getVulpeDevStatus: "xmlFiles:vulpeDevStatus",
+  scanVulpeDevXml: "xmlFiles:vulpeDevScan",
   registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",
   createXmlImportDraft: "xmlImports:createDraft",
@@ -632,6 +634,20 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
+  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "MG" | "ES" | "GRAO"; label: string; available: boolean }> }>;
+  scanVulpeDevXml: (source: "MG" | "ES" | "GRAO") => Promise<{
+    source: "MG" | "ES" | "GRAO";
+    label: string;
+    period: string;
+    authorized: number;
+    alreadyImported: number;
+    pendingReview: number;
+    ignored: number;
+    ignoredByUser: number;
+    cancellationEvents: number;
+    cancellationsAlreadyApplied: number;
+    files: Array<{ token: string; fileName: string; sizeBytes: number }>;
+  }>;
   registerDroppedXmlFiles: (paths: string[]) => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   getDroppedFilePaths: (files: File[]) => string[];
   inspectXmlFiles: (tokens: string[]) => Promise<XmlFileInspection[]>;
@@ -1024,6 +1040,20 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
+  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "MG" | "ES" | "GRAO"; label: string; available: boolean }> }>,
+  scanVulpeDevXml: (source) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, source) as Promise<{
+    source: "MG" | "ES" | "GRAO";
+    label: string;
+    period: string;
+    authorized: number;
+    alreadyImported: number;
+    pendingReview: number;
+    ignored: number;
+    ignoredByUser: number;
+    cancellationEvents: number;
+    cancellationsAlreadyApplied: number;
+    files: Array<{ token: string; fileName: string; sizeBytes: number }>;
+  }>,
   registerDroppedXmlFiles: (paths) => ipcRenderer.invoke(IPC_CHANNELS.registerDroppedXmlFiles, { paths }) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   getDroppedFilePaths: (files) => files.map((file) => webUtils.getPathForFile(file)).filter((path) => path.length > 0),
   inspectXmlFiles: (tokens) => ipcRenderer.invoke(IPC_CHANNELS.inspectXmlFiles, tokens) as Promise<XmlFileInspection[]>,

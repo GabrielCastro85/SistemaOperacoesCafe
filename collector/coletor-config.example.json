@@ -1,0 +1,11 @@
+{
+  "serverUrl": "https://mindful-peace-production.up.railway.app",
+  "collectorSecret": "COLE_A_CREDENCIAL_DO_COLETOR_AQUI",
+  "sourceCode": "GRAO_GRAO",
+  "sourceLabel": "Grao & Grao",
+  "machineId": "pc-grao-principal",
+  "xmlRoot": "C:\\Vulpe\\NFe",
+  "emitterCnpjs": ["16594876000224"],
+  "scanIntervalSeconds": 60,
+  "monthsBack": 1
+}

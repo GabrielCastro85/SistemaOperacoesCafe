@@ -668,7 +668,7 @@ describe("xml imports", () => {
     expect(repo.getFiscalDocumentMergeHistory(existing.document.id)).toHaveLength(1);
 
     const eventPath = join(dir, "cancel.xml");
-    writeFileSync(eventPath, cancelXml(key), "utf8");
+    writeFileSync(eventPath, vulpeCancelResponseXml(key), "utf8");
     const eventInspection = inspectXmlFile(eventPath, "11111111-1111-4111-8111-111111111113");
     const eventJob = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: {} });
     const eventFile = repo.addXmlImportFile({ importJobId: eventJob.id, originalFileName: eventInspection.originalFileName, fileHash: eventInspection.fileHash, fileSize: eventInspection.fileSize, xmlType: eventInspection.xmlType, accessKey: eventInspection.accessKey, status: eventInspection.status, errorCode: null, errorMessage: null, warningCodes: eventInspection.warnings, extractedData: eventInspection.extractedData, resolutionData: null });
@@ -936,6 +936,14 @@ function cancelXml(key: string): string {
   <evento><infEvento Id="ID110111${key}01"><tpEvento>110111</tpEvento><chNFe>${key}</chNFe><nSeqEvento>1</nSeqEvento><dhEvento>2026-07-17T08:00:00-03:00</dhEvento><detEvento><xJust>Erro de emissao</xJust></detEvento></infEvento></evento>
   <retEvento><infEvento><chNFe>${key}</chNFe><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><cStat>135</cStat><xMotivo>Evento registrado</xMotivo><nProt>131260000000002</nProt></infEvento></retEvento>
 </procEventoNFe>`;
+}
+
+function vulpeCancelResponseXml(key: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<retEnvEvento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe">
+  <idLote>1026011149</idLote><tpAmb>1</tpAmb><cStat>128</cStat><xMotivo>Lote de Evento Processado</xMotivo>
+  <retEvento versao="1.00"><infEvento><tpAmb>1</tpAmb><cOrgao>32</cOrgao><cStat>135</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>${key}</chNFe><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><dhRegEvento>2026-10-02T14:26:20-03:00</dhRegEvento><nProt>232260021782433</nProt></infEvento></retEvento>
+</retEnvEvento>`;
 }
 
 function realWorldHighPrecisionNfeXml(): string {
