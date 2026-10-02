@@ -5,7 +5,7 @@
   "sourceLabel": "Grao & Grao",
   "machineId": "pc-grao-principal",
   "xmlRoot": "C:\\Vulpe\\NFe",
-  "emitterCnpjs": ["16594876000224"],
+  "emitterCnpjs": ["16594876000224", "16594876000496"],
   "scanIntervalSeconds": 60,
   "monthsBack": 1
 }

@@ -10,7 +10,7 @@ O resultado esperado e status OK. O coletor inicia junto com o Windows e verific
 novos XMLs a cada minuto. O Operacoes Cafe nao precisa estar aberto nesse computador.
 
 O coletor envia somente NF-e autorizadas e cancelamentos aceitos cujo emitente seja
-o CNPJ configurado. Nenhuma nota e lancada automaticamente: ela fica aguardando
+um dos CNPJs configurados. Nenhuma nota e lancada automaticamente: ela fica aguardando
 classificacao no Operacoes Cafe do computador principal.
 
 Arquivos de diagnostico:
