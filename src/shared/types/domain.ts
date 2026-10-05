@@ -1740,7 +1740,18 @@ export interface DashboardLoanDueAlert {
   daysOverdue: number;
 }
 
+export interface DashboardPayableDueAlert {
+  payableId: string;
+  description: string;
+  payeeName: string;
+  ownLegalEntityName: string;
+  dueDate: string;
+  openAmountCents: number;
+  daysUntilDue: number;
+}
+
 export interface DashboardAlerts {
+  payablesDueSoon: DashboardPayableDueAlert[];
   overdueCharges: DashboardOverdueChargeAlert[];
   waitingSignatureConfirmations: DashboardWaitingSignatureAlert[];
   partnersNearCreditLimit: DashboardCreditLimitAlert[];

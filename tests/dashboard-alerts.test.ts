@@ -43,6 +43,27 @@ async function issueCharge(repo: AppRepository, partnerId: string, entityId: str
 }
 
 describe("dashboard alerts", () => {
+  it("highlights open accounts payable due within the next seven days", async () => {
+    const { repo, db } = await setup();
+    const category = (await repo.listExpenseCategories(villaId))[0];
+    const dateFromNow = (days: number): string => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+    const createPayable = (description: string, dueDate: string): void => {
+      const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Fornecedor", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null, source: "MANUAL", description, documentType: "BOLETO", documentNumber: null, competenceDate: dueDate.slice(0, 8) + "01", issueDate: null, dueDate, originalAmountCents: 25000, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", plannedPaymentMethod: "BOLETO", pixKey: null, notes: null, internalNotes: null });
+      repo.confirmAccountPayable(draft.payable.id);
+    };
+    createPayable("Conta de agua", dateFromNow(1));
+    createPayable("Conta distante", dateFromNow(10));
+
+    const alerts = repo.getDashboardAlerts(villaId, ownLegalEntityId);
+    expect(alerts.payablesDueSoon).toHaveLength(1);
+    expect(alerts.payablesDueSoon[0]).toMatchObject({ description: "Conta de agua", payeeName: "Fornecedor", openAmountCents: 25000, daysUntilDue: 1 });
+    db.close();
+  });
+
   it("flags an issued charge as overdue once its due date has passed", async () => {
     const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "10.5");

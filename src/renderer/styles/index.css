@@ -3439,6 +3439,11 @@ table tbody tr:hover {
   background: #fffdf8;
 }
 
+.ui-timeline li {
+  display: grid;
+  gap: 4px;
+}
+
 .ui-tree__item {
   display: flex;
   justify-content: space-between;
@@ -4058,6 +4063,34 @@ table tbody tr:hover {
   gap: 10px;
 }
 
+.dashboard-alert-sections {
+  display: grid;
+  gap: 22px;
+}
+
+.dashboard-alert-section {
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-alert-section + .dashboard-alert-section {
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+
+.dashboard-alert-section__heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dashboard-alert-section__heading h3 {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-size: 1.18rem;
+}
+
 .alert-item {
   display: flex;
   align-items: center;
@@ -4668,6 +4701,62 @@ table tbody tr:hover {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
+.alert-item--payable {
+  justify-content: space-between;
+  padding: 15px 16px;
+  border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-border));
+  border-left: 5px solid var(--color-accent);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--color-accent) 11%, var(--color-surface)), var(--color-surface) 58%);
+}
+
+.alert-item__content,
+.alert-item__meta {
+  display: grid;
+  gap: 4px;
+}
+
+.alert-item__content strong {
+  font-size: 1rem;
+}
+
+.alert-item__content span,
+.alert-item__meta small {
+  color: var(--color-text-muted);
+  font-size: .82rem;
+}
+
+.alert-item__meta {
+  justify-items: end;
+  min-width: 180px;
+}
+
+.alert-list__more {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent-strong, var(--color-accent));
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.alert-list__more:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 760px) {
+  .alert-item--payable,
+  .dashboard-alert-section__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .alert-item__meta {
+    justify-items: start;
+  }
+}
+
 .charge-cte-card {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.55fr) minmax(150px, 0.7fr);
@@ -4787,6 +4876,20 @@ table tbody tr:hover {
   margin-top: var(--space-5);
 }
 
+.payable-detail-section {
+  scroll-margin-top: 210px;
+}
+
+.payable-payment-entry {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 46%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
+}
+
 .professional-shell.is-collapsed .app-sidebar__nav {
   min-width: 0;
   min-height: 0;
@@ -4882,3 +4985,181 @@ table tbody tr:hover {
 .transfer-balance-row.head { font-size: 12px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
 @media (max-width: 1100px) { .transfer-editor { grid-template-columns: 1fr; } .transfer-summary { position: sticky; bottom: 8px; top: auto; z-index: 4; grid-template-columns: repeat(3,1fr); } .transfer-payment { grid-template-columns: repeat(2,minmax(0,1fr)); } .transfer-history article { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 760px) { .transfer-invoice-title { align-items: stretch; flex-direction: column; } .transfer-invoice-title-actions { justify-content: space-between; } }
+
+/* Financeiro: indicadores legiveis e tabela operacional compacta. */
+.finance-summary-cards {
+  grid-template-columns: repeat(4, minmax(230px, 1fr));
+  align-items: stretch;
+  gap: 18px;
+  margin-block: 24px 30px;
+}
+
+.finance-summary-card,
+.finance-summary-card > .ui-card {
+  min-width: 0;
+  height: 100%;
+}
+
+.finance-summary-card > .ui-card {
+  align-content: start;
+  gap: 10px;
+  overflow: visible;
+}
+
+.finance-summary-card > .ui-card > span {
+  line-height: 1.3;
+  overflow-wrap: normal;
+}
+
+.finance-summary-card > .ui-card > strong {
+  display: block;
+  max-width: 100%;
+  font-size: clamp(1.15rem, 1.65vw, 1.7rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  white-space: nowrap;
+  overflow: visible;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.finance-summary-card > .ui-card > small {
+  line-height: 1.35;
+}
+
+.finance-payables-table .ui-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.finance-payables-table .ui-table th,
+.finance-payables-table .ui-table td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.finance-payables-table .ui-table th:nth-child(1) { width: 108px; }
+.finance-payables-table .ui-table th:nth-child(2) { width: 18%; }
+.finance-payables-table .ui-table th:nth-child(3) { width: 17%; }
+.finance-payables-table .ui-table th:nth-child(4) { width: 14%; }
+.finance-payables-table .ui-table th:nth-child(5),
+.finance-payables-table .ui-table th:nth-child(6),
+.finance-payables-table .ui-table th:nth-child(7) { width: 112px; }
+.finance-payables-table .ui-table th:nth-child(8) { width: 118px; }
+.finance-payables-table .ui-table th:nth-child(9) { width: 176px; }
+
+.finance-table-detail {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.finance-table-detail strong,
+.finance-table-detail small {
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.finance-table-detail strong {
+  overflow-wrap: anywhere;
+}
+
+.finance-table-detail small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.finance-date,
+.finance-money,
+.finance-payables-table .ui-badge {
+  white-space: nowrap;
+}
+
+.finance-row-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(70px, 1fr));
+  gap: 7px;
+  min-width: 152px;
+}
+
+.finance-row-actions > *:not(:only-child),
+.finance-row-actions > *:only-child {
+  min-width: 0;
+  width: 100%;
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .finance-summary-cards {
+    grid-template-columns: repeat(2, minmax(230px, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .finance-summary-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Cadastro de contas: separa etapas, conteudo e comandos. */
+.payable-wizard {
+  display: grid;
+  gap: 18px;
+}
+
+.payable-wizard > .ui-stepper {
+  margin-bottom: 0;
+}
+
+.payable-wizard__content {
+  min-width: 0;
+}
+
+.payable-wizard__content > .form-grid,
+.payable-wizard__content > .payable-attachment-picker,
+.payable-wizard__content > .ui-definition-list {
+  margin: 0;
+}
+
+.payable-wizard__actions {
+  margin-top: 2px;
+}
+
+/* Evita barras de acao encostadas no bloco imediatamente anterior nos demais fluxos. */
+.form-grid + .actions,
+.ui-alert + .actions,
+.ui-table-wrap + .actions,
+.ui-definition-list + .actions,
+.payable-pending-files + .actions,
+.payable-attachment-picker + .actions {
+  margin-top: 16px;
+}
+
+.charge-history-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.charge-history-more span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.toolbar.vulpe-search-actions button.vulpe-search-all {
+  color: #fffdf8 !important;
+  border-color: #056238 !important;
+  background: linear-gradient(135deg, #10a862, #056238) !important;
+  box-shadow: 0 4px 12px rgb(5 98 56 / 28%) !important;
+  font-weight: 800;
+}
+
+.toolbar.vulpe-search-actions button.vulpe-search-all:hover:not(:disabled) {
+  color: #fff !important;
+  border-color: #033d24 !important;
+  background: linear-gradient(135deg, #0c8e53, #044d2b) !important;
+  box-shadow: 0 6px 16px rgb(5 98 56 / 34%) !important;
+}

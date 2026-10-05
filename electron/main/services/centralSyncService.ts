@@ -160,8 +160,15 @@ export class CentralSyncService {
     try {
       await this.synchronize();
     } catch (error) {
-      this.stop();
       log.warn("Central sync during login failed", error instanceof Error ? error.message : String(error));
+      if (this.hasUsableLocalSnapshot()) {
+        // Uma oscilacao curta do servidor nao deve bloquear um computador que
+        // ja concluiu ao menos uma sincronizacao. O erro continua registrado no
+        // rodape e o ciclo automatico tenta atualizar os dados novamente.
+        this.start();
+        return response.user?.desktopProfile ?? null;
+      }
+      this.stop();
       throw new Error(`Nao foi possivel carregar os dados do servidor central. Tente entrar novamente. Detalhe: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.start();
@@ -500,6 +507,14 @@ export class CentralSyncService {
   private getServerRevision(): number {
     const row = this.db.prepare("SELECT server_revision AS revision FROM central_sync_state WHERE singleton = 1").get() as { revision: number };
     return Number(row.revision);
+  }
+
+  private hasUsableLocalSnapshot(): boolean {
+    const row = this.db.prepare(`
+      SELECT server_revision AS revision, last_success_at AS lastSuccessAt
+      FROM central_sync_state WHERE singleton = 1
+    `).get() as { revision: number; lastSuccessAt: string | null };
+    return Number(row.revision) > 0 && Boolean(row.lastSuccessAt);
   }
 
   private setServerRevision(revision: number): void {

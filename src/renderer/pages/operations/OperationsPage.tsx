@@ -1329,9 +1329,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 }}
               />
             </FormGrid>
-            <div className="toolbar">
-              {vulpeDevSources.map((source) => (
-                <button key={source.source} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
+            <div className="toolbar vulpe-search-actions">
+              {[...vulpeDevSources].sort((left, right) => Number(right.source === "ALL") - Number(left.source === "ALL")).map((source) => (
+                <button key={source.source} className={source.source === "ALL" ? "vulpe-search-all" : undefined} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
                   Buscar {source.label}
                 </button>
               ))}

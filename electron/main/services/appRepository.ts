@@ -3639,12 +3639,37 @@ export class AppRepository {
 
   private static readonly WAITING_SIGNATURE_ALERT_DAYS = 7;
   private static readonly CREDIT_LIMIT_ALERT_PERCENT = 90;
+  private static readonly PAYABLE_ALERT_DAYS_AHEAD = 7;
 
   getDashboardAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts {
     this.assertOrganizationWritable(organizationId);
     const today = new Date().toISOString().slice(0, 10);
     const partners = this.listBusinessPartners({ role: "CLIENT", status: "active" });
     const partnerName = (id: string): string => partners.find((item) => item.id === id)?.displayName ?? id;
+
+    // Contas a pagar sao lembretes administrativos globais: quem esta no
+    // painel da Grao MG ainda precisa enxergar, por exemplo, uma conta de agua
+    // da Villa ES. O nome da empresa em cada linha deixa o escopo explicito.
+    const accessibleEntities = this.listLegalEntities({ status: "all" });
+    const accessibleEntityIds = new Set(accessibleEntities.map((entity) => entity.id));
+    const entityNames = new Map(accessibleEntities.map((entity) => [entity.id, entity.tradeName]));
+    const accessibleOrganizationIds = [...new Set(accessibleEntities.map((entity) => entity.organizationId))];
+    const payablesDueSoon = accessibleOrganizationIds.flatMap((accessibleOrganizationId) => this.listAccountsPayable({ organizationId: accessibleOrganizationId }))
+      .filter((payable) => accessibleEntityIds.has(payable.ownLegalEntityId))
+      .filter((payable) => ["SCHEDULED", "OPEN", "PARTIALLY_PAID", "OVERDUE"].includes(payable.status))
+      .filter((payable) => (payable.openAmountCents ?? 0) > 0)
+      .map((payable) => ({ payable, daysUntilDue: daysBetweenDates(today, payable.dueDate) }))
+      .filter((item) => item.daysUntilDue <= AppRepository.PAYABLE_ALERT_DAYS_AHEAD)
+      .sort((left, right) => left.payable.dueDate.localeCompare(right.payable.dueDate))
+      .map(({ payable, daysUntilDue }) => ({
+        payableId: payable.id,
+        description: payable.description,
+        payeeName: payable.payeeNameSnapshot,
+        ownLegalEntityName: entityNames.get(payable.ownLegalEntityId) ?? "Empresa",
+        dueDate: payable.dueDate,
+        openAmountCents: payable.openAmountCents ?? 0,
+        daysUntilDue
+      }));
 
     const overdueCharges = this.listClientCharges({ organizationId })
       .filter((charge) => !ownLegalEntityId || charge.ownLegalEntityId === ownLegalEntityId)
@@ -3720,7 +3745,7 @@ export class AppRepository {
       }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-    return { overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
+    return { payablesDueSoon, overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
   }
 
   markLoanCollected(id: string): ClientLedgerEntry {

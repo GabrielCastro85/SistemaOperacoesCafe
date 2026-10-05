@@ -1,8 +1,8 @@
 import { chargePeriodLabel } from "../../../shared/utils/chargeLabel";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, ClientCharge, ClientChargeDetail, ClientChargeOperation, ClientLedgerEntry, ClientPayment, FiscalDocument, LegalEntity, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatCurrencyInput, formatDateOnlyBr, formatDateTimeBr, parseCurrencyToCents } from "../../../shared/utils/format";
-import { DateInput, EmptyState, Input, PageHeader, Tabs } from "../../design-system";
+import { DateInput, EmptyState, FilterBar, Input, PageHeader, Select, Tabs } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
@@ -19,6 +19,10 @@ function decimalTextBr(value: string | null | undefined): string {
   return value ? value.replace(".", ",") : "0";
 }
 
+function normalizeSearchText(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").trim();
+}
+
 const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
   { id: "WEEKLY", label: "Semanal" },
   { id: "MONTHLY", label: "Mensal" },
@@ -26,6 +30,7 @@ const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
 ];
 
 const INCLUDE_ALL_COMPANIES_IN_CHARGES = true;
+const HISTORY_PAGE_SIZE = 10;
 
 function localDateInputValue(date: Date): string {
   const year = date.getFullYear();
@@ -60,6 +65,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [legalEntities, setLegalEntities] = useState<LegalEntity[]>(data.legalEntities);
   const [charges, setCharges] = useState<ClientCharge[]>([]);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("all");
+  const [historyLegalEntityId, setHistoryLegalEntityId] = useState("all");
+  const [historyMonth, setHistoryMonth] = useState("");
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [bankEditor, setBankEditor] = useState<LegalEntity | null>(null);
   const [savingBank, setSavingBank] = useState(false);
   useEffect(() => { setBankEditor(null); }, [ownLegalEntityId]);
@@ -121,6 +131,43 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const detailRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
 
+  const filteredHistoryCharges = useMemo(() => {
+    const query = normalizeSearchText(historySearch);
+    const monthStart = historyMonth ? `${historyMonth}-01` : "";
+    const monthEnd = historyMonth ? `${historyMonth}-31` : "";
+    return charges.filter((charge) => {
+      const partnerName = partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? "";
+      const matchesSearch = !query || normalizeSearchText([
+        partnerName,
+        charge.chargeNumber ?? "",
+        charge.referenceCode ?? "",
+        formatStatusLabel(charge.status)
+      ].join(" ")).includes(query);
+      const matchesStatus = historyStatus === "all"
+        || (historyStatus === "open" && charge.openAmountCents > 0 && charge.status !== "CANCELLED")
+        || charge.status === historyStatus;
+      const matchesCompany = historyLegalEntityId === "all" || charge.ownLegalEntityId === historyLegalEntityId;
+      const matchesMonth = !historyMonth || (charge.periodStart <= monthEnd && charge.periodEnd >= monthStart);
+      return matchesSearch && matchesStatus && matchesCompany && matchesMonth;
+    });
+  }, [charges, historyLegalEntityId, historyMonth, historySearch, historyStatus, partners]);
+
+  const historyFilterCount = [historySearch.trim(), historyStatus !== "all", historyLegalEntityId !== "all", historyMonth]
+    .filter(Boolean).length;
+  const visibleHistoryCharges = filteredHistoryCharges.slice(0, historyVisibleCount);
+  const hiddenHistoryCharges = Math.max(0, filteredHistoryCharges.length - visibleHistoryCharges.length);
+
+  useEffect(() => {
+    setHistoryVisibleCount(HISTORY_PAGE_SIZE);
+  }, [historySearch, historyStatus, historyLegalEntityId, historyMonth]);
+
+  function clearHistoryFilters(): void {
+    setHistorySearch("");
+    setHistoryStatus("all");
+    setHistoryLegalEntityId("all");
+    setHistoryMonth("");
+  }
+
   const load = useCallback(async () => {
     const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
     setPartners(clients);
@@ -136,7 +183,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setCharges(await window.operationsCafe.listClientCharges({ status: "all" }));
-  }, [organizationId, includeAllCompanies]);
+  }, [organizationId]);
 
   useEffect(() => { void load(); }, [load]);
   const summaryRequestRef = useRef(0);
@@ -1303,10 +1350,27 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       </AdminBlock></div> : null}
 
       {chargesTab === "historico" && (
-      <div ref={historyRef}><AdminBlock title="Historico de cobrancas">
+      <div ref={historyRef}><AdminBlock title="Histórico de cobranças">
+        <FilterBar activeCount={historyFilterCount} onClear={clearHistoryFilters}>
+          <Input label="Pesquisar" type="search" value={historySearch} placeholder="Cliente, número ou referência" onChange={(event) => setHistorySearch(event.target.value)} />
+          <Select label="Situação" value={historyStatus} onChange={(event) => setHistoryStatus(event.target.value)}>
+            <option value="all">Todas</option>
+            <option value="open">Em aberto</option>
+            <option value="PAID">Pagas</option>
+            <option value="PARTIALLY_PAID">Parcialmente pagas</option>
+            <option value="OVERDUE">Vencidas</option>
+            <option value="DRAFT">Rascunhos</option>
+            <option value="CANCELLED">Canceladas</option>
+          </Select>
+          <Select label="Empresa" value={historyLegalEntityId} onChange={(event) => setHistoryLegalEntityId(event.target.value)}>
+            <option value="all">Todas as empresas</option>
+            {legalEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}
+          </Select>
+          <Input label="Mês do período" type="month" value={historyMonth} onChange={(event) => setHistoryMonth(event.target.value)} />
+        </FilterBar>
         <div className="table">
-          <div className="table-head charge-grid"><span>Criada em</span><span>Cliente/corretor</span><span>Periodo</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Status</span><span>Acoes</span></div>
-          {charges.map((charge) => {
+          <div className="table-head charge-grid"><span>Criada em</span><span>Cliente/corretor</span><span>Período</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Situação</span><span>Ações</span></div>
+          {visibleHistoryCharges.map((charge) => {
             const deleteBlockedReason = deleteChargeBlockedReason(charge);
             return (
               <div key={charge.id} className="table-row charge-grid">
@@ -1327,7 +1391,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               </div>
             );
           })}
+          {filteredHistoryCharges.length === 0 ? <div className="table-row"><span>Nenhuma cobrança encontrada com os filtros selecionados.</span></div> : null}
         </div>
+        {filteredHistoryCharges.length > HISTORY_PAGE_SIZE ? (
+          <div className="charge-history-more">
+            <span>Exibindo {visibleHistoryCharges.length} de {filteredHistoryCharges.length} cobranças</span>
+            {hiddenHistoryCharges > 0 ? <button onClick={() => setHistoryVisibleCount((current) => current + HISTORY_PAGE_SIZE)}>Mostrar mais ({Math.min(HISTORY_PAGE_SIZE, hiddenHistoryCharges)})</button> : null}
+            {historyVisibleCount > HISTORY_PAGE_SIZE ? <button onClick={() => setHistoryVisibleCount(HISTORY_PAGE_SIZE)}>Mostrar menos</button> : null}
+          </div>
+        ) : null}
       </AdminBlock>
       </div>
       )}

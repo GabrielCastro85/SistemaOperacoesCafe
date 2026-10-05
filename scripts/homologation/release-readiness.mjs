@@ -19,7 +19,7 @@ const requiredDocs = [
 ];
 const errors = [];
 
-if (pkg.version !== "1.0.0-rc.1" && pkg.version !== "1.0.0") errors.push(`Versao inesperada: ${pkg.version}.`);
+if (!/^1\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version)) errors.push(`Versao inesperada: ${pkg.version}.`);
 for (const doc of requiredDocs) {
   if (!existsSync(join(root, doc))) errors.push(`Documento ausente: ${doc}.`);
 }

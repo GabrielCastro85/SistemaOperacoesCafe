@@ -131,6 +131,34 @@ describe("CentralSyncService", () => {
     }
   });
 
+  it("permite entrar com a ultima copia sincronizada durante uma oscilacao do servidor", async () => {
+    const db = createDatabase();
+    db.prepare(`
+      UPDATE central_sync_state
+      SET server_revision = 12, source_installation_id = 'install-source', last_success_at = '2026-10-05T18:00:00.000Z'
+      WHERE singleton = 1
+    `).run();
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      if (path === "/v1/session/login") return jsonResponse({ token: "token", user: { desktopProfile: null } });
+      throw new TypeError("fetch failed");
+    }));
+
+    const service = new CentralSyncService(db, "test");
+    try {
+      await expect(service.login("Gabriel", "senha-teste")).resolves.toBeNull();
+      expect(service.getStatus()).toMatchObject({
+        status: "ERROR",
+        revision: 12,
+        lastSuccessAt: "2026-10-05T18:00:00.000Z",
+        error: "fetch failed"
+      });
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("informa relacionamentos locais que impedem a carga sem apagar dados ou enviar alteracoes", async () => {
     const db = createDatabase();
     db.exec(`

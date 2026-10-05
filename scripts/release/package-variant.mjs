@@ -141,7 +141,12 @@ async function publishGithubRelease(token, tagName) {
   const patchResponse = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${release.id}`, {
     method: "PATCH",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ draft: false, prerelease: version.includes("-") })
+    body: JSON.stringify({
+      draft: false,
+      prerelease: version.includes("-"),
+      name: `${variant.displayName} ${version}`,
+      body: releaseNotes(variant, version)
+    })
   });
   if (!patchResponse.ok) {
     console.error(`Falha ao publicar a release ${tagName} (status ${patchResponse.status}) -- ela ficou como rascunho, publique manualmente no GitHub.`);
@@ -248,14 +253,16 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
+  const highlights = releaseVersion === "1.1.32"
+    ? `- Login continua disponivel com a ultima copia sincronizada durante oscilacoes temporarias do servidor.\n- Dashboard destaca contas a pagar e resume as cobrancas vencidas.\n- Financeiro reorganizado, com textos em portugues, valores legiveis, baixa e edicao de contas mais acessiveis.\n- Historico de cobrancas ganhou pesquisa, filtros e carregamento por etapas.\n- Importacao de NF-e diferencia avisos e duplicidades e destaca a busca em todas as empresas.`
+    : `- Build Windows x64 unico para o Sistema de Operacoes de Cafe.\n- Villa Coffee e Grao & Grao permanecem como empresas/branding dentro do mesmo app.`;
   return `# ${currentVariant.displayName} ${releaseVersion}
 
 Canal: ${mode}
 
 ## Destaques
 
-- Build Windows x64 unico para o Sistema de Operacoes de Cafe.
-- Villa Coffee e Grao & Grao permanecem como empresas/branding dentro do mesmo app.
+${highlights}
 - UserData preservado em ${currentVariant.userDataDirectoryName}.
 - Backup local recomendado antes de atualizar.
 - Artefato sem assinatura de codigo nesta etapa.

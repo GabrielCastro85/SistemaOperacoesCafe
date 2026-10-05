@@ -2,18 +2,6 @@ import type { FinancialSummary } from "../../../../shared/types/domain";
 import { formatCurrencyFromCents } from "../../../../shared/utils/format";
 import { Card } from "../../../design-system";
 
-const valueStyle = {
-  display: "block",
-  minWidth: 0,
-  maxWidth: "100%",
-  fontSize: "clamp(1.05rem, 1.45vw, 1.55rem)",
-  lineHeight: 1.08,
-  letterSpacing: "-0.03em",
-  whiteSpace: "nowrap",
-  overflow: "hidden",
-  textOverflow: "ellipsis"
-} as const;
-
 function SummaryCard({
   label,
   value,
@@ -27,9 +15,7 @@ function SummaryCard({
     <div className="finance-summary-card">
       <Card>
         <span>{label}</span>
-        <strong style={valueStyle} title={value}>
-          {value}
-        </strong>
+        <strong title={value}>{value}</strong>
         {description ? <small>{description}</small> : null}
       </Card>
     </div>
@@ -40,11 +26,11 @@ export function FinancialSummaryCards({ summary }: { summary: FinancialSummary |
   return (
     <div className="cards finance-summary-cards">
       <SummaryCard
-        label="Total a pagar no mes"
+        label="Total a pagar no mês"
         value={formatCurrencyFromCents(summary?.payableThisMonthCents ?? 0)}
       />
       <SummaryCard
-        label="Pago no mes"
+        label="Pago no mês"
         value={formatCurrencyFromCents(summary?.paidThisMonthCents ?? 0)}
       />
       <SummaryCard
@@ -56,7 +42,7 @@ export function FinancialSummaryCards({ summary }: { summary: FinancialSummary |
         value={formatCurrencyFromCents(summary?.overdueCents ?? 0)}
       />
       <SummaryCard
-        label="Proximos 7 dias"
+        label="Próximos 7 dias"
         value={formatCurrencyFromCents(summary?.dueNext7DaysCents ?? 0)}
       />
       <SummaryCard
@@ -70,7 +56,7 @@ export function FinancialSummaryCards({ summary }: { summary: FinancialSummary |
       <SummaryCard
         label="Resultado projetado"
         value={formatCurrencyFromCents(summary?.projectedResultCents ?? 0)}
-        description="Fluxo gerencial projetado, nao saldo bancario real."
+        description="Fluxo gerencial projetado, não saldo bancário real."
       />
     </div>
   );

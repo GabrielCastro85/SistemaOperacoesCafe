@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 import type { BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import type { UpdateStatus } from "../../../shared/types/updater";
-import { formatCnpj, formatCurrencyFromCents, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
+import { formatCnpj, formatCurrencyFromCents, formatDateOnlyBr, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
 import { Alert, Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, Input, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 
@@ -427,7 +427,18 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     { label: "Rascunho/pendente", value: (confirmationSummary?.drafts ?? 0) + (confirmationSummary?.pendingReview ?? 0) }
   ];
   const statusTotal = statusSlices.reduce((sum, item) => sum + item.value, 0);
-  const hasAlerts = Boolean(alerts && (alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+  const overdueChargePreview = alerts?.overdueCharges.slice(0, 5) ?? [];
+  const remainingOverdueCharges = Math.max(0, (alerts?.overdueCharges.length ?? 0) - overdueChargePreview.length);
+  const payablePreview = alerts?.payablesDueSoon.slice(0, 4) ?? [];
+  const remainingPayables = Math.max(0, (alerts?.payablesDueSoon.length ?? 0) - payablePreview.length);
+  const hasAlerts = Boolean(alerts && (alerts.payablesDueSoon.length || alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+
+  function payableDueLabel(daysUntilDue: number): string {
+    if (daysUntilDue < 0) return `Vencida há ${Math.abs(daysUntilDue)} dia(s)`;
+    if (daysUntilDue === 0) return "Pagar hoje";
+    if (daysUntilDue === 1) return "Vence amanhã";
+    return `Vence em ${daysUntilDue} dias`;
+  }
 
   return (
     <section className="content-section">
@@ -467,13 +478,51 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               <h2>Alertas</h2>
             </div>
           </div>
-          <div className="alert-list">
-            {alerts.overdueCharges.map((item) => (
+          <div className="dashboard-alert-sections">
+            {payablePreview.length ? (
+              <section className="dashboard-alert-section dashboard-alert-section--payables">
+                <div className="dashboard-alert-section__heading">
+                  <div><span className="ui-eyebrow">Próximos pagamentos</span><h3>Contas a pagar</h3></div>
+                  <Button onClick={() => { window.location.hash = "#/finance/payables"; }}>Ver financeiro</Button>
+                </div>
+                <div className="alert-list">
+                  {payablePreview.map((item) => (
+                    <button key={item.payableId} className="alert-item alert-item--payable" onClick={() => { window.location.hash = `#/finance/payables/${item.payableId}`; }}>
+                      <div className="alert-item__content">
+                        <strong>{item.description}</strong>
+                        <span>{item.ownLegalEntityName} · {item.payeeName}</span>
+                      </div>
+                      <div className="alert-item__meta">
+                        <Badge tone={item.daysUntilDue < 0 ? "danger" : item.daysUntilDue <= 1 ? "warning" : "accent"}>{payableDueLabel(item.daysUntilDue)}</Badge>
+                        <strong>{formatCurrencyFromCents(item.openAmountCents)}</strong>
+                        <small>{formatDateOnlyBr(item.dueDate)}</small>
+                      </div>
+                    </button>
+                  ))}
+                  {remainingPayables > 0 ? <button className="alert-list__more" onClick={() => { window.location.hash = "#/finance/payables"; }}>Mais {remainingPayables} conta(s) a pagar</button> : null}
+                </div>
+              </section>
+            ) : null}
+
+            {overdueChargePreview.length ? (
+              <section className="dashboard-alert-section">
+                <div className="dashboard-alert-section__heading"><div><span className="ui-eyebrow">Recebimentos</span><h3>Cobranças vencidas</h3></div></div>
+                <div className="alert-list">
+            {overdueChargePreview.map((item) => (
               <button key={item.chargeId} className="alert-item" onClick={() => { window.location.hash = "#/charges"; }}>
                 <Badge tone="danger">Cobranca vencida</Badge>
                 <span>{item.partnerName} - {formatCurrencyFromCents(item.openAmountCents)} em aberto ha {item.daysOverdue} dia(s)</span>
               </button>
             ))}
+            {remainingOverdueCharges > 0 ? <button className="alert-list__more" onClick={() => { window.location.hash = "#/charges"; }}>Mais {remainingOverdueCharges} cobranças vencidas</button> : null}
+                </div>
+              </section>
+            ) : null}
+
+            {(alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length) ? (
+              <section className="dashboard-alert-section">
+                <div className="dashboard-alert-section__heading"><div><span className="ui-eyebrow">Acompanhamento</span><h3>Outros alertas</h3></div></div>
+                <div className="alert-list">
             {alerts.waitingSignatureConfirmations.map((item) => (
               <button key={item.confirmationId} className="alert-item" onClick={() => { window.location.hash = "#/confirmations"; }}>
                 <Badge tone="warning">Aguardando assinatura</Badge>
@@ -492,6 +541,9 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
                 <span>{item.partnerName} - {formatCurrencyFromCents(item.amountCents)} previsto ha {item.daysOverdue} dia(s)</span>
               </button>
             ))}
+                </div>
+              </section>
+            ) : null}
           </div>
         </Card>
         </div>

@@ -3,6 +3,7 @@ import type { KeyboardEvent } from "react";
 import { resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 import type { AppVariant, AuthSession, Organization } from "../../../shared/types/domain";
 import { EmptyState } from "../../design-system";
+import { loginErrorMessage } from "./loginErrorMessage";
 
 interface AuthPageProps {
   onSession: (session: AuthSession | null) => void;
@@ -29,7 +30,7 @@ function useCentralConnectionStatus(): boolean | null {
 
 function CentralConnectionField({ configured, password, onChange }: { configured: boolean | null; password: string; onChange: (value: string) => void }): JSX.Element {
   if (configured) {
-    return <div className="auth-central-connected"><span aria-hidden="true">✓</span><div><strong>Servidor central conectado</strong><small>Este computador ja esta autorizado para sincronizar.</small></div></div>;
+    return <div className="auth-central-connected"><span aria-hidden="true">✓</span><div><strong>Computador autorizado</strong><small>A conexao com o servidor sera verificada ao entrar.</small></div></div>;
   }
   return (
     <>
@@ -136,11 +137,15 @@ export function LoginPage({ onSession, organization, variant }: AuthPageProps): 
   const [error, setError] = useState<string | null>(null);
 
   async function submit(): Promise<void> {
+    if (!username.trim() || !password) {
+      setError("Informe o usuário e a senha.");
+      return;
+    }
     try {
       setError(null);
       onSession(await window.operationsCafe.authLogin({ username, password, centralPassword: centralPassword || undefined }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Usuario ou senha invalidos.");
+      setError(loginErrorMessage(err));
     }
   }
 
