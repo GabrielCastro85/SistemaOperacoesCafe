@@ -1,4 +1,4 @@
-import { app, clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import { clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -676,7 +676,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       available: collectorAvailable
     }));
     return {
-      available: !app.isPackaged,
+      available: true,
       sources: [
         ...localSources,
         ...collectorSources,
@@ -689,7 +689,6 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     };
   });
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
-    if (app.isPackaged) throw new Error("Leitura da Vulpe disponivel somente no modo de desenvolvimento.");
     const data = z.object({
       source: z.enum(["VILLA_MG", "VILLA_ES", "GRAO_MG", "GRAO_SP", "ALL"]),
       periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

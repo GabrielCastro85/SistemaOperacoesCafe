@@ -158,7 +158,7 @@ describe("accounts payable", () => {
     const eligible = repo.findEligiblePurchaseOperations({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
     expect(eligible.map((item) => item.id)).toEqual([operation.id]);
 
-    const settled = await repo.generatePurchaseSettlement({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, operationIds: [operation.id], categoryId: category.id, dueDate: "2026-09-25", notes: "Acerto semanal" });
+    const settled = await repo.generatePurchaseSettlement({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: supplier.id, operationIds: [operation.id], categoryId: category.id, dueDate: "2027-09-25", notes: "Acerto semanal" });
     expect(settled.payable.finalAmountCents).toBe(500000);
     expect(settled.payable.source).toBe("IMPORT");
     expect(settled.payable.status).toBe("OPEN");

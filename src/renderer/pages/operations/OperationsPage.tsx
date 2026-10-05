@@ -1309,7 +1309,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <p className="muted">Leitura de XML e captura automatica dos dados.</p>
         {vulpeDevAvailable ? (
           <div className="operation-warning-card operation-warning-card--neutral">
-            <strong>Caixa de entrada Vulpe — teste em modo desenvolvimento</strong>
+            <strong>Caixa de entrada de NF-e</strong>
             <span>Busca as NF-e autorizadas no periodo escolhido, remove as chaves ja cadastradas e envia as restantes para revisao. O mes atual ja vem selecionado e nenhuma nota e lancada antes da sua confirmacao.</span>
             <FormGrid>
               <DateInput
