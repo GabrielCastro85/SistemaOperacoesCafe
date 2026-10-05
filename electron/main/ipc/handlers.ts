@@ -796,11 +796,22 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       const remoteFiles = await centralSync.listCollectorInbox("GRAO_GRAO");
       const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
       mkdirSync(downloadDir, { recursive: true });
-      for (const remoteFile of remoteFiles) {
-        const content = await centralSync.downloadCollectorInboxFile(remoteFile.id);
-        const targetPath = join(downloadDir, `${remoteFile.id}-${basename(remoteFile.originalFileName)}`);
-        writeFileSync(targetPath, content);
-        inspectCandidate(targetPath, remoteFile.id);
+      const allowedYearMonths = new Set(brazilYearMonthsBetween(data.periodStart, data.periodEnd).map((period) => period.slice(2)));
+      const matchingRemoteFiles = remoteFiles.filter((remoteFile) => {
+        const accessKey = remoteFile.accessKey ?? "";
+        return accessKey.length === 44
+          && allowedYearMonths.has(accessKey.slice(2, 6))
+          && allowedCnpjs.has(accessKey.slice(6, 20));
+      });
+      for (let offset = 0; offset < matchingRemoteFiles.length; offset += 12) {
+        const batch = matchingRemoteFiles.slice(offset, offset + 12);
+        const downloaded = await Promise.all(batch.map(async (remoteFile) => {
+          const content = await centralSync.downloadCollectorInboxFile(remoteFile.id);
+          const targetPath = join(downloadDir, `${remoteFile.id}-${basename(remoteFile.originalFileName)}`);
+          writeFileSync(targetPath, content);
+          return { targetPath, remoteId: remoteFile.id };
+        }));
+        downloaded.forEach(({ targetPath, remoteId }) => inspectCandidate(targetPath, remoteId));
       }
     }
 
