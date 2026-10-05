@@ -130,7 +130,7 @@ export class CentralSyncService {
   }
 
   async listCollectorInbox(sourceCode: string): Promise<CollectorInboxFile[]> {
-    const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?source=${encodeURIComponent(sourceCode)}&limit=200`);
+    const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?source=${encodeURIComponent(sourceCode)}&limit=1000`);
     return response.files;
   }
 

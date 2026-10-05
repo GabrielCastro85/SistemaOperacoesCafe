@@ -57,7 +57,7 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
   app.get("/v1/collector/inbox", async (request, reply) => {
     const session = await resolveSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
-    const query = z.object({ source: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/), limit: z.coerce.number().int().min(1).max(200).default(100) }).parse(request.query);
+    const query = z.object({ source: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/), limit: z.coerce.number().int().min(1).max(1000).default(500) }).parse(request.query);
     const rows = await pool.query(`
       SELECT id, source_code AS "sourceCode", source_label AS "sourceLabel", original_file_name AS "originalFileName",
         file_hash AS "fileHash", file_size AS "fileSize", access_key AS "accessKey", xml_type AS "xmlType", received_at AS "receivedAt"

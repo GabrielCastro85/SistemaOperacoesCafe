@@ -81,6 +81,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   return `${year}-${month}-${day}`;
 }
+  function currentBrazilMonthRange(): { start: string; end: string } {
+    const today = brazilDateValue();
+    const year = Number(today.slice(0, 4));
+    const month = Number(today.slice(5, 7));
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return {
+      start: `${today.slice(0, 7)}-01`,
+      end: `${today.slice(0, 7)}-${String(lastDay).padStart(2, "0")}`
+    };
+  }
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const ownLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
@@ -135,8 +145,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlBillingObservations, setXmlBillingObservations] = useState<Record<string, string>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
-  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "MG" | "ES" | "GRAO"; label: string; available: boolean }>>([]);
+  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
   const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
+  const [vulpePeriodStart, setVulpePeriodStart] = useState(() => currentBrazilMonthRange().start);
+  const [vulpePeriodEnd, setVulpePeriodEnd] = useState(() => currentBrazilMonthRange().end);
   const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
   const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
   const [returnDate, setReturnDate] = useState(() => brazilDateValue());
@@ -563,16 +575,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
-  async function prepareVulpeDevImport(source: "MG" | "ES" | "GRAO"): Promise<void> {
+  async function prepareVulpeDevImport(source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"): Promise<void> {
     try {
-      const result = await window.operationsCafe.scanVulpeDevXml(source);
+      if (!vulpePeriodStart || !vulpePeriodEnd) throw new Error("Informe as datas inicial e final.");
+      if (vulpePeriodStart > vulpePeriodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
+      const result = await window.operationsCafe.scanVulpeDevXml({ source, periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd });
       setVulpeScan(result);
       if (result.files.length === 0) {
         setXmlSelections([]);
         setXmlQueue([]);
         setXmlJob(null);
         setSelectedXmlToken(null);
-        setMessage(`${result.label}: nenhuma NF-e nova aguardando revisao em ${result.period.slice(4, 6)}/${result.period.slice(0, 4)}.`);
+        setMessage(`${result.label}: nenhuma NF-e nova aguardando revisao entre ${formatDateOnlyBr(result.periodStart)} e ${formatDateOnlyBr(result.periodEnd)}.`);
         return;
       }
       await inspectSelectedXmlFiles(result.files, "FOLDER");
@@ -1296,7 +1310,25 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {vulpeDevAvailable ? (
           <div className="operation-warning-card operation-warning-card--neutral">
             <strong>Caixa de entrada Vulpe — teste em modo desenvolvimento</strong>
-            <span>Busca as NF-e autorizadas do mes atual, remove as chaves ja cadastradas e envia as restantes para revisao. Nenhuma nota e lancada antes da sua confirmacao.</span>
+            <span>Busca as NF-e autorizadas no periodo escolhido, remove as chaves ja cadastradas e envia as restantes para revisao. O mes atual ja vem selecionado e nenhuma nota e lancada antes da sua confirmacao.</span>
+            <FormGrid>
+              <DateInput
+                label="Data inicial"
+                value={vulpePeriodStart}
+                onChange={(event) => {
+                  setVulpePeriodStart(event.target.value);
+                  setVulpeScan(null);
+                }}
+              />
+              <DateInput
+                label="Data final"
+                value={vulpePeriodEnd}
+                onChange={(event) => {
+                  setVulpePeriodEnd(event.target.value);
+                  setVulpeScan(null);
+                }}
+              />
+            </FormGrid>
             <div className="toolbar">
               {vulpeDevSources.map((source) => (
                 <button key={source.source} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>

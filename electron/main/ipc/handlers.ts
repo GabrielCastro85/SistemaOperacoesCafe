@@ -28,9 +28,14 @@ const collectorInboxTokens = new Map<string, string>();
 const payableAttachmentTokens = new Map<string, string>();
 const signedDealPdfTokens = new Map<string, string>();
 const vulpeDevSources = {
-  MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO" },
-  ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO" }
+  VILLA_MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO", cnpj: "44963370000523" },
+  VILLA_ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO", cnpj: "44963370000280" }
 } as const;
+const graoCollectorSources = {
+  GRAO_MG: { label: "Grao & Grao MG", cnpj: "16594876000224" },
+  GRAO_SP: { label: "Grao & Grao SP", cnpj: "16594876000496" }
+} as const;
+type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof graoCollectorSources | "ALL";
 
 function isLikelyDataMutation(channel: string): boolean {
   if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
@@ -658,60 +663,57 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const files = findXmlFiles(result.filePaths[0], data.includeSubfolders === true);
     return { folder: result.filePaths[0], files: registerXmlPaths(files) };
   });
-  handle(IPC_CHANNELS.getVulpeDevStatus, () => ({
-    available: !app.isPackaged,
-    sources: [
-      ...Object.entries(vulpeDevSources).map(([source, config]) => ({
+  handle(IPC_CHANNELS.getVulpeDevStatus, () => {
+    const collectorAvailable = centralSync.getStatus().status === "ONLINE";
+    const localSources = Object.entries(vulpeDevSources).map(([source, config]) => ({
       source: source as keyof typeof vulpeDevSources,
       label: config.label,
       available: existsSync(config.root)
-      })),
-      { source: "GRAO" as const, label: "Grao & Grao (coletor)", available: centralSync.getStatus().status === "ONLINE" }
-    ]
-  }));
+    }));
+    const collectorSources = Object.entries(graoCollectorSources).map(([source, config]) => ({
+      source: source as keyof typeof graoCollectorSources,
+      label: config.label,
+      available: collectorAvailable
+    }));
+    return {
+      available: !app.isPackaged,
+      sources: [
+        ...localSources,
+        ...collectorSources,
+        {
+          source: "ALL" as const,
+          label: "Todas as empresas",
+          available: collectorAvailable && localSources.every((item) => item.available)
+        }
+      ]
+    };
+  });
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
     if (app.isPackaged) throw new Error("Leitura da Vulpe disponivel somente no modo de desenvolvimento.");
-    const source = z.enum(["MG", "ES", "GRAO"]).parse(payload);
-    if (source === "GRAO") {
-      const remoteFiles = await centralSync.listCollectorInbox("GRAO_GRAO");
-      const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
-      mkdirSync(downloadDir, { recursive: true });
-      const registered: Array<{ token: string; fileName: string; sizeBytes: number }> = [];
-      for (const remoteFile of remoteFiles) {
-        const content = await centralSync.downloadCollectorInboxFile(remoteFile.id);
-        const targetPath = join(downloadDir, `${remoteFile.id}-${basename(remoteFile.originalFileName)}`);
-        writeFileSync(targetPath, content);
-        const [file] = registerXmlPaths([targetPath]);
-        if (!file) continue;
-        collectorInboxTokens.set(file.token, remoteFile.id);
-        registered.push(file);
-      }
-      const cancellationEvents = remoteFiles.filter((file) => file.xmlType === "CANCELLATION").length;
-      return {
-        source,
-        label: "Grao & Grao (coletor)",
-        period: currentBrazilYearMonth(),
-        authorized: remoteFiles.length - cancellationEvents,
-        alreadyImported: 0,
-        pendingReview: remoteFiles.length,
-        ignored: 0,
-        ignoredByUser: 0,
-        cancellationEvents,
-        cancellationsAlreadyApplied: 0,
-        files: registered
-      };
-    }
-    const config = vulpeDevSources[source];
-    if (!existsSync(config.root)) throw new Error(`Pasta da ${config.label} nao encontrada neste computador.`);
-    const period = currentBrazilYearMonth();
-    const periodFolder = join(config.root, period);
-    if (!existsSync(periodFolder)) {
-      return { source, label: config.label, period, authorized: 0, alreadyImported: 0, pendingReview: 0, ignored: 0, ignoredByUser: 0, cancellationEvents: 0, cancellationsAlreadyApplied: 0, files: [] };
-    }
-    const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
-      const name = basename(filePath);
-      return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
-    });
+    const data = z.object({
+      source: z.enum(["VILLA_MG", "VILLA_ES", "GRAO_MG", "GRAO_SP", "ALL"]),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+    }).parse(payload);
+    if (data.periodStart > data.periodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
+
+    const source = data.source as VulpeDevSource;
+    const selectedLocalSources = source === "ALL"
+      ? (Object.keys(vulpeDevSources) as Array<keyof typeof vulpeDevSources>)
+      : source in vulpeDevSources ? [source as keyof typeof vulpeDevSources] : [];
+    const selectedCollectorSources = source === "ALL"
+      ? (Object.keys(graoCollectorSources) as Array<keyof typeof graoCollectorSources>)
+      : source in graoCollectorSources ? [source as keyof typeof graoCollectorSources] : [];
+    const allowedCnpjs = new Set<string>([
+      ...selectedLocalSources.map((key) => vulpeDevSources[key].cnpj),
+      ...selectedCollectorSources.map((key) => graoCollectorSources[key].cnpj)
+    ]);
+    const label = source === "ALL"
+      ? "Todas as empresas"
+      : source in vulpeDevSources
+        ? vulpeDevSources[source as keyof typeof vulpeDevSources].label
+        : graoCollectorSources[source as keyof typeof graoCollectorSources].label;
+
     const hasAccessKey = context.db.prepare("SELECT 1 FROM fiscal_documents WHERE access_key = ? LIMIT 1");
     const wasIgnoredByUser = context.db.prepare("SELECT 1 FROM xml_import_files WHERE access_key = ? AND status = 'SKIPPED' AND json_extract(resolution_data_json, '$.ignore') = 1 LIMIT 1");
     const hasFiscalEvent = context.db.prepare(`
@@ -719,19 +721,29 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       WHERE access_key = ? AND event_type = ? AND sequence_number = ? AND COALESCE(protocol_number, '') = COALESCE(?, '')
       LIMIT 1
     `);
-    const pendingPaths: string[] = [];
+    const pending: Array<{ filePath: string; remoteId: string | null }> = [];
     let authorized = 0;
     let alreadyImported = 0;
     let ignored = 0;
     let ignoredByUser = 0;
     let cancellationEvents = 0;
     let cancellationsAlreadyApplied = 0;
-    candidates.forEach((filePath) => {
+
+    const inspectCandidate = (filePath: string, remoteId: string | null): void => {
       const inspection = inspectXmlFile(filePath, randomUUID());
+      const extracted = inspection.extractedData as Record<string, unknown> | null;
+      const issuer = extracted?.issuer as Record<string, unknown> | undefined;
+      const issuerCnpj = inspection.xmlType === "EVENT_CANCELLATION"
+        ? inspection.accessKey?.slice(6, 20) ?? ""
+        : String(issuer?.cnpjCpf ?? "").replace(/\D/g, "");
+      const documentDate = String(
+        inspection.xmlType === "EVENT_CANCELLATION" ? extracted?.eventDate ?? "" : extracted?.issuedAt ?? ""
+      ).slice(0, 10);
+      if (!allowedCnpjs.has(issuerCnpj) || documentDate < data.periodStart || documentDate > data.periodEnd) return;
+
       if (inspection.xmlType === "EVENT_CANCELLATION") {
-        const event = inspection.extractedData as Record<string, unknown> | null;
-        const statusCode = String(event?.statusCode ?? "");
-        const protocolNumber = String(event?.protocolNumber ?? "");
+        const statusCode = String(extracted?.statusCode ?? "");
+        const protocolNumber = String(extracted?.protocolNumber ?? "");
         if (inspection.status === "ERROR" || !inspection.accessKey || !["135", "155"].includes(statusCode) || !protocolNumber) {
           ignored += 1;
           return;
@@ -740,18 +752,18 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         const existing = hasFiscalEvent.get(
           inspection.accessKey,
           "CANCELLATION",
-          String(event?.sequenceNumber ?? "1"),
+          String(extracted?.sequenceNumber ?? "1"),
           protocolNumber
         );
         if (existing) cancellationsAlreadyApplied += 1;
-        else pendingPaths.push(filePath);
+        else pending.push({ filePath, remoteId });
         return;
       }
       if (inspection.xmlType !== "NFE_PROC" && inspection.xmlType !== "NFE") {
         ignored += 1;
         return;
       }
-      const protocol = inspection.extractedData?.protocol as Record<string, unknown> | undefined;
+      const protocol = extracted?.protocol as Record<string, unknown> | undefined;
       const statusCode = String(protocol?.statusCode ?? "");
       if (inspection.status === "ERROR" || !inspection.accessKey || !["100", "150"].includes(statusCode)) {
         ignored += 1;
@@ -760,20 +772,58 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       authorized += 1;
       if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
       else if (hasAccessKey.get(inspection.accessKey)) alreadyImported += 1;
-      else pendingPaths.push(filePath);
+      else pending.push({ filePath, remoteId });
+    };
+
+    for (const localSource of selectedLocalSources) {
+      const config = vulpeDevSources[localSource];
+      if (!existsSync(config.root)) {
+        if (source !== "ALL") throw new Error(`Pasta da ${config.label} nao encontrada neste computador.`);
+        continue;
+      }
+      for (const period of brazilYearMonthsBetween(data.periodStart, data.periodEnd)) {
+        const periodFolder = join(config.root, period);
+        if (!existsSync(periodFolder)) continue;
+        const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
+          const name = basename(filePath);
+          return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
+        });
+        candidates.forEach((filePath) => inspectCandidate(filePath, null));
+      }
+    }
+
+    if (selectedCollectorSources.length > 0) {
+      const remoteFiles = await centralSync.listCollectorInbox("GRAO_GRAO");
+      const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
+      mkdirSync(downloadDir, { recursive: true });
+      for (const remoteFile of remoteFiles) {
+        const content = await centralSync.downloadCollectorInboxFile(remoteFile.id);
+        const targetPath = join(downloadDir, `${remoteFile.id}-${basename(remoteFile.originalFileName)}`);
+        writeFileSync(targetPath, content);
+        inspectCandidate(targetPath, remoteFile.id);
+      }
+    }
+
+    const files = pending.flatMap(({ filePath, remoteId }) => {
+      const [registered] = registerXmlPaths([filePath]);
+      if (!registered) return [];
+      if (remoteId) collectorInboxTokens.set(registered.token, remoteId);
+      return [registered];
     });
     return {
       source,
-      label: config.label,
-      period,
+      label,
+      period: data.periodStart.slice(0, 7).replace("-", ""),
+      periodStart: data.periodStart,
+      periodEnd: data.periodEnd,
       authorized,
       alreadyImported,
-      pendingReview: pendingPaths.length,
+      pendingReview: files.length,
       ignored,
       ignoredByUser,
       cancellationEvents,
       cancellationsAlreadyApplied,
-      files: registerXmlPaths(pendingPaths)
+      files
     };
   });
   handle(IPC_CHANNELS.registerDroppedXmlFiles, (_event, payload: unknown) => {
@@ -1487,16 +1537,19 @@ function findXmlFiles(folder: string, includeSubfolders: boolean): string[] {
   return result;
 }
 
-function currentBrazilYearMonth(date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit"
-  }).formatToParts(date);
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  if (!year || !month) throw new Error("Nao foi possivel determinar o periodo atual.");
-  return `${year}${month}`;
+function brazilYearMonthsBetween(periodStart: string, periodEnd: string): string[] {
+  const [startYear, startMonth] = periodStart.split("-").map(Number);
+  const [endYear, endMonth] = periodEnd.split("-").map(Number);
+  const startIndex = startYear * 12 + startMonth - 1;
+  const endIndex = endYear * 12 + endMonth - 1;
+  if (endIndex - startIndex > 35) throw new Error("Escolha um periodo de no maximo 36 meses.");
+  const periods: string[] = [];
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    const year = Math.floor(index / 12);
+    const month = index % 12 + 1;
+    periods.push(`${year}${String(month).padStart(2, "0")}`);
+  }
+  return periods;
 }
 
 async function selectExportDirectory(title: string): Promise<string | null> {

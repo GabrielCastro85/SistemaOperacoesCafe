@@ -634,11 +634,13 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
-  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "MG" | "ES" | "GRAO"; label: string; available: boolean }> }>;
-  scanVulpeDevXml: (source: "MG" | "ES" | "GRAO") => Promise<{
-    source: "MG" | "ES" | "GRAO";
+  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }> }>;
+  scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
+    source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
     period: string;
+    periodStart: string;
+    periodEnd: string;
     authorized: number;
     alreadyImported: number;
     pendingReview: number;
@@ -1040,11 +1042,13 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
-  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "MG" | "ES" | "GRAO"; label: string; available: boolean }> }>,
-  scanVulpeDevXml: (source) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, source) as Promise<{
-    source: "MG" | "ES" | "GRAO";
+  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }> }>,
+  scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
+    source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
     period: string;
+    periodStart: string;
+    periodEnd: string;
     authorized: number;
     alreadyImported: number;
     pendingReview: number;
