@@ -1,9 +1,23 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type pg from "pg";
 import { z } from "zod";
 import type { ServerConfig } from "./config.js";
 import { resolveSession } from "./auth.js";
+
+const releaseOwner = "GabrielCastro85";
+const releaseRepository = "SistemaOperacoesCafe-releases";
+
+function applicationVersion(): string {
+  try {
+    const value = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version?: unknown };
+    return typeof value.version === "string" ? value.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 const uploadSchema = z.object({
   sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
@@ -45,6 +59,23 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
   app.get("/v1/collector/ping", async (request, reply) => {
     if (!collectorAuthorized(config, request)) return reply.code(401).send({ error: "COLLECTOR_UNAUTHORIZED" });
     return { status: "ready" };
+  });
+
+  app.get("/v1/collector/update", async (request, reply) => {
+    if (!collectorAuthorized(config, request)) return reply.code(401).send({ error: "COLLECTOR_UNAUTHORIZED" });
+    const latestVersion = applicationVersion();
+    const fileName = `ColetorGraoBase-${latestVersion}-portable.exe`;
+    const releaseBase = `https://github.com/${releaseOwner}/${releaseRepository}/releases/download/v${latestVersion}`;
+    const checksumResponse = await fetch(`${releaseBase}/${fileName}.sha256`, { redirect: "follow" });
+    if (!checksumResponse.ok) return { available: false, latestVersion };
+    const checksum = (await checksumResponse.text()).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+    if (!/^[a-f0-9]{64}$/.test(checksum)) return { available: false, latestVersion };
+    return {
+      available: true,
+      latestVersion,
+      downloadUrl: `${releaseBase}/${fileName}`,
+      sha256: checksum
+    };
   });
 
   app.post("/v1/collector/heartbeat", async (request, reply) => {

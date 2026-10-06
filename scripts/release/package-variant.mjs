@@ -117,6 +117,8 @@ if (shouldPublish) {
   // direta que ela fica publicada, independente do comportamento interno do
   // electron-builder.
   await publishGithubRelease(githubToken, `v${version}`);
+  run("npm", ["run", "collector:build"]);
+  await publishCollectorAssets(githubToken, `v${version}`);
 }
 
 writeReleaseFiles(outputDir, variant, version, mode);
@@ -246,6 +248,41 @@ function gitCommit() {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+async function publishCollectorAssets(token, tagName) {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "sistema-operacoes-cafe-release-script"
+  };
+  const releaseResponse = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/tags/${tagName}`, { headers });
+  if (!releaseResponse.ok) throw new Error(`Release ${tagName} nao encontrada para publicar o coletor.`);
+  const release = await releaseResponse.json();
+  const executableName = `ColetorGraoBase-${version}-portable.exe`;
+  const executablePath = join(root, "output", "collector", executableName);
+  if (!existsSync(executablePath)) throw new Error(`Executavel do coletor nao encontrado: ${executablePath}`);
+  const checksum = sha256Path(executablePath);
+  const checksumPath = `${executablePath}.sha256`;
+  writeFileSync(checksumPath, `${checksum}  ${executableName}\n`, "utf8");
+
+  for (const assetPath of [executablePath, checksumPath]) {
+    const name = basename(assetPath);
+    const existing = Array.isArray(release.assets) ? release.assets.find((asset) => asset.name === name) : null;
+    if (existing) {
+      const deletion = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/assets/${existing.id}`, { method: "DELETE", headers });
+      if (!deletion.ok && deletion.status !== 404) throw new Error(`Falha ao substituir o arquivo ${name} (${deletion.status}).`);
+    }
+    const content = readFileSync(assetPath);
+    const upload = await fetch(`https://uploads.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/octet-stream", "Content-Length": String(content.length) },
+      body: content
+    });
+    if (!upload.ok) throw new Error(`Falha ao publicar ${name} (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
+    console.log(`Arquivo do coletor publicado: ${name}`);
+  }
+}
+
 function latestDatabaseMigrationVersion() {
   const source = readFileSync(join(root, "electron", "main", "database", "migrations.ts"), "utf8");
   const names = Array.from(source.matchAll(/^\s*name:\s*"([^"]+)",?\s*$/gm), (match) => match[1]);
@@ -253,7 +290,9 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.32"
+  const highlights = releaseVersion === "1.1.34"
+    ? `- Monitor remoto mostra se o coletor da Grao & Grao esta online e quando funcionou pela ultima vez.\n- Coletor passa a atualizar automaticamente pelas proximas versoes.\n- Inicializacao do coletor no Windows ganhou mecanismos redundantes e verificacao apos a instalacao.`
+    : releaseVersion === "1.1.32"
     ? `- Login continua disponivel com a ultima copia sincronizada durante oscilacoes temporarias do servidor.\n- Dashboard destaca contas a pagar e resume as cobrancas vencidas.\n- Financeiro reorganizado, com textos em portugues, valores legiveis, baixa e edicao de contas mais acessiveis.\n- Historico de cobrancas ganhou pesquisa, filtros e carregamento por etapas.\n- Importacao de NF-e diferencia avisos e duplicidades e destaca a busca em todas as empresas.`
     : `- Build Windows x64 unico para o Sistema de Operacoes de Cafe.\n- Villa Coffee e Grao & Grao permanecem como empresas/branding dentro do mesmo app.`;
   return `# ${currentVariant.displayName} ${releaseVersion}

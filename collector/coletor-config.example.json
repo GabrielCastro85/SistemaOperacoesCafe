@@ -7,5 +7,6 @@
   "xmlRoot": "C:\\Vulpe\\NFe",
   "emitterCnpjs": ["16594876000224", "16594876000496"],
   "scanIntervalSeconds": 60,
+  "updateCheckSeconds": 3600,
   "monthsBack": 1
 }

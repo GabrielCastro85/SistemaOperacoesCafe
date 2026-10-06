@@ -36,6 +36,18 @@ for (const manifestName of existsSync(manifestsDir) ? readdirSync(manifestsDir).
   if (!manifest.appId || !manifest.productName || !manifest.artifactSha256) errors.push(`Manifesto incompleto: ${manifestName}`);
 }
 
+if (!verifyAll) {
+  const collectorName = `ColetorGraoBase-${pkg.version}-portable.exe`;
+  const collectorPath = join(root, "output", "collector", collectorName);
+  const checksumPath = `${collectorPath}.sha256`;
+  if (!existsSync(collectorPath)) errors.push(`Executavel do coletor ausente: ${collectorName}`);
+  if (!existsSync(checksumPath)) errors.push(`Checksum do coletor ausente: ${collectorName}.sha256`);
+  if (existsSync(collectorPath) && existsSync(checksumPath)) {
+    const expected = readFileSync(checksumPath, "utf8").trim().split(/\s+/)[0];
+    if (sha256Path(collectorPath) !== expected) errors.push(`Hash divergente: ${collectorName}`);
+  }
+}
+
 if (errors.length > 0) {
   console.error(errors.join("\n"));
   process.exit(1);

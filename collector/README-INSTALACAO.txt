@@ -9,6 +9,7 @@ COLETOR GRAOBASE - GRAO E GRAO
 
 O resultado esperado e status OK. O coletor inicia junto com o Windows e verifica
 novos XMLs a cada minuto. O Operacoes Cafe nao precisa estar aberto nesse computador.
+Ele roda em segundo plano e, por isso, nao exibe uma janela na barra de tarefas.
 
 O coletor envia somente NF-e autorizadas e cancelamentos aceitos cujo emitente seja
 um dos CNPJs configurados. Nenhuma nota e lancada automaticamente: ela fica aguardando
@@ -16,6 +17,11 @@ classificacao no Operacoes Cafe do computador principal.
 
 A partir da versao 1.1.33, o computador principal mostra se este coletor esta
 online, a ultima verificacao bem-sucedida, o ultimo XML enviado e eventuais erros.
+
+A partir da versao 1.1.34, o coletor consulta o servidor e instala sozinho as
+proximas versoes. Esta e a ultima atualizacao que precisa ser copiada manualmente
+para este computador. A inicializacao no Windows fica registrada de tres formas:
+tarefa agendada, perfil do usuario e pasta Inicializar.
 
 Arquivos de diagnostico:
 - coletor-status.json: resumo da ultima verificacao

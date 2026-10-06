@@ -1,11 +1,13 @@
 import Fastify from "fastify";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type pg from "pg";
 import type { ServerConfig } from "../server/src/config.js";
 import { registerCollectorRoutes } from "../server/src/collector.js";
 
 const collectorSecret = "segredo-do-coletor-com-mais-de-trinta-e-dois-caracteres";
 const config = { COLLECTOR_INGEST_SECRET: collectorSecret } as ServerConfig;
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("monitor remoto do coletor", () => {
   it("recebe o sinal de vida autenticado com as empresas atendidas", async () => {
@@ -103,6 +105,30 @@ describe("monitor remoto do coletor", () => {
         pendingFiles: 4,
         lastError: "1 arquivo aguardando novo envio"
       })]
+    });
+    await app.close();
+  });
+
+  it("entrega um manifesto autenticado e com hash para a atualizacao automatica", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`${"a".repeat(64)}  ColetorGraoBase.exe\n`, { status: 200 })));
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const app = Fastify();
+    registerCollectorRoutes(app, pool, config);
+
+    const unauthorized = await app.inject({ method: "GET", url: "/v1/collector/update" });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/collector/update",
+      headers: { authorization: `Bearer ${collectorSecret}` }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      available: true,
+      latestVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/),
+      downloadUrl: expect.stringContaining("ColetorGraoBase-"),
+      sha256: "a".repeat(64)
     });
     await app.close();
   });

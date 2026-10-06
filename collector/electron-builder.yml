@@ -6,6 +6,7 @@ directories:
   output: output/collector
 files:
   - collector/main.cjs
+  - collector/update-utils.cjs
   - package.json
   - node_modules/fast-xml-parser/**
 extraMetadata:
