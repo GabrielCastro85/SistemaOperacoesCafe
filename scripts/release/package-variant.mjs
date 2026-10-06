@@ -17,6 +17,8 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
 const outputDir = join(root, "release", variant.variant, version);
 const configPath = join(outputDir, `electron-builder.${variant.variant}.json`);
+const UPDATE_FEED_OWNER = "GabrielCastro85";
+const UPDATE_FEED_REPO = "SistemaOperacoesCafe-releases";
 
 if (collectorOnly) {
   const token = readGithubToken();
@@ -43,9 +45,6 @@ run("npm", ["run", "rebuild:electron"]);
 // no repositorio privado/principal). Publico porque o electron-updater dos
 // PCs baixa os assets sem token nenhum -- um repo privado exigiria embutir
 // uma credencial no app instalado, o que nao vale a pena aqui.
-const UPDATE_FEED_OWNER = "GabrielCastro85";
-const UPDATE_FEED_REPO = "SistemaOperacoesCafe-releases";
-
 const config = {
   appId: variant.appId,
   productName: variant.productName,
