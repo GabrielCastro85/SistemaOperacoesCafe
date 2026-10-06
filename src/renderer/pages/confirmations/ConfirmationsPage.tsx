@@ -3,6 +3,7 @@ import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DealCl
 import { formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
+import { inferConfirmationDealDirection, type ConfirmationDealDirection, type ConfirmationDealDirectionChoice } from "../../../shared/utils/dealDirection";
 import { DateInput, EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
@@ -50,8 +51,6 @@ interface DealPartyTarget {
   displayName: string;
 }
 
-type ManualDealDirection = "SALE" | "PURCHASE";
-
 function legalEntityDisplayName(entity: BusinessPartnerLegalEntity): string {
   return entity.legalName || entity.tradeName || "Empresa da NF";
 }
@@ -92,8 +91,9 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [clauses, setClauses] = useState<DealClauseTemplate[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [buyerId, setBuyerId] = useState("");
-  const [manualDealDirection, setManualDealDirection] = useState<ManualDealDirection>("SALE");
+  const [manualDealDirection, setManualDealDirection] = useState<ConfirmationDealDirection>("SALE");
   const [manualCounterpartyLegalEntityId, setManualCounterpartyLegalEntityId] = useState("");
+  const [sourceDealDirection, setSourceDealDirection] = useState<ConfirmationDealDirectionChoice>("AUTO");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("685");
   const [price, setPrice] = useState("1000.0000");
@@ -315,7 +315,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     confirmationOwnLegalEntityId = ownLegalEntityId,
     confirmationBuyer: DealPartyTarget | null = buyerId ? partnerTargetFromPartnerId(buyerId) : null,
     confirmationDeliveryRecipient: DealPartyTarget | null = confirmationBuyer,
-    dealDirection: ManualDealDirection = "SALE",
+    dealDirection: ConfirmationDealDirection = "SALE",
     itemQuantity = quantity,
     itemPrice = price
   ): Promise<void> {
@@ -375,6 +375,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const ownEntityName = data.legalEntities.find((item) => item.id === ownLegalEntityId)?.legalName ?? "Empresa propria";
   const selectedCount = Object.values(selectedDocumentIds).filter(Boolean).length;
   const selectedRows = sourceDocuments.filter((row) => selectedDocumentIds[row.document.id]);
+  const inferredSourceDealDirection = inferConfirmationDealDirection(selectedRows.map((row) => row.document.direction));
   const selectedTotalSacks = selectedRows.length ? sumDecimalTexts(selectedRows.map((row) => row.sacks)) : "0";
   const selectedTotalCents = selectedRows.reduce((sum, row) => sum + row.document.totalAmountCents, 0);
   const selectedAvgPricePerSack = Number(selectedTotalSacks) > 0 ? selectedTotalCents / 100 / Number(selectedTotalSacks) : 0;
@@ -384,6 +385,11 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     if (fiscalDocumentIds.length === 0) return;
     if (fiscalDocumentIds.length > MAX_NOTES_PER_CONFIRMATION) {
       setMessage(`Erro: cada confirmação aceita no máximo ${MAX_NOTES_PER_CONFIRMATION} notas fiscais.`);
+      return;
+    }
+    const dealDirection = sourceDealDirection === "AUTO" ? inferredSourceDealDirection : sourceDealDirection;
+    if (!dealDirection) {
+      setMessage("Erro: não foi possível identificar se as notas são de compra ou venda. Escolha o tipo do fechamento antes de continuar.");
       return;
     }
     const selectedBuyerIds = [...new Set(selectedRows.map((row) => row.document.responsiblePartnerId))];
@@ -410,7 +416,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     }
     try {
       const created = await window.operationsCafe.createDealConfirmationFromFiscalDocuments({ organizationId, ownLegalEntityId, operationIds: [], fiscalDocumentIds });
-      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget);
+      await addPartiesItemsAndSigners(created.confirmation.id, true, created.confirmation.ownLegalEntityId, nfCompanyTarget, nfCompanyTarget, dealDirection);
       if (sourceSearchMode === "corretor" && selectedBuyerId) {
         setSourceClientId(selectedBuyerId);
       }
@@ -425,7 +431,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       loadBankFieldsFromDetail(refreshed);
       setPreviewBase64(null);
       setView("detail");
-      setMessage(`Confirmacao criada a partir de ${fiscalDocumentIds.length} nota(s).`);
+      setMessage(`${dealDirection === "PURCHASE" ? "Compra" : "Venda"} criada a partir de ${fiscalDocumentIds.length} nota(s).`);
       await load();
       scrollTo(detailRef);
     } catch (errorValue) {
@@ -738,6 +744,26 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           {creationMode === "notes" && (
             <AdminBlock title="Criar a partir de notas fiscais">
               <p className="muted">Fluxo recomendado: busque por cliente/corretor, por empresa/CNPJ ou direto pelo número da nota e marque as notas já emitidas para gerar o fechamento automaticamente.</p>
+              <FormGrid>
+                <SelectField
+                  label="Tipo do fechamento"
+                  value={sourceDealDirection}
+                  onChange={(value) => setSourceDealDirection(value as ConfirmationDealDirectionChoice)}
+                  options={[["AUTO", "Identificar automaticamente pelo XML"], ["SALE", "Venda da nossa empresa"], ["PURCHASE", "Compra para nossa empresa"]]}
+                />
+                <div className="confirmation-company-selected">
+                  <span>Identificação das notas selecionadas</span>
+                  <strong>{selectedRows.length === 0
+                    ? "Selecione uma ou mais notas"
+                    : sourceDealDirection !== "AUTO"
+                      ? (sourceDealDirection === "PURCHASE" ? "Compra escolhida manualmente" : "Venda escolhida manualmente")
+                      : inferredSourceDealDirection === "PURCHASE"
+                        ? "Compra — nossa empresa é a destinatária"
+                        : inferredSourceDealDirection === "SALE"
+                          ? "Venda — nossa empresa é a emitente"
+                          : "Não identificado — escolha Compra ou Venda"}</strong>
+                </div>
+              </FormGrid>
               <div className="settings-tabs">
                 <button className={sourceSearchMode === "corretor" ? "active" : ""} onClick={() => { setSourceSearchMode("corretor"); setSourceLegalEntityId(""); setCompanySearchTerm(""); setSourceDocumentNumberFilter(""); }}>Buscar por cliente/corretor</button>
                 <button className={sourceSearchMode === "empresa" ? "active" : ""} onClick={() => { setSourceSearchMode("empresa"); setSourceClientId(""); setShowCompanyResults(false); setSourceDocumentNumberFilter(""); }}>Buscar por empresa/CNPJ</button>
@@ -883,7 +909,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                   label="Tipo do negócio"
                   value={manualDealDirection}
                   onChange={(value) => {
-                    setManualDealDirection(value as ManualDealDirection);
+                    setManualDealDirection(value as ConfirmationDealDirection);
                     setManualCounterpartyLegalEntityId("");
                   }}
                   options={[["SALE", "Venda da nossa empresa"], ["PURCHASE", "Compra para nossa empresa"]]}
