@@ -1,4 +1,5 @@
 import { clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import log from "electron-log/main.js";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -19,7 +20,7 @@ import { lookupCnpj } from "../services/cnpjLookupService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
 import { checkForUpdates, getUpdateStatus, quitAndInstallUpdate } from "../services/updaterService.js";
-import type { CentralSyncService } from "../services/centralSyncService.js";
+import type { CentralSyncService, CollectorMonitorStatus } from "../services/centralSyncService.js";
 import { CentralCredentialStore } from "../services/centralCredentialStore.js";
 
 const spreadsheetTokens = new Map<string, string>();
@@ -663,8 +664,16 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const files = findXmlFiles(result.filePaths[0], data.includeSubfolders === true);
     return { folder: result.filePaths[0], files: registerXmlPaths(files) };
   });
-  handle(IPC_CHANNELS.getVulpeDevStatus, () => {
+  handle(IPC_CHANNELS.getVulpeDevStatus, async () => {
     const collectorAvailable = centralSync.getStatus().status === "ONLINE";
+    let collectors: CollectorMonitorStatus[] = [];
+    if (collectorAvailable) {
+      try {
+        collectors = await centralSync.listCollectorStatuses();
+      } catch (error) {
+        log.warn("Falha ao consultar o monitor dos coletores", error instanceof Error ? error.message : String(error));
+      }
+    }
     const localSources = Object.entries(vulpeDevSources).map(([source, config]) => ({
       source: source as keyof typeof vulpeDevSources,
       label: config.label,
@@ -677,6 +686,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     }));
     return {
       available: true,
+      collectors,
       sources: [
         ...localSources,
         ...collectorSources,

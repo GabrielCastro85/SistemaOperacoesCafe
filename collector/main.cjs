@@ -121,11 +121,39 @@ async function upload(config, filePath, metadata, content, fileHash) {
   if (!response.ok) throw new Error(`Servidor ${response.status}: ${body.slice(0, 300)}`);
 }
 
+async function sendHeartbeat(config, status) {
+  const response = await fetch(`${config.serverUrl}/v1/collector/heartbeat`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${config.collectorSecret}` },
+    body: JSON.stringify({
+      sourceCode: config.sourceCode,
+      sourceLabel: config.sourceLabel,
+      machineId: config.machineId,
+      emitterCnpjs: config.emitterCnpjs,
+      collectorVersion: app.getVersion(),
+      scanIntervalSeconds: config.scanIntervalSeconds,
+      ...status
+    })
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`Servidor ${response.status}: ${body.slice(0, 300)}`);
+}
+
+async function reportHeartbeat(config, status) {
+  try {
+    await sendHeartbeat(config, status);
+  } catch (error) {
+    log("Falha ao atualizar monitor remoto", { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function scan() {
   if (running) return;
   running = true;
+  let activeConfig = null;
   try {
     const config = loadConfig();
+    activeConfig = config;
     const state = loadState();
     state.uploadedHashes ||= {};
     let inspected = 0;
@@ -156,11 +184,30 @@ async function scan() {
         log("Falha ao enviar XML", { file: basename(filePath), error: error instanceof Error ? error.message : String(error) });
       }
     }
-    writeStatus({ status: pendingUpload ? "PENDING_RETRY" : "OK", inspected, eligible, uploaded, pendingUpload, source: config.sourceLabel, xmlRoot: config.xmlRoot });
+    const currentStatus = { status: pendingUpload ? "PENDING_RETRY" : "OK", inspected, eligible, uploaded, pendingUpload, source: config.sourceLabel, xmlRoot: config.xmlRoot };
+    writeStatus(currentStatus);
+    await reportHeartbeat(config, {
+      status: currentStatus.status,
+      inspected,
+      eligible,
+      uploaded,
+      pendingUpload,
+      error: pendingUpload ? `${pendingUpload} arquivo(s) aguardando novo envio.` : null
+    });
     log("Varredura concluida", { inspected, eligible, uploaded, pendingUpload });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     writeStatus({ status: "ERROR", error: message });
+    if (activeConfig) {
+      await reportHeartbeat(activeConfig, {
+        status: "ERROR",
+        inspected: 0,
+        eligible: 0,
+        uploaded: 0,
+        pendingUpload: 0,
+        error: message
+      });
+    }
     log("Falha na varredura", { error: message });
   } finally {
     running = false;

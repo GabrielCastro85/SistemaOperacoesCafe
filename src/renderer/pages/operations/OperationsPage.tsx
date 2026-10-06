@@ -61,6 +61,36 @@ function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
 type DocumentSortKey = "number" | "client";
 type SortDirection = "asc" | "desc";
 type VulpeDevScanResult = Awaited<ReturnType<Window["operationsCafe"]["scanVulpeDevXml"]>>;
+type VulpeDevStatusResult = Awaited<ReturnType<Window["operationsCafe"]["getVulpeDevStatus"]>>;
+type CollectorMonitorStatus = VulpeDevStatusResult["collectors"][number];
+
+function formatCollectorActivity(value: string | null): string {
+  if (!value) return "Ainda nao registrado";
+  const instant = new Date(value);
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - instant.getTime()) / 60_000));
+  const relative = elapsedMinutes < 1
+    ? "agora"
+    : elapsedMinutes < 60
+      ? `ha ${elapsedMinutes} min`
+      : elapsedMinutes < 1_440
+        ? `ha ${Math.floor(elapsedMinutes / 60)} h`
+        : `ha ${Math.floor(elapsedMinutes / 1_440)} dia(s)`;
+  const exact = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "medium"
+  }).format(instant);
+  return `${relative} (${exact})`;
+}
+
+function collectorCompanyLabels(cnpjs: string[]): string {
+  const labels = cnpjs.map((cnpj) => {
+    if (cnpj === "16594876000224") return "Grao & Grao MG";
+    if (cnpj === "16594876000496") return "Grao & Grao SP";
+    return cnpj;
+  });
+  return labels.join(" e ");
+}
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   function brazilDateValue(date = new Date()): string {
@@ -146,6 +176,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
   const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
+  const [collectorStatuses, setCollectorStatuses] = useState<CollectorMonitorStatus[]>([]);
   const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
   const [vulpePeriodStart, setVulpePeriodStart] = useState(() => currentBrazilMonthRange().start);
   const [vulpePeriodEnd, setVulpePeriodEnd] = useState(() => currentBrazilMonthRange().end);
@@ -176,15 +207,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   useEffect(() => { setReturnDate(brazilDateValue()); setReturnUnit("SACKS"); setReturnQuantity(""); setReturnReason(""); }, [detail?.document.id]);
   useEffect(() => {
     if (typeof window.operationsCafe.getVulpeDevStatus !== "function") return;
-    void window.operationsCafe.getVulpeDevStatus()
+    const refresh = () => window.operationsCafe.getVulpeDevStatus()
       .then((status) => {
         setVulpeDevAvailable(status.available);
         setVulpeDevSources(status.sources);
+        setCollectorStatuses(status.collectors);
       })
       .catch(() => {
         setVulpeDevAvailable(false);
         setVulpeDevSources([]);
+        setCollectorStatuses([]);
       });
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const load = useCallback(async () => {
@@ -1311,6 +1347,53 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <div className="operation-warning-card operation-warning-card--neutral">
             <strong>Caixa de entrada de NF-e</strong>
             <span>Busca as NF-e autorizadas no periodo escolhido, remove as chaves ja cadastradas e envia as restantes para revisao. O mes atual ja vem selecionado e nenhuma nota e lancada antes da sua confirmacao.</span>
+            <section className="collector-monitor" aria-label="Monitor do coletor remoto">
+              <div className="collector-monitor__heading">
+                <div>
+                  <strong>Monitor do coletor da Grao &amp; Grao</strong>
+                  <small>O estado e atualizado automaticamente a cada 30 segundos.</small>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void window.operationsCafe
+                      .getVulpeDevStatus()
+                      .then((status) => setCollectorStatuses(status.collectors))
+                      .catch(() => setMessage("Nao foi possivel atualizar o status do coletor agora."));
+                  }}
+                >
+                  Atualizar status
+                </button>
+              </div>
+              {collectorStatuses.length ? (
+                <div className="collector-monitor__list">
+                  {collectorStatuses.map((collector) => {
+                    const tone = !collector.online || collector.status === "ERROR" ? "danger" : collector.status === "PENDING_RETRY" ? "warning" : "success";
+                    const label = !collector.online ? "Sem sinal" : collector.status === "OK" ? "Funcionando agora" : collector.status === "PENDING_RETRY" ? "Online, com envio pendente" : "Online, com erro";
+                    return (
+                      <article className={`collector-monitor__item collector-monitor__item--${tone}`} key={`${collector.sourceCode}-${collector.machineId}`}>
+                        <div className="collector-monitor__title">
+                          <strong>{collector.sourceLabel}</strong>
+                          <span className={`collector-monitor__badge collector-monitor__badge--${tone}`}>{label}</span>
+                        </div>
+                        <small>{collectorCompanyLabels(collector.emitterCnpjs)} · coletor {collector.collectorVersion ?? "sem versao"}</small>
+                        <dl>
+                          <div><dt>Ultima atividade</dt><dd>{formatCollectorActivity(collector.updatedAt)}</dd></div>
+                          <div><dt>Ultima varredura correta</dt><dd>{formatCollectorActivity(collector.lastSuccessAt)}</dd></div>
+                          <div><dt>Ultimo XML enviado</dt><dd>{formatCollectorActivity(collector.lastUploadAt ?? collector.lastFileReceivedAt)}</dd></div>
+                          <div><dt>Fila no servidor</dt><dd>{collector.pendingFiles} arquivo(s)</dd></div>
+                        </dl>
+                        {collector.lastError ? <p>{collector.lastError}</p> : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="collector-monitor__empty">
+                  O servidor ainda nao recebeu o sinal de monitoramento. O coletor antigo continua enviando notas, mas precisa ser atualizado uma vez para mostrar o estado remoto.
+                </div>
+              )}
+            </section>
             <FormGrid>
               <DateInput
                 label="Data inicial"

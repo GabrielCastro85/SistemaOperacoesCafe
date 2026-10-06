@@ -459,6 +459,28 @@ const IPC_CHANNELS = {
 
 type SaveInstallationProfileInput = z.infer<typeof saveInstallationProfileSchema>;
 
+export interface CollectorMonitorStatus {
+  sourceCode: string;
+  sourceLabel: string;
+  machineId: string;
+  emitterCnpjs: string[];
+  collectorVersion: string | null;
+  scanIntervalSeconds: number;
+  status: "OK" | "PENDING_RETRY" | "ERROR";
+  online: boolean;
+  inspected: number;
+  eligible: number;
+  uploaded: number;
+  pendingUpload: number;
+  pendingFiles: number;
+  lastScanAt: string;
+  lastSuccessAt: string | null;
+  lastUploadAt: string | null;
+  lastFileReceivedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+}
+
 export interface OperationsCafeApi {
   authNeedsBootstrap: () => Promise<boolean>;
   authCentralConnectionStatus: () => Promise<{ configured: boolean }>;
@@ -634,7 +656,7 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
-  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }> }>;
+  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[] }>;
   scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
@@ -1042,7 +1064,7 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
-  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }> }>,
+  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[] }>,
   scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
@@ -1266,7 +1288,7 @@ const loadingListeners = new Set<(pendingCount: number) => void>();
 // Consultas periodicas atualizam indicadores em segundo plano. Inclui-las no
 // contador global cobre a janela com o overlay a cada ciclo e impede o uso do
 // Dashboard enquanto o banco responde.
-const nonBlockingLoadingMethods = new Set(["getDiagnostics", "getBillingSummary"]);
+const nonBlockingLoadingMethods = new Set(["getDiagnostics", "getBillingSummary", "getVulpeDevStatus"]);
 
 function notifyLoadingListeners(): void {
   for (const listener of loadingListeners) listener(pendingCallCount);

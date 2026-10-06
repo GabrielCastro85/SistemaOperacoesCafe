@@ -59,6 +59,28 @@ export interface CollectorInboxFile {
   receivedAt: string;
 }
 
+export interface CollectorMonitorStatus {
+  sourceCode: string;
+  sourceLabel: string;
+  machineId: string;
+  emitterCnpjs: string[];
+  collectorVersion: string | null;
+  scanIntervalSeconds: number;
+  status: "OK" | "PENDING_RETRY" | "ERROR";
+  online: boolean;
+  inspected: number;
+  eligible: number;
+  uploaded: number;
+  pendingUpload: number;
+  pendingFiles: number;
+  lastScanAt: string;
+  lastSuccessAt: string | null;
+  lastUploadAt: string | null;
+  lastFileReceivedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+}
+
 function jsonValue(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return { $binaryBase64: value.toString("base64") };
   if (typeof value === "bigint") return value.toString();
@@ -132,6 +154,11 @@ export class CentralSyncService {
   async listCollectorInbox(sourceCode: string): Promise<CollectorInboxFile[]> {
     const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?source=${encodeURIComponent(sourceCode)}&limit=1000`);
     return response.files;
+  }
+
+  async listCollectorStatuses(): Promise<CollectorMonitorStatus[]> {
+    const response = await this.request<{ collectors: CollectorMonitorStatus[] }>("/v1/collector/status");
+    return response.collectors;
   }
 
   async downloadCollectorInboxFile(id: string): Promise<Buffer> {
