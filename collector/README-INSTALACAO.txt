@@ -3,7 +3,8 @@ COLETOR GRAOBASE - GRAO E GRAO
 1. Copie a pasta inteira para o computador onde a Vulpe da Grao e Grao esta instalada.
 2. Confirme que existe a pasta C:\Vulpe\NFe. Se a Vulpe estiver em outro local,
    edite apenas o campo xmlRoot do arquivo coletor-config.json.
-3. Execute INSTALAR-COLETOR.cmd uma unica vez.
+3. Execute INSTALAR-COLETOR.cmd. Em uma atualizacao, ele encerra a versao anterior
+   e inicia automaticamente o executavel mais recente da pasta.
 4. Aguarde dois minutos e execute VER-STATUS.cmd.
 
 O resultado esperado e status OK. O coletor inicia junto com o Windows e verifica
@@ -12,6 +13,9 @@ novos XMLs a cada minuto. O Operacoes Cafe nao precisa estar aberto nesse comput
 O coletor envia somente NF-e autorizadas e cancelamentos aceitos cujo emitente seja
 um dos CNPJs configurados. Nenhuma nota e lancada automaticamente: ela fica aguardando
 classificacao no Operacoes Cafe do computador principal.
+
+A partir da versao 1.1.33, o computador principal mostra se este coletor esta
+online, a ultima verificacao bem-sucedida, o ultimo XML enviado e eventuais erros.
 
 Arquivos de diagnostico:
 - coletor-status.json: resumo da ultima verificacao

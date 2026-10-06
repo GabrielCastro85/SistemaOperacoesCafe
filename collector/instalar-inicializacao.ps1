@@ -22,6 +22,13 @@ $shortcut.WorkingDirectory = $packageDirectory
 $shortcut.Description = "Envia XMLs autorizados da Vulpe para o GraoBase"
 $shortcut.Save()
 
+# Encerra uma versao anterior para que a atualizacao comece a funcionar sem
+# depender da proxima reinicializacao do Windows.
+Get-Process -ErrorAction SilentlyContinue |
+  Where-Object { $_.ProcessName -like "ColetorGraoBase*" } |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
 Start-Process -FilePath $executable.FullName -WorkingDirectory $packageDirectory -WindowStyle Hidden
 Write-Host "Coletor instalado na inicializacao do Windows e iniciado com sucesso."
 Write-Host "Confira coletor-status.json nesta pasta depois de alguns minutos."
