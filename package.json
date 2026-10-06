@@ -37,6 +37,7 @@
     "dev:vulpe:dry-run": "electron scripts/dev/vulpe-dry-run.cjs",
     "collector:dev": "electron collector/main.cjs --once",
     "collector:build": "electron-builder --win portable --config collector/electron-builder.yml",
+    "collector:publish": "node scripts/release/package-variant.mjs multiempresa --collector-only",
     "homologation:check": "node scripts/homologation/release-readiness.mjs",
     "security:review": "node scripts/homologation/security-check.mjs",
     "migrations:check": "node scripts/homologation/migration-check.mjs",

@@ -1,6 +1,7 @@
 /* global console, fetch */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { request as httpsRequest } from "node:https";
 import { basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -9,12 +10,21 @@ import { getVariant, variants } from "./variant-config.mjs";
 const variantName = process.argv[2] ?? "multiempresa";
 const mode = process.argv.includes("--installer") ? "installer" : "dir";
 const skipBuild = process.argv.includes("--skip-build");
+const collectorOnly = process.argv.includes("--collector-only");
 const variant = getVariant(variantName);
 const root = process.cwd();
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
 const outputDir = join(root, "release", variant.variant, version);
 const configPath = join(outputDir, `electron-builder.${variant.variant}.json`);
+
+if (collectorOnly) {
+  const token = readGithubToken();
+  const executablePath = join(root, "output", "collector", `ColetorGraoBase-${version}-portable.exe`);
+  if (!existsSync(executablePath)) run("npm", ["run", "collector:build"]);
+  await publishCollectorAssets(token, `v${version}`);
+  process.exit(0);
+}
 
 mkdirSync(outputDir, { recursive: true });
 
@@ -272,15 +282,40 @@ async function publishCollectorAssets(token, tagName) {
       const deletion = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/assets/${existing.id}`, { method: "DELETE", headers });
       if (!deletion.ok && deletion.status !== 404) throw new Error(`Falha ao substituir o arquivo ${name} (${deletion.status}).`);
     }
-    const content = readFileSync(assetPath);
-    const upload = await fetch(`https://uploads.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/octet-stream", "Content-Length": String(content.length) },
-      body: content
-    });
-    if (!upload.ok) throw new Error(`Falha ao publicar ${name} (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
+    await uploadReleaseAsset(token, release.id, assetPath);
     console.log(`Arquivo do coletor publicado: ${name}`);
   }
+}
+
+function uploadReleaseAsset(token, releaseId, assetPath) {
+  const name = basename(assetPath);
+  const size = statSync(assetPath).size;
+  const path = `/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`;
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest({
+      hostname: "uploads.github.com",
+      path,
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "sistema-operacoes-cafe-release-script",
+        "Content-Type": "application/octet-stream",
+        "Content-Length": size
+      }
+    }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { body += chunk; });
+      response.on("end", () => {
+        if (response.statusCode === 201) resolve();
+        else reject(new Error(`Falha ao publicar ${name} (${response.statusCode}): ${body.slice(0, 300)}`));
+      });
+    });
+    request.on("error", reject);
+    createReadStream(assetPath).on("error", reject).pipe(request);
+  });
 }
 
 function latestDatabaseMigrationVersion() {
