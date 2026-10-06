@@ -560,6 +560,57 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("creates a manual purchase with the supplier as seller and the own company as buyer", async () => {
+    const { repo, db, product } = await setup();
+    const supplier = await repo.createPartnerLegalEntity({
+      organizationId: villaId,
+      businessPartnerId: null,
+      legalName: "FAZENDA FORNECEDORA LTDA",
+      tradeName: "FAZENDA FORNECEDORA",
+      cnpj: "00681184000100",
+      stateRegistration: null,
+      municipalRegistration: null,
+      email: null,
+      phone: null,
+      addressLine: "Rodovia do Cafe",
+      addressNumber: "100",
+      addressComplement: null,
+      district: "Zona Rural",
+      city: "Varginha",
+      state: "MG",
+      postalCode: "37000000",
+      isPrimary: false,
+      isActive: true,
+      isDraft: false
+    });
+    const draft = repo.createDealConfirmationDraft({
+      organizationId: villaId,
+      ownLegalEntityId,
+      confirmationDate: "2026-10-06",
+      paymentTermsSnapshot: "A combinar",
+      deliveryLocationSnapshot: "Villa Coffee Minas Gerais"
+    });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: supplier.id, ownLegalEntityId: null, manualName: "FAZENDA FORNECEDORA LTDA", representativeName: null, sortOrder: 1 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 2 });
+    repo.addDealConfirmationParty({ dealConfirmationId: draft.confirmation.id, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 3 });
+    repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, "Cafe", "320", "1850", 0));
+    repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "SELLER", name: "FAZENDA FORNECEDORA LTDA", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+    repo.addDealSigner({ dealConfirmationId: draft.confirmation.id, partyRole: "BUYER", name: "VILLA COFFEE COMERCIO E EXP. LTDA", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+
+    await repo.setDealConfirmationSequenceFloor(ownLegalEntityId, 90);
+    const issued = await repo.issueDealConfirmation(draft.confirmation.id);
+    expect(issued.fiscalDocuments).toHaveLength(0);
+    expect(issued.parties.find((party) => party.partyRole === "SELLER")?.partnerLegalEntityId).toBe(supplier.id);
+    expect(issued.parties.find((party) => party.partyRole === "BUYER")?.ownLegalEntityId).toBe(ownLegalEntityId);
+    expect(issued.signers.map((signer) => [signer.partyRole, signer.name])).toEqual([
+      ["SELLER", "FAZENDA FORNECEDORA LTDA"],
+      ["BUYER", "VILLA COFFEE COMERCIO E EXP. LTDA"]
+    ]);
+    expect(issued.confirmation.confirmationNumber).toBe("VCMG 0091");
+    expect(issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL")?.originalFileName).toMatch(/^FORNECEDORA X VILLA 91\.pdf$/);
+    db.close();
+  });
+
   it("mensagem clara (nao mais 'sem previa gerada' silencioso) quando o documento nao existe mais localmente", async () => {
     // Aplicativo single-PC: sem nenhum armazenamento compartilhado, um arquivo
     // apagado do disco (ou uma linha vinda de um banco restaurado de outro PC)

@@ -1083,7 +1083,10 @@ function formatPostalCode(value: string | null | undefined): string {
 }
 
 function buildDealConfirmationFileName(input: Parameters<typeof generateDealConfirmationPdf>[0]): string {
-  const seller = compactCompanyName(input.ownLegalEntity.tradeName);
+  const sellerParty = input.detail.parties.find((item) => item.partyRole === "SELLER");
+  const seller = sellerParty?.ownLegalEntityId
+    ? compactCompanyName(input.ownLegalEntity.tradeName)
+    : findPartyFileLabel(input.detail, "SELLER") ?? compactCompanyName(input.ownLegalEntity.tradeName);
   const buyer = findPartyFileLabel(input.detail, "BUYER") ?? "Comprador";
   const sequence = input.detail.confirmation.confirmationNumber
     ? extractConfirmationSequence(input.detail.confirmation.confirmationNumber)

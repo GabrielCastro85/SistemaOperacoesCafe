@@ -50,6 +50,8 @@ interface DealPartyTarget {
   displayName: string;
 }
 
+type ManualDealDirection = "SALE" | "PURCHASE";
+
 function legalEntityDisplayName(entity: BusinessPartnerLegalEntity): string {
   return entity.legalName || entity.tradeName || "Empresa da NF";
 }
@@ -90,6 +92,8 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [clauses, setClauses] = useState<DealClauseTemplate[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [buyerId, setBuyerId] = useState("");
+  const [manualDealDirection, setManualDealDirection] = useState<ManualDealDirection>("SALE");
+  const [manualCounterpartyLegalEntityId, setManualCounterpartyLegalEntityId] = useState("");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("685");
   const [price, setPrice] = useState("1000.0000");
@@ -243,6 +247,29 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   }
 
   async function createManual(): Promise<void> {
+    const counterparty = partnerTargetFromLegalEntityId(manualCounterpartyLegalEntityId);
+    const normalizedQuantity = quantity.trim().replace(",", ".");
+    const normalizedPrice = price.trim().replace(",", ".");
+    if (!ownLegalEntityId) {
+      setMessage("Erro: selecione a empresa própria que participa do fechamento.");
+      return;
+    }
+    if (!counterparty) {
+      setMessage(`Erro: selecione a empresa ${manualDealDirection === "PURCHASE" ? "vendedora" : "compradora"} na base de dados.`);
+      return;
+    }
+    if (!productId) {
+      setMessage("Erro: selecione o produto do fechamento.");
+      return;
+    }
+    if (!Number.isFinite(Number(normalizedQuantity)) || Number(normalizedQuantity) <= 0) {
+      setMessage("Erro: informe uma quantidade de sacas maior que zero.");
+      return;
+    }
+    if (!Number.isFinite(Number(normalizedPrice)) || Number(normalizedPrice) <= 0) {
+      setMessage("Erro: informe um preço por saca maior que zero.");
+      return;
+    }
     try {
       const draft = await window.operationsCafe.createDealConfirmationDraft({
         organizationId,
@@ -259,7 +286,16 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
         publicNotes: null,
         internalNotes: null
       });
-      await addPartiesItemsAndSigners(draft.confirmation.id);
+      await addPartiesItemsAndSigners(
+        draft.confirmation.id,
+        false,
+        draft.confirmation.ownLegalEntityId,
+        counterparty,
+        counterparty,
+        manualDealDirection,
+        normalizedQuantity,
+        normalizedPrice
+      );
       const refreshed = await window.operationsCafe.getDealConfirmation(draft.confirmation.id);
       setDetail(refreshed);
       loadBankFieldsFromDetail(refreshed);
@@ -278,11 +314,20 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     skipItem = false,
     confirmationOwnLegalEntityId = ownLegalEntityId,
     confirmationBuyer: DealPartyTarget | null = buyerId ? partnerTargetFromPartnerId(buyerId) : null,
-    confirmationDeliveryRecipient: DealPartyTarget | null = confirmationBuyer
+    confirmationDeliveryRecipient: DealPartyTarget | null = confirmationBuyer,
+    dealDirection: ManualDealDirection = "SALE",
+    itemQuantity = quantity,
+    itemPrice = price
   ): Promise<void> {
-    if (confirmationOwnLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
-    if (confirmationBuyer) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "BUYER", businessPartnerId: confirmationBuyer.businessPartnerId, partnerLegalEntityId: confirmationBuyer.partnerLegalEntityId, ownLegalEntityId: null, manualName: confirmationBuyer.manualName, representativeName: null, sortOrder: 2 });
-    if (confirmationDeliveryRecipient) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipient.businessPartnerId, partnerLegalEntityId: confirmationDeliveryRecipient.partnerLegalEntityId, ownLegalEntityId: null, manualName: confirmationDeliveryRecipient.manualName, representativeName: null, sortOrder: 3 });
+    const ownPartyRole = dealDirection === "PURCHASE" ? "BUYER" : "SELLER";
+    const counterpartyRole = dealDirection === "PURCHASE" ? "SELLER" : "BUYER";
+    if (confirmationOwnLegalEntityId) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: ownPartyRole, businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: dealDirection === "PURCHASE" ? 2 : 1 });
+    if (confirmationBuyer) await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: counterpartyRole, businessPartnerId: confirmationBuyer.businessPartnerId, partnerLegalEntityId: confirmationBuyer.partnerLegalEntityId, ownLegalEntityId: null, manualName: confirmationBuyer.manualName, representativeName: null, sortOrder: dealDirection === "PURCHASE" ? 1 : 2 });
+    if (dealDirection === "PURCHASE" && confirmationOwnLegalEntityId) {
+      await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId: confirmationOwnLegalEntityId, manualName: null, representativeName: null, sortOrder: 3 });
+    } else if (confirmationDeliveryRecipient) {
+      await window.operationsCafe.addDealConfirmationParty({ dealConfirmationId: confirmationId, partyRole: "DELIVERY_RECIPIENT", businessPartnerId: confirmationDeliveryRecipient.businessPartnerId, partnerLegalEntityId: confirmationDeliveryRecipient.partnerLegalEntityId, ownLegalEntityId: null, manualName: confirmationDeliveryRecipient.manualName, representativeName: null, sortOrder: 3 });
+    }
     if (!skipItem && productId) await window.operationsCafe.addDealConfirmationItem({
       dealConfirmationId: confirmationId,
       sortOrder: 0,
@@ -294,9 +339,9 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       packagingSnapshot: "Sacas",
       originSnapshot: null,
       destinationSnapshot: null,
-      quantitySacksDecimal: quantity,
+      quantitySacksDecimal: itemQuantity,
       sackWeightKgDecimal: "60",
-      unitPriceDecimal: price,
+      unitPriceDecimal: itemPrice,
       totalAmountCents: null,
       totalOverrideReason: null,
       deliveryStartDate: null,
@@ -304,8 +349,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       deliveryLocationSnapshot: "Local de entrega a confirmar",
       notes: null
     });
-    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.legalName ?? "Vendedor", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
-    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: confirmationBuyer?.displayName ?? "Comprador", documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
+    const ownSignerName = data.legalEntities.find((item) => item.id === confirmationOwnLegalEntityId)?.legalName ?? (dealDirection === "PURCHASE" ? "Comprador" : "Vendedor");
+    const counterpartySignerName = confirmationBuyer?.displayName ?? (dealDirection === "PURCHASE" ? "Vendedor" : "Comprador");
+    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "SELLER", name: dealDirection === "PURCHASE" ? counterpartySignerName : ownSignerName, documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 1, signatureStatus: "PENDING", signedAt: null, notes: null });
+    await window.operationsCafe.addDealSigner({ dealConfirmationId: confirmationId, partyRole: "BUYER", name: dealDirection === "PURCHASE" ? ownSignerName : counterpartySignerName, documentNumber: null, positionTitle: null, email: null, phone: null, signatureOrder: 2, signatureStatus: "PENDING", signedAt: null, notes: null });
   }
 
   const clientPartners = partners.filter((item) => item.roles.includes("CLIENT"));
@@ -830,10 +877,29 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
           )}
           {creationMode === "manual" && (
             <AdminBlock title="Criar confirmação sem nota fiscal">
-              <p className="muted">Use quando a confirmação precisa ser assinada antes da emissão da nota fiscal. Informe os dados do negócio e gere o PDF normalmente.</p>
-              <p className="muted">Vendedor: <strong>{ownEntityName}</strong> (empresa/CNPJ próprio selecionado no topo).</p>
+              <p className="muted">Use quando a confirmação precisa ser assinada antes da emissão da nota fiscal. Informe quem está vendendo, os dados do negócio e gere o PDF normalmente.</p>
               <FormGrid>
-                <PartnerQuickSearch label="Comprador (cliente)" value={buyerId} onChange={setBuyerId} partners={clientPartners} legalEntities={partnerLegalEntities} />
+                <SelectField
+                  label="Tipo do negócio"
+                  value={manualDealDirection}
+                  onChange={(value) => {
+                    setManualDealDirection(value as ManualDealDirection);
+                    setManualCounterpartyLegalEntityId("");
+                  }}
+                  options={[["SALE", "Venda da nossa empresa"], ["PURCHASE", "Compra para nossa empresa"]]}
+                />
+                <div className="confirmation-company-selected">
+                  <span>{manualDealDirection === "PURCHASE" ? "Comprador" : "Vendedor"}</span>
+                  <strong>{ownEntityName}</strong>
+                  <small>Empresa/CNPJ próprio selecionado no topo</small>
+                </div>
+                <LegalEntityQuickSearch
+                  label={manualDealDirection === "PURCHASE" ? "Empresa vendedora" : "Empresa compradora"}
+                  value={manualCounterpartyLegalEntityId}
+                  onChange={setManualCounterpartyLegalEntityId}
+                  legalEntities={partnerLegalEntities}
+                  placeholder="Digite o nome, fantasia ou CNPJ da empresa"
+                />
                 <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
                 <TextField label="Sacas" value={quantity} onChange={setQuantity} />
                 <TextField label="Preco por saca" value={price} onChange={setPrice} />
