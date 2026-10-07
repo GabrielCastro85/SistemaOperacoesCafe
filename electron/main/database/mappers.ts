@@ -349,6 +349,8 @@ export function mapFiscalDocument(row: DbRecord): FiscalDocument {
   return {
     billingObservations: textOrNull(row.billing_observations),
     contractNumber: textOrNull(row.contract_number),
+    freightDaeReference: textOrNull(row.freight_dae_reference),
+    freightDaeAmountCents: Number(row.freight_dae_amount_cents ?? 0),
     id: String(row.id),
     organizationId: String(row.organization_id),
     ownLegalEntityId: String(row.own_legal_entity_id),
@@ -716,6 +718,7 @@ export function mapClientChargeAdjustment(row: DbRecord): ClientChargeAdjustment
     id: String(row.id),
     clientChargeId: String(row.client_charge_id),
     ledgerEntryId: textOrNull(row.ledger_entry_id),
+    sourceFiscalDocumentId: textOrNull(row.source_fiscal_document_id),
     ledgerEntryDate: textOrNull(row.ledger_entry_date),
     adjustmentType: String(row.adjustment_type) as ClientChargeAdjustment["adjustmentType"],
     effect: String(row.effect) as ClientChargeAdjustment["effect"],

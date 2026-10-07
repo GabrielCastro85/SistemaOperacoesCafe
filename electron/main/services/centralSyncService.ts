@@ -5,6 +5,10 @@ import log from "electron-log/main.js";
 const API_URL = "https://mindful-peace-production.up.railway.app";
 const SYNC_INTERVAL_MS = 8_000;
 const MUTATION_SYNC_DELAY_MS = 750;
+// Cada nota fiscal carrega muitos campos. Migracoes que acrescentam colunas
+// podem tornar milhares de notas "alteradas" de uma vez; lotes menores evitam
+// ultrapassar o limite de corpo da API central e permitem retomar gradualmente.
+const MAX_PUSH_CHANGES_PER_BATCH = 300;
 export const CENTRAL_SYNCED_TABLES = [
   "organizations", "legal_entities", "locations", "document_sequences",
   "business_partners", "business_partner_roles", "business_partner_merges", "partner_legal_entities",
@@ -149,6 +153,12 @@ export class CentralSyncService {
       lastSuccessAt: row.lastSuccessAt,
       error: row.error
     };
+  }
+
+  // Uma falha momentanea de rede marca o status como ERROR ate a proxima
+  // sincronizacao; para recursos sob demanda basta existir uma sessao.
+  hasSession(): boolean {
+    return this.token !== null;
   }
 
   async listCollectorInbox(sourceCode: string): Promise<CollectorInboxFile[]> {
@@ -358,12 +368,17 @@ export class CentralSyncService {
       changes.push({ table: identity.slice(0, separator), key: identity.slice(separator + 1), operation: "DELETE" });
     }
 
-    for (let index = 0; index < changes.length; index += 1000) {
-      const batch = changes.slice(index, index + 1000);
-      await this.request<{ revision: number }>("/v1/sync/push", {
-        method: "POST",
-        body: JSON.stringify({ idempotencyKey: randomUUID(), baseRevision: this.getServerRevision(), changes: batch })
-      });
+    for (let index = 0; index < changes.length; index += MAX_PUSH_CHANGES_PER_BATCH) {
+      const batch = changes.slice(index, index + MAX_PUSH_CHANGES_PER_BATCH);
+      try {
+        await this.request<{ revision: number }>("/v1/sync/push", {
+          method: "POST",
+          body: JSON.stringify({ idempotencyKey: randomUUID(), baseRevision: this.getServerRevision(), changes: batch })
+        });
+      } catch (error) {
+        const first = batch[0];
+        throw new Error(`Falha ao enviar ${first?.table ?? "registro"}/${first?.key ?? "desconhecido"}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       this.updateBaselineForLocalBatch(batch);
     }
   }
@@ -557,14 +572,23 @@ export class CentralSyncService {
     }
     const requestInit = { ...init, headers };
     if (requestInit.method && requestInit.method !== "GET" && requestInit.body === undefined) requestInit.body = "{}";
-    const response = await fetch(`${API_URL}${path}`, requestInit);
+    let response: Response;
+    try {
+      response = await fetch(`${API_URL}${path}`, requestInit);
+    } catch (error) {
+      // Leituras sao seguras para repetir; a conexao deste computador com o
+      // servidor apresenta quedas curtas e uma nova tentativa costuma bastar.
+      if (requestInit.method && requestInit.method !== "GET") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      response = await fetch(`${API_URL}${path}`, requestInit);
+    }
     const text = await response.text();
     let body: unknown = null;
     try { body = text ? JSON.parse(text) : null; }
     catch { body = { message: text }; }
     if (!response.ok) {
       const detail = body && typeof body === "object" && "message" in body ? String((body as { message: unknown }).message) : text;
-      throw new Error(`Servidor central (${response.status}): ${detail || "falha na requisicao"}`);
+      throw new Error(`Servidor central (${response.status}) em ${path}: ${detail || "falha na requisicao"}`);
     }
     return body as T;
   }

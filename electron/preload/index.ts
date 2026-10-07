@@ -656,7 +656,7 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
-  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[] }>;
+  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
   scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
@@ -670,6 +670,7 @@ export interface OperationsCafeApi {
     ignoredByUser: number;
     cancellationEvents: number;
     cancellationsAlreadyApplied: number;
+    canceledInvoicesHidden: number;
     files: Array<{ token: string; fileName: string; sizeBytes: number }>;
   }>;
   registerDroppedXmlFiles: (paths: string[]) => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
@@ -1064,7 +1065,7 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
-  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[] }>,
+  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>,
   scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
@@ -1078,6 +1079,7 @@ const api: OperationsCafeApi = {
     ignoredByUser: number;
     cancellationEvents: number;
     cancellationsAlreadyApplied: number;
+    canceledInvoicesHidden: number;
     files: Array<{ token: string; fileName: string; sizeBytes: number }>;
   }>,
   registerDroppedXmlFiles: (paths) => ipcRenderer.invoke(IPC_CHANNELS.registerDroppedXmlFiles, { paths }) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,

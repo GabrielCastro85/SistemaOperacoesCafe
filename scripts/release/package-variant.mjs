@@ -324,7 +324,9 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.34"
+  const highlights = releaseVersion === "1.1.35"
+    ? `- Confirmacoes de negocio agora permitem fechamentos de compra com ou sem nota fiscal.\n- DAE de frete pode ser informado durante a importacao da NF-e e entra na cobranca do cliente.\n- Dashboard soma somente as sacas vendidas, sem misturar compras no indicador comercial.\n- Sincronizacao central suporta lotes maiores de alteracoes com retomada segura.`
+    : releaseVersion === "1.1.34"
     ? `- Monitor remoto mostra se o coletor da Grao & Grao esta online e quando funcionou pela ultima vez.\n- Coletor passa a atualizar automaticamente pelas proximas versoes.\n- Inicializacao do coletor no Windows ganhou mecanismos redundantes e verificacao apos a instalacao.`
     : releaseVersion === "1.1.32"
     ? `- Login continua disponivel com a ultima copia sincronizada durante oscilacoes temporarias do servidor.\n- Dashboard destaca contas a pagar e resume as cobrancas vencidas.\n- Financeiro reorganizado, com textos em portugues, valores legiveis, baixa e edicao de contas mais acessiveis.\n- Historico de cobrancas ganhou pesquisa, filtros e carregamento por etapas.\n- Importacao de NF-e diferencia avisos e duplicidades e destaca a busca em todas as empresas.`

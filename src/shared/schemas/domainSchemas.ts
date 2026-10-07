@@ -338,6 +338,8 @@ export const operationTypeSchema = z.enum(["PURCHASE", "SALE"]);
 export const fiscalDocumentInputSchema = z.object({
   billingObservations: z.string().trim().max(500).nullable().optional(),
   contractNumber: z.string().trim().max(200).nullable().optional(),
+  freightDaeReference: z.string().trim().max(120).nullable().optional(),
+  freightDaeAmountCents: z.number().int().min(0).optional(),
   organizationId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid(),
   responsiblePartnerId: z.string().uuid(),
@@ -485,6 +487,8 @@ export const xmlImportFileInputSchema = z.object({
 export const xmlImportResolutionSchema = z.object({
   billingObservations: z.string().trim().max(500).nullable().optional(),
   contractNumber: z.string().trim().max(200).nullable().optional(),
+  freightDaeReference: z.string().trim().max(120).nullable().optional(),
+  freightDaeAmountCents: z.number().int().min(0).optional(),
   clientPartnerId: z.string().uuid().nullable().optional(),
   ownLegalEntityId: z.string().uuid().nullable().optional(),
   operationType: operationTypeSchema.nullable().optional(),

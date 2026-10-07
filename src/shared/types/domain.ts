@@ -628,6 +628,8 @@ export type PurchaseSettlementStatus = "UNSETTLED" | "RESERVED" | "SETTLED";
 export interface FiscalDocument {
   billingObservations?: string | null;
   contractNumber?: string | null;
+  freightDaeReference?: string | null;
+  freightDaeAmountCents?: number;
   id: string;
   organizationId: string;
   ownLegalEntityId: string;
@@ -1021,6 +1023,7 @@ export interface ClientChargeAdjustment {
   id: string;
   clientChargeId: string;
   ledgerEntryId: string | null;
+  sourceFiscalDocumentId?: string | null;
   ledgerEntryDate: string | null;
   adjustmentType: ChargeAdjustmentType;
   effect: LedgerEffect;

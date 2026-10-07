@@ -1750,7 +1750,9 @@ export class AppRepository {
       notes, confirmed_at, canceled_at, cancel_reason, created_at, updated_at, direction
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
       .run(id, data.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, status, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, now, now, direction);
-    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ? WHERE id = ?").run(data.contractNumber?.trim() || null, data.billingObservations ?? null, id);
+    const freightDaeAmountCents = data.freightDaeAmountCents ?? 0;
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ? WHERE id = ?")
+      .run(data.contractNumber?.trim() || null, data.billingObservations ?? null, freightDaeAmountCents > 0 ? data.freightDaeReference?.trim() || null : null, freightDaeAmountCents, id);
     return this.getFiscalDocument(id);
   }
 
@@ -1772,7 +1774,12 @@ export class AppRepository {
     const secondaryOperationType = data.secondaryResponsiblePartnerId ? (data.secondaryOperationType ?? (data.operationType === "PURCHASE" ? "SALE" : "PURCHASE")) : null;
     this.db.prepare(`UPDATE fiscal_documents SET own_legal_entity_id = ?, responsible_partner_id = ?, partner_legal_entity_id = ?, secondary_responsible_partner_id = ?, secondary_operation_type = ?, access_key = ?, document_number = ?, series = ?, issue_date = ?, total_amount_cents = ?, has_pending_issues = ?, pending_notes = ?, duplicate_warning = ?, notes = ?, updated_at = ?, direction = ? WHERE id = ?`)
       .run(data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, new Date().toISOString(), direction, id);
-    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ? WHERE id = ?").run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, id);
+    const freightDaeAmountCents = data.freightDaeAmountCents === undefined ? previous.document.freightDaeAmountCents ?? 0 : data.freightDaeAmountCents;
+    const freightDaeReference = freightDaeAmountCents > 0
+      ? (data.freightDaeReference === undefined ? previous.document.freightDaeReference : data.freightDaeReference?.trim() || null)
+      : null;
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ? WHERE id = ?")
+      .run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, freightDaeReference, freightDaeAmountCents, id);
     if (reassigning) {
       const now = new Date().toISOString();
       for (const op of previous.operations.filter((item) => item.responsiblePartnerId === previous.document.responsiblePartnerId)) {
@@ -2023,17 +2030,20 @@ export class AppRepository {
     const operations = this.listOperations({ organizationId, ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined });
     const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
     const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
+    const activeSales = activeOperations.filter((operation) => operation.operationType === "SALE");
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
       confirmed: docs.filter((doc) => doc.status === "CONFIRMED").length,
       operations: operations.length,
-      sacksDecimal: activeOperations.length ? sumDecimalTexts(activeOperations.map((operation) => operation.quantitySacks)) : "0",
+      // O card principal representa o volume vendido. Compras aparecem nos
+      // fluxos proprios, mas nao devem aumentar o total comercial de sacas.
+      sacksDecimal: activeSales.length ? sumDecimalTexts(activeSales.map((operation) => operation.quantitySacks)) : "0",
       fiscalAmountCents: activeDocs.reduce((sum, doc) => sum + doc.totalAmountCents, 0),
       // So' soma o lado de venda -- serviceAmountCents de uma operacao de
       // COMPRA guarda o que devemos ao fornecedor, nao receita de comissao;
       // somar os dois juntos misturaria a pagar com a receber.
-      serviceAmountCents: activeOperations.filter((operation) => operation.operationType !== "PURCHASE").reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+      serviceAmountCents: activeSales.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
@@ -2948,6 +2958,15 @@ export class AppRepository {
       this.db.prepare("UPDATE client_charge_operations SET released_at = ? WHERE client_charge_id = ? AND operation_id = ? AND released_at IS NULL").run(now, clientChargeId, operationId);
       this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE id = ? AND client_charge_id = ?").run(now, operationId, clientChargeId);
     });
+    this.db.prepare(`DELETE FROM client_charge_adjustments
+      WHERE client_charge_id = ?
+        AND source_fiscal_document_id IS NOT NULL
+        AND source_fiscal_document_id NOT IN (
+          SELECT DISTINCT o.fiscal_document_id
+          FROM client_charge_operations cco
+          JOIN operations o ON o.id = cco.operation_id
+          WHERE cco.client_charge_id = ? AND cco.released_at IS NULL
+        )`).run(clientChargeId, clientChargeId);
     this.recalculateClientCharge(clientChargeId);
     return this.getClientCharge(clientChargeId);
   }
@@ -2966,8 +2985,9 @@ export class AppRepository {
   }
 
   removeChargeAdjustment(id: string): ClientChargeDetail {
-    const row = this.db.prepare("SELECT client_charge_id AS chargeId FROM client_charge_adjustments WHERE id = ?").get(id) as { chargeId: string } | undefined;
+    const row = this.db.prepare("SELECT client_charge_id AS chargeId, source_fiscal_document_id AS sourceFiscalDocumentId FROM client_charge_adjustments WHERE id = ?").get(id) as { chargeId: string; sourceFiscalDocumentId: string | null } | undefined;
     if (!row) throw new Error("Ajuste nao encontrado.");
+    if (row.sourceFiscalDocumentId) throw new Error("O DAE de frete vem da nota fiscal. Libere a nota da cobranca e altere o DAE no cadastro da nota.");
     const charge = this.getClientCharge(row.chargeId).charge;
     if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status)) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
     this.db.prepare("DELETE FROM client_charge_adjustments WHERE id = ?").run(id);
@@ -3968,6 +3988,8 @@ export class AppRepository {
       pendingNotes: pending.length ? pending.join(" ") : null,
       contractNumber: typeof fileResolution.contractNumber === "string" ? fileResolution.contractNumber : (typeof resolution.contractNumber === "string" ? resolution.contractNumber : this.stringOrNull(extracted.contractNumber)),
       billingObservations: typeof fileResolution.billingObservations === "string" ? fileResolution.billingObservations : (typeof resolution.billingObservations === "string" ? resolution.billingObservations : null),
+      freightDaeReference: typeof fileResolution.freightDaeReference === "string" ? fileResolution.freightDaeReference : (typeof resolution.freightDaeReference === "string" ? resolution.freightDaeReference : null),
+      freightDaeAmountCents: typeof fileResolution.freightDaeAmountCents === "number" ? fileResolution.freightDaeAmountCents : (typeof resolution.freightDaeAmountCents === "number" ? resolution.freightDaeAmountCents : 0),
       notes: [String(extracted.nature ?? ""), isThirdPartyDocument ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
@@ -4722,6 +4744,13 @@ export class AppRepository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, doc.issueDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
+      if ((doc.freightDaeAmountCents ?? 0) > 0) {
+        const reference = doc.freightDaeReference ? ` - DAE ${doc.freightDaeReference}` : "";
+        this.db.prepare(`INSERT OR IGNORE INTO client_charge_adjustments (
+          id, client_charge_id, ledger_entry_id, source_fiscal_document_id, adjustment_type, effect, description, reason, amount_cents, sort_order, created_at, updated_at
+        ) VALUES (?, ?, NULL, ?, 'SURCHARGE', 'INCREASE_RECEIVABLE', ?, ?, ?, 40, ?, ?)`)
+          .run(randomUUID(), charge.id, doc.id, `DAE de frete referente a NF ${doc.documentNumber}${reference}`, `Valor de DAE de frete registrado na nota fiscal ${doc.documentNumber}.`, doc.freightDaeAmountCents ?? 0, now, now);
+      }
     });
   }
 

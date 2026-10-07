@@ -31,14 +31,15 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("053_payable_planned_payment");
+    expect(getCurrentMigration(db)).toBe("054_fiscal_document_freight_dae");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });
-    expect(db.prepare("PRAGMA table_info(fiscal_documents)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source" })]));
+    expect(db.prepare("PRAGMA table_info(fiscal_documents)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source" }), expect.objectContaining({ name: "freight_dae_reference" }), expect.objectContaining({ name: "freight_dae_amount_cents" })]));
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'spreadsheet_import_jobs'").get()).toMatchObject({ name: "spreadsheet_import_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'xml_import_jobs'").get()).toMatchObject({ name: "xml_import_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'client_charges'").get()).toMatchObject({ name: "client_charges" });
+    expect(db.prepare("PRAGMA table_info(client_charge_adjustments)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source_fiscal_document_id" })]));
     expect(db.prepare("PRAGMA table_info(client_charge_operations)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "own_legal_entity_name_snapshot" })]));
     expect(db.prepare("PRAGMA table_info(business_partners)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "document_number" }), expect.objectContaining({ name: "mobile" })]));
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accounts_payable'").get()).toMatchObject({ name: "accounts_payable" });

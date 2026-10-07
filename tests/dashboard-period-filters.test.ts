@@ -83,7 +83,14 @@ describe("filtros de periodo e cliente do Dashboard", () => {
     repo.addOperation({ fiscalDocumentId: outsideDoc.document.id, fiscalDocumentItemId: outsideItem.id, ownLegalEntityId, responsiblePartnerId: partnerAId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-08-15", quantitySacks: "40", manualRateValueCents: null, manualOverrideReason: null, notes: null });
     repo.confirmFiscalDocument(outsideDoc.document.id);
 
+    const purchaseDoc = repo.createFiscalDocument(sampleDocument(partnerAId, "502", "2026-08-16"));
+    const purchaseItem = repo.addFiscalDocumentItem({ fiscalDocumentId: purchaseDoc.document.id, productId, description: "Cafe comprado", quantity: "900", unit: "SACK", unitPriceDecimal: "100", totalAmountCents: 100000, sacksQuantity: "900" });
+    const purchaseOperation = repo.addOperation({ fiscalDocumentId: purchaseDoc.document.id, fiscalDocumentItemId: purchaseItem.id, ownLegalEntityId, responsiblePartnerId: partnerAId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-08-16", quantitySacks: "900", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    db.prepare("UPDATE operations SET operation_type = 'PURCHASE' WHERE id = ?").run(purchaseOperation.id);
+    repo.confirmFiscalDocument(purchaseDoc.document.id);
+
     const noFilter = repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId });
+    // O volume principal e' somente de vendas; a compra de 900 sacas nao entra.
     expect(noFilter.sacksDecimal).toBe("140");
 
     const filtered = repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-06-01", periodEnd: "2026-06-30" });

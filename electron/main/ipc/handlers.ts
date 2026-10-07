@@ -665,13 +665,15 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return { folder: result.filePaths[0], files: registerXmlPaths(files) };
   });
   handle(IPC_CHANNELS.getVulpeDevStatus, async () => {
-    const collectorAvailable = centralSync.getStatus().status === "ONLINE";
+    const collectorAvailable = centralSync.hasSession();
     let collectors: CollectorMonitorStatus[] = [];
+    let collectorMonitorError: string | null = collectorAvailable ? null : "Entre no servidor central para consultar o coletor.";
     if (collectorAvailable) {
       try {
         collectors = await centralSync.listCollectorStatuses();
       } catch (error) {
         log.warn("Falha ao consultar o monitor dos coletores", error instanceof Error ? error.message : String(error));
+        collectorMonitorError = "Nao foi possivel consultar o servidor agora. Uma nova tentativa sera feita em 30 segundos.";
       }
     }
     const localSources = Object.entries(vulpeDevSources).map(([source, config]) => ({
@@ -687,6 +689,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return {
       available: true,
       collectors,
+      collectorMonitorError,
       sources: [
         ...localSources,
         ...collectorSources,
@@ -724,19 +727,27 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         : graoCollectorSources[source as keyof typeof graoCollectorSources].label;
 
     const hasAccessKey = context.db.prepare("SELECT 1 FROM fiscal_documents WHERE access_key = ? LIMIT 1");
+    const hasAcceptedCancellation = context.db.prepare(`
+      SELECT 1 FROM fiscal_document_events
+      WHERE access_key = ? AND event_type = 'CANCELLATION' AND status_code IN ('135', '155')
+        AND COALESCE(protocol_number, '') <> ''
+      LIMIT 1
+    `);
     const wasIgnoredByUser = context.db.prepare("SELECT 1 FROM xml_import_files WHERE access_key = ? AND status = 'SKIPPED' AND json_extract(resolution_data_json, '$.ignore') = 1 LIMIT 1");
     const hasFiscalEvent = context.db.prepare(`
       SELECT 1 FROM fiscal_document_events
       WHERE access_key = ? AND event_type = ? AND sequence_number = ? AND COALESCE(protocol_number, '') = COALESCE(?, '')
       LIMIT 1
     `);
-    const pending: Array<{ filePath: string; remoteId: string | null }> = [];
+    const pending: Array<{ filePath: string; remoteId: string | null; accessKey: string; xmlType: "NFE" | "CANCELLATION" }> = [];
+    const acceptedCancellationKeys = new Set<string>();
     let authorized = 0;
     let alreadyImported = 0;
     let ignored = 0;
     let ignoredByUser = 0;
     let cancellationEvents = 0;
     let cancellationsAlreadyApplied = 0;
+    let canceledInvoicesHidden = 0;
 
     const inspectCandidate = (filePath: string, remoteId: string | null): void => {
       const inspection = inspectXmlFile(filePath, randomUUID());
@@ -758,6 +769,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
           return;
         }
         cancellationEvents += 1;
+        acceptedCancellationKeys.add(inspection.accessKey);
         const existing = hasFiscalEvent.get(
           inspection.accessKey,
           "CANCELLATION",
@@ -765,7 +777,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
           protocolNumber
         );
         if (existing) cancellationsAlreadyApplied += 1;
-        else pending.push({ filePath, remoteId });
+        else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "CANCELLATION" });
         return;
       }
       if (inspection.xmlType !== "NFE_PROC" && inspection.xmlType !== "NFE") {
@@ -779,9 +791,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         return;
       }
       authorized += 1;
-      if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
+      if (hasAcceptedCancellation.get(inspection.accessKey)) canceledInvoicesHidden += 1;
+      else if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
       else if (hasAccessKey.get(inspection.accessKey)) alreadyImported += 1;
-      else pending.push({ filePath, remoteId });
+      else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "NFE" });
     };
 
     for (const localSource of selectedLocalSources) {
@@ -824,7 +837,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       }
     }
 
-    const files = pending.flatMap(({ filePath, remoteId }) => {
+    const visiblePending = pending.filter((candidate) => {
+      if (candidate.xmlType !== "NFE" || !acceptedCancellationKeys.has(candidate.accessKey)) return true;
+      canceledInvoicesHidden += 1;
+      return false;
+    });
+    const files = visiblePending.flatMap(({ filePath, remoteId }) => {
       const [registered] = registerXmlPaths([filePath]);
       if (!registered) return [];
       if (remoteId) collectorInboxTokens.set(registered.token, remoteId);
@@ -843,6 +861,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       ignoredByUser,
       cancellationEvents,
       cancellationsAlreadyApplied,
+      canceledInvoicesHidden,
       files
     };
   });

@@ -475,11 +475,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const cteUnitValueCents = parseCurrencyToCents(cteUnitValueInput);
   const cteTotalCents = cteQuantity * cteUnitValueCents;
   const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
+  const selectedFreightDaes = Array.from(new Set(selectedOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
+    const document = operationDocuments[documentId];
+    return document && (document.freightDaeAmountCents ?? 0) > 0 ? [document] : [];
+  });
+  const selectedFreightDaeCents = selectedFreightDaes.reduce((total, document) => total + (document.freightDaeAmountCents ?? 0), 0);
   const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
   const eligibleSacks = selectedOperations.length ? sumDecimalTexts(selectedOperations.map((operation) => operation.quantitySacks)) : "0";
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const paidSacks = paidOperations.length ? sumDecimalTexts(paidOperations.map((operation) => operation.quantitySacks)) : "0";
-  const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents;
+  const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + selectedFreightDaeCents;
   const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents + cteTotalCents, discountCents, advanceCents);
   const hasPendingManualAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
   const hasPendingCte = cteTotalCents > 0;
@@ -985,7 +990,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <article>
                 <span>Notas novas para cobrar</span>
                 <strong>{selectedNoteCount} nota(s) selecionada(s)</strong>
-                <small>{decimalTextBr(eligibleSacks)} sacas · {formatCurrencyFromCents(eligibleSubtotalCents)}</small>
+                <small>{decimalTextBr(eligibleSacks)} sacas · {formatCurrencyFromCents(eligibleSubtotalCents)}{selectedFreightDaeCents > 0 ? ` + ${formatCurrencyFromCents(selectedFreightDaeCents)} em DAE` : ""}</small>
               </article>
               <article>
                 <span>Ja em cobranca aberta</span>
@@ -1078,6 +1083,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     </div>
                   );
                 })}
+                {!detail ? selectedFreightDaes.map((document) => (
+                  <div key={`dae-${document.id}`} className="table-row charge-operation-grid charge-row--adjustment">
+                    <span><strong>DAE de frete</strong><small>Referente à NF {document.documentNumber}</small></span>
+                    <span>DAE</span>
+                    <span>{document.freightDaeReference ? `Referência ${document.freightDaeReference}` : "Frete"}</span>
+                    <span><strong>+ {formatCurrencyFromCents(document.freightDaeAmountCents ?? 0)}</strong></span>
+                    <span>Automático</span>
+                    <span>Entra na cobrança</span>
+                  </div>
+                )) : null}
               </div>
             ) : (
               <EmptyState

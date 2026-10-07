@@ -3495,4 +3495,15 @@ export const migrations: Migration[] = [
       ALTER TABLE accounts_payable ADD COLUMN pix_key TEXT;
     `)
   }
+  ,{
+    name: "054_fiscal_document_freight_dae",
+    up: (db) => db.exec(`
+      ALTER TABLE fiscal_documents ADD COLUMN freight_dae_reference TEXT;
+      ALTER TABLE fiscal_documents ADD COLUMN freight_dae_amount_cents INTEGER NOT NULL DEFAULT 0 CHECK (freight_dae_amount_cents >= 0);
+      ALTER TABLE client_charge_adjustments ADD COLUMN source_fiscal_document_id TEXT REFERENCES fiscal_documents(id);
+      CREATE UNIQUE INDEX idx_client_charge_adjustments_freight_dae_unique
+        ON client_charge_adjustments(client_charge_id, source_fiscal_document_id)
+        WHERE source_fiscal_document_id IS NOT NULL;
+    `)
+  }
 ];

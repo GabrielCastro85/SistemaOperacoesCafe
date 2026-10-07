@@ -104,7 +104,7 @@ describe("xml imports", () => {
     const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
     const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
     repo.setXmlImportFileStoredPath(file.id, filePath);
-    repo.updateXmlImportFileResolution(file.id, { contractNumber: "CONTRATO-NF-1", billingObservations: "Lote 42" });
+    repo.updateXmlImportFileResolution(file.id, { contractNumber: "CONTRATO-NF-1", billingObservations: "Lote 42", freightDaeReference: "GUIA-998", freightDaeAmountCents: 8750 });
     repo.updateXmlImportFileResolution(file.id, { clientPartnerId: partnerId });
     const result = await repo.executeXmlImportJob(job.id);
     expect(result.files[0].errorMessage).toBeNull();
@@ -118,6 +118,8 @@ describe("xml imports", () => {
     expect(detail.operations[0].serviceAmountCents).toBe(5250);
     expect(detail.document.contractNumber).toBe("CONTRATO-NF-1");
     expect(detail.document.billingObservations).toBe("Lote 42");
+    expect(detail.document.freightDaeReference).toBe("GUIA-998");
+    expect(detail.document.freightDaeAmountCents).toBe(8750);
     // A clean XML import (no pending issues) auto-confirms the note and its operation,
     // so it shows up ready-to-bill without a separate manual "Confirmar" step.
     expect(detail.document.status).toBe("CONFIRMED");

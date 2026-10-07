@@ -633,6 +633,36 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("adds one freight DAE per fiscal document to the charge and removes it when the note is released", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "DAE-900", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const fiscal = repo.getFiscalDocument(operation.fiscalDocumentId).document;
+      repo.updateFiscalDocument(fiscal.id, {
+        ...fiscal,
+        operationType: "SALE",
+        freightDaeReference: "GUIA-123",
+        freightDaeAmountCents: 12345
+      });
+
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      expect(draft.charge.subtotalServicesCents).toBe(5000);
+      expect(draft.charge.additionsCents).toBe(12345);
+      expect(draft.charge.finalAmountCents).toBe(17345);
+      expect(draft.adjustments).toEqual(expect.arrayContaining([expect.objectContaining({
+        sourceFiscalDocumentId: fiscal.id,
+        description: "DAE de frete referente a NF DAE-900 - DAE GUIA-123",
+        amountCents: 12345
+      })]));
+
+      const released = repo.releaseOperations(draft.charge.id, [operation.id]);
+      expect(released.adjustments).toHaveLength(0);
+      expect(released.charge.finalAmountCents).toBe(0);
+    } finally { db.close(); }
+  });
+
   it("subtracts manual returns in sacks or kilograms and recalculates an open charge", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {

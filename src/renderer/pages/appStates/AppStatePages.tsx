@@ -463,7 +463,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
         <DateInput label="Periodo - fim" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
       </FilterBar>
       <div className="dashboard-grid dashboard-grid--hero">
-        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
+        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas vendidas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas de venda lancadas</small></Card>
         <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
         <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber no periodo</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>Todas as empresas · {billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
         <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Recebido referente ao periodo</span><strong>{formatCurrencyFromCents(billingSummary?.receivedForOperationsPeriodCents ?? 0)}</strong><small>Total recebido nas datas selecionadas: {formatCurrencyFromCents(billingSummary?.cashReceivedCents ?? 0)} · Todas as empresas</small></Card>
