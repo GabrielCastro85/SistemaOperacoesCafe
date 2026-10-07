@@ -165,7 +165,7 @@ describe("monitor remoto do coletor", () => {
     await app.close();
   });
 
-  it("entrega um manifesto autenticado e com hash para a atualizacao automatica", async () => {
+  it("entrega um manifesto autenticado e com hash para a atualizacao comandada", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(`${"a".repeat(64)}  ColetorGraoBase.exe\n`, { status: 200 })));
     const pool = { query: vi.fn() } as unknown as pg.Pool;
     const app = Fastify();

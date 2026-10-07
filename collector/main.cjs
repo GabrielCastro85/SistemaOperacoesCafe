@@ -185,15 +185,33 @@ async function downloadToFile(url, destination) {
 
 function startDownloadedVersion(executablePath, version) {
   const scriptPath = join(portableDir, "aplicar-atualizacao-coletor.ps1");
+  const updateLogPath = join(portableDir, "coletor-atualizacao.log");
   const script = [
     "$ErrorActionPreference = \"SilentlyContinue\"",
     `$oldPid = ${process.pid}`,
+    `$oldExecutable = ${powershellLiteral(process.execPath)}`,
     `$newExecutable = ${powershellLiteral(executablePath)}`,
     `$workingDirectory = ${powershellLiteral(portableDir)}`,
+    `$updateLog = ${powershellLiteral(updateLogPath)}`,
+    "function Write-UpdateLog([string]$message) { Add-Content -LiteralPath $updateLog -Value \"$(Get-Date -Format o) $message\" -Encoding UTF8 -ErrorAction SilentlyContinue }",
+    "Write-UpdateLog \"Aguardando o coletor anterior encerrar.\"",
     "Wait-Process -Id $oldPid -Timeout 60",
     "if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) { Stop-Process -Id $oldPid -Force }",
     "Start-Sleep -Seconds 2",
-    "Start-Process -FilePath $newExecutable -WorkingDirectory $workingDirectory -WindowStyle Hidden"
+    "$started = $false",
+    "foreach ($attempt in 1..3) {",
+    "  Write-UpdateLog \"Tentativa $attempt de iniciar a nova versao.\"",
+    "  Start-Process -FilePath $newExecutable -WorkingDirectory $workingDirectory -WindowStyle Hidden",
+    "  Start-Sleep -Seconds 10",
+    "  $collector = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'ColetorGraoBase*' }",
+    "  if ($collector) { $started = $true; break }",
+    "}",
+    "if ($started) {",
+    "  Write-UpdateLog \"Nova versao iniciada com sucesso.\"",
+    "} else {",
+    "  Write-UpdateLog \"A nova versao nao permaneceu aberta; retornando ao coletor anterior.\"",
+    "  Start-Process -FilePath $oldExecutable -WorkingDirectory $workingDirectory -WindowStyle Hidden",
+    "}"
   ].join("\r\n");
   writeFileSync(scriptPath, script, "utf8");
   const child = spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
@@ -367,21 +385,15 @@ else app.whenReady().then(async () => {
   await scan();
   if (once) return app.quit();
   let interval = 60_000;
-  let updateInterval = 3_600_000;
   try {
     const config = loadConfig();
     interval = config.scanIntervalSeconds * 1000;
-    updateInterval = config.updateCheckSeconds * 1000;
-    if (await checkForUpdate(config)) return;
     await pollRemoteCommands(config);
   } catch {}
   setInterval(() => void scan(), interval);
   setInterval(() => {
     try { void pollRemoteCommands(loadConfig()); } catch (error) { log("Falha ao preparar consulta de comandos", { error: error instanceof Error ? error.message : String(error) }); }
   }, 30_000);
-  setInterval(() => {
-    try { void checkForUpdate(loadConfig()); } catch (error) { log("Falha ao preparar verificacao de atualizacao", { error: error instanceof Error ? error.message : String(error) }); }
-  }, updateInterval);
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());

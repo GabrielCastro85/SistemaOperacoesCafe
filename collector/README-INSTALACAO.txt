@@ -20,8 +20,10 @@ A partir da versao 1.1.33, o computador principal mostra se este coletor esta
 online, a ultima verificacao bem-sucedida, o ultimo XML enviado e eventuais erros.
 
 A partir da versao 1.1.36, o programa principal permite buscar notas agora,
-procurar atualizacoes, reiniciar o coletor e consultar os registros recentes a
-distancia. O coletor instala sozinho as proximas versoes. A inicializacao fica
+atualizar, reiniciar o coletor e consultar os registros recentes a distancia.
+A atualizacao so comeca quando o usuario aciona "Atualizar coletor" no programa;
+se a nova versao nao permanecer aberta, o coletor anterior e iniciado novamente.
+A inicializacao fica
 registrada antes do login, no perfil do usuario e na pasta Inicializar. Uma
 vigilancia executada a cada dois minutos reabre o coletor caso ele tenha parado.
 
@@ -29,4 +31,5 @@ Arquivos de diagnostico:
 - coletor-status.json: resumo da ultima verificacao
 - coletor.log: historico de verificacoes e eventuais erros
 - coletor-inicializacao.log: tentativas do Windows de abrir o coletor
+- coletor-atualizacao.log: tentativas de troca e recuperacao de versao
 - coletor-state.json: controle dos XMLs ja enviados
