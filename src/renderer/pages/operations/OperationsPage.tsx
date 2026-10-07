@@ -83,6 +83,28 @@ function formatCollectorActivity(value: string | null): string {
   return `${relative} (${exact})`;
 }
 
+function formatCollectorUptime(value: number | null): string {
+  if (value === null) return "Ainda nao informado";
+  const hours = Math.floor(value / 3_600);
+  const minutes = Math.floor((value % 3_600) / 60);
+  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
+
+function collectorCommandLabel(command: CollectorMonitorStatus["lastCommand"]): string {
+  if (command === "SCAN_NOW") return "Buscar notas";
+  if (command === "UPDATE_NOW") return "Atualizar coletor";
+  if (command === "RESTART") return "Reiniciar coletor";
+  return "Nenhum comando enviado";
+}
+
+function collectorCommandStatusLabel(status: CollectorMonitorStatus["lastCommandStatus"]): string {
+  if (status === "PENDING") return "aguardando o coletor";
+  if (status === "RUNNING") return "em execucao";
+  if (status === "COMPLETED") return "concluido";
+  if (status === "FAILED") return "falhou";
+  return "";
+}
+
 function collectorCompanyLabels(cnpjs: string[]): string {
   const labels = cnpjs.map((cnpj) => {
     if (cnpj === "16594876000224") return "Grao & Grao MG";
@@ -185,6 +207,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
   const [collectorStatuses, setCollectorStatuses] = useState<CollectorMonitorStatus[]>([]);
   const [collectorMonitorError, setCollectorMonitorError] = useState<string | null>(null);
+  const [collectorCommandBusy, setCollectorCommandBusy] = useState<string | null>(null);
   const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
   const [vulpePeriodStart, setVulpePeriodStart] = useState(() => currentBrazilMonthRange().start);
   const [vulpePeriodEnd, setVulpePeriodEnd] = useState(() => currentBrazilMonthRange().end);
@@ -209,6 +232,27 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlDataRef = useRef<HTMLDivElement | null>(null);
   const xmlResultRef = useRef<HTMLDivElement | null>(null);
   const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
+
+  const sendCollectorCommand = async (collector: CollectorMonitorStatus, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART") => {
+    const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
+    setCollectorCommandBusy(key);
+    try {
+      await window.operationsCafe.sendCollectorCommand({
+        sourceCode: collector.sourceCode,
+        machineId: collector.machineId,
+        command
+      });
+      const action = collectorCommandLabel(command);
+      setMessage(`${action} enviado ao coletor. ${collector.online ? "Ele deve executar em ate 30 segundos." : "O comando sera executado assim que o coletor voltar a conectar."}`);
+      const status = await window.operationsCafe.getVulpeDevStatus();
+      setCollectorStatuses(status.collectors);
+      setCollectorMonitorError(status.collectorMonitorError);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Nao foi possivel enviar o comando ao coletor.");
+    } finally {
+      setCollectorCommandBusy(null);
+    }
+  };
 
   useEffect(() => { setXmlJob(null); }, [partnerId, operationType, scope, productId, ownLegalEntityId]);
   useEffect(() => { setReplacementPartnerId(""); }, [detail?.document.id]);
@@ -1462,8 +1506,29 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                           <div><dt>Ultima varredura correta</dt><dd>{formatCollectorActivity(collector.lastSuccessAt)}</dd></div>
                           <div><dt>Ultimo XML enviado</dt><dd>{formatCollectorActivity(collector.lastUploadAt ?? collector.lastFileReceivedAt)}</dd></div>
                           <div><dt>Fila no servidor</dt><dd>{collector.pendingFiles} arquivo(s)</dd></div>
+                          <div><dt>Iniciado em</dt><dd>{formatCollectorActivity(collector.startedAt)}</dd></div>
+                          <div><dt>Tempo ativo</dt><dd>{formatCollectorUptime(collector.uptimeSeconds)}</dd></div>
+                          <div><dt>Inicializacao automatica</dt><dd>{collector.startupConfigured ? "Configurada" : "Nao confirmada"}</dd></div>
+                          <div><dt>Ultima busca de atualizacao</dt><dd>{formatCollectorActivity(collector.lastUpdateCheckAt)}</dd></div>
                         </dl>
+                        {collector.lastCommand ? (
+                          <p>Ultimo comando: <strong>{collectorCommandLabel(collector.lastCommand)}</strong> · {collectorCommandStatusLabel(collector.lastCommandStatus)}{collector.lastCommandResult ? ` · ${collector.lastCommandResult}` : ""}</p>
+                        ) : null}
                         {collector.lastError ? <p>{collector.lastError}</p> : null}
+                        <div className="collector-monitor__actions">
+                          {(["SCAN_NOW", "UPDATE_NOW", "RESTART"] as const).map((command) => {
+                            const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
+                            return (
+                              <button type="button" key={command} disabled={collectorCommandBusy !== null} onClick={() => void sendCollectorCommand(collector, command)}>
+                                {collectorCommandBusy === key ? "Enviando..." : collectorCommandLabel(command)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <details className="collector-monitor__diagnostics">
+                          <summary>Ver diagnostico e registros recentes</summary>
+                          <pre>{collector.recentLogs?.trim() || "O coletor ainda nao enviou registros detalhados."}</pre>
+                        </details>
                       </article>
                     );
                   })}

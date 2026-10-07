@@ -43,8 +43,15 @@ const heartbeatSchema = z.object({
   eligible: z.number().int().nonnegative().default(0),
   uploaded: z.number().int().nonnegative().default(0),
   pendingUpload: z.number().int().nonnegative().default(0),
-  error: z.string().trim().max(1000).nullable().optional()
+  error: z.string().trim().max(1000).nullable().optional(),
+  startedAt: z.string().datetime().nullable().optional(),
+  uptimeSeconds: z.number().int().nonnegative().max(31_536_000).nullable().optional(),
+  lastUpdateCheckAt: z.string().datetime().nullable().optional(),
+  recentLogs: z.string().max(12_000).nullable().optional(),
+  startupConfigured: z.boolean().optional()
 });
+
+const collectorCommandSchema = z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART"]);
 
 function collectorAuthorized(config: ServerConfig, request: FastifyRequest): boolean {
   const supplied = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : "";
@@ -85,11 +92,13 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
       INSERT INTO collector_status(
         source_code, machine_id, source_label, emitter_cnpjs, collector_version,
         scan_interval_seconds, status, inspected, eligible, uploaded, pending_upload,
-        last_scan_at, last_success_at, last_upload_at, last_error, updated_at
+        last_scan_at, last_success_at, last_upload_at, last_error, updated_at,
+        started_at, uptime_seconds, last_update_check_at, recent_logs, startup_configured
       ) VALUES (
         $1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,
         now(), CASE WHEN $7 = 'OK' THEN now() ELSE NULL END,
-        CASE WHEN $10 > 0 THEN now() ELSE NULL END, $12, now()
+        CASE WHEN $10 > 0 THEN now() ELSE NULL END, $12, now(),
+        $13, $14, $15, $16, $17
       )
       ON CONFLICT (source_code, machine_id) DO UPDATE SET
         source_label = excluded.source_label,
@@ -105,13 +114,71 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
         last_success_at = CASE WHEN excluded.status = 'OK' THEN now() ELSE collector_status.last_success_at END,
         last_upload_at = CASE WHEN excluded.uploaded > 0 THEN now() ELSE collector_status.last_upload_at END,
         last_error = excluded.last_error,
+        started_at = excluded.started_at,
+        uptime_seconds = excluded.uptime_seconds,
+        last_update_check_at = excluded.last_update_check_at,
+        recent_logs = excluded.recent_logs,
+        startup_configured = excluded.startup_configured,
         updated_at = now()
     `, [
       input.sourceCode, input.machineId, input.sourceLabel, JSON.stringify(input.emitterCnpjs),
       input.collectorVersion ?? null, input.scanIntervalSeconds, input.status,
-      input.inspected, input.eligible, input.uploaded, input.pendingUpload, input.error ?? null
+      input.inspected, input.eligible, input.uploaded, input.pendingUpload, input.error ?? null,
+      input.startedAt ?? null, input.uptimeSeconds ?? null, input.lastUpdateCheckAt ?? null,
+      input.recentLogs ?? null, input.startupConfigured ?? false
     ]);
     return { status: "received", receivedAt: new Date().toISOString() };
+  });
+
+  app.get("/v1/collector/commands", async (request, reply) => {
+    if (!collectorAuthorized(config, request)) return reply.code(401).send({ error: "COLLECTOR_UNAUTHORIZED" });
+    const query = z.object({
+      sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
+      machineId: z.string().trim().min(4).max(200)
+    }).parse(request.query);
+    const result = await pool.query(`
+      UPDATE collector_commands
+      SET status = 'RUNNING', started_at = now()
+      WHERE id = (
+        SELECT id FROM collector_commands
+        WHERE source_code = $1 AND machine_id = $2
+          AND (status = 'PENDING' OR (status = 'RUNNING' AND started_at < now() - interval '5 minutes'))
+        ORDER BY requested_at LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, command, requested_at AS "requestedAt"
+    `, [query.sourceCode, query.machineId]);
+    return { command: result.rows[0] ?? null };
+  });
+
+  app.patch("/v1/collector/commands/:id", async (request, reply) => {
+    if (!collectorAuthorized(config, request)) return reply.code(401).send({ error: "COLLECTOR_UNAUTHORIZED" });
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const input = z.object({ status: z.enum(["COMPLETED", "FAILED"]), message: z.string().trim().max(1000).nullable().optional() }).parse(request.body);
+    const result = await pool.query(`
+      UPDATE collector_commands SET status = $1, completed_at = now(), result_message = $2
+      WHERE id = $3 AND status = 'RUNNING' RETURNING id
+    `, [input.status, input.message ?? null, id]);
+    if (!result.rowCount) return reply.code(404).send({ error: "COLLECTOR_COMMAND_NOT_FOUND" });
+    return { id, status: input.status };
+  });
+
+  app.post("/v1/collector/commands", async (request, reply) => {
+    const session = await resolveSession(pool, request);
+    if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
+    const input = z.object({
+      sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
+      machineId: z.string().trim().min(4).max(200),
+      command: collectorCommandSchema
+    }).parse(request.body);
+    const collector = await pool.query("SELECT 1 FROM collector_status WHERE source_code = $1 AND machine_id = $2", [input.sourceCode, input.machineId]);
+    if (!collector.rowCount) return reply.code(404).send({ error: "COLLECTOR_NOT_FOUND" });
+    const id = randomUUID();
+    await pool.query(`
+      INSERT INTO collector_commands(id, source_code, machine_id, command, requested_by_user_id)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [id, input.sourceCode, input.machineId, input.command, session.userId]);
+    return reply.code(201).send({ id, status: "PENDING", command: input.command });
   });
 
   app.post("/v1/collector/files", { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
@@ -170,6 +237,15 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
         status.last_upload_at AS "lastUploadAt",
         status.last_error AS "lastError",
         status.updated_at AS "updatedAt",
+        status.started_at AS "startedAt",
+        status.uptime_seconds AS "uptimeSeconds",
+        status.last_update_check_at AS "lastUpdateCheckAt",
+        status.recent_logs AS "recentLogs",
+        status.startup_configured AS "startupConfigured",
+        command.command AS "lastCommand",
+        command.status AS "lastCommandStatus",
+        command.requested_at AS "lastCommandRequestedAt",
+        command.result_message AS "lastCommandResult",
         COALESCE(inbox.pending_count, 0)::integer AS "pendingFiles",
         inbox.last_received_at AS "lastFileReceivedAt"
       FROM collector_status status
@@ -180,6 +256,12 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
         FROM collector_inbox_files files
         WHERE files.source_code = status.source_code AND files.machine_id = status.machine_id
       ) inbox ON true
+      LEFT JOIN LATERAL (
+        SELECT commands.command, commands.status, commands.requested_at, commands.result_message
+        FROM collector_commands commands
+        WHERE commands.source_code = status.source_code AND commands.machine_id = status.machine_id
+        ORDER BY commands.requested_at DESC LIMIT 1
+      ) command ON true
       ORDER BY status.updated_at DESC, status.source_label, status.machine_id
     `);
     const now = Date.now();

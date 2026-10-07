@@ -33,7 +33,12 @@ describe("monitor remoto do coletor", () => {
       eligible: 2,
       uploaded: 1,
       pendingUpload: 0,
-      error: null
+      error: null,
+      startedAt: "2026-10-07T10:00:00.000Z",
+      uptimeSeconds: 3600,
+      lastUpdateCheckAt: "2026-10-07T10:30:00.000Z",
+      recentLogs: "Varredura concluida",
+      startupConfigured: true
     };
     const unauthorized = await app.inject({ method: "POST", url: "/v1/collector/heartbeat", payload });
     expect(unauthorized.statusCode).toBe(401);
@@ -52,6 +57,57 @@ describe("monitor remoto do coletor", () => {
       JSON.stringify(payload.emitterCnpjs),
       "1.1.33"
     ]));
+    await app.close();
+  });
+
+  it("envia, entrega e conclui um comando remoto", async () => {
+    const commandId = "cae8aceb-f66e-4595-9908-0c68b79b605a";
+    let insertedCommand: unknown[] | null = null;
+    const pool = {
+      async query(sql: string, params: unknown[] = []) {
+        if (sql.includes("FROM api_sessions")) {
+          return { rows: [{ sessionId: "session", userId: "6456596f-2ab5-47f5-85ee-dd60fcb5fe1d", username: "gabriel", displayName: "Gabriel", deviceId: "device" }] };
+        }
+        if (sql.includes("UPDATE api_sessions")) return { rows: [] };
+        if (sql.includes("SELECT 1 FROM collector_status")) return { rows: [{ exists: 1 }], rowCount: 1 };
+        if (sql.includes("INSERT INTO collector_commands")) {
+          insertedCommand = params;
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes("UPDATE collector_commands") && sql.includes("RETURNING id, command")) {
+          return { rows: [{ id: commandId, command: "SCAN_NOW", requestedAt: new Date().toISOString() }], rowCount: 1 };
+        }
+        if (sql.includes("UPDATE collector_commands SET status")) return { rows: [{ id: commandId }], rowCount: 1 };
+        throw new Error(`SQL inesperado: ${sql}`);
+      }
+    } as unknown as pg.Pool;
+    const app = Fastify();
+    registerCollectorRoutes(app, pool, config);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/collector/commands",
+      headers: { authorization: "Bearer sessao" },
+      payload: { sourceCode: "GRAO_GRAO", machineId: "pc-grao-principal", command: "SCAN_NOW" }
+    });
+    expect(created.statusCode).toBe(201);
+    expect(insertedCommand).toEqual(expect.arrayContaining(["GRAO_GRAO", "pc-grao-principal", "SCAN_NOW"]));
+
+    const polled = await app.inject({
+      method: "GET",
+      url: "/v1/collector/commands?sourceCode=GRAO_GRAO&machineId=pc-grao-principal",
+      headers: { authorization: `Bearer ${collectorSecret}` }
+    });
+    expect(polled.json()).toMatchObject({ command: { id: commandId, command: "SCAN_NOW" } });
+
+    const completed = await app.inject({
+      method: "PATCH",
+      url: `/v1/collector/commands/${commandId}`,
+      headers: { authorization: `Bearer ${collectorSecret}` },
+      payload: { status: "COMPLETED", message: "Varredura executada." }
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({ id: commandId, status: "COMPLETED" });
     await app.close();
   });
 

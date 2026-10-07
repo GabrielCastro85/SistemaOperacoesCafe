@@ -701,6 +701,15 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       ]
     };
   });
+  handle(IPC_CHANNELS.sendCollectorCommand, async (_event, payload: unknown) => {
+    const data = z.object({
+      sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
+      machineId: z.string().trim().min(4).max(200),
+      command: z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART"])
+    }).parse(payload);
+    if (!centralSync.hasSession()) throw new Error("Entre no servidor central para controlar o coletor.");
+    return centralSync.sendCollectorCommand(data.sourceCode, data.machineId, data.command);
+  });
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
     const data = z.object({
       source: z.enum(["VILLA_MG", "VILLA_ES", "GRAO_MG", "GRAO_SP", "ALL"]),

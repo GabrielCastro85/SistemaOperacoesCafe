@@ -83,6 +83,15 @@ export interface CollectorMonitorStatus {
   lastFileReceivedAt: string | null;
   lastError: string | null;
   updatedAt: string;
+  startedAt: string | null;
+  uptimeSeconds: number | null;
+  lastUpdateCheckAt: string | null;
+  recentLogs: string | null;
+  startupConfigured: boolean;
+  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | null;
+  lastCommandStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | null;
+  lastCommandRequestedAt: string | null;
+  lastCommandResult: string | null;
 }
 
 function jsonValue(value: unknown): unknown {
@@ -169,6 +178,13 @@ export class CentralSyncService {
   async listCollectorStatuses(): Promise<CollectorMonitorStatus[]> {
     const response = await this.request<{ collectors: CollectorMonitorStatus[] }>("/v1/collector/status");
     return response.collectors;
+  }
+
+  async sendCollectorCommand(sourceCode: string, machineId: string, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART"): Promise<{ id: string; status: "PENDING"; command: string }> {
+    return this.request("/v1/collector/commands", {
+      method: "POST",
+      body: JSON.stringify({ sourceCode, machineId, command })
+    });
   }
 
   async downloadCollectorInboxFile(id: string): Promise<Buffer> {

@@ -1,14 +1,18 @@
 @echo off
+set "COLLECTOR_DIR=%ProgramData%\GraoBase\Coletor"
+if not exist "%COLLECTOR_DIR%" set "COLLECTOR_DIR=%~dp0"
+echo Pasta instalada: %COLLECTOR_DIR%
+echo.
 echo ===== ULTIMA VARREDURA =====
-if exist "%~dp0coletor-status.json" (
-  type "%~dp0coletor-status.json"
+if exist "%COLLECTOR_DIR%\coletor-status.json" (
+  type "%COLLECTOR_DIR%\coletor-status.json"
 ) else (
   echo O coletor ainda nao gerou o arquivo de status.
 )
 echo.
 echo ===== INICIALIZACAO =====
-if exist "%~dp0coletor-inicializacao.log" (
-  powershell.exe -NoProfile -Command "Get-Content -LiteralPath '%~dp0coletor-inicializacao.log' -Tail 15"
+if exist "%COLLECTOR_DIR%\coletor-inicializacao.log" (
+  powershell.exe -NoProfile -Command "Get-Content -LiteralPath '%COLLECTOR_DIR%\coletor-inicializacao.log' -Tail 15"
 ) else (
   echo Ainda nao existe registro de inicializacao automatica.
 )

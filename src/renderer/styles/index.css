@@ -5259,6 +5259,41 @@ table tbody tr:hover {
   font-size: 13px;
 }
 
+.collector-monitor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.collector-monitor__actions button {
+  flex: 1 1 145px;
+}
+
+.collector-monitor__diagnostics {
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.collector-monitor__diagnostics summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.collector-monitor__diagnostics pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #151b18;
+  color: #dff5e8;
+  font: 12px/1.45 Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 720px) {
   .collector-monitor__heading,
   .collector-monitor__title {

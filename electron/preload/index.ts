@@ -263,6 +263,7 @@ const IPC_CHANNELS = {
   selectXmlFiles: "xmlFiles:selectFiles",
   selectXmlFolder: "xmlFiles:selectFolder",
   getVulpeDevStatus: "xmlFiles:vulpeDevStatus",
+  sendCollectorCommand: "xmlFiles:collectorCommand",
   scanVulpeDevXml: "xmlFiles:vulpeDevScan",
   registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",
@@ -479,6 +480,15 @@ export interface CollectorMonitorStatus {
   lastFileReceivedAt: string | null;
   lastError: string | null;
   updatedAt: string;
+  startedAt: string | null;
+  uptimeSeconds: number | null;
+  lastUpdateCheckAt: string | null;
+  recentLogs: string | null;
+  startupConfigured: boolean;
+  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | null;
+  lastCommandStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | null;
+  lastCommandRequestedAt: string | null;
+  lastCommandResult: string | null;
 }
 
 export interface OperationsCafeApi {
@@ -657,6 +667,7 @@ export interface OperationsCafeApi {
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
   getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
+  sendCollectorCommand: (input: { sourceCode: string; machineId: string; command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" }) => Promise<{ id: string; status: "PENDING"; command: string }>;
   scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
@@ -1066,6 +1077,7 @@ const api: OperationsCafeApi = {
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
   getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>,
+  sendCollectorCommand: (input) => ipcRenderer.invoke(IPC_CHANNELS.sendCollectorCommand, input) as Promise<{ id: string; status: "PENDING"; command: string }>,
   scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;

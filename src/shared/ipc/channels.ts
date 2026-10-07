@@ -173,6 +173,7 @@ export const IPC_CHANNELS = {
   selectXmlFiles: "xmlFiles:selectFiles",
   selectXmlFolder: "xmlFiles:selectFolder",
   getVulpeDevStatus: "xmlFiles:vulpeDevStatus",
+  sendCollectorCommand: "xmlFiles:collectorCommand",
   scanVulpeDevXml: "xmlFiles:vulpeDevScan",
   registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",

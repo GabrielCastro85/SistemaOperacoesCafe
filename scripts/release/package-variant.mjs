@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.35"
+  const highlights = releaseVersion === "1.1.36"
+    ? `- PDFs de cobranca passam a listar tambem as notas ja pagas no periodo, em uma secao informativa separada.
+- Monitor do coletor permite buscar notas, procurar atualizacoes e reiniciar o agente remotamente.
+- Diagnostico remoto mostra inicio, tempo ativo, inicializacao automatica, ultimo comando e registros recentes.
+- Instalacao do coletor usa uma pasta local do Windows e vigilancia a cada dois minutos para iniciar mesmo sem login.`
+    : releaseVersion === "1.1.35"
     ? `- Confirmacoes de negocio agora permitem fechamentos de compra com ou sem nota fiscal.\n- DAE de frete pode ser informado durante a importacao da NF-e e entra na cobranca do cliente.\n- Dashboard soma somente as sacas vendidas, sem misturar compras no indicador comercial.\n- Sincronizacao central suporta lotes maiores de alteracoes com retomada segura.`
     : releaseVersion === "1.1.34"
     ? `- Monitor remoto mostra se o coletor da Grao & Grao esta online e quando funcionou pela ultima vez.\n- Coletor passa a atualizar automaticamente pelas proximas versoes.\n- Inicializacao do coletor no Windows ganhou mecanismos redundantes e verificacao apos a instalacao.`

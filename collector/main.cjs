@@ -2,7 +2,7 @@ const { app } = require("electron");
 const { createHash, randomUUID } = require("node:crypto");
 const { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } = require("node:fs");
 const { basename, dirname, join, resolve } = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const { XMLParser } = require("fast-xml-parser");
@@ -20,6 +20,9 @@ let running = false;
 let checkingUpdate = false;
 let updateApplying = false;
 let lastUpdateError = null;
+let lastUpdateCheckAt = null;
+let pollingCommands = false;
+const startedAt = new Date().toISOString();
 
 function log(message, details) {
   const line = `${new Date().toISOString()} ${message}${details ? ` ${JSON.stringify(details)}` : ""}\n`;
@@ -31,6 +34,20 @@ function log(message, details) {
 
 function writeStatus(status) {
   writeFileSync(statusPath, JSON.stringify({ updatedAt: new Date().toISOString(), ...status }, null, 2), "utf8");
+}
+
+function recentLogs() {
+  try {
+    if (!existsSync(logPath)) return null;
+    return readFileSync(logPath, "utf8").split(/\r?\n/).filter(Boolean).slice(-30).join("\n").slice(-12_000);
+  } catch { return null; }
+}
+
+function startupConfigured() {
+  try {
+    const result = spawnSync("schtasks.exe", ["/Query", "/TN", "Coletor GraoBase - Vigilancia"], { windowsHide: true, encoding: "utf8" });
+    return result.status === 0;
+  } catch { return false; }
 }
 
 function loadConfig() {
@@ -140,7 +157,12 @@ async function sendHeartbeat(config, status) {
       emitterCnpjs: config.emitterCnpjs,
       collectorVersion: app.getVersion(),
       scanIntervalSeconds: config.scanIntervalSeconds,
-      ...status
+      ...status,
+      startedAt,
+      uptimeSeconds: Math.max(0, Math.floor(process.uptime())),
+      lastUpdateCheckAt,
+      recentLogs: recentLogs(),
+      startupConfigured: startupConfigured()
     })
   });
   const body = await response.text();
@@ -183,12 +205,13 @@ function startDownloadedVersion(executablePath, version) {
   updateApplying = true;
   writeStatus({ status: "UPDATING", source: "GraoBase", currentVersion: app.getVersion(), targetVersion: version });
   log("Atualizacao validada; reiniciando o coletor", { currentVersion: app.getVersion(), targetVersion: version });
-  setTimeout(() => app.quit(), 250);
+  setTimeout(() => app.quit(), 1500);
 }
 
 async function checkForUpdate(config) {
   if (checkingUpdate || updateApplying) return false;
   checkingUpdate = true;
+  lastUpdateCheckAt = new Date().toISOString();
   let temporaryPath = "";
   try {
     const response = await fetch(`${config.serverUrl}/v1/collector/update`, {
@@ -221,6 +244,53 @@ async function checkForUpdate(config) {
     return false;
   } finally {
     checkingUpdate = false;
+  }
+}
+
+async function finishRemoteCommand(config, id, status, message) {
+  const response = await fetch(`${config.serverUrl}/v1/collector/commands/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", authorization: `Bearer ${config.collectorSecret}` },
+    body: JSON.stringify({ status, message })
+  });
+  if (!response.ok) throw new Error(`Servidor ${response.status} ao concluir comando remoto.`);
+}
+
+async function pollRemoteCommands(config) {
+  if (pollingCommands || updateApplying || running) return;
+  pollingCommands = true;
+  try {
+    const query = new URLSearchParams({ sourceCode: config.sourceCode, machineId: config.machineId });
+    const response = await fetch(`${config.serverUrl}/v1/collector/commands?${query}`, {
+      headers: { authorization: `Bearer ${config.collectorSecret}` }
+    });
+    if (!response.ok) throw new Error(`Servidor ${response.status} ao consultar comandos remotos.`);
+    const payload = await response.json();
+    const command = payload?.command;
+    if (!command) return;
+    log("Comando remoto recebido", { command: command.command, id: command.id });
+    if (command.command === "SCAN_NOW") {
+      await scan();
+      await finishRemoteCommand(config, command.id, "COMPLETED", "Varredura executada.");
+      return;
+    }
+    if (command.command === "UPDATE_NOW") {
+      const updating = await checkForUpdate(config);
+      await finishRemoteCommand(config, command.id, "COMPLETED", updating ? "Atualizacao baixada e reinicio iniciado." : "O coletor ja esta atualizado.");
+      return;
+    }
+    if (command.command === "RESTART") {
+      await finishRemoteCommand(config, command.id, "COMPLETED", "Reinicio solicitado.");
+      log("Reinicio remoto solicitado");
+      app.relaunch({ args: [`--config=${configPath}`] });
+      setTimeout(() => app.exit(0), 500);
+      return;
+    }
+    await finishRemoteCommand(config, command.id, "FAILED", "Comando desconhecido.");
+  } catch (error) {
+    log("Falha ao processar comando remoto", { error: error instanceof Error ? error.message : String(error) });
+  } finally {
+    pollingCommands = false;
   }
 }
 
@@ -303,8 +373,12 @@ else app.whenReady().then(async () => {
     interval = config.scanIntervalSeconds * 1000;
     updateInterval = config.updateCheckSeconds * 1000;
     if (await checkForUpdate(config)) return;
+    await pollRemoteCommands(config);
   } catch {}
   setInterval(() => void scan(), interval);
+  setInterval(() => {
+    try { void pollRemoteCommands(loadConfig()); } catch (error) { log("Falha ao preparar consulta de comandos", { error: error instanceof Error ? error.message : String(error) }); }
+  }, 30_000);
   setInterval(() => {
     try { void checkForUpdate(loadConfig()); } catch (error) { log("Falha ao preparar verificacao de atualizacao", { error: error instanceof Error ? error.message : String(error) }); }
   }, updateInterval);
