@@ -315,8 +315,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     return {
       periodStart: filters.periodStart,
       periodEnd: filters.periodEnd,
-      sacks: operations.reduce((sum, row) => sum + numberValue(row.quantity_sacks_decimal), 0),
-      operationCount: operations.length,
+      sacks: sales.reduce((sum, row) => sum + numberValue(row.quantity_sacks_decimal), 0),
+      operationCount: sales.length,
       receivableCents: globalCharges.reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0) + globalUnbilled.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       receivedCents: globalReceivedForOperationsPeriodCents,
       generatedServiceCents: sales.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
