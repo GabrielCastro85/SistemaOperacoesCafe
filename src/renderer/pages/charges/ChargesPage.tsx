@@ -122,6 +122,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const ledgerAutofillChargeIdRef = useRef<string | null>(null);
   const ledgerAutofillClientIdRef = useRef<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [generatingPreview, setGeneratingPreview] = useState<"pdf" | "image" | null>(null);
   const [lastReceipt, setLastReceipt] = useState<ClientPayment | null>(null);
   const [chargeReceipts, setChargeReceipts] = useState<ClientPayment[]>([]);
   const [searchedOperations, setSearchedOperations] = useState(false);
@@ -844,6 +845,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function generateInternalPreview(kind: "pdf" | "image"): Promise<void> {
+    if (generatingPreview) return;
     if (!clientId || selectedOperations.length === 0) {
       setMessage("Selecione o cliente e marque as notas antes de gerar a previa.");
       return;
@@ -854,6 +856,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     }
 
     let temporaryChargeId: string | null = null;
+    setGeneratingPreview(kind);
+    setMessage(`Gerando a previa em ${kind === "pdf" ? "PDF" : "imagem"}. Aguarde a janela para escolher onde salvar.`);
     try {
       const draft = await window.operationsCafe.createClientChargeDraft({
         organizationId,
@@ -892,8 +896,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           setMessage(`A previa foi processada, mas o rascunho temporario nao pôde ser removido: ${cleanupError instanceof Error ? cleanupError.message : "erro desconhecido"}.`);
         }
       }
-      await load();
-      await findOperations();
+      try {
+        await load();
+        await findOperations();
+      } finally {
+        setGeneratingPreview(null);
+      }
     }
   }
 
@@ -1212,9 +1220,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               {!detail ? (
                 <>
                   <div className="inline-actions">
-                    <button onClick={() => void generateInternalPreview("pdf")} disabled={Boolean(draftDisabledReason)}>Previa interna PDF</button>
-                    <button onClick={() => void generateInternalPreview("image")} disabled={Boolean(draftDisabledReason)}>Previa interna imagem</button>
+                    <button onClick={() => void generateInternalPreview("pdf")} disabled={Boolean(draftDisabledReason) || Boolean(generatingPreview)}>{generatingPreview === "pdf" ? "Gerando PDF..." : "Previa interna PDF"}</button>
+                    <button onClick={() => void generateInternalPreview("image")} disabled={Boolean(draftDisabledReason) || Boolean(generatingPreview)}>{generatingPreview === "image" ? "Gerando imagem..." : "Previa interna imagem"}</button>
                   </div>
+                  {generatingPreview ? <small role="status">Preparando o arquivo. A janela para escolher onde salvar aparecera em seguida.</small> : null}
                   <span className="disabled-action-tip" tabIndex={draftDisabledReason ? 0 : -1}>
                     <button className="primary" onClick={() => void createDraft()} disabled={Boolean(draftDisabledReason)}>Preparar cobranca definitiva</button>
                     {draftDisabledReason ? <span className="disabled-action-tip__card" role="tooltip">{draftDisabledReason}</span> : null}

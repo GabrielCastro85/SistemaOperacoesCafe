@@ -1,4 +1,4 @@
-import { clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import { BrowserWindow, clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import log from "electron-log/main.js";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
@@ -1062,13 +1062,20 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     if (error) throw new Error(error);
     return true;
   });
-  handle(IPC_CHANNELS.openChargeDocument, async (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.openChargeDocument, async (event, payload: unknown) => {
     const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);
     const regenerated = await repository.regenerateChargeDocuments(data.chargeId);
     const filePath = repository.getChargeDocumentPath(regenerated.charge.id, data.kind);
     const client = repository.getBusinessPartner(regenerated.charge.clientPartnerId);
     const exportFileName = buildChargeExportFileName(client.displayName, regenerated.charge.periodStart, regenerated.charge.periodEnd, data.kind);
-    const destination = await dialog.showSaveDialog({ title: "Salvar cobranca por periodo", defaultPath: exportFileName, filters: [{ name: data.kind === "pdf" ? "PDF" : "Imagem PNG", extensions: [data.kind === "pdf" ? "pdf" : "png"] }] });
+    const dialogOptions = { title: "Salvar cobranca por periodo", defaultPath: exportFileName, filters: [{ name: data.kind === "pdf" ? "PDF" : "Imagem PNG", extensions: [data.kind === "pdf" ? "pdf" : "png"] }] };
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    // A geracao da imagem usa uma janela Electron oculta. Sem vincular o
+    // dialogo de salvamento a janela principal, o Windows pode abri-lo atras
+    // do aplicativo e o clique parece nao ter funcionado.
+    const destination = parentWindow
+      ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
     if (destination.canceled || !destination.filePath) return false;
     const exportedPath = copyGeneratedFileToPath(filePath, destination.filePath);
     const result = await shell.openPath(exportedPath);
