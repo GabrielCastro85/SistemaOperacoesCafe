@@ -213,22 +213,49 @@ export function registerSyncRoutes(app: FastifyInstance, pool: pg.Pool): void {
         });
       }
       const revision = currentRevision + 1;
-      for (const [index, change] of synchronizedChanges.entries()) {
+      const preparedChanges = synchronizedChanges.map((change, index) => {
         const data = change.operation === "UPSERT" ? change.data! : null;
-        const sha256 = data ? rowHash(data) : null;
-        await client.query(`
-          INSERT INTO central_records(table_name, row_key, row_data, row_sha256, revision, deleted, updated_by_user_id, updated_by_device_id, updated_at)
-          VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, now())
+        return {
+          tableName: change.table,
+          rowKey: change.key,
+          operation: change.operation,
+          rowData: data,
+          rowSha256: data ? rowHash(data) : null,
+          deleted: change.operation === "DELETE",
+          sequence: index + 1
+        };
+      });
+      // Um lote de centenas de notas gerava duas idas ao PostgreSQL para cada
+      // registro. Em migracoes de esquema isso excedia o tempo da requisicao e
+      // o desktop ficava preso no erro 500. O JSON recebido agora e aplicado
+      // em uma unica operacao atomica, incluindo o historico de alteracoes.
+      await client.query(`
+        WITH incoming AS MATERIALIZED (
+          SELECT * FROM jsonb_to_recordset($1::jsonb) AS change(
+            "tableName" text, "rowKey" text, operation text, "rowData" jsonb,
+            "rowSha256" text, deleted boolean, sequence integer
+          )
+        ), upserted AS (
+          INSERT INTO central_records(
+            table_name, row_key, row_data, row_sha256, revision, deleted,
+            updated_by_user_id, updated_by_device_id, updated_at
+          )
+          SELECT "tableName", "rowKey", "rowData", "rowSha256", $2, deleted, $3, $4, now()
+          FROM incoming
           ON CONFLICT (table_name, row_key) DO UPDATE SET
-            row_data = excluded.row_data, row_sha256 = excluded.row_sha256, revision = excluded.revision,
-            deleted = excluded.deleted, updated_by_user_id = excluded.updated_by_user_id,
+            row_data = excluded.row_data, row_sha256 = excluded.row_sha256,
+            revision = excluded.revision, deleted = excluded.deleted,
+            updated_by_user_id = excluded.updated_by_user_id,
             updated_by_device_id = excluded.updated_by_device_id, updated_at = now()
-        `, [change.table, change.key, data ? JSON.stringify(data) : null, sha256, revision, change.operation === "DELETE", session.userId, session.deviceId]);
-        await client.query(`
-          INSERT INTO central_change_log(revision, sequence, table_name, row_key, operation, row_data, row_sha256, user_id, device_id)
-          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
-        `, [revision, index + 1, change.table, change.key, change.operation, data ? JSON.stringify(data) : null, sha256, session.userId, session.deviceId]);
-      }
+          RETURNING table_name, row_key
+        )
+        INSERT INTO central_change_log(
+          revision, sequence, table_name, row_key, operation, row_data,
+          row_sha256, user_id, device_id
+        )
+        SELECT $2, sequence, "tableName", "rowKey", operation, "rowData", "rowSha256", $3, $4
+        FROM incoming
+      `, [JSON.stringify(preparedChanges), revision, session.userId, session.deviceId]);
       await client.query("UPDATE central_sync_state SET revision = $1, updated_at = now() WHERE singleton = true", [revision]);
       await client.query(`
         INSERT INTO central_sync_batches(idempotency_key, user_id, device_id, base_revision, committed_revision, change_count)
