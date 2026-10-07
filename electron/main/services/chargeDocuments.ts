@@ -121,7 +121,7 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   y -= 102;
   const chargeCount = 1;
   const totalOpenCents = detail.charge.openAmountCents;
-  drawSectionTitle(page, "Operacoes do periodo", margin, y, bold, ink, green);
+  drawSectionTitle(page, detail.charge.openAmountCents > 0 ? "Notas em aberto desta cobranca" : "Notas desta cobranca (pagas)", margin, y, bold, ink, green);
   y -= 16;
   const sections = summaryImageSections({ ...input, relatedOpenChargeDetails: [] });
   const columns = [
@@ -143,6 +143,35 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
     gold,
     green
   }));
+
+  const paidChargeDetails = input.relatedPaidChargeDetails ?? [];
+  if (paidChargeDetails.length > 0) {
+    if (y < 110) {
+      page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
+      y = pageHeight - margin - 70;
+    }
+    y -= 10;
+    drawSectionTitle(page, "Notas ja pagas no periodo (informativo)", margin, y, bold, ink, green);
+    y -= 16;
+    const [firstPaidCharge, ...otherPaidCharges] = paidChargeDetails;
+    const paidSections = summaryImageSections({
+      ...input,
+      detail: firstPaidCharge,
+      relatedOpenChargeDetails: otherPaidCharges,
+      relatedPaidChargeDetails: []
+    });
+    ({ page, y } = drawChargeOperationSectionsPdf(doc, page, paidSections, [], chargePeriodLabel(charge, true), columns, margin, y, contentWidth, {
+      font,
+      bold,
+      ink,
+      muted,
+      soft,
+      paper,
+      border,
+      gold,
+      green
+    }, " - PAGA"));
+  }
   y -= 20;
 
   if (y < 238) {
@@ -244,7 +273,8 @@ function drawChargeOperationSectionsPdf(
   margin: number,
   startY: number,
   contentWidth: number,
-  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; soft: PdfColor; paper: PdfColor; border: PdfColor; gold: PdfColor; green: PdfColor }
+  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; soft: PdfColor; paper: PdfColor; border: PdfColor; gold: PdfColor; green: PdfColor },
+  sectionTitleSuffix = ""
 ): { page: PDFPage; y: number } {
   const pageWidth = page.getWidth();
   const pageHeight = page.getHeight();
@@ -275,7 +305,7 @@ function drawChargeOperationSectionsPdf(
   sections.forEach((section) => {
     ensureSpace(35);
     currentPage.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
-    currentPage.drawText(truncate(section.title, style.bold, 6.8, contentWidth - 20), { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
+    currentPage.drawText(truncate(`${section.title}${sectionTitleSuffix}`, style.bold, 6.8, contentWidth - 20), { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
     cursorY -= 13;
 
     section.rows.forEach((row) => {
