@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.36"
+  const highlights = releaseVersion === "1.1.37"
+    ? `- Corrige o coletor que podia ser encerrado pelo Agendador do Windows poucos minutos depois de iniciar.
+- O coletor passa a manter uma vigilancia interna e tenta se reabrir quando o processo encerra inesperadamente.
+- Instalacoes antigas tem o limite de execucao das tarefas reparado automaticamente quando houver permissao.`
+    : releaseVersion === "1.1.36"
     ? `- PDFs de cobranca passam a listar tambem as notas ja pagas no periodo, em uma secao informativa separada.
 - Monitor do coletor permite buscar notas, procurar atualizacoes e reiniciar o agente remotamente.
 - Diagnostico remoto mostra inicio, tempo ativo, inicializacao automatica, ultimo comando e registros recentes.

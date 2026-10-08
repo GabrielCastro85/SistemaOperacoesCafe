@@ -55,7 +55,9 @@ Set-ItemProperty -Path $runKey -Name "ColetorGraoBase" -Value $runCommand
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherScript`""
 $systemPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+# Nao imponha limite de duracao: o Agendador pode manter o executavel filho no
+# mesmo job da tarefa e encerrava o coletor poucos minutos depois de inicia-lo.
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
 $startupTrigger = New-ScheduledTaskTrigger -AtStartup
 Register-ScheduledTask -TaskName "Coletor GraoBase - Inicializacao" -Action $action -Trigger $startupTrigger -Principal $systemPrincipal -Settings $settings -Description "Inicia o coletor de NF-e do GraoBase junto com o computador" -Force | Out-Null
 

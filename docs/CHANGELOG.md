@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.37
+
+- Removido o limite de execucao que podia fazer o Agendador do Windows encerrar o coletor poucos minutos depois da inicializacao.
+- O coletor agora mantem uma vigilancia interna para se reabrir depois de uma parada inesperada.
+- Tarefas antigas tem o limite de execucao reparado automaticamente quando o coletor estiver rodando com permissao suficiente.
+- Falhas inesperadas passam a ser registradas no diagnostico para facilitar a verificacao pelo computador principal.
+
 ## 1.1.24
 
 - Confirmacoes criadas a partir de notas fiscais passam a usar CNPJ, inscricao estadual e endereco da empresa da NF mesmo quando ela ainda nao esta associada a um cliente ou corretor.

@@ -23,9 +23,10 @@ A partir da versao 1.1.36, o programa principal permite buscar notas agora,
 atualizar, reiniciar o coletor e consultar os registros recentes a distancia.
 A atualizacao so comeca quando o usuario aciona "Atualizar coletor" no programa;
 se a nova versao nao permanecer aberta, o coletor anterior e iniciado novamente.
-A inicializacao fica
-registrada antes do login, no perfil do usuario e na pasta Inicializar. Uma
-vigilancia executada a cada dois minutos reabre o coletor caso ele tenha parado.
+A inicializacao fica registrada antes do login, no perfil do usuario e na pasta
+Inicializar. Uma vigilancia do Windows executada a cada dois minutos reabre o
+coletor caso ele tenha parado. O executavel tambem mantem uma vigilancia propria:
+se o processo encerrar inesperadamente, ela tenta reabri-lo sem aguardar o Windows.
 
 Arquivos de diagnostico:
 - coletor-status.json: resumo da ultima verificacao

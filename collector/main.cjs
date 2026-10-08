@@ -12,6 +12,8 @@ const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_
 const once = process.argv.includes("--once");
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || dirname(process.execPath);
 const configArgument = process.argv.find((value) => value.startsWith("--config="));
+const watchdogParentArgument = process.argv.find((value) => value.startsWith("--watchdog-parent="));
+const watchdogTargetArgument = process.argv.find((value) => value.startsWith("--watchdog-target="));
 const configPath = configArgument ? resolve(configArgument.slice("--config=".length)) : join(portableDir, "coletor-config.json");
 const statePath = join(portableDir, "coletor-state.json");
 const statusPath = join(portableDir, "coletor-status.json");
@@ -23,6 +25,7 @@ let lastUpdateError = null;
 let lastUpdateCheckAt = null;
 let pollingCommands = false;
 const startedAt = new Date().toISOString();
+let recoveryWatchdogStarted = false;
 
 function log(message, details) {
   const line = `${new Date().toISOString()} ${message}${details ? ` ${JSON.stringify(details)}` : ""}\n`;
@@ -43,11 +46,88 @@ function recentLogs() {
   } catch { return null; }
 }
 
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function collectorExecutablePath() {
+  return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+}
+
+function startRecoveryWatchdog() {
+  if (recoveryWatchdogStarted || once) return;
+  recoveryWatchdogStarted = true;
+  const target = collectorExecutablePath();
+  try {
+    const child = spawn(target, [
+      `--watchdog-parent=${process.pid}`,
+      `--watchdog-target=${target}`,
+      `--config=${configPath}`
+    ], { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    log("Vigilancia interna iniciada", { watchdogPid: child.pid });
+  } catch (error) {
+    log("Falha ao iniciar vigilancia interna", { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function runRecoveryWatchdog() {
+  const parentPid = Number(watchdogParentArgument?.slice("--watchdog-parent=".length));
+  const target = watchdogTargetArgument?.slice("--watchdog-target=".length);
+  if (!Number.isInteger(parentPid) || parentPid <= 0 || !target) return app.quit();
+
+  const timer = setInterval(() => {
+    if (processExists(parentPid)) return;
+    clearInterval(timer);
+    // Da tempo para uma atualizacao ou reinicio intencional abrir primeiro. Se
+    // ja houver outra instancia, o bloqueio de instancia unica encerra esta.
+    setTimeout(() => {
+      try {
+        const child = spawn(target, [`--config=${configPath}`], { detached: true, stdio: "ignore", windowsHide: true });
+        child.unref();
+      } finally {
+        app.quit();
+      }
+    }, 15_000);
+  }, 5_000);
+}
+
 function startupConfigured() {
   try {
     const result = spawnSync("schtasks.exe", ["/Query", "/TN", "Coletor GraoBase - Vigilancia"], { windowsHide: true, encoding: "utf8" });
     return result.status === 0;
   } catch { return false; }
+}
+
+function repairScheduledTaskSettings() {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$names = @('Coletor GraoBase - Inicializacao', 'Coletor GraoBase - Vigilancia')",
+    "foreach ($name in $names) {",
+    "  $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue",
+    "  if ($task) {",
+    "    $settings = $task.Settings",
+    "    $settings.ExecutionTimeLimit = 'PT0S'",
+    "    Set-ScheduledTask -TaskName $name -Settings $settings | Out-Null",
+    "  }",
+    "}"
+  ].join("\r\n");
+  try {
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", script], {
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 20_000
+    });
+    if (result.status === 0) log("Configuracao das tarefas de inicializacao verificada");
+    else log("Nao foi possivel reparar as tarefas nesta conta do Windows", { status: result.status, error: String(result.stderr || "").trim().slice(0, 500) });
+  } catch (error) {
+    log("Falha ao verificar tarefas de inicializacao", { error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function loadConfig() {
@@ -379,9 +459,13 @@ async function scan() {
   }
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (watchdogParentArgument) {
+  app.whenReady().then(runRecoveryWatchdog);
+} else if (!app.requestSingleInstanceLock()) app.quit();
 else app.whenReady().then(async () => {
   mkdirSync(portableDir, { recursive: true });
+  repairScheduledTaskSettings();
+  startRecoveryWatchdog();
   await scan();
   if (once) return app.quit();
   let interval = 60_000;
@@ -397,3 +481,12 @@ else app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
+
+process.on("uncaughtException", (error) => {
+  log("Falha inesperada no processo", { error: error instanceof Error ? error.stack || error.message : String(error) });
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (error) => {
+  log("Falha inesperada em tarefa assincrona", { error: error instanceof Error ? error.stack || error.message : String(error) });
+});
