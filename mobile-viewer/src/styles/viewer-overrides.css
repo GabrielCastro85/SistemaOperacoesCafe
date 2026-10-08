@@ -281,8 +281,8 @@
   }
 }
 .viewer-period-filter {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -290,10 +290,22 @@
 .viewer-period-filter label {
   display: grid;
   gap: 5px;
-  min-width: 180px;
+  min-width: 0;
   color: var(--color-text-muted, #6e6253);
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+.viewer-period-filter .ui-input {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .viewer-period-filter {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .viewer-overdue-charges {
