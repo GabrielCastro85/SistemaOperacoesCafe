@@ -6,6 +6,7 @@
 - O coletor agora mantem uma vigilancia interna para se reabrir depois de uma parada inesperada.
 - Tarefas antigas tem o limite de execucao reparado automaticamente quando o coletor estiver rodando com permissao suficiente.
 - Falhas inesperadas passam a ser registradas no diagnostico para facilitar a verificacao pelo computador principal.
+- O identificador do computador passa a ser persistente, permitindo que comandos remotos pendentes sejam recebidos depois de verificacoes e reinicios.
 
 ## 1.1.24
 

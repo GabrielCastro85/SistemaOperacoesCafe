@@ -16,6 +16,7 @@ const watchdogParentArgument = process.argv.find((value) => value.startsWith("--
 const watchdogTargetArgument = process.argv.find((value) => value.startsWith("--watchdog-target="));
 const configPath = configArgument ? resolve(configArgument.slice("--config=".length)) : join(portableDir, "coletor-config.json");
 const statePath = join(portableDir, "coletor-state.json");
+const machineIdPath = join(portableDir, "coletor-machine-id.txt");
 const statusPath = join(portableDir, "coletor-status.json");
 const logPath = join(portableDir, "coletor.log");
 let running = false;
@@ -104,6 +105,20 @@ function startupConfigured() {
   } catch { return false; }
 }
 
+function stableMachineId(configuredMachineId) {
+  const configured = String(configuredMachineId || "").trim();
+  if (configured) return configured;
+  try {
+    if (existsSync(machineIdPath)) {
+      const saved = readFileSync(machineIdPath, "utf8").trim();
+      if (/^graobase-[a-zA-Z0-9_-]{8,180}$/.test(saved)) return saved;
+    }
+  } catch {}
+  const generated = `graobase-${randomUUID()}`;
+  try { writeFileSync(machineIdPath, generated, "utf8"); } catch {}
+  return generated;
+}
+
 function repairScheduledTaskSettings() {
   const script = [
     "$ErrorActionPreference = 'Stop'",
@@ -144,7 +159,7 @@ function loadConfig() {
   return {
     ...value,
     serverUrl: String(value.serverUrl).replace(/\/$/, ""),
-    machineId: String(value.machineId || `graobase-${randomUUID()}`),
+    machineId: stableMachineId(value.machineId),
     scanIntervalSeconds: Math.max(15, Number(value.scanIntervalSeconds || 60)),
     updateCheckSeconds: Math.max(300, Number(value.updateCheckSeconds || 3600)),
     monthsBack: Math.max(0, Math.min(24, Number(value.monthsBack || 1))),

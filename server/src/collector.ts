@@ -138,12 +138,12 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
     }).parse(request.query);
     const result = await pool.query(`
       UPDATE collector_commands
-      SET status = 'RUNNING', started_at = now()
+      SET status = 'RUNNING', started_at = now(), machine_id = $2
       WHERE id = (
         SELECT id FROM collector_commands
-        WHERE source_code = $1 AND machine_id = $2
+        WHERE source_code = $1
           AND (status = 'PENDING' OR (status = 'RUNNING' AND started_at < now() - interval '5 minutes'))
-        ORDER BY requested_at LIMIT 1
+        ORDER BY CASE WHEN machine_id = $2 THEN 0 ELSE 1 END, requested_at LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
       RETURNING id, command, requested_at AS "requestedAt"

@@ -15,4 +15,11 @@ describe("recuperacao do coletor", () => {
     expect(collector).toContain("--watchdog-parent=");
     expect(collector).toContain("ExecutionTimeLimit = 'PT0S'");
   });
+
+  it("preserva o identificador do computador entre verificacoes e reinicios", () => {
+    const collector = readFileSync("collector/main.cjs", "utf8");
+    expect(collector).toContain("coletor-machine-id.txt");
+    expect(collector).toContain("stableMachineId(value.machineId)");
+    expect(collector).not.toContain("machineId: String(value.machineId || `graobase-${randomUUID()}`)");
+  });
 });
