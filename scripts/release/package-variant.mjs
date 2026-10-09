@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.38"
+  const highlights = releaseVersion === "1.1.39"
+    ? `- Cobrancas de operacoes terceirizadas passam a mostrar a razao social do destinatario registrada no XML.
+- A lista de notas, a previa em PDF, a imagem e a cobranca definitiva identificam corretamente a empresa que recebeu a NF-e.
+- O cliente/corretor continua sendo o responsavel financeiro pela cobranca, sem substituir o destinatario fiscal no documento.`
+    : releaseVersion === "1.1.38"
     ? `- Detecta quando o processo do coletor continua aberto, mas parou de varrer e de se comunicar.
 - Reinicia automaticamente o coletor depois de dez minutos sem atividade.
 - Limita o tempo das conexoes para impedir que uma falha de rede deixe a coleta travada.`
