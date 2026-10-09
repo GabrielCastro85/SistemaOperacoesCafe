@@ -9,7 +9,7 @@ import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives"
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { formatOperationScope } from "../../../shared/utils/operationLabels";
-import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
+import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentRecipientNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
@@ -380,12 +380,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   // segundo plano.
   function counterpartyLabel(operation: Operation): string {
     const document = operationDocument(operation);
-    // Nas operacoes trianguladas/terceirizadas, partnerLegalEntityId aponta
-    // para quem emitiu a NF fisica. O destino comercial da linha de venda e'
-    // o cliente/corretor responsavel pela cobranca.
-    if (document?.secondaryResponsiblePartnerId) {
-      const responsible = partners.find((item) => item.id === operation.responsiblePartnerId);
-      if (responsible) return responsible.displayName;
+    // Nas operacoes trianguladas/terceirizadas, o cliente/corretor continua
+    // responsavel pela cobranca, mas a coluna Empresa deve identificar quem
+    // recebeu a NF de venda conforme a razao social gravada no XML.
+    if (document?.secondaryResponsiblePartnerId && operation.operationType === "SALE") {
+      const recipientName = fiscalDocumentRecipientNameFromSnapshot(document);
+      if (recipientName) return recipientName;
     }
     const entityId = document?.partnerLegalEntityId;
     if (entityId) {

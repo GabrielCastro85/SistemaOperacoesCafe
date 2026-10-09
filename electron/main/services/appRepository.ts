@@ -4690,12 +4690,12 @@ export class AppRepository {
   }
 
   private fiscalDocumentChargeDestinationName(document: FiscalDocument, operation: Operation, ownLegalEntity: LegalEntity): string | null {
-    // Numa nota triangulada, partnerLegalEntityId representa o emissor fisico
-    // da NF. Para a cobranca da ponta de venda, o destino comercial e' o
-    // cliente responsavel pela operacao (ex.: MUNIZ -> UNI GRAO), nao o
-    // emissor nem o CNPJ proprio usado para contabilizar a corretagem.
+    // Numa nota triangulada, o responsavel pela cobranca e o cliente/corretor,
+    // enquanto o destino exibido na nota e no PDF deve ser a razao social do
+    // destinatario fiscal lida do XML (ex.: JH CAFE LTDA).
     if (document.secondaryResponsiblePartnerId && operation.operationType === "SALE") {
-      return this.getBusinessPartner(operation.responsiblePartnerId).displayName;
+      return this.fiscalSnapshotPartyName(document, "recipient")
+        ?? this.fiscalDocumentCompanyName(document, ownLegalEntity);
     }
     return this.fiscalDocumentCompanyName(document, ownLegalEntity);
   }
