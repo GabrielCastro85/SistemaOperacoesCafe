@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $packageDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $startupLog = Join-Path $packageDirectory "coletor-inicializacao.log"
+$statusPath = Join-Path $packageDirectory "coletor-status.json"
 $executable = Get-ChildItem -LiteralPath $packageDirectory -Filter "ColetorGraoBase-*-portable.exe" -File |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
@@ -18,12 +19,32 @@ try {
   }
 
   # Evita abrir uma segunda copia quando os mecanismos de inicializacao do
-  # Windows ou a vigilancia de cinco minutos forem acionados ao mesmo tempo.
+  # Windows forem acionados ao mesmo tempo. Um processo ainda listado pode
+  # estar travado; nesse caso o status deixa de ser renovado e ele e reiniciado.
   $running = Get-Process -ErrorAction SilentlyContinue |
     Where-Object { $_.ProcessName -like "ColetorGraoBase*" }
   if ($running) {
-    Write-StartupLog "Coletor ja estava em execucao."
-    exit 0
+    $newestProcess = $running | Sort-Object StartTime -Descending | Select-Object -First 1
+    if ($newestProcess -and ((Get-Date) - $newestProcess.StartTime).TotalMinutes -le 10) {
+      Write-StartupLog "Coletor iniciou recentemente; aguardando a primeira varredura."
+      exit 0
+    }
+    $lastActivity = $null
+    if (Test-Path -LiteralPath $statusPath) {
+      try {
+        $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+        $lastActivity = [DateTimeOffset]::Parse([string]$status.updatedAt)
+      } catch {
+        $lastActivity = [DateTimeOffset](Get-Item -LiteralPath $statusPath).LastWriteTimeUtc
+      }
+    }
+    if ($lastActivity -and ([DateTimeOffset]::UtcNow - $lastActivity.ToUniversalTime()).TotalMinutes -le 10) {
+      Write-StartupLog "Coletor ja estava em execucao e com atividade recente."
+      exit 0
+    }
+    Write-StartupLog "Processo encontrado sem atividade recente; reiniciando o coletor."
+    $running | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
   }
 
   Write-StartupLog "Tentando iniciar $($executable.Name)."

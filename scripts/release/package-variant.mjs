@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.37"
+  const highlights = releaseVersion === "1.1.38"
+    ? `- Detecta quando o processo do coletor continua aberto, mas parou de varrer e de se comunicar.
+- Reinicia automaticamente o coletor depois de dez minutos sem atividade.
+- Limita o tempo das conexoes para impedir que uma falha de rede deixe a coleta travada.`
+    : releaseVersion === "1.1.37"
     ? `- Corrige o coletor que podia ser encerrado pelo Agendador do Windows poucos minutos depois de iniciar.
 - O coletor passa a manter uma vigilancia interna e tenta se reabrir quando o processo encerra inesperadamente.
 - Instalacoes antigas tem o limite de execucao das tarefas reparado automaticamente quando houver permissao.`

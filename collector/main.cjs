@@ -19,6 +19,7 @@ const statePath = join(portableDir, "coletor-state.json");
 const machineIdPath = join(portableDir, "coletor-machine-id.txt");
 const statusPath = join(portableDir, "coletor-status.json");
 const logPath = join(portableDir, "coletor.log");
+const watchdogStaleAfterMs = 10 * 60 * 1000;
 let running = false;
 let checkingUpdate = false;
 let updateApplying = false;
@@ -60,6 +61,20 @@ function collectorExecutablePath() {
   return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
 }
 
+function statusLastUpdatedAt() {
+  try {
+    const status = JSON.parse(readFileSync(statusPath, "utf8"));
+    const updatedAt = Date.parse(String(status?.updatedAt || ""));
+    if (Number.isFinite(updatedAt)) return updatedAt;
+  } catch {}
+  try { return statSync(statusPath).mtimeMs; }
+  catch { return null; }
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 30_000) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 function startRecoveryWatchdog() {
   if (recoveryWatchdogStarted || once) return;
   recoveryWatchdogStarted = true;
@@ -81,9 +96,31 @@ function runRecoveryWatchdog() {
   const parentPid = Number(watchdogParentArgument?.slice("--watchdog-parent=".length));
   const target = watchdogTargetArgument?.slice("--watchdog-target=".length);
   if (!Number.isInteger(parentPid) || parentPid <= 0 || !target) return app.quit();
+  const watchdogStartedAt = Date.now();
 
   const timer = setInterval(() => {
-    if (processExists(parentPid)) return;
+    if (processExists(parentPid)) {
+      // Um processo pode continuar listado no Windows mesmo com a rotina de
+      // coleta travada. O arquivo de status e renovado em toda varredura; se
+      // ficar velho por dez minutos, encerra somente o processo principal.
+      // Esta vigilancia permanece viva e o abre novamente logo abaixo.
+      if (Date.now() - watchdogStartedAt < watchdogStaleAfterMs) return;
+      const lastUpdatedAt = statusLastUpdatedAt();
+      const staleForMs = lastUpdatedAt == null ? Number.POSITIVE_INFINITY : Date.now() - lastUpdatedAt;
+      if (staleForMs <= watchdogStaleAfterMs) return;
+      log("Vigilancia detectou coletor sem atividade; reiniciando", {
+        parentPid,
+        staleForSeconds: Number.isFinite(staleForMs) ? Math.floor(staleForMs / 1000) : null
+      });
+      try { process.kill(parentPid, "SIGKILL"); }
+      catch (error) {
+        log("Vigilancia nao conseguiu encerrar o coletor sem atividade", {
+          parentPid,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
     clearInterval(timer);
     // Da tempo para uma atualizacao ou reinicio intencional abrir primeiro. Se
     // ja houver outra instancia, o bloqueio de instancia unica encerra esta.
@@ -222,7 +259,7 @@ function oldestAcceptedModification(monthsBack) {
 }
 
 async function upload(config, filePath, metadata, content, fileHash) {
-  const response = await fetch(`${config.serverUrl}/v1/collector/files`, {
+  const response = await fetchWithTimeout(`${config.serverUrl}/v1/collector/files`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${config.collectorSecret}` },
     body: JSON.stringify({
@@ -236,13 +273,13 @@ async function upload(config, filePath, metadata, content, fileHash) {
       xmlType: metadata.xmlType,
       xmlBase64: Buffer.from(content).toString("base64")
     })
-  });
+  }, 60_000);
   const body = await response.text();
   if (!response.ok) throw new Error(`Servidor ${response.status}: ${body.slice(0, 300)}`);
 }
 
 async function sendHeartbeat(config, status) {
-  const response = await fetch(`${config.serverUrl}/v1/collector/heartbeat`, {
+  const response = await fetchWithTimeout(`${config.serverUrl}/v1/collector/heartbeat`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${config.collectorSecret}` },
     body: JSON.stringify({
@@ -273,7 +310,7 @@ async function reportHeartbeat(config, status) {
 }
 
 async function downloadToFile(url, destination) {
-  const response = await fetch(url, { redirect: "follow" });
+  const response = await fetchWithTimeout(url, { redirect: "follow" }, 5 * 60_000);
   if (!response.ok || !response.body) throw new Error(`Download da atualizacao falhou (${response.status}).`);
   await pipeline(Readable.fromWeb(response.body), createWriteStream(destination));
 }
@@ -327,7 +364,7 @@ async function checkForUpdate(config) {
   lastUpdateCheckAt = new Date().toISOString();
   let temporaryPath = "";
   try {
-    const response = await fetch(`${config.serverUrl}/v1/collector/update`, {
+    const response = await fetchWithTimeout(`${config.serverUrl}/v1/collector/update`, {
       headers: { authorization: `Bearer ${config.collectorSecret}` }
     });
     if (!response.ok) throw new Error(`Servidor ${response.status} ao consultar atualizacao.`);
@@ -361,7 +398,7 @@ async function checkForUpdate(config) {
 }
 
 async function finishRemoteCommand(config, id, status, message) {
-  const response = await fetch(`${config.serverUrl}/v1/collector/commands/${encodeURIComponent(id)}`, {
+  const response = await fetchWithTimeout(`${config.serverUrl}/v1/collector/commands/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json", authorization: `Bearer ${config.collectorSecret}` },
     body: JSON.stringify({ status, message })
@@ -374,7 +411,7 @@ async function pollRemoteCommands(config) {
   pollingCommands = true;
   try {
     const query = new URLSearchParams({ sourceCode: config.sourceCode, machineId: config.machineId });
-    const response = await fetch(`${config.serverUrl}/v1/collector/commands?${query}`, {
+    const response = await fetchWithTimeout(`${config.serverUrl}/v1/collector/commands?${query}`, {
       headers: { authorization: `Bearer ${config.collectorSecret}` }
     });
     if (!response.ok) throw new Error(`Servidor ${response.status} ao consultar comandos remotos.`);
