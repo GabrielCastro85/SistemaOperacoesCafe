@@ -626,6 +626,29 @@ input[type="checkbox"] {
   flex: 0 0 16px;
 }
 
+.charge-control-print-panel {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface, #fffdf8);
+}
+
+.charge-control-print-panel h3,
+.charge-control-print-panel p {
+  margin: 0;
+}
+
+.charge-control-print-panel .form-grid {
+  align-items: end;
+}
+
+.charge-control-print-panel .checkbox {
+  min-height: 40px;
+}
+
 .primary {
   width: fit-content;
   min-height: 42px;

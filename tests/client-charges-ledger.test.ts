@@ -602,7 +602,7 @@ describe("client charges and ledger", () => {
       });
 
       expect(draft.operations[0].issuerNameSnapshot).toBe("MUNIZ COMERCIO DE GRAOS LTDA");
-      expect(draft.operations[0].destinationNameSnapshot).toBe("Cliente Cobranca");
+      expect(draft.operations[0].destinationNameSnapshot).toBe("JH CAFE LTDA");
     } finally { db.close(); }
   });
 

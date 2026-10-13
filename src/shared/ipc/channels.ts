@@ -211,6 +211,8 @@ export const IPC_CHANNELS = {
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
   getPartnerRateSummary: "clientCharges:partnerRateSummary",
   exportPartnerPeriodReport: "clientCharges:exportPeriodReport",
+  exportChargeControlWorkbook: "clientCharges:exportControlWorkbook",
+  printChargeControl: "clientCharges:printControl",
   createClientChargeDraft: "clientCharges:createDraft",
   reserveChargeOperations: "clientCharges:reserveOperations",
   releaseChargeOperations: "clientCharges:releaseOperations",

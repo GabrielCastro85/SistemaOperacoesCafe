@@ -70,6 +70,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [historyLegalEntityId, setHistoryLegalEntityId] = useState("all");
   const [historyMonth, setHistoryMonth] = useState("");
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
+  const [exportingChargeControl, setExportingChargeControl] = useState(false);
+  const [printingChargeControl, setPrintingChargeControl] = useState(false);
+  const [controlPeriodStart, setControlPeriodStart] = useState(() => currentBillingRange("MONTHLY").periodStart);
+  const [controlPeriodEnd, setControlPeriodEnd] = useState(() => localDateInputValue(new Date()));
+  const [controlIncludeAllOpen, setControlIncludeAllOpen] = useState(true);
   const [bankEditor, setBankEditor] = useState<LegalEntity | null>(null);
   const [savingBank, setSavingBank] = useState(false);
   useEffect(() => { setBankEditor(null); }, [ownLegalEntityId]);
@@ -157,6 +162,21 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     .filter(Boolean).length;
   const visibleHistoryCharges = filteredHistoryCharges.slice(0, historyVisibleCount);
   const hiddenHistoryCharges = Math.max(0, filteredHistoryCharges.length - visibleHistoryCharges.length);
+  const printableCharges = useMemo(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(controlPeriodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(controlPeriodEnd) || controlPeriodStart > controlPeriodEnd) return [];
+    return charges
+      .filter((charge) => {
+        if (["DRAFT", "CANCELLED", "REPLACED"].includes(charge.status)) return false;
+        const isInPeriod = charge.periodStart <= controlPeriodEnd && charge.periodEnd >= controlPeriodStart;
+        const isOpen = charge.openAmountCents > 0;
+        return isInPeriod || (controlIncludeAllOpen && isOpen);
+      })
+      .sort((left, right) => {
+        const leftName = partners.find((item) => item.id === left.clientPartnerId)?.displayName ?? "";
+        const rightName = partners.find((item) => item.id === right.clientPartnerId)?.displayName ?? "";
+        return leftName.localeCompare(rightName, "pt-BR") || left.periodStart.localeCompare(right.periodStart);
+      });
+  }, [charges, controlIncludeAllOpen, controlPeriodEnd, controlPeriodStart, partners]);
 
   useEffect(() => {
     setHistoryVisibleCount(HISTORY_PAGE_SIZE);
@@ -915,6 +935,45 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
+  async function exportChargeControl(): Promise<void> {
+    if (printableCharges.length === 0 || exportingChargeControl) return;
+    setExportingChargeControl(true);
+    try {
+      const exported = await window.operationsCafe.exportChargeControlWorkbook({
+        chargeIds: printableCharges.map((charge) => charge.id),
+        filterDescription: chargeControlFilterDescription()
+      });
+      setMessage(exported
+        ? "Planilha de controle interno salva e aberta, pronta para preencher ou imprimir."
+        : "Exportacao cancelada. Nenhuma pasta foi escolhida.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar o controle interno."}`);
+    } finally {
+      setExportingChargeControl(false);
+    }
+  }
+
+  function chargeControlFilterDescription(): string {
+    const period = `Período das cobranças: ${formatDateOnlyBr(controlPeriodStart)} a ${formatDateOnlyBr(controlPeriodEnd)}`;
+    return controlIncludeAllOpen ? `${period} | Inclui todas as cobranças em aberto` : period;
+  }
+
+  async function printChargeControl(): Promise<void> {
+    if (printableCharges.length === 0 || printingChargeControl) return;
+    setPrintingChargeControl(true);
+    try {
+      const printed = await window.operationsCafe.printChargeControl({
+        chargeIds: printableCharges.map((charge) => charge.id),
+        filterDescription: chargeControlFilterDescription()
+      });
+      setMessage(printed ? "Controle enviado para a impressora." : "Impressão cancelada.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao imprimir o controle."}`);
+    } finally {
+      setPrintingChargeControl(false);
+    }
+  }
+
   async function deleteCharge(charge: ClientCharge): Promise<void> {
     const blockedReason = deleteChargeBlockedReason(charge);
     if (blockedReason) {
@@ -1392,6 +1451,26 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           </Select>
           <Input label="Mês do período" type="month" value={historyMonth} onChange={(event) => setHistoryMonth(event.target.value)} />
         </FilterBar>
+        <div className="charge-control-print-panel">
+          <div>
+            <h3>Controle para impressão</h3>
+            <p className="muted">Escolha o período das cobranças. Se desejar, inclua também todas que ainda possuem saldo em aberto.</p>
+          </div>
+          <FormGrid>
+            <DateInput label="Período inicial" value={controlPeriodStart} onChange={(event) => setControlPeriodStart(event.target.value)} />
+            <DateInput label="Período final" value={controlPeriodEnd} onChange={(event) => setControlPeriodEnd(event.target.value)} />
+            <label className="checkbox"><input type="checkbox" checked={controlIncludeAllOpen} onChange={(event) => setControlIncludeAllOpen(event.target.checked)} /> Incluir todas as cobranças em aberto</label>
+          </FormGrid>
+          <div className="toolbar charge-control-export">
+            <button className="primary" disabled={printableCharges.length === 0 || printingChargeControl || exportingChargeControl} onClick={() => void printChargeControl()}>
+              {printingChargeControl ? "Abrindo impressão..." : "Imprimir controle"}
+            </button>
+            <button disabled={printableCharges.length === 0 || exportingChargeControl || printingChargeControl} onClick={() => void exportChargeControl()}>
+              {exportingChargeControl ? "Gerando planilha..." : "Exportar Excel"}
+            </button>
+            <span className="muted">{printableCharges.length} cobrança(s) incluída(s).</span>
+          </div>
+        </div>
         <div className="table">
           <div className="table-head charge-grid"><span>Criada em</span><span>Cliente/corretor</span><span>Período</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Situação</span><span>Ações</span></div>
           {visibleHistoryCharges.map((charge) => {

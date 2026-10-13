@@ -3263,6 +3263,10 @@ export class AppRepository {
     return filePath;
   }
 
+  getClientPaymentForReport(id: string): ClientPayment {
+    return this.getOrRepairClientPayment(id);
+  }
+
   // Exclusao definitiva (nao so' cancelamento): apaga a cobranca e o historico
   // dela de vez, igual ja funciona pra confirmacoes de negocio (ver
   // deleteDealConfirmation). Cobranca com pagamento registrado nao pode ser

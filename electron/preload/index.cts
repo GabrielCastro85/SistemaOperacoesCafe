@@ -301,6 +301,8 @@ const IPC_CHANNELS = {
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
   getPartnerRateSummary: "clientCharges:partnerRateSummary",
   exportPartnerPeriodReport: "clientCharges:exportPeriodReport",
+  exportChargeControlWorkbook: "clientCharges:exportControlWorkbook",
+  printChargeControl: "clientCharges:printControl",
   createClientChargeDraft: "clientCharges:createDraft",
   reserveChargeOperations: "clientCharges:reserveOperations",
   releaseChargeOperations: "clientCharges:releaseOperations",
@@ -721,6 +723,8 @@ export interface OperationsCafeApi {
   findEligibleChargeOperations: (input: unknown) => Promise<Operation[]>;
   getPartnerRateSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
   exportPartnerPeriodReport: (input: unknown) => Promise<boolean>;
+  exportChargeControlWorkbook: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
+  printChargeControl: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
   createClientChargeDraft: (input: unknown) => Promise<ClientChargeDetail>;
   reserveChargeOperations: (clientChargeId: string, operationIds: string[]) => Promise<ClientChargeDetail>;
   releaseChargeOperations: (clientChargeId: string, operationIds?: string[]) => Promise<ClientChargeDetail>;
@@ -1131,6 +1135,8 @@ const api: OperationsCafeApi = {
   findEligibleChargeOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligibleChargeOperations, input) as Promise<Operation[]>,
   getPartnerRateSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerRateSummary, input) as Promise<PartnerRateSummaryRow[]>,
   exportPartnerPeriodReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPartnerPeriodReport, input) as Promise<boolean>,
+  exportChargeControlWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargeControlWorkbook, input) as Promise<boolean>,
+  printChargeControl: (input) => ipcRenderer.invoke(IPC_CHANNELS.printChargeControl, input) as Promise<boolean>,
   createClientChargeDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientChargeDraft, input) as Promise<ClientChargeDetail>,
   reserveChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.reserveChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
   releaseChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.releaseChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,

@@ -7,6 +7,7 @@ import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { buildPartnerPeriodReportPdf, getPartnerPeriodReport } from "../services/partnerPeriodReport.js";
+import { buildChargeControlPrintHtml, buildChargeControlWorkbook } from "../services/chargeControlWorkbook.js";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
@@ -37,6 +38,25 @@ const graoCollectorSources = {
   GRAO_SP: { label: "Grao & Grao SP", cnpj: "16594876000496" }
 } as const;
 type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof graoCollectorSources | "ALL";
+
+function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
+  return chargeIds.map((chargeId) => {
+    const detail = repository.getClientCharge(chargeId);
+    const allocations = new Map<string, number>();
+    detail.payments.filter((allocation) => !allocation.cancelledAt).forEach((allocation) => {
+      allocations.set(allocation.clientPaymentId, (allocations.get(allocation.clientPaymentId) ?? 0) + allocation.amountCents);
+    });
+    return {
+      charge: detail.charge,
+      clientName: repository.getBusinessPartner(detail.charge.clientPartnerId).displayName,
+      companyName: repository.getLegalEntity(detail.charge.ownLegalEntityId).legalName,
+      payments: [...allocations.entries()].map(([paymentId, allocatedAmountCents]) => ({
+        payment: repository.getClientPaymentForReport(paymentId),
+        allocatedAmountCents
+      }))
+    };
+  });
+}
 
 function isLikelyDataMutation(channel: string): boolean {
   if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
@@ -1061,6 +1081,60 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const error = await shell.openPath(result.filePath);
     if (error) throw new Error(error);
     return true;
+  });
+  handle(IPC_CHANNELS.exportChargeControlWorkbook, async (event, payload: unknown) => {
+    const data = z.object({
+      chargeIds: z.array(z.string().uuid()).min(1).max(10_000),
+      filterDescription: z.string().trim().max(500).optional()
+    }).parse(payload);
+    const rows = getChargeControlRows(repository, data.chargeIds);
+    const workbook = await buildChargeControlWorkbook({ rows, filterDescription: data.filterDescription });
+    const today = new Date().toISOString().slice(0, 10);
+    const dialogOptions = {
+      title: "Salvar controle interno de cobrancas",
+      defaultPath: `Controle-interno-cobrancas-${today}.xlsx`,
+      filters: [{ name: "Planilha Excel", extensions: ["xlsx"] }]
+    };
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const destination = parentWindow
+      ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
+    if (destination.canceled || !destination.filePath) return false;
+    writeFileSync(destination.filePath, workbook);
+    const openError = await shell.openPath(destination.filePath);
+    if (openError) throw new Error(openError);
+    return true;
+  });
+  handle(IPC_CHANNELS.printChargeControl, async (event, payload: unknown) => {
+    const data = z.object({
+      chargeIds: z.array(z.string().uuid()).min(1).max(10_000),
+      filterDescription: z.string().trim().max(500).optional()
+    }).parse(payload);
+    const rows = getChargeControlRows(repository, data.chargeIds);
+    const html = buildChargeControlPrintHtml({ rows, filterDescription: data.filterDescription });
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const printWindow = new BrowserWindow({
+      show: false,
+      parent: parentWindow ?? undefined,
+      webPreferences: { sandbox: true }
+    });
+    try {
+      await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      return await new Promise<boolean>((resolve, reject) => {
+        printWindow.webContents.print(
+          { silent: false, printBackground: true, landscape: true },
+          (success, failureReason) => {
+            if (!success && failureReason && !/cancel/i.test(failureReason)) {
+              reject(new Error(failureReason));
+              return;
+            }
+            resolve(success);
+          }
+        );
+      });
+    } finally {
+      if (!printWindow.isDestroyed()) printWindow.destroy();
+    }
   });
   handle(IPC_CHANNELS.openChargeDocument, async (event, payload: unknown) => {
     const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);
