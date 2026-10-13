@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.41"
+  const highlights = releaseVersion === "1.1.42"
+    ? `- O controle interno passa a incluir somente cobrancas com saldo realmente em aberto.
+- Cobrancas quitadas sao descartadas e cobrancas fora do periodo so entram quando a opcao correspondente for marcada.
+- A planilha mostra o saldo restante e a impressao foi compactada para papel A4 vertical.`
+    : releaseVersion === "1.1.41"
     ? `- Adiciona a opcao Estornar baixa no historico de pagamentos da cobranca.
 - Ao estornar, o valor volta para o saldo em aberto e a cobranca e reaberta automaticamente.
 - O pagamento original e o motivo do estorno permanecem registrados para auditoria.`
