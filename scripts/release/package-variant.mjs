@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.40"
+  const highlights = releaseVersion === "1.1.41"
+    ? `- Adiciona a opcao Estornar baixa no historico de pagamentos da cobranca.
+- Ao estornar, o valor volta para o saldo em aberto e a cobranca e reaberta automaticamente.
+- O pagamento original e o motivo do estorno permanecem registrados para auditoria.`
+    : releaseVersion === "1.1.40"
     ? `- Adiciona um controle interno de pagamentos pronto para impressao na tela de cobrancas.
 - Permite escolher o periodo das cobrancas e incluir, opcionalmente, todas as cobrancas ainda em aberto.
 - Cada cobranca mostra cliente, periodo, valor e duas linhas para registrar pagamentos parciais e suas datas.
