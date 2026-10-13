@@ -40,7 +40,7 @@ const graoCollectorSources = {
 type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof graoCollectorSources | "ALL";
 
 function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
-  return chargeIds.map((chargeId) => {
+  return [...new Set(chargeIds)].map((chargeId) => {
     const detail = repository.getClientCharge(chargeId);
     const allocations = new Map<string, number>();
     detail.payments.filter((allocation) => !allocation.cancelledAt).forEach((allocation) => {
@@ -55,7 +55,7 @@ function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
         allocatedAmountCents
       }))
     };
-  });
+  }).filter((row) => row.charge.openAmountCents > 0 && !["DRAFT", "CANCELLED", "REPLACED", "PAID"].includes(row.charge.status));
 }
 
 function isLikelyDataMutation(channel: string): boolean {
@@ -1122,7 +1122,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
       return await new Promise<boolean>((resolve, reject) => {
         printWindow.webContents.print(
-          { silent: false, printBackground: true, landscape: true },
+          { silent: false, printBackground: true, landscape: false },
           (success, failureReason) => {
             if (!success && failureReason && !/cancel/i.test(failureReason)) {
               reject(new Error(failureReason));

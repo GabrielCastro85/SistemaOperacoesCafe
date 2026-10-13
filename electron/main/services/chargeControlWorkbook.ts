@@ -30,6 +30,7 @@ const border = "CDBEAA";
 export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInput): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const generatedAt = input.generatedAt ?? new Date();
+  const rows = openChargeRows(input.rows);
   workbook.creator = "Sistema de Operacoes de Cafe";
   workbook.created = generatedAt;
   workbook.modified = generatedAt;
@@ -37,66 +38,63 @@ export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInp
   const sheet = workbook.addWorksheet("Controle para impressao", {
     views: [{ state: "frozen", ySplit: 4, activeCell: "A5" }],
     pageSetup: {
-      orientation: "landscape",
+      orientation: "portrait",
       paperSize: 9,
       fitToPage: true,
       fitToWidth: 1,
       fitToHeight: 0,
       horizontalCentered: true,
-      margins: { left: 0.2, right: 0.2, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.25 }
+      margins: { left: 0.15, right: 0.15, top: 0.3, bottom: 0.3, header: 0.1, footer: 0.15 }
     }
   });
 
   sheet.columns = [
-    { width: 34 },
-    { width: 23 },
-    { width: 19 },
-    { width: 18 },
+    { width: 25 },
     { width: 20 },
-    { width: 19 },
-    { width: 14 }
+    { width: 15 },
+    { width: 18 },
+    { width: 17 },
+    { width: 11 }
   ];
 
-  sheet.mergeCells("A1:G1");
+  sheet.mergeCells("A1:F1");
   const title = sheet.getCell("A1");
   title.value = "CONTROLE INTERNO DE PAGAMENTOS";
   title.font = { name: "Aptos Display", size: 18, bold: true, color: { argb: "FFFFFFFF" } };
   title.fill = solidFill(darkGreen);
   title.alignment = { vertical: "middle", horizontal: "center" };
-  sheet.getRow(1).height = 34;
+  sheet.getRow(1).height = 27;
 
-  sheet.mergeCells("A2:G2");
+  sheet.mergeCells("A2:F2");
   const subtitle = sheet.getCell("A2");
   subtitle.value = `Preencha o valor e a data de cada pagamento. Gerado em ${formatDateTimeBr(generatedAt)}.`;
   subtitle.font = { name: "Aptos", size: 10, italic: true, color: { argb: `FF${muted}` } };
   subtitle.fill = solidFill(cream);
   subtitle.alignment = { vertical: "middle", horizontal: "center" };
-  sheet.getRow(2).height = 23;
+  sheet.getRow(2).height = 18;
 
   sheet.addRow([]);
   const header = sheet.addRow([
     "Cliente/corretor",
     "Periodo da planilha",
-    "Valor da planilha",
-    "Parcela",
+    "Saldo em aberto",
     "Valor pago (R$)",
     "Data do pagamento",
     "Conferido"
   ]);
   styleHeaderRow(header);
 
-  input.rows.forEach((item, index) => {
+  rows.forEach((item, index) => {
     const firstRowNumber = sheet.rowCount + 1;
     const first = sheet.addRow([
       item.clientName,
       `${formatDateOnlyBr(item.charge.periodStart)} a ${formatDateOnlyBr(item.charge.periodEnd)}`,
-      item.charge.finalAmountCents / 100,
-      "1º pagamento",
-      "",
+      item.charge.openAmountCents / 100,
+      "1º pagamento: __________________",
       "",
       "☐"
     ]);
-    const second = sheet.addRow(["", "", "", "2º pagamento", "", "", "☐"]);
+    const second = sheet.addRow(["", "", "", "2º pagamento: __________________", "", "☐"]);
     const secondRowNumber = sheet.rowCount;
 
     sheet.mergeCells(`A${firstRowNumber}:A${secondRowNumber}`);
@@ -106,8 +104,8 @@ export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInp
   });
 
   const lastRow = Math.max(4, sheet.rowCount);
-  sheet.autoFilter = { from: "A4", to: "G4" };
-  sheet.pageSetup.printArea = `A1:G${lastRow}`;
+  sheet.autoFilter = { from: "A4", to: "F4" };
+  sheet.pageSetup.printArea = `A1:F${lastRow}`;
   sheet.pageSetup.printTitlesRow = "1:4";
   sheet.headerFooter.oddFooter = "Página &P de &N";
   sheet.headerFooter.evenFooter = "Página &P de &N";
@@ -118,10 +116,10 @@ export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInp
 
 export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): string {
   const generatedAt = input.generatedAt ?? new Date();
-  const rows = input.rows.map((item, index) => {
+  const rows = openChargeRows(input.rows).map((item, index) => {
     const client = escapeHtml(item.clientName);
     const period = escapeHtml(`${formatDateOnlyBr(item.charge.periodStart)} a ${formatDateOnlyBr(item.charge.periodEnd)}`);
-    const amount = escapeHtml(formatCurrencyBr(item.charge.finalAmountCents));
+    const amount = escapeHtml(formatCurrencyBr(item.charge.openAmountCents));
     const pairClass = index % 2 === 0 ? "pair alternate" : "pair";
     return `
       <tbody class="${pairClass}">
@@ -129,14 +127,12 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
           <td rowspan="2" class="client">${client}</td>
           <td rowspan="2">${period}</td>
           <td rowspan="2" class="money">${amount}</td>
-          <td>1º pagamento</td>
-          <td class="write"></td>
+          <td class="write"><span>1º:</span></td>
           <td class="write"></td>
           <td class="check">☐</td>
         </tr>
         <tr>
-          <td>2º pagamento</td>
-          <td class="write"></td>
+          <td class="write"><span>2º:</span></td>
           <td class="write"></td>
           <td class="check">☐</td>
         </tr>
@@ -149,26 +145,26 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
   <meta charset="utf-8">
   <title>Controle interno de pagamentos</title>
   <style>
-    @page { size: A4 landscape; margin: 9mm; }
+    @page { size: A4 portrait; margin: 6mm; }
     * { box-sizing: border-box; }
-    body { margin: 0; color: #261d16; font-family: Arial, sans-serif; font-size: 9pt; }
-    h1 { margin: 0; padding: 8px 12px; background: #063f2e; color: white; font-size: 17pt; text-align: center; }
-    .meta { margin: 0 0 8px; padding: 5px 10px; background: #fbf6eb; color: #6e5d50; text-align: center; font-size: 8.5pt; }
+    body { margin: 0; color: #261d16; font-family: Arial, sans-serif; font-size: 7.5pt; }
+    h1 { margin: 0; padding: 5px 8px; background: #063f2e; color: white; font-size: 13pt; text-align: center; }
+    .meta { margin: 0 0 5px; padding: 3px 6px; background: #fbf6eb; color: #6e5d50; text-align: center; font-size: 7pt; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     thead { display: table-header-group; }
     tbody.pair { break-inside: avoid; page-break-inside: avoid; }
-    th { padding: 7px 5px; background: #063f2e; color: white; border: 1px solid #c9a66b; font-size: 8.5pt; text-align: center; }
-    td { height: 30px; padding: 5px; border: 1px solid #cdbeaa; text-align: center; vertical-align: middle; }
+    th { padding: 4px 3px; background: #063f2e; color: white; border: 1px solid #c9a66b; font-size: 7pt; text-align: center; }
+    td { height: 22px; padding: 3px; border: 1px solid #cdbeaa; text-align: center; vertical-align: middle; }
     tbody.alternate td { background: #eff8f2; }
     td.client { font-weight: 700; text-align: left; }
-    td.money { font-weight: 700; font-size: 10pt; white-space: nowrap; }
-    td.write { min-width: 110px; }
-    td.check { font-size: 15pt; }
-    .client-col { width: 23%; }
-    .period-col { width: 17%; }
-    .amount-col { width: 14%; }
-    .installment-col { width: 13%; }
-    .paid-col { width: 14%; }
+    td.money { font-weight: 700; font-size: 8pt; white-space: nowrap; }
+    td.write { text-align: left; }
+    td.write span { font-weight: 700; }
+    td.check { font-size: 12pt; }
+    .client-col { width: 27%; }
+    .period-col { width: 22%; }
+    .amount-col { width: 15%; }
+    .paid-col { width: 17%; }
     .date-col { width: 13%; }
     .check-col { width: 6%; }
   </style>
@@ -181,8 +177,7 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
       <tr>
         <th class="client-col">Cliente/corretor</th>
         <th class="period-col">Período da planilha</th>
-        <th class="amount-col">Valor da planilha</th>
-        <th class="installment-col">Parcela</th>
+        <th class="amount-col">Saldo em aberto</th>
         <th class="paid-col">Valor pago (R$)</th>
         <th class="date-col">Data do pagamento</th>
         <th class="check-col">Conferido</th>
@@ -192,6 +187,10 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
   </table>
 </body>
 </html>`;
+}
+
+function openChargeRows(rows: ChargeControlRow[]): ChargeControlRow[] {
+  return rows.filter((item) => item.charge.openAmountCents > 0 && !["DRAFT", "CANCELLED", "REPLACED", "PAID"].includes(item.charge.status));
 }
 
 function styleHeaderRow(row: ExcelJS.Row): void {
@@ -207,10 +206,10 @@ function styleHeaderRow(row: ExcelJS.Row): void {
 function stylePaymentPair(first: ExcelJS.Row, second: ExcelJS.Row, highlighted: boolean): void {
   const fill = solidFill(highlighted ? paleGreen : "FFFDF8");
   [first, second].forEach((row) => {
-    row.height = 31;
-    for (let column = 1; column <= 7; column += 1) {
+    row.height = 23;
+    for (let column = 1; column <= 6; column += 1) {
       const cell = row.getCell(column);
-      cell.font = { name: "Aptos", size: 10, color: { argb: `FF${ink}` } };
+      cell.font = { name: "Aptos", size: 8, color: { argb: `FF${ink}` } };
       cell.fill = fill;
       cell.alignment = {
         vertical: "middle",
@@ -220,11 +219,11 @@ function stylePaymentPair(first: ExcelJS.Row, second: ExcelJS.Row, highlighted: 
       cell.border = thinBorder(border);
     }
   });
-  first.getCell(1).font = { name: "Aptos", size: 10, bold: true, color: { argb: `FF${ink}` } };
-  first.getCell(3).font = { name: "Aptos", size: 11, bold: true, color: { argb: `FF${ink}` } };
+  first.getCell(1).font = { name: "Aptos", size: 8, bold: true, color: { argb: `FF${ink}` } };
+  first.getCell(3).font = { name: "Aptos", size: 9, bold: true, color: { argb: `FF${ink}` } };
   first.getCell(3).numFmt = 'R$ #,##0.00;[Red]-R$ #,##0.00';
-  first.getCell(7).font = { name: "Aptos", size: 16, color: { argb: `FF${darkGreen}` } };
-  second.getCell(7).font = { name: "Aptos", size: 16, color: { argb: `FF${darkGreen}` } };
+  first.getCell(6).font = { name: "Aptos", size: 13, color: { argb: `FF${darkGreen}` } };
+  second.getCell(6).font = { name: "Aptos", size: 13, color: { argb: `FF${darkGreen}` } };
 }
 
 function solidFill(color: string): ExcelJS.Fill {

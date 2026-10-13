@@ -74,7 +74,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [printingChargeControl, setPrintingChargeControl] = useState(false);
   const [controlPeriodStart, setControlPeriodStart] = useState(() => currentBillingRange("MONTHLY").periodStart);
   const [controlPeriodEnd, setControlPeriodEnd] = useState(() => localDateInputValue(new Date()));
-  const [controlIncludeAllOpen, setControlIncludeAllOpen] = useState(true);
+  const [controlIncludeAllOpen, setControlIncludeAllOpen] = useState(false);
   const [bankEditor, setBankEditor] = useState<LegalEntity | null>(null);
   const [savingBank, setSavingBank] = useState(false);
   useEffect(() => { setBankEditor(null); }, [ownLegalEntityId]);
@@ -169,7 +169,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         if (["DRAFT", "CANCELLED", "REPLACED"].includes(charge.status)) return false;
         const isInPeriod = charge.periodStart <= controlPeriodEnd && charge.periodEnd >= controlPeriodStart;
         const isOpen = charge.openAmountCents > 0;
-        return isInPeriod || (controlIncludeAllOpen && isOpen);
+        return isOpen && (isInPeriod || controlIncludeAllOpen);
       })
       .sort((left, right) => {
         const leftName = partners.find((item) => item.id === left.clientPartnerId)?.displayName ?? "";
@@ -1482,12 +1482,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="charge-control-print-panel">
           <div>
             <h3>Controle para impressão</h3>
-            <p className="muted">Escolha o período das cobranças. Se desejar, inclua também todas que ainda possuem saldo em aberto.</p>
+            <p className="muted">O arquivo inclui somente cobranças com saldo em aberto dentro do período escolhido.</p>
           </div>
           <FormGrid>
             <DateInput label="Período inicial" value={controlPeriodStart} onChange={(event) => setControlPeriodStart(event.target.value)} />
             <DateInput label="Período final" value={controlPeriodEnd} onChange={(event) => setControlPeriodEnd(event.target.value)} />
-            <label className="checkbox"><input type="checkbox" checked={controlIncludeAllOpen} onChange={(event) => setControlIncludeAllOpen(event.target.checked)} /> Incluir todas as cobranças em aberto</label>
+            <label className="checkbox"><input type="checkbox" checked={controlIncludeAllOpen} onChange={(event) => setControlIncludeAllOpen(event.target.checked)} /> Incluir também cobranças em aberto fora do período</label>
           </FormGrid>
           <div className="toolbar charge-control-export">
             <button className="primary" disabled={printableCharges.length === 0 || printingChargeControl || exportingChargeControl} onClick={() => void printChargeControl()}>
