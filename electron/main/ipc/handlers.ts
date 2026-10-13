@@ -1181,6 +1181,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const result = repository.allocatePayment(payload);
     return result;
   });
+  handle(IPC_CHANNELS.cancelClientPayment, async (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().trim().min(1) }).parse(payload);
+    return repository.cancelClientPayment(data.id, data.reason);
+  });
   handle(IPC_CHANNELS.generateClientPaymentReceipt, (_event, payload: unknown) => repository.generateClientPaymentReceipt(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.openClientPaymentReceipt, async (_event, payload: unknown) => {
     const data = z.object({ paymentId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);

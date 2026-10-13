@@ -812,6 +812,33 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     window.setTimeout(() => scrollTo(detailRef, 120), 0);
   }
 
+  async function reversePayment(paymentId: string): Promise<void> {
+    if (!detail) return;
+    const confirmed = await requestDecision({
+      title: "Estornar baixa",
+      message: "Estornar este pagamento? O valor voltara para o saldo em aberto da cobranca e o estorno ficara registrado no historico."
+    });
+    if (!confirmed) return;
+    const reason = await requestTextInput({
+      title: "Motivo do estorno",
+      label: "Informe por que esta baixa esta sendo estornada",
+      required: true
+    });
+    if (!reason?.trim()) return;
+    try {
+      await window.operationsCafe.cancelClientPayment(paymentId, reason.trim());
+      const refreshed = await window.operationsCafe.getClientCharge(detail.charge.id);
+      setDetail(refreshed);
+      setChargeReceipts((current) => current.filter((item) => item.id !== paymentId));
+      setLastReceipt((current) => current?.id === paymentId ? null : current);
+      await load();
+      setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies, periodStart, periodEnd }));
+      setMessage("Baixa estornada. O valor voltou para o saldo em aberto da cobranca.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao estornar a baixa."}`);
+    }
+  }
+
   async function settleSingleOperation(operation: Operation): Promise<void> {
     if (operation.serviceAmountCents <= 0) {
       setMessage("Essa nota nao tem valor de servico calculado para receber.");
@@ -1419,6 +1446,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     <span className="row-actions">
                       <button disabled={!receipt?.receiptPdfFilePath} onClick={() => receipt && void window.operationsCafe.openClientPaymentReceipt({ paymentId: receipt.id, kind: "pdf" })}>Salvar PDF</button>
                       <button disabled={!receipt?.receiptImageFilePath} onClick={() => receipt && void window.operationsCafe.openClientPaymentReceipt({ paymentId: receipt.id, kind: "image" })}>Salvar imagem</button>
+                      <button className="danger" onClick={() => void reversePayment(paymentId)}>Estornar baixa</button>
                     </span>
                   </div>
                 );

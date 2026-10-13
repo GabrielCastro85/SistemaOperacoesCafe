@@ -82,6 +82,34 @@ describe("client charges and ledger", () => {
     } finally { db.close(); }
   });
 
+  it("reverses an accidental client payment and reopens the charge", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "REVERSAL-101", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: issued.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: "REVERSAL-101", notes: null, attachmentPath: null });
+      const paid = repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: issued.charge.finalAmountCents });
+      expect(paid.charge.status).toBe("PAID");
+
+      const cancelledPayment = repo.cancelClientPayment(payment.id, "Baixa feita por engano");
+      const reopened = repo.getClientCharge(issued.charge.id);
+      expect(cancelledPayment.status).toBe("CANCELLED");
+      expect(["ISSUED", "OVERDUE"]).toContain(reopened.charge.status);
+      expect(reopened.charge.paidAmountCents).toBe(0);
+      expect(reopened.charge.openAmountCents).toBe(reopened.charge.finalAmountCents);
+      expect(reopened.payments.filter((allocation) => !allocation.cancelledAt)).toHaveLength(0);
+      expect(db.prepare("SELECT entry_type, effect, amount_cents FROM client_ledger_entries WHERE client_charge_id = ? AND entry_type = 'REVERSAL'").get(issued.charge.id)).toEqual({
+        entry_type: "REVERSAL",
+        effect: "INCREASE_RECEIVABLE",
+        amount_cents: issued.charge.finalAmountCents
+      });
+      expect(() => repo.cancelClientPayment(payment.id, "Repetido")).toThrow("ja foi estornado");
+    } finally { db.close(); }
+  });
+
   it("generates a branded receipt with the client name and partial note payment", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {

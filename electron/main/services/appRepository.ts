@@ -3174,6 +3174,40 @@ export class AppRepository {
     return this.getClientCharge(charge.id);
   }
 
+  cancelClientPayment(id: string, reason: string): ClientPayment {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) throw new Error("Motivo obrigatorio.");
+    const payment = this.getClientPayment(id);
+    if (payment.status === "CANCELLED") throw new Error("Este pagamento ja foi estornado.");
+    const allocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_payment_id = ? AND cancelled_at IS NULL").all(id) as DbRecord[];
+    if (!allocations.length) throw new Error("Este pagamento nao possui baixa ativa para estornar.");
+    const now = new Date().toISOString();
+    const entryDate = now.slice(0, 10);
+    const chargeIds = [...new Set(allocations.map((allocation) => String(allocation.client_charge_id)))];
+    const run = this.db.transaction(() => {
+      this.db.prepare("UPDATE client_payments SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?")
+        .run(now, trimmedReason, now, id);
+      this.db.prepare("UPDATE client_payment_allocations SET cancelled_at = ?, cancellation_reason = ? WHERE client_payment_id = ? AND cancelled_at IS NULL")
+        .run(now, trimmedReason, id);
+      for (const allocation of allocations) {
+        this.db.prepare(`INSERT INTO client_ledger_entries (
+          id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id,
+          entry_type, effect, amount_cents, entry_date, description, reference_number,
+          notes, attachment_path, status, available_amount_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'REVERSAL', 'INCREASE_RECEIVABLE', ?, ?, ?, ?, ?, NULL, 'CONFIRMED', NULL, ?, ?)`)
+          .run(
+            randomUUID(), payment.organizationId, payment.ownLegalEntityId, payment.clientPartnerId,
+            String(allocation.client_charge_id), Number(allocation.amount_cents), entryDate,
+            "Estorno de pagamento recebido", payment.transactionReference,
+            `Pagamento estornado: ${trimmedReason}`, now, now
+          );
+      }
+      chargeIds.forEach((chargeId) => this.recalculateClientCharge(chargeId));
+    });
+    run();
+    return this.getClientPayment(id);
+  }
+
   async generateClientPaymentReceipt(id: string): Promise<ClientPayment> {
     if (!this.directories) throw new Error("Diretorios locais nao configurados.");
     const payment = this.getOrRepairClientPayment(id);

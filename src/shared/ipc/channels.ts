@@ -234,6 +234,7 @@ export const IPC_CHANNELS = {
   getAvailableCredits: "clientLedger:getAvailableCredits",
   createClientPayment: "clientPayments:create",
   allocateClientPayment: "clientPayments:allocate",
+  cancelClientPayment: "clientPayments:cancel",
   generateClientPaymentReceipt: "clientPayments:generateReceipt",
   openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",

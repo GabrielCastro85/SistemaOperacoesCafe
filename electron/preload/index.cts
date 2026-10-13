@@ -324,6 +324,7 @@ const IPC_CHANNELS = {
   getAvailableCredits: "clientLedger:getAvailableCredits",
   createClientPayment: "clientPayments:create",
   allocateClientPayment: "clientPayments:allocate",
+  cancelClientPayment: "clientPayments:cancel",
   generateClientPaymentReceipt: "clientPayments:generateReceipt",
   openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",
@@ -746,6 +747,7 @@ export interface OperationsCafeApi {
   getAvailableCredits: (organizationId: string, ownLegalEntityId: string, clientPartnerId: string) => Promise<ClientLedgerEntry[]>;
   createClientPayment: (input: unknown) => Promise<ClientPayment>;
   allocateClientPayment: (input: unknown) => Promise<ClientChargeDetail>;
+  cancelClientPayment: (id: string, reason: string) => Promise<ClientPayment>;
   generateClientPaymentReceipt: (id: string) => Promise<ClientPayment>;
   openClientPaymentReceipt: (input: { paymentId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart?: string | null; periodEnd?: string | null }) => Promise<BillingSummary>;
@@ -1158,6 +1160,7 @@ const api: OperationsCafeApi = {
   getAvailableCredits: (organizationId, ownLegalEntityId, clientPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.getAvailableCredits, { organizationId, ownLegalEntityId, clientPartnerId }) as Promise<ClientLedgerEntry[]>,
   createClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientPayment, input) as Promise<ClientPayment>,
   allocateClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.allocateClientPayment, input) as Promise<ClientChargeDetail>,
+  cancelClientPayment: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelClientPayment, { id, reason }) as Promise<ClientPayment>,
   generateClientPaymentReceipt: (id) => ipcRenderer.invoke(IPC_CHANNELS.generateClientPaymentReceipt, id) as Promise<ClientPayment>,
   openClientPaymentReceipt: (input) => ipcRenderer.invoke(IPC_CHANNELS.openClientPaymentReceipt, input) as Promise<boolean>,
   getBillingSummary: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingSummary, organizationId) as Promise<BillingSummary>,
