@@ -14,7 +14,7 @@ const schema = z.object({
   COLLECTOR_INGEST_SECRET: z.string().min(32).optional(),
   OPENAI_API_KEY: z.string().startsWith("sk-").optional(),
   OPENAI_MODEL: z.string().min(1).default("gpt-6-luna"),
-  OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(200).max(2000).default(900)
+  OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(200).max(4000).default(1800)
 });
 
 export type ServerConfig = ReturnType<typeof loadConfig>;

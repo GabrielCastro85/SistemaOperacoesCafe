@@ -20,7 +20,7 @@ function fakePool(): pg.Pool {
 const config = {
   OPENAI_API_KEY: "sk-test",
   OPENAI_MODEL: "gpt-6-luna",
-  OPENAI_MAX_OUTPUT_TOKENS: 900
+  OPENAI_MAX_OUTPUT_TOKENS: 1800
 } as ServerConfig;
 
 afterEach(() => vi.unstubAllGlobals());
@@ -51,9 +51,28 @@ describe("assistant API", () => {
       usage: { inputTokens: 20, outputTokens: 8, monthInputTokens: 120, monthOutputTokens: 30 }
     });
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(requestBody).toMatchObject({ model: "gpt-6-luna", store: false, max_output_tokens: 900 });
+    expect(requestBody).toMatchObject({ model: "gpt-6-luna", store: false, max_output_tokens: 1800, reasoning: { effort: "minimal" } });
     expect(requestBody.instructions).toContain("somente leitura");
     expect(requestBody.input.at(-1).content).toContain("Cliente A");
+    await app.close();
+  });
+
+  it("devolve erro controlado quando o provedor encerra a resposta antes de produzir texto", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [{ type: "reasoning", content: [] }]
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    const app = Fastify();
+    registerAssistantRoutes(app, fakePool(), config);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/assistant/chat",
+      headers: { authorization: "Bearer test" },
+      payload: { question: "Quais cobrancas?", context: {} }
+    });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({ error: "AI_INCOMPLETE_RESPONSE" });
     await app.close();
   });
 });

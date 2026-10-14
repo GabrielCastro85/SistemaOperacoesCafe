@@ -17,20 +17,22 @@ const requestSchema = z.object({
 });
 
 type OpenAiResponse = {
+  status?: string;
+  incomplete_details?: { reason?: string } | null;
   output_text?: string;
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
   usage?: { input_tokens?: number; output_tokens?: number };
   error?: { message?: string };
 };
 
-function extractAnswer(response: OpenAiResponse): string {
+function extractAnswer(response: OpenAiResponse): string | null {
   if (response.output_text?.trim()) return response.output_text.trim();
   for (const item of response.output ?? []) {
     for (const content of item.content ?? []) {
       if (content.type === "output_text" && content.text?.trim()) return content.text.trim();
     }
   }
-  throw new Error("A OpenAI nao retornou uma resposta em texto.");
+  return null;
 }
 
 export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): void {
@@ -60,6 +62,7 @@ export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, con
         model: config.OPENAI_MODEL,
         store: false,
         max_output_tokens: config.OPENAI_MAX_OUTPUT_TOKENS,
+        reasoning: { effort: "minimal" },
         instructions: [
           "Voce e o Assistente do sistema GraoBase, para operacoes de cafe.",
           "Responda sempre em portugues brasileiro, de forma direta e clara.",
@@ -84,6 +87,15 @@ export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, con
     }
 
     const answer = extractAnswer(payload);
+    if (!answer) {
+      request.log.warn({ status: payload.status, reason: payload.incomplete_details?.reason }, "OpenAI returned no assistant text");
+      return reply.code(502).send({
+        error: "AI_INCOMPLETE_RESPONSE",
+        message: payload.incomplete_details?.reason === "max_output_tokens"
+          ? "O Assistente precisou processar muitos dados. Tente novamente com uma pergunta mais especifica."
+          : "O Assistente nao conseguiu concluir esta resposta. Tente novamente."
+      });
+    }
     const inputTokens = Math.max(0, Number(payload.usage?.input_tokens ?? 0));
     const outputTokens = Math.max(0, Number(payload.usage?.output_tokens ?? 0));
     await pool.query(
