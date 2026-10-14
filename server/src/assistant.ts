@@ -62,7 +62,7 @@ export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, con
         model: config.OPENAI_MODEL,
         store: false,
         max_output_tokens: config.OPENAI_MAX_OUTPUT_TOKENS,
-        reasoning: { effort: "minimal" },
+        reasoning: { effort: "none" },
         instructions: [
           "Voce e o Assistente do sistema GraoBase, para operacoes de cafe.",
           "Responda sempre em portugues brasileiro, de forma direta e clara.",

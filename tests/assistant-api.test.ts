@@ -51,7 +51,7 @@ describe("assistant API", () => {
       usage: { inputTokens: 20, outputTokens: 8, monthInputTokens: 120, monthOutputTokens: 30 }
     });
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(requestBody).toMatchObject({ model: "gpt-6-luna", store: false, max_output_tokens: 1800, reasoning: { effort: "minimal" } });
+    expect(requestBody).toMatchObject({ model: "gpt-6-luna", store: false, max_output_tokens: 1800, reasoning: { effort: "none" } });
     expect(requestBody.instructions).toContain("somente leitura");
     expect(requestBody.input.at(-1).content).toContain("Cliente A");
     await app.close();
