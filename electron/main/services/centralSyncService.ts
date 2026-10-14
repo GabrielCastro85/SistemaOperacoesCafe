@@ -95,6 +95,17 @@ export interface CollectorMonitorStatus {
   lastCommandResult: string | null;
 }
 
+export interface AssistantChatResponse {
+  answer: string;
+  model: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    monthInputTokens: number;
+    monthOutputTokens: number;
+  };
+}
+
 function jsonValue(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return { $binaryBase64: value.toString("base64") };
   if (typeof value === "bigint") return value.toString();
@@ -185,6 +196,17 @@ export class CentralSyncService {
     return this.request("/v1/collector/commands", {
       method: "POST",
       body: JSON.stringify({ sourceCode, machineId, command })
+    });
+  }
+
+  async askAssistant(input: {
+    question: string;
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+    context: Record<string, unknown>;
+  }): Promise<AssistantChatResponse> {
+    return this.request("/v1/assistant/chat", {
+      method: "POST",
+      body: JSON.stringify(input)
     });
   }
 

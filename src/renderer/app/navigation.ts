@@ -14,7 +14,10 @@ export interface NavigationGroup {
 }
 
 export const navigationGroups: NavigationGroup[] = [
-  { title: "Visão geral", items: [{ id: "dashboard", label: "Resumo", legacyMenu: "Dashboard", path: "/dashboard", icon: "⌂" }] },
+  { title: "Visão geral", items: [
+    { id: "dashboard", label: "Resumo", legacyMenu: "Dashboard", path: "/dashboard", icon: "⌂" },
+    { id: "assistant", label: "Assistente", legacyMenu: "Assistente", path: "/assistant", icon: "✦" }
+  ] },
   {
     title: "Operações",
     items: [
@@ -77,6 +80,7 @@ export function pathFromLegacyMenu(menu: string): string {
 export function legacyMenuFromPath(path: string): string {
   const normalized = path.replace(/^#/, "").split("?")[0] || "/dashboard";
   if (normalized.startsWith("/operations")) return "Notas e operacoes";
+  if (normalized.startsWith("/assistant")) return "Assistente";
   if (normalized.startsWith("/products")) return "Produtos";
   if (normalized.startsWith("/billing/rates")) return "Regras por saca";
   if (normalized.startsWith("/imports/spreadsheets")) return "Notas e operacoes";

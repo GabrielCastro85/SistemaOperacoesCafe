@@ -1,5 +1,6 @@
 export type AppRouteId =
   | "dashboard"
+  | "assistant"
   | "invoices"
   | "productAliases"
   | "partners"
@@ -23,6 +24,7 @@ export type AppRouteId =
 
 export const routeTitleById: Record<AppRouteId, string> = {
   dashboard: "Dashboard",
+  assistant: "Assistente",
   invoices: "Notas e operações",
   productAliases: "Aliases de produto",
   partners: "Cadastros comerciais",

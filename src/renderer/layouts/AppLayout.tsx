@@ -50,6 +50,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
   switch (item.id) {
     case "dashboard":
       return <DashboardIcon />;
+    case "assistant":
+      return <ReportIcon />;
     case "invoices":
       return <InvoiceIcon />;
     case "partners":

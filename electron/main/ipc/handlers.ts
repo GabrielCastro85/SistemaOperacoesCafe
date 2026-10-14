@@ -730,6 +730,78 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     if (!centralSync.hasSession()) throw new Error("Entre no servidor central para controlar o coletor.");
     return centralSync.sendCollectorCommand(data.sourceCode, data.machineId, data.command);
   });
+  handle(IPC_CHANNELS.askAssistant, async (_event, payload: unknown) => {
+    const data = z.object({
+      question: z.string().trim().min(2).max(2000),
+      organizationId: z.string().uuid(),
+      ownLegalEntityId: z.string().uuid().nullable().optional(),
+      history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().trim().min(1).max(4000) })).max(8).optional()
+    }).parse(payload);
+    if (!centralSync.hasSession()) throw new Error("Entre no servidor central para usar o Assistente.");
+    await centralSync.synchronize().catch(() => undefined);
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = `${today.slice(0, 8)}01`;
+    const ownLegalEntityId = data.ownLegalEntityId ?? null;
+    const billing = repository.getBillingSummary({
+      organizationId: data.organizationId,
+      ownLegalEntityId,
+      periodStart: monthStart,
+      periodEnd: today
+    });
+    const operational = repository.getOperationalIndicators({
+      organizationId: data.organizationId,
+      ownLegalEntityId,
+      periodStart: monthStart,
+      periodEnd: today
+    });
+    const alerts = repository.getDashboardAlerts(data.organizationId, ownLegalEntityId);
+    const financial = repository.getFinancialSummary(data.organizationId);
+    const openCharges = repository.listClientCharges({ organizationId: data.organizationId })
+      .filter((charge) => charge.openAmountCents > 0 && !["DRAFT", "CANCELLED", "REPLACED", "PAID"].includes(charge.status))
+      .slice(0, 60)
+      .map((charge) => ({
+        number: charge.chargeNumber,
+        client: repository.getBusinessPartner(charge.clientPartnerId).displayName,
+        periodStart: charge.periodStart,
+        periodEnd: charge.periodEnd,
+        dueDate: charge.dueDate,
+        status: charge.status,
+        openAmountCents: charge.openAmountCents
+      }));
+    const openPayables = repository.listAccountsPayable({ organizationId: data.organizationId })
+      .filter((payable) => Number(payable.openAmountCents ?? 0) > 0 && !["DRAFT", "CANCELLED", "PAID"].includes(payable.status))
+      .slice(0, 40)
+      .map((payable) => ({ description: payable.description, dueDate: payable.dueDate, status: payable.status, openAmountCents: Number(payable.openAmountCents ?? 0) }));
+    const collectors = await centralSync.listCollectorStatuses().catch(() => []);
+    const activeContext = repository.getActiveContext();
+    const activeLegalEntity = ownLegalEntityId || activeContext.legalEntityId
+      ? repository.getLegalEntity(ownLegalEntityId ?? activeContext.legalEntityId ?? "")
+      : null;
+    return centralSync.askAssistant({
+      question: data.question,
+      history: data.history ?? [],
+      context: {
+        generatedAt: new Date().toISOString(),
+        period: { start: monthStart, end: today },
+        activeCompany: activeLegalEntity ? { name: activeLegalEntity.tradeName, cnpj: activeLegalEntity.cnpj } : null,
+        operational,
+        billing,
+        financial,
+        alerts,
+        openCharges,
+        openPayables,
+        collectors: collectors.map((collector) => ({
+          name: collector.sourceLabel,
+          online: collector.online,
+          status: collector.status,
+          lastScanAt: collector.lastScanAt,
+          lastSuccessAt: collector.lastSuccessAt,
+          lastError: collector.lastError,
+          pendingFiles: collector.pendingFiles
+        }))
+      }
+    });
+  });
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
     const data = z.object({
       source: z.enum(["VILLA_MG", "VILLA_ES", "GRAO_MG", "GRAO_SP", "ALL"]),

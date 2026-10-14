@@ -10,6 +10,7 @@ import { registerSqliteImportRoutes } from "./sqliteImport.js";
 import { registerSyncRoutes } from "./sync.js";
 import { registerViewerRoutes } from "./viewer.js";
 import { registerCollectorRoutes } from "./collector.js";
+import { registerAssistantRoutes } from "./assistant.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -47,6 +48,7 @@ registerSqliteImportRoutes(app, pool);
 registerSyncRoutes(app, pool);
 registerViewerRoutes(app, pool);
 registerCollectorRoutes(app, pool, config);
+registerAssistantRoutes(app, pool, config);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });

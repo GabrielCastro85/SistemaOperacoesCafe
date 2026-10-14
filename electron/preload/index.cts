@@ -264,6 +264,7 @@ const IPC_CHANNELS = {
   selectXmlFolder: "xmlFiles:selectFolder",
   getVulpeDevStatus: "xmlFiles:vulpeDevStatus",
   sendCollectorCommand: "xmlFiles:collectorCommand",
+  askAssistant: "assistant:ask",
   scanVulpeDevXml: "xmlFiles:vulpeDevScan",
   registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",
@@ -495,6 +496,12 @@ export interface CollectorMonitorStatus {
   lastCommandResult: string | null;
 }
 
+export interface AssistantChatResponse {
+  answer: string;
+  model: string;
+  usage: { inputTokens: number; outputTokens: number; monthInputTokens: number; monthOutputTokens: number };
+}
+
 export interface OperationsCafeApi {
   authNeedsBootstrap: () => Promise<boolean>;
   authCentralConnectionStatus: () => Promise<{ configured: boolean }>;
@@ -505,6 +512,7 @@ export interface OperationsCafeApi {
   authUnlock: (password: string) => Promise<AuthSession>;
   authLogout: () => Promise<void>;
   authChangePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+  askAssistant: (input: { question: string; organizationId: string; ownLegalEntityId?: string | null; history?: Array<{ role: "user" | "assistant"; content: string }> }) => Promise<AssistantChatResponse>;
   listUsers: () => Promise<AppUser[]>;
   createUser: (input: { displayName: string; username: string; email?: string | null; password: string; mustChangePassword?: boolean }) => Promise<AppUser>;
   updateUser: (input: { id: string; displayName?: string; email?: string | null; status?: AppUser["status"]; mustChangePassword?: boolean }) => Promise<AppUser>;
@@ -895,6 +903,7 @@ const api: OperationsCafeApi = {
   authUnlock: (password) => ipcRenderer.invoke(IPC_CHANNELS.authUnlock, password) as Promise<AuthSession>,
   authLogout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout) as Promise<void>,
   authChangePassword: (input) => ipcRenderer.invoke(IPC_CHANNELS.authChangePassword, input) as Promise<void>,
+  askAssistant: (input) => ipcRenderer.invoke(IPC_CHANNELS.askAssistant, input) as Promise<AssistantChatResponse>,
   listUsers: () => ipcRenderer.invoke(IPC_CHANNELS.listUsers) as Promise<AppUser[]>,
   createUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUser, input) as Promise<AppUser>,
   updateUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateUser, input) as Promise<AppUser>,
