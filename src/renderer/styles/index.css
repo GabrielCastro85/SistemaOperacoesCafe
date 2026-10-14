@@ -4732,6 +4732,37 @@ table tbody tr:hover {
   background: linear-gradient(100deg, color-mix(in srgb, var(--color-accent) 11%, var(--color-surface)), var(--color-surface) 58%);
 }
 
+.alert-item--billing-pending {
+  cursor: default;
+  justify-content: space-between;
+  padding: 16px;
+  border-color: color-mix(in srgb, var(--color-warning, #b7791f) 48%, var(--color-border));
+  border-left: 5px solid var(--color-warning, #b7791f);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--color-warning, #b7791f) 9%, var(--color-surface)), var(--color-surface) 64%);
+}
+
+.alert-item--billing-pending:hover {
+  border-color: color-mix(in srgb, var(--color-warning, #b7791f) 60%, var(--color-border));
+}
+
+.alert-item--billing-pending .alert-item__content {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.alert-item__content small {
+  color: var(--color-text-muted);
+  font-size: .78rem;
+}
+
+.alert-item__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .alert-item__content,
 .alert-item__meta {
   display: grid;
@@ -4770,6 +4801,7 @@ table tbody tr:hover {
 
 @media (max-width: 760px) {
   .alert-item--payable,
+  .alert-item--billing-pending,
   .dashboard-alert-section__heading {
     align-items: stretch;
     flex-direction: column;
@@ -4777,6 +4809,14 @@ table tbody tr:hover {
 
   .alert-item__meta {
     justify-items: start;
+  }
+
+  .alert-item__actions {
+    justify-content: stretch;
+  }
+
+  .alert-item__actions .ui-button {
+    flex: 1 1 150px;
   }
 }
 

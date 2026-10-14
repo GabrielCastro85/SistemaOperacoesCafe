@@ -60,7 +60,7 @@ function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
 
 function isLikelyDataMutation(channel: string): boolean {
   if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
-  return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return)/i.test(channel);
+  return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return|ignore)/i.test(channel);
 }
 
 export function createDiagnostics(context: AppContext, repository: AppRepository, centralSync?: CentralSyncService): Diagnostics {
@@ -1221,6 +1221,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.getDashboardAlerts, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload);
     return repository.getDashboardAlerts(data.organizationId, data.ownLegalEntityId);
+  });
+  handle(IPC_CHANNELS.ignorePreviousPeriodBillingAlert, (_event, payload: unknown) => {
+    const data = z.object({
+      organizationId: z.string().uuid(),
+      ownLegalEntityId: z.string().uuid(),
+      clientPartnerId: z.string().uuid(),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      reason: z.string().trim().min(3).max(500)
+    }).parse(payload);
+    return repository.ignorePreviousPeriodBillingAlert(data);
   });
   handle(IPC_CHANNELS.listTransferReconciliations, (_event, payload: unknown) => repository.listTransferReconciliations(
     z.object({ organizationId: z.string().uuid(), clientPartnerId: z.string().uuid().optional(), status: z.enum(["ALL", "DRAFT", "COMPLETED", "CANCELLED"]).optional() }).parse(payload)

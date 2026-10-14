@@ -1753,7 +1753,25 @@ export interface DashboardPayableDueAlert {
   daysUntilDue: number;
 }
 
+export interface DashboardPreviousPeriodUnbilledAlert {
+  organizationId: string;
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  partnerId: string;
+  partnerName: string;
+  periodStart: string;
+  periodEnd: string;
+  operationIds: string[];
+  operationCount: number;
+  documentCount: number;
+  documentNumbers: string[];
+  serviceAmountCents: number;
+  freightDaeAmountCents: number;
+  totalAmountCents: number;
+}
+
 export interface DashboardAlerts {
+  previousPeriodUnbilled: DashboardPreviousPeriodUnbilledAlert[];
   payablesDueSoon: DashboardPayableDueAlert[];
   overdueCharges: DashboardOverdueChargeAlert[];
   waitingSignatureConfirmations: DashboardWaitingSignatureAlert[];

@@ -3699,11 +3699,123 @@ export class AppRepository {
   private static readonly CREDIT_LIMIT_ALERT_PERCENT = 90;
   private static readonly PAYABLE_ALERT_DAYS_AHEAD = 7;
 
+  private getPreviousPeriodUnbilledAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts["previousPeriodUnbilled"] {
+    const today = parseLocalDate(isoDate(new Date()));
+    const periodStart = isoDate(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+    const periodEnd = isoDate(new Date(today.getFullYear(), today.getMonth(), 0));
+    const rows = this.db.prepare(`
+      SELECT
+        operations.id AS operation_id,
+        operations.own_legal_entity_id,
+        legal_entities.trade_name AS own_legal_entity_name,
+        operations.responsible_partner_id,
+        business_partners.display_name AS partner_name,
+        operations.fiscal_document_id,
+        fiscal_documents.document_number,
+        operations.service_amount_cents,
+        COALESCE(fiscal_documents.freight_dae_amount_cents, 0) AS freight_dae_amount_cents
+      FROM operations
+      INNER JOIN fiscal_documents ON fiscal_documents.id = operations.fiscal_document_id
+      INNER JOIN business_partners ON business_partners.id = operations.responsible_partner_id
+      INNER JOIN legal_entities ON legal_entities.id = operations.own_legal_entity_id
+      LEFT JOIN billing_alert_ignores ON billing_alert_ignores.operation_id = operations.id
+      WHERE operations.organization_id = ?
+        AND (? IS NULL OR operations.own_legal_entity_id = ?)
+        AND operations.operation_date BETWEEN ? AND ?
+        AND operations.operation_type = 'SALE'
+        AND operations.status IN ('DRAFT', 'CONFIRMED')
+        AND operations.billing_status = 'UNBILLED'
+        AND operations.applied_rate_value_cents > 0
+        AND operations.service_amount_cents > 0
+        AND fiscal_documents.status IN ('DRAFT', 'CONFIRMED')
+        AND fiscal_documents.has_pending_issues = 0
+        AND billing_alert_ignores.id IS NULL
+      ORDER BY business_partners.display_name, legal_entities.trade_name, fiscal_documents.document_number
+    `).all(organizationId, ownLegalEntityId ?? null, ownLegalEntityId ?? null, periodStart, periodEnd) as Array<{
+      operation_id: string;
+      own_legal_entity_id: string;
+      own_legal_entity_name: string;
+      responsible_partner_id: string;
+      partner_name: string;
+      fiscal_document_id: string;
+      document_number: string;
+      service_amount_cents: number;
+      freight_dae_amount_cents: number;
+    }>;
+
+    const groups = new Map<string, DashboardAlerts["previousPeriodUnbilled"][number] & { documentIds: Set<string> }>();
+    for (const row of rows) {
+      const key = `${row.own_legal_entity_id}\u0000${row.responsible_partner_id}`;
+      const group = groups.get(key) ?? {
+        organizationId,
+        ownLegalEntityId: row.own_legal_entity_id,
+        ownLegalEntityName: row.own_legal_entity_name,
+        partnerId: row.responsible_partner_id,
+        partnerName: row.partner_name,
+        periodStart,
+        periodEnd,
+        operationIds: [],
+        operationCount: 0,
+        documentCount: 0,
+        documentNumbers: [],
+        serviceAmountCents: 0,
+        freightDaeAmountCents: 0,
+        totalAmountCents: 0,
+        documentIds: new Set<string>()
+      };
+      group.operationIds.push(row.operation_id);
+      group.operationCount += 1;
+      group.serviceAmountCents += Number(row.service_amount_cents);
+      if (!group.documentIds.has(row.fiscal_document_id)) {
+        group.documentIds.add(row.fiscal_document_id);
+        group.documentNumbers.push(row.document_number);
+        group.freightDaeAmountCents += Number(row.freight_dae_amount_cents);
+      }
+      group.documentCount = group.documentIds.size;
+      group.totalAmountCents = group.serviceAmountCents + group.freightDaeAmountCents;
+      groups.set(key, group);
+    }
+
+    return [...groups.values()]
+      .map(({ documentIds: _documentIds, ...alert }) => alert)
+      .sort((left, right) => right.totalAmountCents - left.totalAmountCents || left.partnerName.localeCompare(right.partnerName, "pt-BR"));
+  }
+
+  ignorePreviousPeriodBillingAlert(input: {
+    organizationId: string;
+    ownLegalEntityId: string;
+    clientPartnerId: string;
+    periodStart: string;
+    periodEnd: string;
+    reason: string;
+  }): DashboardAlerts {
+    this.assertOrganizationWritable(input.organizationId);
+    const reason = input.reason.trim();
+    if (reason.length < 3) throw new Error("Informe o motivo para ignorar esta cobranca.");
+    const alert = this.getPreviousPeriodUnbilledAlerts(input.organizationId, input.ownLegalEntityId)
+      .find((item) => item.partnerId === input.clientPartnerId && item.periodStart === input.periodStart && item.periodEnd === input.periodEnd);
+    if (!alert) throw new Error("A pendencia nao esta mais disponivel. Atualize o Dashboard.");
+    const now = new Date().toISOString();
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO billing_alert_ignores(
+        id, organization_id, own_legal_entity_id, client_partner_id, operation_id,
+        period_start, period_end, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const operationId of alert.operationIds) {
+        insert.run(randomUUID(), input.organizationId, input.ownLegalEntityId, input.clientPartnerId, operationId, input.periodStart, input.periodEnd, reason, now);
+      }
+    })();
+    return this.getDashboardAlerts(input.organizationId, input.ownLegalEntityId);
+  }
+
   getDashboardAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts {
     this.assertOrganizationWritable(organizationId);
     const today = new Date().toISOString().slice(0, 10);
     const partners = this.listBusinessPartners({ role: "CLIENT", status: "active" });
     const partnerName = (id: string): string => partners.find((item) => item.id === id)?.displayName ?? id;
+    const previousPeriodUnbilled = this.getPreviousPeriodUnbilledAlerts(organizationId, ownLegalEntityId);
 
     // Contas a pagar sao lembretes administrativos globais: quem esta no
     // painel da Grao MG ainda precisa enxergar, por exemplo, uma conta de agua
@@ -3803,7 +3915,7 @@ export class AppRepository {
       }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-    return { payablesDueSoon, overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
+    return { previousPeriodUnbilled, payablesDueSoon, overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
   }
 
   markLoanCollected(id: string): ClientLedgerEntry {

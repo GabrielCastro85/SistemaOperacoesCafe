@@ -3506,4 +3506,23 @@ export const migrations: Migration[] = [
         WHERE source_fiscal_document_id IS NOT NULL;
     `)
   }
+  ,{
+    name: "055_previous_period_billing_alert_ignores",
+    up: (db) => db.exec(`
+      CREATE TABLE billing_alert_ignores (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id),
+        own_legal_entity_id TEXT NOT NULL REFERENCES legal_entities(id),
+        client_partner_id TEXT NOT NULL REFERENCES business_partners(id),
+        operation_id TEXT NOT NULL REFERENCES operations(id) ON DELETE CASCADE,
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(operation_id)
+      );
+      CREATE INDEX idx_billing_alert_ignores_scope
+        ON billing_alert_ignores(organization_id, own_legal_entity_id, client_partner_id, period_start, period_end);
+    `)
+  }
 ];

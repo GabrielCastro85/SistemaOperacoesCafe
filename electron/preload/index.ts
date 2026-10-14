@@ -329,6 +329,7 @@ const IPC_CHANNELS = {
   openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",
   getDashboardAlerts: "billingDashboard:alerts",
+  ignorePreviousPeriodBillingAlert: "billingDashboard:ignorePreviousPeriod",
   listTransferReconciliations: "transferReconciliations:list",
   listTransferReconciliationInvoices: "transferReconciliations:listInvoices",
   getTransferReconciliation: "transferReconciliations:get",
@@ -752,6 +753,7 @@ export interface OperationsCafeApi {
   openClientPaymentReceipt: (input: { paymentId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart?: string | null; periodEnd?: string | null }) => Promise<BillingSummary>;
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
+  ignorePreviousPeriodBillingAlert: (input: { organizationId: string; ownLegalEntityId: string; clientPartnerId: string; periodStart: string; periodEnd: string; reason: string }) => Promise<DashboardAlerts>;
   listTransferReconciliations: (filters: { organizationId: string; clientPartnerId?: string; status?: "ALL" | "DRAFT" | "COMPLETED" | "CANCELLED" }) => Promise<TransferReconciliation[]>;
   listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
   getTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
@@ -1165,6 +1167,7 @@ const api: OperationsCafeApi = {
   openClientPaymentReceipt: (input) => ipcRenderer.invoke(IPC_CHANNELS.openClientPaymentReceipt, input) as Promise<boolean>,
   getBillingSummary: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingSummary, organizationId) as Promise<BillingSummary>,
   getDashboardAlerts: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDashboardAlerts, input) as Promise<DashboardAlerts>,
+  ignorePreviousPeriodBillingAlert: (input) => ipcRenderer.invoke(IPC_CHANNELS.ignorePreviousPeriodBillingAlert, input) as Promise<DashboardAlerts>,
   listTransferReconciliations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliations, filters) as Promise<TransferReconciliation[]>,
   listTransferReconciliationInvoices: (input) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliationInvoices, input) as Promise<TransferReconciliationAvailableInvoice[]>,
   getTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.getTransferReconciliation, id) as Promise<TransferReconciliationDetail>,

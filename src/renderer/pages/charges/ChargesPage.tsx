@@ -32,6 +32,11 @@ const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
 const INCLUDE_ALL_COMPANIES_IN_CHARGES = true;
 const HISTORY_PAGE_SIZE = 10;
 
+function chargeHashParam(name: string): string {
+  const query = window.location.hash.split("?")[1] ?? "";
+  return new URLSearchParams(query).get(name) ?? "";
+}
+
 function localDateInputValue(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -111,10 +116,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [partnerSummary, setPartnerSummary] = useState<PartnerRateSummaryRow[]>([]);
   const [partnerSummarySearch, setPartnerSummarySearch] = useState("");
   const [includeAlreadyBilled, setIncludeAlreadyBilled] = useState(false);
-  const [clientId, setClientId] = useState("");
+  const [clientId, setClientId] = useState(() => chargeHashParam("clientId"));
   const [periodicity, setPeriodicity] = useState<BillingPeriodicity>("MONTHLY");
-  const [periodStart, setPeriodStart] = useState(() => currentBillingRange("MONTHLY").periodStart);
-  const [periodEnd, setPeriodEnd] = useState(() => localDateInputValue(new Date()));
+  const [periodStart, setPeriodStart] = useState(() => chargeHashParam("periodStart") || currentBillingRange("MONTHLY").periodStart);
+  const [periodEnd, setPeriodEnd] = useState(() => chargeHashParam("periodEnd") || localDateInputValue(new Date()));
   const [dueDate, setDueDate] = useState(() => localDateInputValue(new Date()));
   const [advanceInput, setAdvanceInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
@@ -309,6 +314,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const periodRequestRef = useRef(0);
+  const dashboardPrefillHandledRef = useRef(false);
   const [loadingPeriod, setLoadingPeriod] = useState(false);
   async function findOperationsForRange(nextPeriodStart: string, nextPeriodEnd: string, selectedClientId = clientId): Promise<void> {
     const request = ++periodRequestRef.current;
@@ -343,6 +349,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       if (request === periodRequestRef.current) setLoadingPeriod(false);
     }
   }
+
+  useEffect(() => {
+    if (dashboardPrefillHandledRef.current || chargeHashParam("from") !== "dashboard" || !clientId) return;
+    dashboardPrefillHandledRef.current = true;
+    void findOperationsForRange(periodStart, periodEnd, clientId);
+  }, [clientId, periodEnd, periodStart]);
 
   async function applyPeriodicityFilter(nextPeriodicity: BillingPeriodicity): Promise<void> {
     const range = currentBillingRange(nextPeriodicity);

@@ -5,6 +5,7 @@ import type { UpdateStatus } from "../../../shared/types/updater";
 import { formatCnpj, formatCurrencyFromCents, formatDateOnlyBr, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
 import { Alert, Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, Input, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
+import { requestTextInput } from "../../utils/dialogs";
 
 const NEW_COMPANY_DEFAULT_COLORS = { primaryColor: "#1F6F4A", secondaryColor: "#0B3D26", accentColor: "#E0A94A" };
 
@@ -329,6 +330,8 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const [partnerSummaryLoading, setPartnerSummaryLoading] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [ignoringBillingAlert, setIgnoringBillingAlert] = useState<string | null>(null);
+  const [billingAlertFeedback, setBillingAlertFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     void window.operationsCafe.getUpdateStatus().then(setUpdateStatus);
@@ -431,7 +434,39 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const remainingOverdueCharges = Math.max(0, (alerts?.overdueCharges.length ?? 0) - overdueChargePreview.length);
   const payablePreview = alerts?.payablesDueSoon.slice(0, 4) ?? [];
   const remainingPayables = Math.max(0, (alerts?.payablesDueSoon.length ?? 0) - payablePreview.length);
-  const hasAlerts = Boolean(alerts && (alerts.payablesDueSoon.length || alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+  const hasAlerts = Boolean(alerts && (alerts.previousPeriodUnbilled.length || alerts.payablesDueSoon.length || alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+
+  async function ignorePreviousPeriodAlert(item: DashboardAlerts["previousPeriodUnbilled"][number]): Promise<void> {
+    const reason = await requestTextInput({
+      title: "Ignorar pendencia de cobranca",
+      label: `Informe por que as ${item.documentCount} nota(s) de ${item.partnerName} nao devem ser cobradas`,
+      required: true
+    });
+    if (!reason?.trim()) return;
+    setIgnoringBillingAlert(`${item.ownLegalEntityId}:${item.partnerId}`);
+    setBillingAlertFeedback(null);
+    try {
+      const nextAlerts = await window.operationsCafe.ignorePreviousPeriodBillingAlert({
+        organizationId: item.organizationId,
+        ownLegalEntityId: item.ownLegalEntityId,
+        clientPartnerId: item.partnerId,
+        periodStart: item.periodStart,
+        periodEnd: item.periodEnd,
+        reason: reason.trim()
+      });
+      setAlerts(nextAlerts);
+      setBillingAlertFeedback(`Pendencia de ${item.partnerName} ignorada. Ela nao aparecera novamente no Dashboard.`);
+    } catch (error) {
+      setBillingAlertFeedback(`Nao foi possivel ignorar a pendencia: ${error instanceof Error ? error.message : "falha inesperada"}`);
+    } finally {
+      setIgnoringBillingAlert(null);
+    }
+  }
+
+  function openPreviousPeriodCharge(item: DashboardAlerts["previousPeriodUnbilled"][number]): void {
+    const query = new URLSearchParams({ from: "dashboard", clientId: item.partnerId, periodStart: item.periodStart, periodEnd: item.periodEnd });
+    window.location.hash = `#/charges?${query.toString()}`;
+  }
 
   function payableDueLabel(daysUntilDue: number): string {
     if (daysUntilDue < 0) return `Vencida há ${Math.abs(daysUntilDue)} dia(s)`;
@@ -478,7 +513,42 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               <h2>Alertas</h2>
             </div>
           </div>
+          {billingAlertFeedback ? <Alert tone={billingAlertFeedback.startsWith("Nao") ? "danger" : "success"}>{billingAlertFeedback}</Alert> : null}
           <div className="dashboard-alert-sections">
+            {alerts.previousPeriodUnbilled.length ? (
+              <section className="dashboard-alert-section dashboard-alert-section--billing-pending">
+                <div className="dashboard-alert-section__heading">
+                  <div><span className="ui-eyebrow">Mês anterior</span><h3>Pendências de cobrança</h3></div>
+                  <Badge tone="warning">{alerts.previousPeriodUnbilled.reduce((sum, item) => sum + item.documentCount, 0)} nota(s)</Badge>
+                </div>
+                <div className="alert-list">
+                  {alerts.previousPeriodUnbilled.map((item) => {
+                    const alertKey = `${item.ownLegalEntityId}:${item.partnerId}`;
+                    const shownNotes = item.documentNumbers.slice(0, 5).join(", ");
+                    const hiddenNotes = Math.max(0, item.documentNumbers.length - 5);
+                    return (
+                      <article key={alertKey} className="alert-item alert-item--billing-pending">
+                        <div className="alert-item__content">
+                          <strong>{item.partnerName}</strong>
+                          <span>{item.ownLegalEntityName} · {item.documentCount} nota(s) · {item.operationCount} operação(ões)</span>
+                          <small>NF {shownNotes}{hiddenNotes ? ` e mais ${hiddenNotes}` : ""}</small>
+                          {item.freightDaeAmountCents > 0 ? <small>Inclui {formatCurrencyFromCents(item.freightDaeAmountCents)} de DAE de frete</small> : null}
+                        </div>
+                        <div className="alert-item__meta">
+                          <Badge tone="warning">Não cobrada</Badge>
+                          <strong>{formatCurrencyFromCents(item.totalAmountCents)}</strong>
+                          <small>{formatDateOnlyBr(item.periodStart)} a {formatDateOnlyBr(item.periodEnd)}</small>
+                        </div>
+                        <div className="alert-item__actions">
+                          <Button variant="primary" onClick={() => openPreviousPeriodCharge(item)}>Gerar cobrança</Button>
+                          <Button variant="ghost" loading={ignoringBillingAlert === alertKey} onClick={() => void ignorePreviousPeriodAlert(item)}>Ignorar cobrança</Button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
             {payablePreview.length ? (
               <section className="dashboard-alert-section dashboard-alert-section--payables">
                 <div className="dashboard-alert-section__heading">

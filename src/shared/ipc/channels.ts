@@ -239,6 +239,7 @@ export const IPC_CHANNELS = {
   openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",
   getDashboardAlerts: "billingDashboard:alerts",
+  ignorePreviousPeriodBillingAlert: "billingDashboard:ignorePreviousPeriod",
   listTransferReconciliations: "transferReconciliations:list",
   listTransferReconciliationInvoices: "transferReconciliations:listInvoices",
   getTransferReconciliation: "transferReconciliations:get",
