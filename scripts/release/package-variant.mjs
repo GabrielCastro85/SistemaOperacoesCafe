@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.42"
+  const highlights = releaseVersion === "1.1.43"
+    ? `- Dashboard avisa quando existem notas do mes anterior que ainda nao entraram em uma cobranca.
+- Pendencias sao agrupadas por cliente e mostram notas, DAE de frete e valor total.
+- O botao Gerar cobranca abre o cliente e o periodo corretos diretamente na tela de cobrancas.
+- A opcao Ignorar cobranca oculta as pendencias escolhidas e mantem a decisao sincronizada entre os computadores.`
+    : releaseVersion === "1.1.42"
     ? `- O controle interno passa a incluir somente cobrancas com saldo realmente em aberto.
 - Cobrancas quitadas sao descartadas e cobrancas fora do periodo so entram quando a opcao correspondente for marcada.
 - A planilha mostra o saldo restante e a impressao foi compactada para papel A4 vertical.`
