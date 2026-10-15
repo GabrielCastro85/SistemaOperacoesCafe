@@ -25,6 +25,58 @@ type OpenAiResponse = {
   error?: { message?: string };
 };
 
+const MAX_CONTEXT_CHARACTERS = 12_000;
+
+function compactValue(value: unknown, arrayLimit = 10): unknown {
+  if (typeof value === "string") return value.slice(0, 500);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, arrayLimit).map((item) => compactValue(item, arrayLimit));
+  if (typeof value === "object" && value) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 50)
+        .map(([key, item]) => [key, compactValue(item, arrayLimit)])
+    );
+  }
+  return undefined;
+}
+
+function buildBusinessContext(context: Record<string, unknown>): string {
+  const compactAlerts = (limit: number): unknown => {
+    const alerts = context.alerts;
+    if (!alerts || typeof alerts !== "object" || Array.isArray(alerts)) return undefined;
+    return Object.fromEntries(
+      Object.entries(alerts as Record<string, unknown>)
+        .slice(0, 20)
+        .map(([key, value]) => [key, compactValue(value, limit)])
+    );
+  };
+  const build = (alertLimit: number, chargeLimit: number, payableLimit: number) => ({
+    generatedAt: compactValue(context.generatedAt),
+    period: compactValue(context.period),
+    activeCompany: compactValue(context.activeCompany),
+    operational: compactValue(context.operational),
+    billing: compactValue(context.billing),
+    financial: compactValue(context.financial),
+    openCharges: compactValue(context.openCharges, chargeLimit),
+    openPayables: compactValue(context.openPayables, payableLimit),
+    collectors: compactValue(context.collectors, 10),
+    alerts: compactAlerts(alertLimit)
+  });
+
+  let result = build(5, 60, 40);
+  let serialized = JSON.stringify(result);
+  if (serialized.length > MAX_CONTEXT_CHARACTERS) {
+    result = build(2, 40, 20);
+    serialized = JSON.stringify(result);
+  }
+  if (serialized.length > MAX_CONTEXT_CHARACTERS) {
+    result.alerts = undefined;
+    serialized = JSON.stringify(result);
+  }
+  return serialized.slice(0, MAX_CONTEXT_CHARACTERS);
+}
+
 function extractAnswer(response: OpenAiResponse): string | null {
   if (response.output_text?.trim()) return response.output_text.trim();
   for (const item of response.output ?? []) {
@@ -42,7 +94,7 @@ export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, con
     if (!config.OPENAI_API_KEY) return reply.code(503).send({ error: "AI_NOT_CONFIGURED", message: "O Assistente ainda nao foi configurado no servidor." });
 
     const input = requestSchema.parse(request.body);
-    const businessContext = JSON.stringify(input.context).slice(0, 40_000);
+    const businessContext = buildBusinessContext(input.context);
     const messages = [
       ...input.history.map((message) => ({ role: message.role, content: message.content })),
       {

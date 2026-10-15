@@ -75,4 +75,39 @@ describe("assistant API", () => {
     expect(response.json()).toMatchObject({ error: "AI_INCOMPLETE_RESPONSE" });
     await app.close();
   });
+
+  it("compacta listas repetidas sem remover as cobrancas em aberto do contexto", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      output_text: "Resposta compactada.",
+      usage: { input_tokens: 100, output_tokens: 10 }
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const app = Fastify();
+    registerAssistantRoutes(app, fakePool(), config);
+    const repeatedAlerts = Array.from({ length: 50 }, (_, index) => ({
+      partnerName: `Cliente ${index} ${"A".repeat(200)}`,
+      openAmountCents: 10000 + index
+    }));
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/assistant/chat",
+      headers: { authorization: "Bearer test" },
+      payload: {
+        question: "Quais cobrancas?",
+        context: {
+          alerts: { overdueCharges: repeatedAlerts, previousPeriodUnbilled: repeatedAlerts },
+          openCharges: [{ client: "Cliente preservado", openAmountCents: 12000 }],
+          openPayables: [{ description: "Conta preservada", openAmountCents: 3000 }]
+        }
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const prompt = String(requestBody.input.at(-1).content);
+    expect(prompt.length).toBeLessThan(12_500);
+    expect(prompt).toContain("Cliente preservado");
+    expect(prompt).toContain("Conta preservada");
+    expect(prompt).not.toContain("Cliente 49");
+    await app.close();
+  });
 });
