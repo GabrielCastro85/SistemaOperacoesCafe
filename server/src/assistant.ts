@@ -41,6 +41,35 @@ function compactValue(value: unknown, arrayLimit = 10): unknown {
   return undefined;
 }
 
+function numericField(value: unknown, field: string): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const parsed = Number((value as Record<string, unknown>)[field] ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function stringField(value: unknown, field: string): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const fieldValue = (value as Record<string, unknown>)[field];
+  return typeof fieldValue === "string" ? fieldValue : "";
+}
+
+function calculateContextTotals(context: Record<string, unknown>): Record<string, number> {
+  const openCharges = Array.isArray(context.openCharges) ? context.openCharges : [];
+  const overdueCharges = openCharges.filter((charge) => stringField(charge, "status") === "OVERDUE");
+  const openPayables = Array.isArray(context.openPayables) ? context.openPayables : [];
+  const overduePayables = openPayables.filter((payable) => stringField(payable, "status") === "OVERDUE");
+  return {
+    openChargeCount: openCharges.length,
+    openChargeAmountCents: Math.round(openCharges.reduce((sum, charge) => sum + numericField(charge, "openAmountCents"), 0)),
+    overdueChargeCount: overdueCharges.length,
+    overdueChargeAmountCents: Math.round(overdueCharges.reduce((sum, charge) => sum + numericField(charge, "openAmountCents"), 0)),
+    openPayableCount: openPayables.length,
+    openPayableAmountCents: Math.round(openPayables.reduce((sum, payable) => sum + numericField(payable, "openAmountCents"), 0)),
+    overduePayableCount: overduePayables.length,
+    overduePayableAmountCents: Math.round(overduePayables.reduce((sum, payable) => sum + numericField(payable, "openAmountCents"), 0))
+  };
+}
+
 function buildBusinessContext(context: Record<string, unknown>): string {
   const compactAlerts = (limit: number): unknown => {
     const alerts = context.alerts;
@@ -55,6 +84,7 @@ function buildBusinessContext(context: Record<string, unknown>): string {
     generatedAt: compactValue(context.generatedAt),
     period: compactValue(context.period),
     activeCompany: compactValue(context.activeCompany),
+    calculatedTotals: calculateContextTotals(context),
     operational: compactValue(context.operational),
     billing: compactValue(context.billing),
     financial: compactValue(context.financial),
@@ -120,6 +150,7 @@ export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, con
           "Responda sempre em portugues brasileiro, de forma direta e clara.",
           "Use somente os dados atuais fornecidos nesta solicitacao.",
           "Nunca invente numeros, nomes, pagamentos ou status.",
+          "Use calculatedTotals para totais e contagens; nao refaca essas somas a partir das listas.",
           "Quando os dados nao forem suficientes, diga exatamente o que nao foi encontrado.",
           "Esta versao e somente leitura: explique o que o usuario pode fazer, mas nao afirme que alterou dados.",
           "Ao citar dinheiro recebido em centavos, converta para reais no formato brasileiro."

@@ -96,8 +96,8 @@ describe("assistant API", () => {
         question: "Quais cobrancas?",
         context: {
           alerts: { overdueCharges: repeatedAlerts, previousPeriodUnbilled: repeatedAlerts },
-          openCharges: [{ client: "Cliente preservado", openAmountCents: 12000 }],
-          openPayables: [{ description: "Conta preservada", openAmountCents: 3000 }]
+          openCharges: [{ client: "Cliente preservado", status: "OVERDUE", openAmountCents: 12000 }],
+          openPayables: [{ description: "Conta preservada", status: "OVERDUE", openAmountCents: 3000 }]
         }
       }
     });
@@ -107,6 +107,9 @@ describe("assistant API", () => {
     expect(prompt.length).toBeLessThan(12_500);
     expect(prompt).toContain("Cliente preservado");
     expect(prompt).toContain("Conta preservada");
+    expect(prompt).toContain('"openChargeAmountCents":12000');
+    expect(prompt).toContain('"overdueChargeAmountCents":12000');
+    expect(prompt).toContain('"openPayableAmountCents":3000');
     expect(prompt).not.toContain("Cliente 49");
     await app.close();
   });
