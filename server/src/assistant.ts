@@ -151,6 +151,7 @@ export function registerAssistantRoutes(app: FastifyInstance, pool: pg.Pool, con
           "Use somente os dados atuais fornecidos nesta solicitacao.",
           "Nunca invente numeros, nomes, pagamentos ou status.",
           "Use calculatedTotals para totais e contagens; nao refaca essas somas a partir das listas.",
+          "Organize respostas longas com um resumo curto e listas em Markdown, colocando cada item em sua propria linha.",
           "Quando os dados nao forem suficientes, diga exatamente o que nao foi encontrado.",
           "Esta versao e somente leitura: explique o que o usuario pode fazer, mas nao afirme que alterou dados.",
           "Ao citar dinheiro recebido em centavos, converta para reais no formato brasileiro."

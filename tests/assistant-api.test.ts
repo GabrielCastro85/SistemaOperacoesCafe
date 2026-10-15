@@ -77,7 +77,7 @@ describe("assistant API", () => {
   });
 
   it("compacta listas repetidas sem remover as cobrancas em aberto do contexto", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
       output_text: "Resposta compactada.",
       usage: { input_tokens: 100, output_tokens: 10 }
     }), { status: 200, headers: { "content-type": "application/json" } }));
