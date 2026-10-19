@@ -64,6 +64,7 @@ export function DashboardTab({ organizationId, legalEntityId }: { organizationId
         <>
           <div className="dashboard-grid dashboard-grid--hero">
             <Card><span className="kpi-icon"><PackageIcon /></span><span>Sacas vendidas no período</span><strong>{summary.sacks.toLocaleString("pt-BR", { maximumFractionDigits: 3 })}</strong><small>{summary.operationCount} operação(ões) de venda</small></Card>
+            <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total dos serviços</span><strong>{formatCurrencyBr(summary.generatedServiceCents)}</strong><small>Total bruto dos serviços no período, sem descontar recebimentos</small></Card>
             <Card><span className="kpi-icon"><WalletIcon /></span><span>Total a receber</span><strong>{formatCurrencyBr(summary.receivableCents)}</strong><small>Todas as empresas · {summary.unbilledCount} operação(ões) sem cobrança</small></Card>
             <Card><span className="kpi-icon"><CoinsIcon /></span><span>Recebido no período</span><strong>{formatCurrencyBr(summary.receivedCents)}</strong><small>Todas as empresas</small></Card>
           </div>
