@@ -268,6 +268,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     ]);
     const operations = allOperations.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELED" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
     const sales = operations.filter((row) => text(row.operation_type) !== "PURCHASE");
+    const globalSales = allOperations.filter((row) => text(row.operation_type) !== "PURCHASE" && text(row.status) !== "CANCELED"
+      && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
     const charges = allCharges.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd));
     // "A receber" e "Recebido" replicam getBillingSummary({ includeAllCompanies: true })
     // do app desktop (electron/main/services/appRepository.ts) -- la' esses dois cards
@@ -319,7 +321,7 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       operationCount: sales.length,
       receivableCents: globalCharges.reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0) + globalUnbilled.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       receivedCents: globalReceivedForOperationsPeriodCents,
-      generatedServiceCents: sales.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
+      generatedServiceCents: globalSales.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       unbilledCount: globalUnbilled.length,
       overdueCents: charges.filter(isOverdueCharge).reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0),
       overdueCharges

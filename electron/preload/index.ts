@@ -651,7 +651,7 @@ export interface OperationsCafeApi {
   markLoanCollected: (id: string) => Promise<ClientLedgerEntry>;
   confirmFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   cancelFiscalDocument: (id: string, reason: string) => Promise<FiscalDocumentDetail>;
-  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number }>;
+  getOperationalIndicators: (input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number; allCompaniesServiceAmountCents: number }>;
   getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   getPartnerPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; businessPartnerId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
   getCompanyPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; partnerLegalEntityId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
@@ -1065,6 +1065,7 @@ const api: OperationsCafeApi = {
       sacksDecimal: string;
       fiscalAmountCents: number;
       serviceAmountCents: number;
+      allCompaniesServiceAmountCents: number;
     }>,
   getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
   getPartnerPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,

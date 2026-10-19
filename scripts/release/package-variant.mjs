@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.47"
+  const highlights = releaseVersion === "1.1.48"
+    ? `- O card Valor total dos servicos soma todos os servicos do periodo selecionado.
+- O total inclui operacoes ja cobradas e ainda nao cobradas.
+- Villa Coffee e Grao & Grao, com todos os seus CNPJs, entram no mesmo valor corporativo.`
+    : releaseVersion === "1.1.47"
     ? `- Cada regra por saca pode ter um valor normal e outro valor quando o servico inclui financeiro.
 - A condicao com financeiro e marcada manualmente durante a revisao do XML e pode ser corrigida depois na nota.
 - Ao alterar a marcacao, o sistema recalcula automaticamente o servico antes da cobranca.

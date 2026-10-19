@@ -9,6 +9,8 @@ import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/se
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
 const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+const graoId = "22222222-2222-4222-8222-222222222222";
+const graoLegalEntityId = "44444444-4444-4444-8444-444444444441";
 
 async function setup(): Promise<{ repo: AppRepository; db: ReturnType<typeof initializeDatabase>; productId: string; partnerAId: string; partnerBId: string }> {
   const userData = mkdtempSync(join(tmpdir(), "operacoes-dashboard-periodo-"));
@@ -70,6 +72,28 @@ afterEach(() => {
 });
 
 describe("filtros de periodo e cliente do Dashboard", () => {
+  it("soma no card bruto servicos cobrados e nao cobrados de todas as empresas", async () => {
+    const { repo, db, productId, partnerAId } = await setup();
+    const villaDoc = repo.createFiscalDocument(sampleDocument(partnerAId, "490", "2026-06-10"));
+    const villaItem = repo.addFiscalDocumentItem({ fiscalDocumentId: villaDoc.document.id, productId, description: "Cafe", quantity: "10", unit: "SACK", unitPriceDecimal: "100", totalAmountCents: 100000, sacksQuantity: "10" });
+    const villaOperation = repo.addOperation({ fiscalDocumentId: villaDoc.document.id, fiscalDocumentItemId: villaItem.id, ownLegalEntityId, responsiblePartnerId: partnerAId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-06-10", quantitySacks: "10", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(villaDoc.document.id);
+    repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerAId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-06-01", periodEnd: "2026-06-30", dueDate: "2026-07-05", notes: null, internalNotes: null, operationIds: [villaOperation.id] });
+
+    const graoPartner = await repo.createBusinessPartner({ organizationId: graoId, displayName: "Cliente Grao Global", notes: null, roles: ["CLIENT"], isActive: true });
+    const graoProduct = repo.listProducts({ organizationId: graoId })[0];
+    await repo.createServiceRateRule({ organizationId: graoId, businessPartnerId: graoPartner.id, ownLegalEntityId: null, productId: graoProduct.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const graoDoc = repo.createFiscalDocument({ ...sampleDocument(graoPartner.id, "491", "2026-06-11"), organizationId: graoId, ownLegalEntityId: graoLegalEntityId });
+    const graoItem = repo.addFiscalDocumentItem({ fiscalDocumentId: graoDoc.document.id, productId: graoProduct.id, description: "Cafe", quantity: "20", unit: "SACK", unitPriceDecimal: "100", totalAmountCents: 100000, sacksQuantity: "20" });
+    repo.addOperation({ fiscalDocumentId: graoDoc.document.id, fiscalDocumentItemId: graoItem.id, ownLegalEntityId: graoLegalEntityId, responsiblePartnerId: graoPartner.id, productId: graoProduct.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-06-11", quantitySacks: "20", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+    repo.confirmFiscalDocument(graoDoc.document.id);
+
+    const indicators = repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-06-01", periodEnd: "2026-06-30" });
+    expect(indicators.serviceAmountCents).toBe(5000);
+    expect(indicators.allCompaniesServiceAmountCents).toBe(15000);
+    db.close();
+  });
+
   it("getOperationalIndicators so' soma operacoes dentro do periodo informado", async () => {
     const { repo, db, productId, partnerAId } = await setup();
 

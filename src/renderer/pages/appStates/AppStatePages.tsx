@@ -314,7 +314,7 @@ function ExistingCompanySetupWizard({ data, onSaved }: { data: BootstrapData; on
 export function Dashboard({ organizations, legalEntities, locations, organizationId, ownLegalEntityId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string; ownLegalEntityId?: string | null }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
-  const [operationalIndicators, setOperationalIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } | null>(null);
+  const [operationalIndicators, setOperationalIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number; allCompaniesServiceAmountCents: number } | null>(null);
   const [alerts, setAlerts] = useState<DashboardAlerts | null>(null);
   const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
@@ -416,7 +416,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   }, [organizationId, ownLegalEntityId, partnerSearchMode, partnerSearchId, companySearchId, periodStart, periodEnd]);
 
   const totalReceivable = billingSummary?.openCents ?? 0;
-  const totalServiceAmount = operationalIndicators?.serviceAmountCents ?? 0;
+  const totalServiceAmount = operationalIndicators?.allCompaniesServiceAmountCents ?? 0;
   const sacks = Number(operationalIndicators?.sacksDecimal ?? 0);
   const maxMonthlyAmount = Math.max(1, ...monthlyTotals.map((item) => item.amountCents));
   const maxMonthlySacks = Math.max(1, ...monthlyTotals.map((item) => Number(item.sacksDecimal)));
@@ -499,7 +499,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
       </FilterBar>
       <div className="dashboard-grid dashboard-grid--hero">
         <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas vendidas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas de venda lancadas</small></Card>
-        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total dos servicos</span><strong>{formatCurrencyFromCents(totalServiceAmount)}</strong><small>Total bruto dos servicos no periodo, sem descontar recebimentos</small></Card>
+        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total dos servicos</span><strong>{formatCurrencyFromCents(totalServiceAmount)}</strong><small>Todos os servicos do periodo · Todas as empresas · cobrados ou ainda em aberto</small></Card>
         <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber no periodo</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>Todas as empresas · {billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
         <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Recebido referente ao periodo</span><strong>{formatCurrencyFromCents(billingSummary?.receivedForOperationsPeriodCents ?? 0)}</strong><small>Total recebido nas datas selecionadas: {formatCurrencyFromCents(billingSummary?.cashReceivedCents ?? 0)} · Todas as empresas</small></Card>
       </div>

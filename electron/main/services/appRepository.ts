@@ -2026,7 +2026,7 @@ export class AppRepository {
     return this.getFiscalDocument(id);
   }
 
-  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } {
+  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number; allCompaniesServiceAmountCents: number } {
     const organizationId = typeof input === "string" ? input : input.organizationId;
     const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
     const periodStart = typeof input === "string" ? null : input.periodStart ?? null;
@@ -2040,6 +2040,13 @@ export class AppRepository {
     const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
     const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
     const activeSales = activeOperations.filter((operation) => operation.operationType === "SALE");
+    // O total bruto do Dashboard e' corporativo: soma Villa e Grao & Grao,
+    // todos os CNPJs, cobrados ou nao, respeitando somente o periodo escolhido.
+    const allCompaniesSales = this.listOperations({
+      periodStart: periodStart ?? undefined,
+      periodEnd: periodEnd ?? undefined,
+      status: "all"
+    }).filter((operation) => operation.status !== "CANCELED" && operation.operationType === "SALE");
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
@@ -2052,7 +2059,8 @@ export class AppRepository {
       // So' soma o lado de venda -- serviceAmountCents de uma operacao de
       // COMPRA guarda o que devemos ao fornecedor, nao receita de comissao;
       // somar os dois juntos misturaria a pagar com a receber.
-      serviceAmountCents: activeSales.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+      serviceAmountCents: activeSales.reduce((sum, operation) => sum + operation.serviceAmountCents, 0),
+      allCompaniesServiceAmountCents: allCompaniesSales.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
