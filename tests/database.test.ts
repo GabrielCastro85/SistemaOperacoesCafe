@@ -31,11 +31,12 @@ describe("database foundation", () => {
     const directories = resolveAppDirectories(makeTempUserData());
     ensureAppDirectories(directories);
     const db = initializeDatabase(directories);
-    expect(getCurrentMigration(db)).toBe("055_previous_period_billing_alert_ignores");
+    expect(getCurrentMigration(db)).toBe("056_financial_service_rates");
     expect(db.prepare("SELECT COUNT(*) AS total FROM organizations").get()).toMatchObject({ total: 2 });
     expect(db.prepare("PRAGMA table_info(legal_entities)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "is_draft" })]));
     expect(db.prepare("SELECT COUNT(*) AS total FROM products").get()).toMatchObject({ total: 4 });
-    expect(db.prepare("PRAGMA table_info(fiscal_documents)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source" }), expect.objectContaining({ name: "freight_dae_reference" }), expect.objectContaining({ name: "freight_dae_amount_cents" })]));
+    expect(db.prepare("PRAGMA table_info(fiscal_documents)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source" }), expect.objectContaining({ name: "freight_dae_reference" }), expect.objectContaining({ name: "freight_dae_amount_cents" }), expect.objectContaining({ name: "has_financial_service" })]));
+    expect(db.prepare("PRAGMA table_info(service_rate_rules)").all()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "financial_rate_value_cents" })]));
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'spreadsheet_import_jobs'").get()).toMatchObject({ name: "spreadsheet_import_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'xml_import_jobs'").get()).toMatchObject({ name: "xml_import_jobs" });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'client_charges'").get()).toMatchObject({ name: "client_charges" });
