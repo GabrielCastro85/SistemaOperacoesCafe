@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.43"
+  const highlights = releaseVersion === "1.1.46"
+    ? `- Acrescimos e emprestimos vinculados a cobranca agora podem ser selecionados diretamente para baixa.
+- O pagamento pode incluir somente o acrescimo ou combinar notas e acrescimos na mesma operacao.
+- Recibos identificam o acrescimo separadamente e nao atribuem seu valor novamente as notas fiscais.`
+    : releaseVersion === "1.1.43"
     ? `- Dashboard avisa quando existem notas do mes anterior que ainda nao entraram em uma cobranca.
 - Pendencias sao agrupadas por cliente e mostram notas, DAE de frete e valor total.
 - O botao Gerar cobranca abre o cliente e o periodo corretos diretamente na tela de cobrancas.

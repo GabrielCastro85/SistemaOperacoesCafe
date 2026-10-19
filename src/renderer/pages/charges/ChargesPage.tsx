@@ -112,6 +112,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [operationDocuments, setOperationDocuments] = useState<Record<string, FiscalDocument>>({});
   const [detail, setDetail] = useState<ClientChargeDetail | null>(null);
   const [selectedPaymentOperationIds, setSelectedPaymentOperationIds] = useState<Set<string>>(new Set());
+  const [selectedPaymentAdjustmentIds, setSelectedPaymentAdjustmentIds] = useState<Set<string>>(new Set());
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [partnerSummary, setPartnerSummary] = useState<PartnerRateSummaryRow[]>([]);
   const [partnerSummarySearch, setPartnerSummarySearch] = useState("");
@@ -226,8 +227,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }, [organizationId, includeAllCompanies, periodStart, periodEnd]);
   useEffect(() => {
     // Uma cobranca aberta exige uma escolha explicita das notas que estao
-    // sendo recebidas. Evita reaproveitar a selecao de outra cobranca.
+    // sendo recebidas e dos acrescimos que entram na baixa. Evita reaproveitar
+    // a selecao de outra cobranca.
     setSelectedPaymentOperationIds(new Set());
+    setSelectedPaymentAdjustmentIds(new Set());
   }, [detail?.charge.id]);
   useEffect(() => {
     if (detail?.charge.clientPartnerId === clientId) return;
@@ -736,11 +739,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     if (!detail) return;
 
     const selectedForPayment = detail.operations.filter((operation) => selectedPaymentOperationIds.has(operation.id));
-    if (selectedForPayment.length === 0) {
-      setMessage("Marque pelo menos uma nota da cobranca para registrar o pagamento.");
+    const selectedAdjustmentsForPayment = detail.adjustments.filter((adjustment) =>
+      adjustment.effect === "INCREASE_RECEIVABLE" && selectedPaymentAdjustmentIds.has(adjustment.id)
+    );
+    if (selectedForPayment.length === 0 && selectedAdjustmentsForPayment.length === 0) {
+      setMessage("Marque pelo menos uma nota ou acrescimo da cobranca para registrar o pagamento.");
       return;
     }
-    const selectedAmountCents = selectedForPayment.reduce((total, operation) => total + operation.serviceAmountCentsSnapshot, 0);
+    const selectedAmountCents = selectedForPayment.reduce((total, operation) => total + operation.serviceAmountCentsSnapshot, 0)
+      + selectedAdjustmentsForPayment.reduce((total, adjustment) => total + adjustment.amountCents, 0);
     const suggestedAmountCents = Math.min(selectedAmountCents, detail.charge.openAmountCents);
 
     const value = await requestTextInput({
@@ -753,7 +760,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
     const amountCents = parseCurrencyToCents(value);
     if (amountCents <= 0 || amountCents > suggestedAmountCents) {
-      setMessage(`Informe um valor entre R$ 0,01 e ${formatCurrencyFromCents(suggestedAmountCents)} para as notas selecionadas.`);
+      setMessage(`Informe um valor entre R$ 0,01 e ${formatCurrencyFromCents(suggestedAmountCents)} para os itens selecionados.`);
       return;
     }
 
@@ -766,6 +773,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setDetail(payableDetail);
     }
 
+    const paymentReferences = [
+      ...selectedForPayment.map((operation) => `NF ${operation.fiscalDocumentNumberSnapshot ?? "-"}`),
+      ...selectedAdjustmentsForPayment.map((adjustment) => `Acrescimo: ${adjustment.description}`)
+    ];
     const payment = await window.operationsCafe.createClientPayment({
       organizationId,
       ownLegalEntityId,
@@ -774,8 +785,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       amountCents,
       paymentMethod: "PIX",
       bankAccountDescription: null,
-      transactionReference: selectedForPayment.map((operation) => `NF ${operation.fiscalDocumentNumberSnapshot ?? "-"}`).join(", "),
-      notes: `Recebimento referente a ${selectedForPayment.length} nota(s) selecionada(s).`,
+      transactionReference: paymentReferences.join(", "),
+      notes: `Recebimento referente a ${selectedForPayment.length} nota(s) e ${selectedAdjustmentsForPayment.length} acrescimo(s) selecionado(s).`,
       attachmentPath: null
     });
 
@@ -789,6 +800,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setChargeReceipts((current) => [...current.filter((item) => item.id !== receipt.id), receipt]);
     setDetail(updatedDetail);
     setSelectedPaymentOperationIds(new Set());
+    setSelectedPaymentAdjustmentIds(new Set());
     setMessage(`Pagamento de ${formatCurrencyFromCents(amountCents)} registrado. O recibo em PDF e imagem esta pronto.`);
 
     await load();
@@ -1035,6 +1047,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir cobranca."}`);
     }
   }
+
+  const payableAdjustments = detail?.adjustments.filter((adjustment) => adjustment.effect === "INCREASE_RECEIVABLE") ?? [];
 
   return (
     <section className="content-section settings">
@@ -1394,7 +1408,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             checked={detail.operations.length > 0 && selectedPaymentOperationIds.size === detail.operations.length}
             onChange={(event) => setSelectedPaymentOperationIds(event.target.checked ? new Set(detail.operations.map((operation) => operation.id)) : new Set())}
           /> Selecionar todas as notas</label>
-          <span>{selectedPaymentOperationIds.size} de {detail.operations.length} nota(s) selecionada(s)</span>
+          <span>{selectedPaymentOperationIds.size} de {detail.operations.length} nota(s) e {selectedPaymentAdjustmentIds.size} de {payableAdjustments.length} acrescimo(s) selecionado(s)</span>
         </div>
         <div className="table">
           <div className="table-head charge-detail-operation-grid"><span>Nota fiscal</span><span>Empresa</span><span>Data</span><span>Produto</span><span>Sacas</span><span>Servico</span><span>Situação</span></div>
@@ -1427,11 +1441,22 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         {detail.adjustments.length > 0 ? (
           <div className="charge-adjustments-detail">
             <h4>Valores adicionais e descontos</h4>
+            {payableAdjustments.length > 0 && detail.charge.openAmountCents > 0 ? <p className="muted">Marque o acrescimo abaixo para inclui-lo na baixa. Ele pode ser recebido sozinho ou junto com as notas.</p> : null}
             <div className="table">
               <div className="table-head charge-adjustment-detail-grid"><span>Descricao</span><span>Detalhe</span><span>Tipo</span><span>Valor</span></div>
               {detail.adjustments.map((adjustment) => (
                 <div key={adjustment.id} className="table-row charge-adjustment-detail-grid">
-                  <span><strong>{adjustment.description}</strong></span>
+                  <span><label>{adjustment.effect === "INCREASE_RECEIVABLE" ? <input
+                    type="checkbox"
+                    disabled={detail.charge.openAmountCents <= 0}
+                    checked={selectedPaymentAdjustmentIds.has(adjustment.id)}
+                    onChange={() => setSelectedPaymentAdjustmentIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(adjustment.id)) next.delete(adjustment.id); else next.add(adjustment.id);
+                      return next;
+                    })}
+                    aria-label={`Selecionar acrescimo ${adjustment.description} para pagamento`}
+                  /> : null} <strong>{adjustment.description}</strong></label></span>
                   <span>{adjustment.reason ?? "-"}</span>
                   <span>{adjustment.effect === "INCREASE_RECEIVABLE" ? "Acrescimo" : "Desconto"}</span>
                   <span>{adjustment.effect === "INCREASE_RECEIVABLE" ? "+" : "-"} {formatCurrencyFromCents(adjustment.amountCents)}</span>
@@ -1467,7 +1492,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           </div>
         ) : null}
         <div className="toolbar">
-          <button disabled={selectedPaymentOperationIds.size === 0 || detail.charge.openAmountCents <= 0} onClick={() => void registerPayment()}>Registrar pagamento das notas selecionadas</button>
+          <button disabled={(selectedPaymentOperationIds.size === 0 && selectedPaymentAdjustmentIds.size === 0) || detail.charge.openAmountCents <= 0} onClick={() => void registerPayment()}>Registrar pagamento dos itens selecionados</button>
           {lastReceipt ? <><button onClick={() => void window.operationsCafe.openClientPaymentReceipt({ paymentId: lastReceipt.id, kind: "pdf" })}>Salvar recibo PDF</button><button onClick={() => void window.operationsCafe.openClientPaymentReceipt({ paymentId: lastReceipt.id, kind: "image" })}>Salvar recibo em imagem</button></> : null}
         </div>
       </AdminBlock></div> : null}
