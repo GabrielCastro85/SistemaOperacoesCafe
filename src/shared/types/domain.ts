@@ -547,6 +547,7 @@ export interface ServiceRateRule {
   operationScope: OperationScope;
   rateType: RateType;
   rateValueCents: number;
+  financialRateValueCents: number | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   priority: number;
@@ -567,6 +568,7 @@ export interface PurchaseRateRule {
   operationScope: OperationScope;
   rateType: RateType;
   rateValueCents: number;
+  financialRateValueCents: number | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   priority: number;
@@ -630,6 +632,7 @@ export interface FiscalDocument {
   contractNumber?: string | null;
   freightDaeReference?: string | null;
   freightDaeAmountCents?: number;
+  hasFinancialService?: boolean;
   id: string;
   organizationId: string;
   ownLegalEntityId: string;

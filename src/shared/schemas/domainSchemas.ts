@@ -277,6 +277,7 @@ export const serviceRateRuleInputSchema = z
     operationScope: operationScopeSchema,
     rateType: rateTypeSchema,
     rateValueCents: z.number().int().min(0),
+    financialRateValueCents: z.number().int().min(0).nullable().optional().default(null),
     effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
     priority: z.number().int().min(0),
@@ -292,7 +293,8 @@ export const resolveRateInputSchema = z.object({
   counterpartyPartnerLegalEntityId: z.string().uuid().nullable().optional().default(null),
   productId: z.string().uuid().nullable(),
   operationScope: operationScopeSchema.exclude(["ALL"]),
-  operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  operationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  hasFinancialService: z.boolean().optional().default(false)
 });
 
 // Mesma forma de service_rate_rules -- preco por saca que PAGAMOS ao
@@ -340,6 +342,7 @@ export const fiscalDocumentInputSchema = z.object({
   contractNumber: z.string().trim().max(200).nullable().optional(),
   freightDaeReference: z.string().trim().max(120).nullable().optional(),
   freightDaeAmountCents: z.number().int().min(0).optional(),
+  hasFinancialService: z.boolean().optional(),
   organizationId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid(),
   responsiblePartnerId: z.string().uuid(),
@@ -489,6 +492,7 @@ export const xmlImportResolutionSchema = z.object({
   contractNumber: z.string().trim().max(200).nullable().optional(),
   freightDaeReference: z.string().trim().max(120).nullable().optional(),
   freightDaeAmountCents: z.number().int().min(0).optional(),
+  hasFinancialService: z.boolean().optional(),
   clientPartnerId: z.string().uuid().nullable().optional(),
   ownLegalEntityId: z.string().uuid().nullable().optional(),
   operationType: operationTypeSchema.nullable().optional(),

@@ -1295,7 +1295,7 @@ export class AppRepository {
     const row: DbRecord = {
       id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
       counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
-      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, financial_rate_value_cents: data.financialRateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
     };
     this.upsertLocalRow("service_rate_rules", row);
@@ -1311,7 +1311,7 @@ export class AppRepository {
     const row: DbRecord = {
       id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
       counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
-      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, financial_rate_value_cents: data.financialRateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
     };
     this.db.transaction(() => {
@@ -1429,7 +1429,10 @@ export class AppRepository {
     const best = specific.filter((item) => item.rule.priority === priority);
     if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
     const rule = best[0].rule;
-    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
+    const rateValueCents = data.hasFinancialService && rule.financialRateValueCents !== null
+      ? rule.financialRateValueCents
+      : rule.rateValueCents;
+    return { status: "found", rule, rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
   }
 
   // Espelha o bloco service_rate_rules acima -- mesma logica de resolucao por
@@ -1751,8 +1754,8 @@ export class AppRepository {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
       .run(id, data.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, status, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, now, now, direction);
     const freightDaeAmountCents = data.freightDaeAmountCents ?? 0;
-    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ? WHERE id = ?")
-      .run(data.contractNumber?.trim() || null, data.billingObservations ?? null, freightDaeAmountCents > 0 ? data.freightDaeReference?.trim() || null : null, freightDaeAmountCents, id);
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ?, has_financial_service = ? WHERE id = ?")
+      .run(data.contractNumber?.trim() || null, data.billingObservations ?? null, freightDaeAmountCents > 0 ? data.freightDaeReference?.trim() || null : null, freightDaeAmountCents, data.hasFinancialService ? 1 : 0, id);
     return this.getFiscalDocument(id);
   }
 
@@ -1778,19 +1781,23 @@ export class AppRepository {
     const freightDaeReference = freightDaeAmountCents > 0
       ? (data.freightDaeReference === undefined ? previous.document.freightDaeReference : data.freightDaeReference?.trim() || null)
       : null;
-    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ? WHERE id = ?")
-      .run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, freightDaeReference, freightDaeAmountCents, id);
-    if (reassigning) {
+    const hasFinancialService = data.hasFinancialService ?? previous.document.hasFinancialService ?? false;
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ?, has_financial_service = ? WHERE id = ?")
+      .run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, freightDaeReference, freightDaeAmountCents, hasFinancialService ? 1 : 0, id);
+    const financialServiceChanged = hasFinancialService !== (previous.document.hasFinancialService ?? false);
+    if (reassigning || financialServiceChanged) {
       const now = new Date().toISOString();
       for (const op of previous.operations.filter((item) => item.responsiblePartnerId === previous.document.responsiblePartnerId)) {
-        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate };
+        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate, hasFinancialService };
         const resolved = op.operationType === "PURCHASE" ? this.resolvePurchaseRateRule(input) : this.resolveServiceRateRule(input);
         if (resolved.status === "conflict") throw new Error("O novo responsavel possui tarifas conflitantes. Ajuste as regras antes de trocar.");
         const rate = resolved.rateValueCents ?? 0;
         const amount = multiplyDecimalByCents(op.quantitySacks, rate);
         this.db.prepare(`UPDATE operations SET responsible_partner_id = ?, service_rate_rule_id = ?, purchase_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, rate_was_manually_overridden = 0, manual_rate_value_cents = NULL, manual_override_reason = NULL, updated_at = ? WHERE id = ?`)
           .run(data.responsiblePartnerId, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, op.operationType === "PURCHASE" ? resolved.rule?.id ?? null : null, rate, amount, now, op.id);
-        const reason = `Responsavel alterado: ${previous.document.responsiblePartnerId} -> ${data.responsiblePartnerId}. Tarifa recalculada para o novo responsavel.`;
+        const reason = reassigning
+          ? `Responsavel alterado: ${previous.document.responsiblePartnerId} -> ${data.responsiblePartnerId}. Tarifa recalculada para o novo responsavel.`
+          : `Condicao de financeiro alterada para ${hasFinancialService ? "com financeiro" : "sem financeiro"}.`;
         this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(randomUUID(), op.id, op.serviceRateRuleId, op.appliedRateValueCents, op.serviceAmountCents, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, rate, amount, reason, now);
       }
@@ -1902,7 +1909,8 @@ export class AppRepository {
           counterpartyPartnerLegalEntityId,
           productId: data.productId,
           operationScope: data.operationScope,
-          operationDate: data.operationDate
+          operationDate: data.operationDate,
+          hasFinancialService: detail.document.hasFinancialService
         })
       : this.resolveServiceRateRule({
           organizationId: detail.document.organizationId,
@@ -1911,7 +1919,8 @@ export class AppRepository {
           counterpartyPartnerLegalEntityId,
           productId: data.productId,
           operationScope: data.operationScope,
-          operationDate: data.operationDate
+          operationDate: data.operationDate,
+          hasFinancialService: detail.document.hasFinancialService
         });
     if (resolved.status === "conflict") throw new Error(isPurchase ? "Conflito ao resolver preco de compra por saca." : "Conflito ao resolver regra por saca.");
     const manual = data.manualRateValueCents !== null;
@@ -2870,7 +2879,8 @@ export class AppRepository {
         counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId, operation.responsiblePartnerId),
         productId: operation.productId,
         operationScope: operation.operationScope,
-        operationDate: operation.operationDate
+        operationDate: operation.operationDate,
+        hasFinancialService: this.fiscalDocumentHasFinancialService(operation.fiscalDocumentId)
       });
       const backfilled = resolved;
       if (backfilled.status !== "found" || backfilled.rateValueCents === null) continue;
@@ -4140,6 +4150,7 @@ export class AppRepository {
       billingObservations: typeof fileResolution.billingObservations === "string" ? fileResolution.billingObservations : (typeof resolution.billingObservations === "string" ? resolution.billingObservations : null),
       freightDaeReference: typeof fileResolution.freightDaeReference === "string" ? fileResolution.freightDaeReference : (typeof resolution.freightDaeReference === "string" ? resolution.freightDaeReference : null),
       freightDaeAmountCents: typeof fileResolution.freightDaeAmountCents === "number" ? fileResolution.freightDaeAmountCents : (typeof resolution.freightDaeAmountCents === "number" ? resolution.freightDaeAmountCents : 0),
+      hasFinancialService: typeof fileResolution.hasFinancialService === "boolean" ? fileResolution.hasFinancialService : resolution.hasFinancialService === true,
       notes: [String(extracted.nature ?? ""), isThirdPartyDocument ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
@@ -7665,6 +7676,12 @@ export class AppRepository {
       return secondaryEntity?.id ?? null;
     }
     return row.partner_legal_entity_id ?? null;
+  }
+
+  private fiscalDocumentHasFinancialService(fiscalDocumentId: string): boolean {
+    const row = this.db.prepare("SELECT has_financial_service FROM fiscal_documents WHERE id = ?")
+      .get(fiscalDocumentId) as { has_financial_service: number } | undefined;
+    return Boolean(row?.has_financial_service);
   }
 
   private getSpreadsheetMappingTemplate(id: string): SpreadsheetMappingTemplate {

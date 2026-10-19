@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.46"
+  const highlights = releaseVersion === "1.1.47"
+    ? `- Cada regra por saca pode ter um valor normal e outro valor quando o servico inclui financeiro.
+- A condicao com financeiro e marcada manualmente durante a revisao do XML e pode ser corrigida depois na nota.
+- Ao alterar a marcacao, o sistema recalcula automaticamente o servico antes da cobranca.
+- O dashboard passa a mostrar o valor bruto de todos os servicos do periodo, sem descontar valores recebidos.`
+    : releaseVersion === "1.1.46"
     ? `- Acrescimos e emprestimos vinculados a cobranca agora podem ser selecionados diretamente para baixa.
 - O pagamento pode incluir somente o acrescimo ou combinar notas e acrescimos na mesma operacao.
 - Recibos identificam o acrescimo separadamente e nao atribuem seu valor novamente as notas fiscais.`

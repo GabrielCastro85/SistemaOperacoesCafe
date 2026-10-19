@@ -3525,4 +3525,11 @@ export const migrations: Migration[] = [
         ON billing_alert_ignores(organization_id, own_legal_entity_id, client_partner_id, period_start, period_end);
     `)
   }
+  ,{
+    name: "056_financial_service_rates",
+    up: (db) => db.exec(`
+      ALTER TABLE service_rate_rules ADD COLUMN financial_rate_value_cents INTEGER CHECK (financial_rate_value_cents IS NULL OR financial_rate_value_cents >= 0);
+      ALTER TABLE fiscal_documents ADD COLUMN has_financial_service INTEGER NOT NULL DEFAULT 0 CHECK (has_financial_service IN (0, 1));
+    `)
+  }
 ];

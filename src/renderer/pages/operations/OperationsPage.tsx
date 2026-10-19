@@ -165,6 +165,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [freightDaeEnabled, setFreightDaeEnabled] = useState(false);
   const [freightDaeReference, setFreightDaeReference] = useState("");
   const [freightDaeAmount, setFreightDaeAmount] = useState("");
+  const [financialServiceEnabled, setFinancialServiceEnabled] = useState(false);
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState("");
@@ -202,6 +203,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlFreightDaeEnabled, setXmlFreightDaeEnabled] = useState<Record<string, boolean>>({});
   const [xmlFreightDaeReferences, setXmlFreightDaeReferences] = useState<Record<string, string>>({});
   const [xmlFreightDaeAmounts, setXmlFreightDaeAmounts] = useState<Record<string, string>>({});
+  const [xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled] = useState<Record<string, boolean>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
   const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
@@ -267,6 +269,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     detail?.document.freightDaeAmountCents,
     detail?.document.freightDaeReference,
   ]);
+  useEffect(() => {
+    setFinancialServiceEnabled(detail?.document.hasFinancialService ?? false);
+  }, [detail?.document.id, detail?.document.hasFinancialService]);
   useEffect(() => {
     if (typeof window.operationsCafe.getVulpeDevStatus !== "function") return;
     const refresh = () => window.operationsCafe.getVulpeDevStatus()
@@ -582,6 +587,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         totalAmountCents: detail.document.totalAmountCents,
         hasPendingIssues: detail.document.hasPendingIssues,
         pendingNotes: detail.document.pendingNotes,
+        hasFinancialService: detail.document.hasFinancialService,
         notes: detail.document.notes
       });
       setDetail(updated);
@@ -730,6 +736,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlFreightDaeEnabled({});
     setXmlFreightDaeReferences({});
     setXmlFreightDaeAmounts({});
+    setXmlFinancialServiceEnabled({});
     setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
     setMessage(
       invalidCount
@@ -780,18 +787,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         const freightDaeEnabled = xmlFreightDaeEnabled[inspected.token] === true;
         const freightDaeAmountCents = freightDaeEnabled ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0;
         const freightDaeReference = freightDaeEnabled ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null;
+        const hasFinancialService = xmlFinancialServiceEnabled[inspected.token] === true;
         if (!ignore && freightDaeEnabled && freightDaeAmountCents <= 0) {
           setSelectedXmlToken(inspected.token);
           setMessage(`Informe um valor de DAE de frete maior que zero para a NF ${inspected.extractedData?.number ?? inspected.originalFileName}.`);
           scrollTo(xmlDataRef);
           return;
         }
-        if (contractNumber || billingObservations || selectedPartnerId || ignore || freightDaeAmountCents > 0) {
+        if (contractNumber || billingObservations || selectedPartnerId || ignore || freightDaeAmountCents > 0 || hasFinancialService) {
           await window.operationsCafe.updateXmlImportFileResolution(file.id, {
             contractNumber,
             billingObservations,
             freightDaeReference,
             freightDaeAmountCents,
+            hasFinancialService,
             clientPartnerId: selectedPartnerId,
             ignore
           });
@@ -870,7 +879,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         contractNumber: inspected ? xmlContractNumbers[inspected.token]?.trim() || null : null,
         billingObservations: inspected ? xmlBillingObservations[inspected.token]?.trim() || null : null,
         freightDaeReference: inspected && xmlFreightDaeEnabled[inspected.token] ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null,
-        freightDaeAmountCents: inspected && xmlFreightDaeEnabled[inspected.token] ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0
+        freightDaeAmountCents: inspected && xmlFreightDaeEnabled[inspected.token] ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0,
+        hasFinancialService: inspected ? xmlFinancialServiceEnabled[inspected.token] === true : false
       });
       if (xmlJob) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJob.job.id));
       setMessage(
@@ -1262,6 +1272,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           }}>Salvar contrato e observacoes</button>
         </FormGrid>
         <p className="muted">Ao trocar o responsavel, a tarifa anterior (inclusive manual) e substituida pela regra do novo cliente. Notas vinculadas a cobranca ou acerto precisam ser liberadas primeiro.</p>
+        <section className="coffee-return-card">
+          <header><span>Servico financeiro</span><strong>Define o valor por saca desta nota</strong></header>
+          <label className="inline-check">
+            <input type="checkbox" checked={financialServiceEnabled} onChange={(event) => setFinancialServiceEnabled(event.target.checked)} />
+            Esta nota possui financeiro
+          </label>
+          <p className="muted">Quando marcado, o sistema usa o valor "com financeiro" cadastrado na regra por saca do cliente. Sem essa marca, usa o valor normal.</p>
+          <button className="invoice-action-button invoice-action-button--primary" disabled={detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
+            try {
+              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
+                ...detail.document,
+                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
+                hasFinancialService: financialServiceEnabled
+              });
+              setDetail(updated);
+              await load();
+              setMessage(`Condicao financeira salva. A tarifa foi recalculada para ${financialServiceEnabled ? "com financeiro" : "sem financeiro"}.`);
+            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar a condicao financeira."}`); }
+          }}>Salvar condicao e recalcular</button>
+        </section>
         <section className="coffee-return-card">
           <header><span>DAE de frete</span><strong>Valor adicional vinculado à NF {detail.document.documentNumber}</strong></header>
           <label className="inline-check">
@@ -1668,6 +1698,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
                     <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
                     <label className="inline-check">
+                      <input type="checkbox" checked={xmlFinancialServiceEnabled[selectedXmlFile.token] === true} onChange={(event) => {
+                        setXmlJob(null);
+                        setXmlFinancialServiceEnabled((current) => ({ ...current, [selectedXmlFile.token]: event.target.checked }));
+                      }} />
+                      Esta nota possui financeiro
+                    </label>
+                    <label className="inline-check">
                       <input type="checkbox" checked={xmlFreightDaeEnabled[selectedXmlFile.token] === true} onChange={(event) => {
                         const checked = event.target.checked;
                         setXmlJob(null);
@@ -1751,7 +1788,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </>
             )}
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan)}>Importar XMLs</button>
             </div>
           </div>

@@ -74,6 +74,55 @@ describe("manual invoices and operations", () => {
     db.close();
   });
 
+  it("uses the financial rate only when the invoice is marked and recalculates when unmarked", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    const baseRule = repo.listServiceRateRules({ businessPartnerId: partnerId })[0];
+    await repo.updateServiceRateRule(baseRule.id, {
+      organizationId: villaId,
+      businessPartnerId: partnerId,
+      ownLegalEntityId: null,
+      counterpartyPartnerLegalEntityId: null,
+      productId,
+      operationScope: "EXTERNAL",
+      rateType: "PER_SACK",
+      rateValueCents: 500,
+      financialRateValueCents: 700,
+      effectiveFrom: "2026-07-01",
+      effectiveTo: null,
+      priority: 10,
+      notes: null,
+      isActive: true
+    });
+
+    const doc = repo.createFiscalDocument({ ...sampleDocument(partnerId, "100-F", null), hasFinancialService: true });
+    const operation = repo.addOperation({
+      fiscalDocumentId: doc.document.id,
+      fiscalDocumentItemId: null,
+      ownLegalEntityId,
+      responsiblePartnerId: partnerId,
+      productId,
+      operationType: "SALE",
+      operationScope: "EXTERNAL",
+      operationDate: "2026-07-16",
+      quantitySacks: "100",
+      manualRateValueCents: null,
+      manualOverrideReason: null,
+      notes: null
+    });
+    expect(operation.appliedRateValueCents).toBe(700);
+    expect(operation.serviceAmountCents).toBe(70000);
+
+    const updated = repo.updateFiscalDocument(doc.document.id, {
+      ...doc.document,
+      operationType: "SALE",
+      hasFinancialService: false
+    });
+    expect(updated.document.hasFinancialService).toBe(false);
+    expect(updated.operations[0].appliedRateValueCents).toBe(500);
+    expect(updated.operations[0].serviceAmountCents).toBe(50000);
+    db.close();
+  });
+
   it("accepts Brazilian decimal commas when adding a manual invoice item", async () => {
     const { repo, db, partnerId, productId } = await setup();
     const doc = repo.createFiscalDocument(sampleDocument(partnerId, "6832", null));
