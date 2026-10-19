@@ -5,7 +5,10 @@ import process from "node:process";
 /* global console */
 
 const root = process.cwd();
-const main = read("electron/main/index.ts");
+const main = [
+  read("electron/main/index.ts"),
+  read("electron/main/windows/createMainWindow.ts")
+].join("\n");
 const preload = read("electron/preload/index.cts");
 const html = read("index.html");
 const security = read("electron/main/services/security.ts");

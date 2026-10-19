@@ -262,6 +262,10 @@ const IPC_CHANNELS = {
   selectXmlFile: "xmlFiles:selectFile",
   selectXmlFiles: "xmlFiles:selectFiles",
   selectXmlFolder: "xmlFiles:selectFolder",
+  getVulpeDevStatus: "xmlFiles:vulpeDevStatus",
+  sendCollectorCommand: "xmlFiles:collectorCommand",
+  askAssistant: "assistant:ask",
+  scanVulpeDevXml: "xmlFiles:vulpeDevScan",
   registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",
   createXmlImportDraft: "xmlImports:createDraft",
@@ -298,6 +302,8 @@ const IPC_CHANNELS = {
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
   getPartnerRateSummary: "clientCharges:partnerRateSummary",
   exportPartnerPeriodReport: "clientCharges:exportPeriodReport",
+  exportChargeControlWorkbook: "clientCharges:exportControlWorkbook",
+  printChargeControl: "clientCharges:printControl",
   createClientChargeDraft: "clientCharges:createDraft",
   reserveChargeOperations: "clientCharges:reserveOperations",
   releaseChargeOperations: "clientCharges:releaseOperations",
@@ -319,10 +325,12 @@ const IPC_CHANNELS = {
   getAvailableCredits: "clientLedger:getAvailableCredits",
   createClientPayment: "clientPayments:create",
   allocateClientPayment: "clientPayments:allocate",
+  cancelClientPayment: "clientPayments:cancel",
   generateClientPaymentReceipt: "clientPayments:generateReceipt",
   openClientPaymentReceipt: "clientPayments:openReceipt",
   getBillingSummary: "billingDashboard:summary",
   getDashboardAlerts: "billingDashboard:alerts",
+  ignorePreviousPeriodBillingAlert: "billingDashboard:ignorePreviousPeriod",
   listTransferReconciliations: "transferReconciliations:list",
   listTransferReconciliationInvoices: "transferReconciliations:listInvoices",
   getTransferReconciliation: "transferReconciliations:get",
@@ -457,6 +465,43 @@ const IPC_CHANNELS = {
 
 type SaveInstallationProfileInput = z.infer<typeof saveInstallationProfileSchema>;
 
+export interface CollectorMonitorStatus {
+  sourceCode: string;
+  sourceLabel: string;
+  machineId: string;
+  emitterCnpjs: string[];
+  collectorVersion: string | null;
+  scanIntervalSeconds: number;
+  status: "OK" | "PENDING_RETRY" | "ERROR";
+  online: boolean;
+  inspected: number;
+  eligible: number;
+  uploaded: number;
+  pendingUpload: number;
+  pendingFiles: number;
+  lastScanAt: string;
+  lastSuccessAt: string | null;
+  lastUploadAt: string | null;
+  lastFileReceivedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+  startedAt: string | null;
+  uptimeSeconds: number | null;
+  lastUpdateCheckAt: string | null;
+  recentLogs: string | null;
+  startupConfigured: boolean;
+  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | null;
+  lastCommandStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | null;
+  lastCommandRequestedAt: string | null;
+  lastCommandResult: string | null;
+}
+
+export interface AssistantChatResponse {
+  answer: string;
+  model: string;
+  usage: { inputTokens: number; outputTokens: number; monthInputTokens: number; monthOutputTokens: number };
+}
+
 export interface OperationsCafeApi {
   authNeedsBootstrap: () => Promise<boolean>;
   authCentralConnectionStatus: () => Promise<{ configured: boolean }>;
@@ -467,6 +512,7 @@ export interface OperationsCafeApi {
   authUnlock: (password: string) => Promise<AuthSession>;
   authLogout: () => Promise<void>;
   authChangePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+  askAssistant: (input: { question: string; organizationId: string; ownLegalEntityId?: string | null; history?: Array<{ role: "user" | "assistant"; content: string }> }) => Promise<AssistantChatResponse>;
   listUsers: () => Promise<AppUser[]>;
   createUser: (input: { displayName: string; username: string; email?: string | null; password: string; mustChangePassword?: boolean }) => Promise<AppUser>;
   updateUser: (input: { id: string; displayName?: string; email?: string | null; status?: AppUser["status"]; mustChangePassword?: boolean }) => Promise<AppUser>;
@@ -632,6 +678,24 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
+  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
+  sendCollectorCommand: (input: { sourceCode: string; machineId: string; command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" }) => Promise<{ id: string; status: "PENDING"; command: string }>;
+  scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
+    source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
+    label: string;
+    period: string;
+    periodStart: string;
+    periodEnd: string;
+    authorized: number;
+    alreadyImported: number;
+    pendingReview: number;
+    ignored: number;
+    ignoredByUser: number;
+    cancellationEvents: number;
+    cancellationsAlreadyApplied: number;
+    canceledInvoicesHidden: number;
+    files: Array<{ token: string; fileName: string; sizeBytes: number }>;
+  }>;
   registerDroppedXmlFiles: (paths: string[]) => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   getDroppedFilePaths: (files: File[]) => string[];
   inspectXmlFiles: (tokens: string[]) => Promise<XmlFileInspection[]>;
@@ -669,6 +733,8 @@ export interface OperationsCafeApi {
   findEligibleChargeOperations: (input: unknown) => Promise<Operation[]>;
   getPartnerRateSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
   exportPartnerPeriodReport: (input: unknown) => Promise<boolean>;
+  exportChargeControlWorkbook: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
+  printChargeControl: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
   createClientChargeDraft: (input: unknown) => Promise<ClientChargeDetail>;
   reserveChargeOperations: (clientChargeId: string, operationIds: string[]) => Promise<ClientChargeDetail>;
   releaseChargeOperations: (clientChargeId: string, operationIds?: string[]) => Promise<ClientChargeDetail>;
@@ -690,10 +756,12 @@ export interface OperationsCafeApi {
   getAvailableCredits: (organizationId: string, ownLegalEntityId: string, clientPartnerId: string) => Promise<ClientLedgerEntry[]>;
   createClientPayment: (input: unknown) => Promise<ClientPayment>;
   allocateClientPayment: (input: unknown) => Promise<ClientChargeDetail>;
+  cancelClientPayment: (id: string, reason: string) => Promise<ClientPayment>;
   generateClientPaymentReceipt: (id: string) => Promise<ClientPayment>;
   openClientPaymentReceipt: (input: { paymentId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   getBillingSummary: (input: string | { organizationId: string; ownLegalEntityId?: string | null; includeAllCompanies?: boolean; periodStart?: string | null; periodEnd?: string | null }) => Promise<BillingSummary>;
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
+  ignorePreviousPeriodBillingAlert: (input: { organizationId: string; ownLegalEntityId: string; clientPartnerId: string; periodStart: string; periodEnd: string; reason: string }) => Promise<DashboardAlerts>;
   listTransferReconciliations: (filters: { organizationId: string; clientPartnerId?: string; status?: "ALL" | "DRAFT" | "COMPLETED" | "CANCELLED" }) => Promise<TransferReconciliation[]>;
   listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
   getTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
@@ -835,6 +903,7 @@ const api: OperationsCafeApi = {
   authUnlock: (password) => ipcRenderer.invoke(IPC_CHANNELS.authUnlock, password) as Promise<AuthSession>,
   authLogout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout) as Promise<void>,
   authChangePassword: (input) => ipcRenderer.invoke(IPC_CHANNELS.authChangePassword, input) as Promise<void>,
+  askAssistant: (input) => ipcRenderer.invoke(IPC_CHANNELS.askAssistant, input) as Promise<AssistantChatResponse>,
   listUsers: () => ipcRenderer.invoke(IPC_CHANNELS.listUsers) as Promise<AppUser[]>,
   createUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.createUser, input) as Promise<AppUser>,
   updateUser: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateUser, input) as Promise<AppUser>,
@@ -1024,6 +1093,24 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
+  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>,
+  sendCollectorCommand: (input) => ipcRenderer.invoke(IPC_CHANNELS.sendCollectorCommand, input) as Promise<{ id: string; status: "PENDING"; command: string }>,
+  scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
+    source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
+    label: string;
+    period: string;
+    periodStart: string;
+    periodEnd: string;
+    authorized: number;
+    alreadyImported: number;
+    pendingReview: number;
+    ignored: number;
+    ignoredByUser: number;
+    cancellationEvents: number;
+    cancellationsAlreadyApplied: number;
+    canceledInvoicesHidden: number;
+    files: Array<{ token: string; fileName: string; sizeBytes: number }>;
+  }>,
   registerDroppedXmlFiles: (paths) => ipcRenderer.invoke(IPC_CHANNELS.registerDroppedXmlFiles, { paths }) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   getDroppedFilePaths: (files) => files.map((file) => webUtils.getPathForFile(file)).filter((path) => path.length > 0),
   inspectXmlFiles: (tokens) => ipcRenderer.invoke(IPC_CHANNELS.inspectXmlFiles, tokens) as Promise<XmlFileInspection[]>,
@@ -1061,6 +1148,8 @@ const api: OperationsCafeApi = {
   findEligibleChargeOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligibleChargeOperations, input) as Promise<Operation[]>,
   getPartnerRateSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerRateSummary, input) as Promise<PartnerRateSummaryRow[]>,
   exportPartnerPeriodReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPartnerPeriodReport, input) as Promise<boolean>,
+  exportChargeControlWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargeControlWorkbook, input) as Promise<boolean>,
+  printChargeControl: (input) => ipcRenderer.invoke(IPC_CHANNELS.printChargeControl, input) as Promise<boolean>,
   createClientChargeDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientChargeDraft, input) as Promise<ClientChargeDetail>,
   reserveChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.reserveChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
   releaseChargeOperations: (clientChargeId, operationIds) => ipcRenderer.invoke(IPC_CHANNELS.releaseChargeOperations, { clientChargeId, operationIds }) as Promise<ClientChargeDetail>,
@@ -1082,10 +1171,12 @@ const api: OperationsCafeApi = {
   getAvailableCredits: (organizationId, ownLegalEntityId, clientPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.getAvailableCredits, { organizationId, ownLegalEntityId, clientPartnerId }) as Promise<ClientLedgerEntry[]>,
   createClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientPayment, input) as Promise<ClientPayment>,
   allocateClientPayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.allocateClientPayment, input) as Promise<ClientChargeDetail>,
+  cancelClientPayment: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelClientPayment, { id, reason }) as Promise<ClientPayment>,
   generateClientPaymentReceipt: (id) => ipcRenderer.invoke(IPC_CHANNELS.generateClientPaymentReceipt, id) as Promise<ClientPayment>,
   openClientPaymentReceipt: (input) => ipcRenderer.invoke(IPC_CHANNELS.openClientPaymentReceipt, input) as Promise<boolean>,
   getBillingSummary: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.getBillingSummary, organizationId) as Promise<BillingSummary>,
   getDashboardAlerts: (input) => ipcRenderer.invoke(IPC_CHANNELS.getDashboardAlerts, input) as Promise<DashboardAlerts>,
+  ignorePreviousPeriodBillingAlert: (input) => ipcRenderer.invoke(IPC_CHANNELS.ignorePreviousPeriodBillingAlert, input) as Promise<DashboardAlerts>,
   listTransferReconciliations: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliations, filters) as Promise<TransferReconciliation[]>,
   listTransferReconciliationInvoices: (input) => ipcRenderer.invoke(IPC_CHANNELS.listTransferReconciliationInvoices, input) as Promise<TransferReconciliationAvailableInvoice[]>,
   getTransferReconciliation: (id) => ipcRenderer.invoke(IPC_CHANNELS.getTransferReconciliation, id) as Promise<TransferReconciliationDetail>,
@@ -1232,7 +1323,7 @@ const loadingListeners = new Set<(pendingCount: number) => void>();
 // Consultas periodicas atualizam indicadores em segundo plano. Inclui-las no
 // contador global cobre a janela com o overlay a cada ciclo e impede o uso do
 // Dashboard enquanto o banco responde.
-const nonBlockingLoadingMethods = new Set(["getDiagnostics", "getBillingSummary"]);
+const nonBlockingLoadingMethods = new Set(["getDiagnostics", "getBillingSummary", "getVulpeDevStatus"]);
 
 function notifyLoadingListeners(): void {
   for (const listener of loadingListeners) listener(pendingCallCount);

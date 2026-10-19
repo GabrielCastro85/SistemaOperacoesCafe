@@ -547,6 +547,7 @@ export interface ServiceRateRule {
   operationScope: OperationScope;
   rateType: RateType;
   rateValueCents: number;
+  financialRateValueCents: number | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   priority: number;
@@ -567,6 +568,7 @@ export interface PurchaseRateRule {
   operationScope: OperationScope;
   rateType: RateType;
   rateValueCents: number;
+  financialRateValueCents: number | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   priority: number;
@@ -628,6 +630,9 @@ export type PurchaseSettlementStatus = "UNSETTLED" | "RESERVED" | "SETTLED";
 export interface FiscalDocument {
   billingObservations?: string | null;
   contractNumber?: string | null;
+  freightDaeReference?: string | null;
+  freightDaeAmountCents?: number;
+  hasFinancialService?: boolean;
   id: string;
   organizationId: string;
   ownLegalEntityId: string;
@@ -1021,6 +1026,7 @@ export interface ClientChargeAdjustment {
   id: string;
   clientChargeId: string;
   ledgerEntryId: string | null;
+  sourceFiscalDocumentId?: string | null;
   ledgerEntryDate: string | null;
   adjustmentType: ChargeAdjustmentType;
   effect: LedgerEffect;
@@ -1740,7 +1746,36 @@ export interface DashboardLoanDueAlert {
   daysOverdue: number;
 }
 
+export interface DashboardPayableDueAlert {
+  payableId: string;
+  description: string;
+  payeeName: string;
+  ownLegalEntityName: string;
+  dueDate: string;
+  openAmountCents: number;
+  daysUntilDue: number;
+}
+
+export interface DashboardPreviousPeriodUnbilledAlert {
+  organizationId: string;
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  partnerId: string;
+  partnerName: string;
+  periodStart: string;
+  periodEnd: string;
+  operationIds: string[];
+  operationCount: number;
+  documentCount: number;
+  documentNumbers: string[];
+  serviceAmountCents: number;
+  freightDaeAmountCents: number;
+  totalAmountCents: number;
+}
+
 export interface DashboardAlerts {
+  previousPeriodUnbilled: DashboardPreviousPeriodUnbilledAlert[];
+  payablesDueSoon: DashboardPayableDueAlert[];
   overdueCharges: DashboardOverdueChargeAlert[];
   waitingSignatureConfirmations: DashboardWaitingSignatureAlert[];
   partnersNearCreditLimit: DashboardCreditLimitAlert[];

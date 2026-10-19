@@ -48,11 +48,11 @@ export function getPartnerPeriodReport(repository: AppRepository, input: unknown
       return [{
         operationId: operation.id, fiscalDocumentId: document.id, number: document.documentNumber, series: document.series,
         issuer: snapshot?.issuerNameSnapshot ?? fiscalDocumentIssuerNameFromSnapshot(document) ?? entity?.legalName ?? "Empresa nao registrada",
-        date: operation.operationDate, company: snapshot?.ownLegalEntityNameSnapshot ?? entity?.legalName ?? "Empresa nao registrada",
+        date: document.issueDate, company: snapshot?.ownLegalEntityNameSnapshot ?? entity?.legalName ?? "Empresa nao registrada",
         destination: snapshot?.destinationNameSnapshot ?? triangulatedDestination ?? fiscalDocumentCounterpartyNameFromSnapshot(document, entity?.cnpj) ?? "-",
         sacks: snapshot?.quantitySacksDecimalSnapshot ?? operation.quantitySacks,
         amountCents: snapshot?.serviceAmountCentsSnapshot ?? operation.serviceAmountCents,
-        scope: operation.operationScope === "INTERNAL" ? "Mesma UF" : "Outra UF", status,
+        scope: operation.operationScope === "INTERNAL" ? "Interno" : "Externo", status,
         chargeNumber: activeCharge ? chargePeriodLabel(activeCharge, true) : "-"
       }];
     }).sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number, "pt-BR", { numeric: true }) || a.operationId.localeCompare(b.operationId));
@@ -120,7 +120,7 @@ export async function buildPartnerPeriodReportPdf(report: PartnerPeriodReport): 
       right(`${formatDateOnlyBr(report.filters.periodStart)} a ${formatDateOnlyBr(report.filters.periodEnd)}`, width - margin - 190, height - margin - 23, 174, 7.5, false, rgb(0.82, 0.76, 0.67));
       y = height - margin - 55;
       page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: soft, borderColor: border, borderWidth: 0.45 });
-      ["NF / DATA", "EMPRESA / DESTINO", "UF", "SACAS", "SERVICO", "SITUACAO", "PERIODO COBRANCA"].forEach((label, i) => page.drawText(label, { x: columns[i] + 5, y: y - 13, size: 6.5, font: bold, color: muted }));
+      ["NF / DATA DE EMISSAO", "EMPRESA / DESTINO", "TIPO", "SACAS", "SERVICO", "SITUACAO", "PERIODO COBRANCA"].forEach((label, i) => page.drawText(label, { x: columns[i] + 5, y: y - 13, size: 6.5, font: bold, color: muted }));
       y -= 31;
       return;
     }
@@ -150,7 +150,7 @@ export async function buildPartnerPeriodReportPdf(report: PartnerPeriodReport): 
     page.drawText("Notas do periodo", { x: margin + 8, y: y - 8, size: 8.5, font: bold, color: ink });
     y -= 18;
     page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: soft, borderColor: border, borderWidth: 0.45 });
-    ["NF / DATA", "EMPRESA / DESTINO", "UF", "SACAS", "SERVICO", "SITUACAO", "PERIODO COBRANCA"].forEach((label, i) => page.drawText(label, { x: columns[i] + 5, y: y - 13, size: 6.5, font: bold, color: muted }));
+    ["NF / DATA DE EMISSAO", "EMPRESA / DESTINO", "TIPO", "SACAS", "SERVICO", "SITUACAO", "PERIODO COBRANCA"].forEach((label, i) => page.drawText(label, { x: columns[i] + 5, y: y - 13, size: 6.5, font: bold, color: muted }));
     y -= 31;
   };
   await header();

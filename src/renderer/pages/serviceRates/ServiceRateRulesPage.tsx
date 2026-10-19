@@ -24,6 +24,7 @@ const emptyRuleForm = {
   productId: "",
   scope: "EXTERNAL" as OperationScope,
   value: "5,00",
+  financialValue: "",
   noDefinedValidity: false,
   effectiveFrom: currentMonthStart(),
   effectiveTo: "",
@@ -114,6 +115,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       productId: rule.productId ?? "",
       scope: rule.operationScope,
       value: (rule.rateValueCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      financialValue: rule.financialRateValueCents === null ? "" : (rule.financialRateValueCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       noDefinedValidity: hasNoDefinedValidity,
       effectiveFrom: hasNoDefinedValidity ? "" : rule.effectiveFrom,
       effectiveTo: rule.effectiveTo ?? "",
@@ -142,6 +144,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       operationScope: form.scope,
       rateType: "PER_SACK",
       rateValueCents: centsFromInput(form.value),
+      financialRateValueCents: form.financialValue.trim() ? centsFromInput(form.financialValue) : null,
       effectiveFrom: form.noDefinedValidity ? OPEN_ENDED_EFFECTIVE_FROM : form.effectiveFrom,
       effectiveTo: form.noDefinedValidity ? null : form.effectiveTo.trim() || null,
       priority: Number.parseInt(form.priority, 10) || (form.productId ? 10 : 1),
@@ -161,6 +164,10 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
     }
     if (centsFromInput(form.value) <= 0) {
       setMessage("Erro: informe um valor por saca maior que zero.");
+      return;
+    }
+    if (form.financialValue.trim() && centsFromInput(form.financialValue) <= 0) {
+      setMessage("Erro: informe um valor com financeiro maior que zero ou deixe o campo vazio.");
       return;
     }
     try {
@@ -217,7 +224,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
               <span>{counterpartyLabel(item.counterpartyPartnerLegalEntityId)}</span>
               <span>{scopeLabels[item.operationScope]}</span>
               <span>{productLabel(item.productId)}</span>
-              <span>{formatCurrencyFromCents(item.rateValueCents)} por saca</span>
+              <span>{formatCurrencyFromCents(item.rateValueCents)} normal{item.financialRateValueCents !== null ? <small>{formatCurrencyFromCents(item.financialRateValueCents)} com financeiro</small> : null}</span>
               <span>{validityLabel(item)}</span>
               <span>{item.isActive ? "Vigente" : "Inativa"}</span>
               <span title={item.conflictWarning ?? undefined} className={item.conflictWarning ? "rate-conflict-flag" : undefined}>{item.conflictWarning ? "Conflito de regra" : "-"}</span>
@@ -244,7 +251,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                   <span className="partner-action-icon" aria-hidden="true">$</span>
                   <div>
                     <strong>Dados da regra</strong>
-                    <small>Escolha o cliente/corretor, produto opcional, se a venda e na mesma UF ou em outra UF, e o valor comercial por saca.</small>
+                    <small>Escolha o cliente/corretor, produto opcional, UF e os valores por saca normal e com financeiro.</small>
                   </div>
                 </div>
                 <FormGrid>
@@ -252,7 +259,8 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                   <SelectField label="Empresa da nota especifica" value={form.counterpartyPartnerLegalEntityId} onChange={(value) => updateForm("counterpartyPartnerLegalEntityId", value)} options={[["", "Todas"], ...counterpartyLegalEntities.map((item) => [item.id, item.tradeName] as [string, string])]} />
                   <SelectField label="UF da venda" value={form.scope} onChange={(value) => updateForm("scope", value)} options={SERVICE_RATE_SCOPE_OPTIONS} />
                   <SelectField label="Produto" value={form.productId} onChange={(value) => updateForm("productId", value)} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
-                  <TextField label="Valor por saca" value={form.value} onChange={(value) => updateForm("value", value)} />
+                  <TextField label="Valor normal por saca" value={form.value} onChange={(value) => updateForm("value", value)} />
+                  <TextField label="Valor com financeiro por saca (opcional)" value={form.financialValue} onChange={(value) => updateForm("financialValue", value)} />
                   <label className="checkbox"><input type="checkbox" checked={form.noDefinedValidity} onChange={(event) => setForm((current) => ({ ...current, noDefinedValidity: event.target.checked, effectiveFrom: event.target.checked ? "" : current.effectiveFrom || currentMonthStart(), effectiveTo: event.target.checked ? "" : current.effectiveTo }))} /> Sem vigencia definida</label>
                   <DateInput label="Inicio da vigencia" value={form.effectiveFrom} disabled={form.noDefinedValidity} onChange={(event) => updateForm("effectiveFrom", event.target.value)} />
                   <DateInput label="Fim da vigencia" value={form.effectiveTo} disabled={form.noDefinedValidity} onChange={(event) => updateForm("effectiveTo", event.target.value)} />

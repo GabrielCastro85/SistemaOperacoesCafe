@@ -104,7 +104,7 @@ describe("xml imports", () => {
     const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
     const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
     repo.setXmlImportFileStoredPath(file.id, filePath);
-    repo.updateXmlImportFileResolution(file.id, { contractNumber: "CONTRATO-NF-1", billingObservations: "Lote 42" });
+    repo.updateXmlImportFileResolution(file.id, { contractNumber: "CONTRATO-NF-1", billingObservations: "Lote 42", freightDaeReference: "GUIA-998", freightDaeAmountCents: 8750 });
     repo.updateXmlImportFileResolution(file.id, { clientPartnerId: partnerId });
     const result = await repo.executeXmlImportJob(job.id);
     expect(result.files[0].errorMessage).toBeNull();
@@ -118,6 +118,8 @@ describe("xml imports", () => {
     expect(detail.operations[0].serviceAmountCents).toBe(5250);
     expect(detail.document.contractNumber).toBe("CONTRATO-NF-1");
     expect(detail.document.billingObservations).toBe("Lote 42");
+    expect(detail.document.freightDaeReference).toBe("GUIA-998");
+    expect(detail.document.freightDaeAmountCents).toBe(8750);
     // A clean XML import (no pending issues) auto-confirms the note and its operation,
     // so it shows up ready-to-bill without a separate manual "Confirmar" step.
     expect(detail.document.status).toBe("CONFIRMED");
@@ -668,7 +670,7 @@ describe("xml imports", () => {
     expect(repo.getFiscalDocumentMergeHistory(existing.document.id)).toHaveLength(1);
 
     const eventPath = join(dir, "cancel.xml");
-    writeFileSync(eventPath, cancelXml(key), "utf8");
+    writeFileSync(eventPath, vulpeCancelResponseXml(key), "utf8");
     const eventInspection = inspectXmlFile(eventPath, "11111111-1111-4111-8111-111111111113");
     const eventJob = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: {} });
     const eventFile = repo.addXmlImportFile({ importJobId: eventJob.id, originalFileName: eventInspection.originalFileName, fileHash: eventInspection.fileHash, fileSize: eventInspection.fileSize, xmlType: eventInspection.xmlType, accessKey: eventInspection.accessKey, status: eventInspection.status, errorCode: null, errorMessage: null, warningCodes: eventInspection.warnings, extractedData: eventInspection.extractedData, resolutionData: null });
@@ -936,6 +938,14 @@ function cancelXml(key: string): string {
   <evento><infEvento Id="ID110111${key}01"><tpEvento>110111</tpEvento><chNFe>${key}</chNFe><nSeqEvento>1</nSeqEvento><dhEvento>2026-07-17T08:00:00-03:00</dhEvento><detEvento><xJust>Erro de emissao</xJust></detEvento></infEvento></evento>
   <retEvento><infEvento><chNFe>${key}</chNFe><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><cStat>135</cStat><xMotivo>Evento registrado</xMotivo><nProt>131260000000002</nProt></infEvento></retEvento>
 </procEventoNFe>`;
+}
+
+function vulpeCancelResponseXml(key: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<retEnvEvento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe">
+  <idLote>1026011149</idLote><tpAmb>1</tpAmb><cStat>128</cStat><xMotivo>Lote de Evento Processado</xMotivo>
+  <retEvento versao="1.00"><infEvento><tpAmb>1</tpAmb><cOrgao>32</cOrgao><cStat>135</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>${key}</chNFe><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><dhRegEvento>2026-10-02T14:26:20-03:00</dhRegEvento><nProt>232260021782433</nProt></infEvento></retEvento>
+</retEnvEvento>`;
 }
 
 function realWorldHighPrecisionNfeXml(): string {

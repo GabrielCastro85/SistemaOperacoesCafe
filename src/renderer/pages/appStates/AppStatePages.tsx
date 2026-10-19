@@ -2,9 +2,10 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 import type { BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import type { UpdateStatus } from "../../../shared/types/updater";
-import { formatCnpj, formatCurrencyFromCents, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
+import { formatCnpj, formatCurrencyFromCents, formatDateOnlyBr, isValidCnpj, onlyDigits } from "../../../shared/utils/format";
 import { Alert, Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, Input, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
+import { requestTextInput } from "../../utils/dialogs";
 
 const NEW_COMPANY_DEFAULT_COLORS = { primaryColor: "#1F6F4A", secondaryColor: "#0B3D26", accentColor: "#E0A94A" };
 
@@ -313,7 +314,7 @@ function ExistingCompanySetupWizard({ data, onSaved }: { data: BootstrapData; on
 export function Dashboard({ organizations, legalEntities, locations, organizationId, ownLegalEntityId }: { organizations: Organization[]; legalEntities: LegalEntity[]; locations: Location[]; organizationId?: string; ownLegalEntityId?: string | null }): JSX.Element {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [confirmationSummary, setConfirmationSummary] = useState<DealConfirmationSummary | null>(null);
-  const [operationalIndicators, setOperationalIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } | null>(null);
+  const [operationalIndicators, setOperationalIndicators] = useState<{ documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number; allCompaniesServiceAmountCents: number } | null>(null);
   const [alerts, setAlerts] = useState<DashboardAlerts | null>(null);
   const [monthlyTotals, setMonthlyTotals] = useState<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>([]);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
@@ -329,6 +330,8 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const [partnerSummaryLoading, setPartnerSummaryLoading] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [ignoringBillingAlert, setIgnoringBillingAlert] = useState<string | null>(null);
+  const [billingAlertFeedback, setBillingAlertFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     void window.operationsCafe.getUpdateStatus().then(setUpdateStatus);
@@ -413,7 +416,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   }, [organizationId, ownLegalEntityId, partnerSearchMode, partnerSearchId, companySearchId, periodStart, periodEnd]);
 
   const totalReceivable = billingSummary?.openCents ?? 0;
-  const totalCommercialAmount = operationalIndicators?.fiscalAmountCents ?? 0;
+  const totalServiceAmount = operationalIndicators?.allCompaniesServiceAmountCents ?? 0;
   const sacks = Number(operationalIndicators?.sacksDecimal ?? 0);
   const maxMonthlyAmount = Math.max(1, ...monthlyTotals.map((item) => item.amountCents));
   const maxMonthlySacks = Math.max(1, ...monthlyTotals.map((item) => Number(item.sacksDecimal)));
@@ -427,7 +430,50 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     { label: "Rascunho/pendente", value: (confirmationSummary?.drafts ?? 0) + (confirmationSummary?.pendingReview ?? 0) }
   ];
   const statusTotal = statusSlices.reduce((sum, item) => sum + item.value, 0);
-  const hasAlerts = Boolean(alerts && (alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+  const overdueChargePreview = alerts?.overdueCharges.slice(0, 5) ?? [];
+  const remainingOverdueCharges = Math.max(0, (alerts?.overdueCharges.length ?? 0) - overdueChargePreview.length);
+  const payablePreview = alerts?.payablesDueSoon.slice(0, 4) ?? [];
+  const remainingPayables = Math.max(0, (alerts?.payablesDueSoon.length ?? 0) - payablePreview.length);
+  const hasAlerts = Boolean(alerts && (alerts.previousPeriodUnbilled.length || alerts.payablesDueSoon.length || alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+
+  async function ignorePreviousPeriodAlert(item: DashboardAlerts["previousPeriodUnbilled"][number]): Promise<void> {
+    const reason = await requestTextInput({
+      title: "Ignorar pendencia de cobranca",
+      label: `Informe por que as ${item.documentCount} nota(s) de ${item.partnerName} nao devem ser cobradas`,
+      required: true
+    });
+    if (!reason?.trim()) return;
+    setIgnoringBillingAlert(`${item.ownLegalEntityId}:${item.partnerId}`);
+    setBillingAlertFeedback(null);
+    try {
+      const nextAlerts = await window.operationsCafe.ignorePreviousPeriodBillingAlert({
+        organizationId: item.organizationId,
+        ownLegalEntityId: item.ownLegalEntityId,
+        clientPartnerId: item.partnerId,
+        periodStart: item.periodStart,
+        periodEnd: item.periodEnd,
+        reason: reason.trim()
+      });
+      setAlerts(nextAlerts);
+      setBillingAlertFeedback(`Pendencia de ${item.partnerName} ignorada. Ela nao aparecera novamente no Dashboard.`);
+    } catch (error) {
+      setBillingAlertFeedback(`Nao foi possivel ignorar a pendencia: ${error instanceof Error ? error.message : "falha inesperada"}`);
+    } finally {
+      setIgnoringBillingAlert(null);
+    }
+  }
+
+  function openPreviousPeriodCharge(item: DashboardAlerts["previousPeriodUnbilled"][number]): void {
+    const query = new URLSearchParams({ from: "dashboard", clientId: item.partnerId, periodStart: item.periodStart, periodEnd: item.periodEnd });
+    window.location.hash = `#/charges?${query.toString()}`;
+  }
+
+  function payableDueLabel(daysUntilDue: number): string {
+    if (daysUntilDue < 0) return `Vencida há ${Math.abs(daysUntilDue)} dia(s)`;
+    if (daysUntilDue === 0) return "Pagar hoje";
+    if (daysUntilDue === 1) return "Vence amanhã";
+    return `Vence em ${daysUntilDue} dias`;
+  }
 
   return (
     <section className="content-section">
@@ -452,8 +498,8 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
         <DateInput label="Periodo - fim" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
       </FilterBar>
       <div className="dashboard-grid dashboard-grid--hero">
-        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas negociadas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas lancadas</small></Card>
-        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total das notas</span><strong>{formatCurrencyFromCents(totalCommercialAmount)}</strong><small>Valor comercial das NFs lancadas</small></Card>
+        <Card><span className="kpi-icon"><SackIcon /></span><span>Sacas vendidas</span><strong>{sacks ? sacks.toLocaleString("pt-BR") : "0"}</strong><small>Volume das notas de venda lancadas</small></Card>
+        <Card><span className="kpi-icon"><CoinsIcon /></span><span>Valor total dos servicos</span><strong>{formatCurrencyFromCents(totalServiceAmount)}</strong><small>Todos os servicos do periodo · Todas as empresas · cobrados ou ainda em aberto</small></Card>
         <Card><span className="kpi-icon"><WalletIcon /></span><span>A receber no periodo</span><strong>{formatCurrencyFromCents(totalReceivable)}</strong><small>Todas as empresas · {billingSummary?.unbilledOperations ?? 0} operacoes sem cobranca</small></Card>
         <Card><span className="kpi-icon"><CheckCircleIcon /></span><span>Recebido referente ao periodo</span><strong>{formatCurrencyFromCents(billingSummary?.receivedForOperationsPeriodCents ?? 0)}</strong><small>Total recebido nas datas selecionadas: {formatCurrencyFromCents(billingSummary?.cashReceivedCents ?? 0)} · Todas as empresas</small></Card>
       </div>
@@ -467,13 +513,86 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               <h2>Alertas</h2>
             </div>
           </div>
-          <div className="alert-list">
-            {alerts.overdueCharges.map((item) => (
+          {billingAlertFeedback ? <Alert tone={billingAlertFeedback.startsWith("Nao") ? "danger" : "success"}>{billingAlertFeedback}</Alert> : null}
+          <div className="dashboard-alert-sections">
+            {alerts.previousPeriodUnbilled.length ? (
+              <section className="dashboard-alert-section dashboard-alert-section--billing-pending">
+                <div className="dashboard-alert-section__heading">
+                  <div><span className="ui-eyebrow">Mês anterior</span><h3>Pendências de cobrança</h3></div>
+                  <Badge tone="warning">{alerts.previousPeriodUnbilled.reduce((sum, item) => sum + item.documentCount, 0)} nota(s)</Badge>
+                </div>
+                <div className="alert-list">
+                  {alerts.previousPeriodUnbilled.map((item) => {
+                    const alertKey = `${item.ownLegalEntityId}:${item.partnerId}`;
+                    const shownNotes = item.documentNumbers.slice(0, 5).join(", ");
+                    const hiddenNotes = Math.max(0, item.documentNumbers.length - 5);
+                    return (
+                      <article key={alertKey} className="alert-item alert-item--billing-pending">
+                        <div className="alert-item__content">
+                          <strong>{item.partnerName}</strong>
+                          <span>{item.ownLegalEntityName} · {item.documentCount} nota(s) · {item.operationCount} operação(ões)</span>
+                          <small>NF {shownNotes}{hiddenNotes ? ` e mais ${hiddenNotes}` : ""}</small>
+                          {item.freightDaeAmountCents > 0 ? <small>Inclui {formatCurrencyFromCents(item.freightDaeAmountCents)} de DAE de frete</small> : null}
+                        </div>
+                        <div className="alert-item__meta">
+                          <Badge tone="warning">Não cobrada</Badge>
+                          <strong>{formatCurrencyFromCents(item.totalAmountCents)}</strong>
+                          <small>{formatDateOnlyBr(item.periodStart)} a {formatDateOnlyBr(item.periodEnd)}</small>
+                        </div>
+                        <div className="alert-item__actions">
+                          <Button variant="primary" onClick={() => openPreviousPeriodCharge(item)}>Gerar cobrança</Button>
+                          <Button variant="ghost" loading={ignoringBillingAlert === alertKey} onClick={() => void ignorePreviousPeriodAlert(item)}>Ignorar cobrança</Button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+            {payablePreview.length ? (
+              <section className="dashboard-alert-section dashboard-alert-section--payables">
+                <div className="dashboard-alert-section__heading">
+                  <div><span className="ui-eyebrow">Próximos pagamentos</span><h3>Contas a pagar</h3></div>
+                  <Button onClick={() => { window.location.hash = "#/finance/payables"; }}>Ver financeiro</Button>
+                </div>
+                <div className="alert-list">
+                  {payablePreview.map((item) => (
+                    <button key={item.payableId} className="alert-item alert-item--payable" onClick={() => { window.location.hash = `#/finance/payables/${item.payableId}`; }}>
+                      <div className="alert-item__content">
+                        <strong>{item.description}</strong>
+                        <span>{item.ownLegalEntityName} · {item.payeeName}</span>
+                      </div>
+                      <div className="alert-item__meta">
+                        <Badge tone={item.daysUntilDue < 0 ? "danger" : item.daysUntilDue <= 1 ? "warning" : "accent"}>{payableDueLabel(item.daysUntilDue)}</Badge>
+                        <strong>{formatCurrencyFromCents(item.openAmountCents)}</strong>
+                        <small>{formatDateOnlyBr(item.dueDate)}</small>
+                      </div>
+                    </button>
+                  ))}
+                  {remainingPayables > 0 ? <button className="alert-list__more" onClick={() => { window.location.hash = "#/finance/payables"; }}>Mais {remainingPayables} conta(s) a pagar</button> : null}
+                </div>
+              </section>
+            ) : null}
+
+            {overdueChargePreview.length ? (
+              <section className="dashboard-alert-section">
+                <div className="dashboard-alert-section__heading"><div><span className="ui-eyebrow">Recebimentos</span><h3>Cobranças vencidas</h3></div></div>
+                <div className="alert-list">
+            {overdueChargePreview.map((item) => (
               <button key={item.chargeId} className="alert-item" onClick={() => { window.location.hash = "#/charges"; }}>
                 <Badge tone="danger">Cobranca vencida</Badge>
                 <span>{item.partnerName} - {formatCurrencyFromCents(item.openAmountCents)} em aberto ha {item.daysOverdue} dia(s)</span>
               </button>
             ))}
+            {remainingOverdueCharges > 0 ? <button className="alert-list__more" onClick={() => { window.location.hash = "#/charges"; }}>Mais {remainingOverdueCharges} cobranças vencidas</button> : null}
+                </div>
+              </section>
+            ) : null}
+
+            {(alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length) ? (
+              <section className="dashboard-alert-section">
+                <div className="dashboard-alert-section__heading"><div><span className="ui-eyebrow">Acompanhamento</span><h3>Outros alertas</h3></div></div>
+                <div className="alert-list">
             {alerts.waitingSignatureConfirmations.map((item) => (
               <button key={item.confirmationId} className="alert-item" onClick={() => { window.location.hash = "#/confirmations"; }}>
                 <Badge tone="warning">Aguardando assinatura</Badge>
@@ -492,6 +611,9 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
                 <span>{item.partnerName} - {formatCurrencyFromCents(item.amountCents)} previsto ha {item.daysOverdue} dia(s)</span>
               </button>
             ))}
+                </div>
+              </section>
+            ) : null}
           </div>
         </Card>
         </div>

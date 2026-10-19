@@ -60,6 +60,59 @@ function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
 
 type DocumentSortKey = "number" | "client";
 type SortDirection = "asc" | "desc";
+type VulpeDevScanResult = Awaited<ReturnType<Window["operationsCafe"]["scanVulpeDevXml"]>>;
+type VulpeDevStatusResult = Awaited<ReturnType<Window["operationsCafe"]["getVulpeDevStatus"]>>;
+type CollectorMonitorStatus = VulpeDevStatusResult["collectors"][number];
+
+function formatCollectorActivity(value: string | null): string {
+  if (!value) return "Ainda nao registrado";
+  const instant = new Date(value);
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - instant.getTime()) / 60_000));
+  const relative = elapsedMinutes < 1
+    ? "agora"
+    : elapsedMinutes < 60
+      ? `ha ${elapsedMinutes} min`
+      : elapsedMinutes < 1_440
+        ? `ha ${Math.floor(elapsedMinutes / 60)} h`
+        : `ha ${Math.floor(elapsedMinutes / 1_440)} dia(s)`;
+  const exact = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "medium"
+  }).format(instant);
+  return `${relative} (${exact})`;
+}
+
+function formatCollectorUptime(value: number | null): string {
+  if (value === null) return "Ainda nao informado";
+  const hours = Math.floor(value / 3_600);
+  const minutes = Math.floor((value % 3_600) / 60);
+  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
+
+function collectorCommandLabel(command: CollectorMonitorStatus["lastCommand"]): string {
+  if (command === "SCAN_NOW") return "Buscar notas";
+  if (command === "UPDATE_NOW") return "Atualizar coletor";
+  if (command === "RESTART") return "Reiniciar coletor";
+  return "Nenhum comando enviado";
+}
+
+function collectorCommandStatusLabel(status: CollectorMonitorStatus["lastCommandStatus"]): string {
+  if (status === "PENDING") return "aguardando o coletor";
+  if (status === "RUNNING") return "em execucao";
+  if (status === "COMPLETED") return "concluido";
+  if (status === "FAILED") return "falhou";
+  return "";
+}
+
+function collectorCompanyLabels(cnpjs: string[]): string {
+  const labels = cnpjs.map((cnpj) => {
+    if (cnpj === "16594876000224") return "Grao & Grao MG";
+    if (cnpj === "16594876000496") return "Grao & Grao SP";
+    return cnpj;
+  });
+  return labels.join(" e ");
+}
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   function brazilDateValue(date = new Date()): string {
@@ -80,6 +133,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   return `${year}-${month}-${day}`;
 }
+  function currentBrazilMonthRange(): { start: string; end: string } {
+    const today = brazilDateValue();
+    const year = Number(today.slice(0, 4));
+    const month = Number(today.slice(5, 7));
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return {
+      start: `${today.slice(0, 7)}-01`,
+      end: `${today.slice(0, 7)}-${String(lastDay).padStart(2, "0")}`
+    };
+  }
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
   const ownLegalEntity = data.legalEntities.find((item) => item.id === ownLegalEntityId) ?? null;
@@ -89,6 +152,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [products, setProducts] = useState<Product[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
   const [documentSearch, setDocumentSearch] = useState("");
+  const [showCanceledDocuments, setShowCanceledDocuments] = useState(false);
   const [documentLimit, setDocumentLimit] = useState(20);
   const [documentSort, setDocumentSort] = useState<{ key: DocumentSortKey | null; direction: SortDirection }>({
     key: null,
@@ -98,6 +162,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [replacementPartnerId, setReplacementPartnerId] = useState("");
   const [reviewBeforeConfirm, setReviewBeforeConfirm] = useState(false);
   const [billingObservations, setBillingObservations] = useState("");
+  const [freightDaeEnabled, setFreightDaeEnabled] = useState(false);
+  const [freightDaeReference, setFreightDaeReference] = useState("");
+  const [freightDaeAmount, setFreightDaeAmount] = useState("");
+  const [financialServiceEnabled, setFinancialServiceEnabled] = useState(false);
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState("");
@@ -128,9 +196,23 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
   const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
+  const [xmlPartnerOverrides, setXmlPartnerOverrides] = useState<Record<string, string>>({});
+  const [xmlIgnoredSelections, setXmlIgnoredSelections] = useState<Record<string, boolean>>({});
   const [xmlContractNumbers, setXmlContractNumbers] = useState<Record<string, string>>({});
   const [xmlBillingObservations, setXmlBillingObservations] = useState<Record<string, string>>({});
+  const [xmlFreightDaeEnabled, setXmlFreightDaeEnabled] = useState<Record<string, boolean>>({});
+  const [xmlFreightDaeReferences, setXmlFreightDaeReferences] = useState<Record<string, string>>({});
+  const [xmlFreightDaeAmounts, setXmlFreightDaeAmounts] = useState<Record<string, string>>({});
+  const [xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled] = useState<Record<string, boolean>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
+  const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
+  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
+  const [collectorStatuses, setCollectorStatuses] = useState<CollectorMonitorStatus[]>([]);
+  const [collectorMonitorError, setCollectorMonitorError] = useState<string | null>(null);
+  const [collectorCommandBusy, setCollectorCommandBusy] = useState<string | null>(null);
+  const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
+  const [vulpePeriodStart, setVulpePeriodStart] = useState(() => currentBrazilMonthRange().start);
+  const [vulpePeriodEnd, setVulpePeriodEnd] = useState(() => currentBrazilMonthRange().end);
   const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
   const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
   const [returnDate, setReturnDate] = useState(() => brazilDateValue());
@@ -153,9 +235,62 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlResultRef = useRef<HTMLDivElement | null>(null);
   const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
 
+  const sendCollectorCommand = async (collector: CollectorMonitorStatus, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART") => {
+    const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
+    setCollectorCommandBusy(key);
+    try {
+      await window.operationsCafe.sendCollectorCommand({
+        sourceCode: collector.sourceCode,
+        machineId: collector.machineId,
+        command
+      });
+      const action = collectorCommandLabel(command);
+      setMessage(`${action} enviado ao coletor. ${collector.online ? "Ele deve executar em ate 30 segundos." : "O comando sera executado assim que o coletor voltar a conectar."}`);
+      const status = await window.operationsCafe.getVulpeDevStatus();
+      setCollectorStatuses(status.collectors);
+      setCollectorMonitorError(status.collectorMonitorError);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Nao foi possivel enviar o comando ao coletor.");
+    } finally {
+      setCollectorCommandBusy(null);
+    }
+  };
+
   useEffect(() => { setXmlJob(null); }, [partnerId, operationType, scope, productId, ownLegalEntityId]);
   useEffect(() => { setReplacementPartnerId(""); }, [detail?.document.id]);
   useEffect(() => { setReturnDate(brazilDateValue()); setReturnUnit("SACKS"); setReturnQuantity(""); setReturnReason(""); }, [detail?.document.id]);
+  useEffect(() => {
+    const amount = detail?.document.freightDaeAmountCents ?? 0;
+    setFreightDaeEnabled(amount > 0);
+    setFreightDaeReference(detail?.document.freightDaeReference ?? "");
+    setFreightDaeAmount(amount > 0 ? formatCurrencyFromCents(amount) : "");
+  }, [
+    detail?.document.id,
+    detail?.document.freightDaeAmountCents,
+    detail?.document.freightDaeReference,
+  ]);
+  useEffect(() => {
+    setFinancialServiceEnabled(detail?.document.hasFinancialService ?? false);
+  }, [detail?.document.id, detail?.document.hasFinancialService]);
+  useEffect(() => {
+    if (typeof window.operationsCafe.getVulpeDevStatus !== "function") return;
+    const refresh = () => window.operationsCafe.getVulpeDevStatus()
+      .then((status) => {
+        setVulpeDevAvailable(status.available);
+        setVulpeDevSources(status.sources);
+        setCollectorStatuses(status.collectors);
+        setCollectorMonitorError(status.collectorMonitorError);
+      })
+      .catch(() => {
+        setVulpeDevAvailable(false);
+        setVulpeDevSources([]);
+        setCollectorStatuses([]);
+        setCollectorMonitorError("Nao foi possivel consultar o servidor agora. Uma nova tentativa sera feita em 30 segundos.");
+      });
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const load = useCallback(async () => {
     const roleForOperationType = operationType === "PURCHASE" ? "SUPPLIER" : "CLIENT";
@@ -452,6 +587,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         totalAmountCents: detail.document.totalAmountCents,
         hasPendingIssues: detail.document.hasPendingIssues,
         pendingNotes: detail.document.pendingNotes,
+        hasFinancialService: detail.document.hasFinancialService,
         notes: detail.document.notes
       });
       setDetail(updated);
@@ -532,6 +668,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function prepareXmlImport(source: "single" | "multiple" | "folder"): Promise<void> {
     try {
+      setVulpeScan(null);
       const selected =
         source === "single"
           ? await window.operationsCafe.selectXmlFile()
@@ -541,6 +678,27 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       await inspectSelectedXmlFiles(selected, source === "folder" ? "FOLDER" : selected.length === 1 ? "FILE" : "MULTIPLE_FILES");
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao selecionar XML."}`);
+    }
+  }
+
+  async function prepareVulpeDevImport(source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"): Promise<void> {
+    try {
+      if (!vulpePeriodStart || !vulpePeriodEnd) throw new Error("Informe as datas inicial e final.");
+      if (vulpePeriodStart > vulpePeriodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
+      const result = await window.operationsCafe.scanVulpeDevXml({ source, periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd });
+      setVulpeScan(result);
+      if (result.files.length === 0) {
+        setXmlSelections([]);
+        setXmlQueue([]);
+        setXmlJob(null);
+        setSelectedXmlToken(null);
+        setMessage(`${result.label}: nenhuma NF-e nova aguardando revisao entre ${formatDateOnlyBr(result.periodStart)} e ${formatDateOnlyBr(result.periodEnd)}.`);
+        return;
+      }
+      await inspectSelectedXmlFiles(result.files, "FOLDER");
+      setMessage(`${result.label}: ${result.pendingReview} NF-e nova(s) carregada(s) para classificacao.`);
+    } catch (errorValue) {
+      setMessage(`Erro Vulpe: ${errorValue instanceof Error ? errorValue.message : "falha ao buscar notas."}`);
     }
   }
 
@@ -571,8 +729,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlQueue(inspections);
     setXmlJob(null);
     setXmlScopeOverrides({});
+    setXmlPartnerOverrides({});
+    setXmlIgnoredSelections({});
     setXmlContractNumbers({});
     setXmlBillingObservations({});
+    setXmlFreightDaeEnabled({});
+    setXmlFreightDaeReferences({});
+    setXmlFreightDaeAmounts({});
+    setXmlFinancialServiceEnabled({});
     setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
     setMessage(
       invalidCount
@@ -584,7 +748,21 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function validateXmlImport(): Promise<void> {
     if (xmlSelections.length === 0) return;
-    if (!partnerId) {
+    if (vulpeScan) {
+      const missingPartner = xmlQueue.find((file) =>
+        file.status !== "ERROR"
+        && !file.xmlType.startsWith("EVENT_")
+        && !xmlIgnoredSelections[file.token]
+        && !xmlPartnerOverrides[file.token]
+      );
+      if (missingPartner) {
+        setSelectedXmlToken(missingPartner.token);
+        setMessage("Escolha o cliente/corretor desta nota ou marque 'Nao cadastrar'. Cada nota precisa de uma decisao propria.");
+        scrollTo(xmlDataRef);
+        return;
+      }
+    }
+    if (!partnerId && !vulpeScan) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
       scrollTo(xmlDataRef);
       return;
@@ -599,13 +777,33 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       });
       const added = await window.operationsCafe.addXmlImportFiles({ jobId: job.id, tokens: xmlSelections.map((file) => file.token) });
       for (const file of added.files) {
-        const inspected = xmlQueue.find((candidate) => candidate.accessKey && candidate.accessKey === file.accessKey)
-          ?? xmlQueue.find((candidate) => candidate.originalFileName === file.originalFileName);
+        const inspected = xmlQueue.find((candidate) => candidate.originalFileName === file.originalFileName)
+          ?? xmlQueue.find((candidate) => candidate.accessKey && candidate.accessKey === file.accessKey);
         if (!inspected) continue;
         const contractNumber = xmlContractNumbers[inspected.token]?.trim() || null;
         const billingObservations = xmlBillingObservations[inspected.token]?.trim() || null;
-        if (contractNumber || billingObservations) {
-          await window.operationsCafe.updateXmlImportFileResolution(file.id, { contractNumber, billingObservations });
+        const selectedPartnerId = vulpeScan ? xmlPartnerOverrides[inspected.token] || null : null;
+        const ignore = vulpeScan ? xmlIgnoredSelections[inspected.token] === true : false;
+        const freightDaeEnabled = xmlFreightDaeEnabled[inspected.token] === true;
+        const freightDaeAmountCents = freightDaeEnabled ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0;
+        const freightDaeReference = freightDaeEnabled ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null;
+        const hasFinancialService = xmlFinancialServiceEnabled[inspected.token] === true;
+        if (!ignore && freightDaeEnabled && freightDaeAmountCents <= 0) {
+          setSelectedXmlToken(inspected.token);
+          setMessage(`Informe um valor de DAE de frete maior que zero para a NF ${inspected.extractedData?.number ?? inspected.originalFileName}.`);
+          scrollTo(xmlDataRef);
+          return;
+        }
+        if (contractNumber || billingObservations || selectedPartnerId || ignore || freightDaeAmountCents > 0 || hasFinancialService) {
+          await window.operationsCafe.updateXmlImportFileResolution(file.id, {
+            contractNumber,
+            billingObservations,
+            freightDaeReference,
+            freightDaeAmountCents,
+            hasFinancialService,
+            clientPartnerId: selectedPartnerId,
+            ignore
+          });
         }
       }
       const validated = await window.operationsCafe.validateXmlImportJob(added.job.id);
@@ -620,7 +818,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
-    if (!partnerId) {
+    if (!partnerId && !vulpeScan) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
       scrollTo(xmlDataRef);
       return;
@@ -679,7 +877,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         clientPartnerId,
         secondaryPartnerId,
         contractNumber: inspected ? xmlContractNumbers[inspected.token]?.trim() || null : null,
-        billingObservations: inspected ? xmlBillingObservations[inspected.token]?.trim() || null : null
+        billingObservations: inspected ? xmlBillingObservations[inspected.token]?.trim() || null : null,
+        freightDaeReference: inspected && xmlFreightDaeEnabled[inspected.token] ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null,
+        freightDaeAmountCents: inspected && xmlFreightDaeEnabled[inspected.token] ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0,
+        hasFinancialService: inspected ? xmlFinancialServiceEnabled[inspected.token] === true : false
       });
       if (xmlJob) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJob.job.id));
       setMessage(
@@ -740,6 +941,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const selectedXmlFile = xmlQueue.find((file) => file.token === selectedXmlToken) ?? xmlQueue[0] ?? null;
+  const selectedXmlIsEvent = selectedXmlFile?.xmlType.startsWith("EVENT_") === true;
+  const selectedXmlEvent = selectedXmlIsEvent ? selectedXmlFile?.extractedData ?? null : null;
+  const selectedXmlPartnerId = selectedXmlFile && vulpeScan
+    ? xmlPartnerOverrides[selectedXmlFile.token] ?? ""
+    : partnerId;
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
     ? selectedXmlFile.extractedData.contractNumber
@@ -763,12 +969,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     const parties = resolveOwnAndCounterparty(preview, data.legalEntities);
     const firstItem = preview?.items[0] ?? null;
     const inferredScope = inferXmlOperationScope(preview);
+    const assignedPartner = partners.find((partner) => partner.id === xmlPartnerOverrides[file.token]);
     return {
       file,
       preview,
       parties,
       firstItem,
-      operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope
+      operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope,
+      classificationLabel: file.xmlType.startsWith("EVENT_")
+        ? "Cancelamento"
+        : xmlIgnoredSelections[file.token]
+          ? "Nao cadastrar"
+          : assignedPartner?.displayName ?? "Escolher cliente"
     };
   });
   const validXmlBatchRows = xmlBatchRows.filter((row) => row.file.status !== "ERROR");
@@ -857,7 +1069,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     return searchableValues.some((value) => normalizeDocumentSearch(value).includes(term));
   };
 
-  const filteredDocuments = documents.filter(documentMatchesSearch);
+  const canceledDocumentsCount = documents.filter((document) => document.status === "CANCELED").length;
+  const filteredDocuments = documents
+    .filter((document) => showCanceledDocuments || document.status !== "CANCELED")
+    .filter(documentMatchesSearch);
 
   const sortedDocuments = [...filteredDocuments].sort((left, right) => {
     if (!documentSort.key) return 0;
@@ -995,8 +1210,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           {documentSearch ? (
             <button type="button" onClick={() => setDocumentSearch("")}>Limpar</button>
           ) : null}
+          {canceledDocumentsCount > 0 ? (
+            <button type="button" onClick={() => { setShowCanceledDocuments((current) => !current); setDocumentLimit(20); }}>
+              {showCanceledDocuments ? "Ocultar canceladas" : `Ver ${canceledDocumentsCount} cancelada(s)`}
+            </button>
+          ) : null}
           <span className="muted">
-            Exibindo {Math.min(visibleDocuments.length, filteredDocuments.length)} de {filteredDocuments.length} nota(s){filteredDocuments.length !== documents.length ? ` filtradas de ${documents.length}` : ""}
+            Exibindo {Math.min(visibleDocuments.length, filteredDocuments.length)} de {filteredDocuments.length} nota(s){!showCanceledDocuments && canceledDocumentsCount > 0 ? ` · ${canceledDocumentsCount} cancelada(s) oculta(s)` : filteredDocuments.length !== documents.length ? ` filtradas de ${documents.length}` : ""}
           </span>
         </div>
         <div className="table"><div className="table-head invoice-grid"><button type="button" className={`table-sort-button${documentSort.key === "number" ? " active" : ""}`} onClick={() => toggleDocumentSort("number")} aria-label={`Ordenar notas por numero ${documentSort.key === "number" && documentSort.direction === "asc" ? "do maior para o menor" : "do menor para o maior"}`}><span>Numero</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("number")}</span></button><button type="button" className={`table-sort-button${documentSort.key === "client" ? " active" : ""}`} onClick={() => toggleDocumentSort("client")} aria-label={`Ordenar notas por cliente ${documentSort.key === "client" && documentSort.direction === "asc" ? "de Z a A" : "de A a Z"}`}><span>Cliente/corretor</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("client")}</span></button><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{visibleDocuments.map((doc) => {
@@ -1027,7 +1247,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {sortedDocuments.length === 0 ? (
           <EmptyState
             title="Nenhuma nota encontrada"
-            description={documentSearch ? "Tente pesquisar por outro numero, cliente, empresa ou CNPJ." : "Nenhuma nota cadastrada para este CNPJ."}
+            description={documentSearch ? "Tente pesquisar por outro numero, cliente, empresa ou CNPJ." : canceledDocumentsCount > 0 && !showCanceledDocuments ? "Nao ha notas ativas nesta lista. Use 'Ver canceladas' para consultar o historico." : "Nenhuma nota cadastrada para este CNPJ."}
           />
         ) : null}
         </div>
@@ -1052,6 +1272,59 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           }}>Salvar contrato e observacoes</button>
         </FormGrid>
         <p className="muted">Ao trocar o responsavel, a tarifa anterior (inclusive manual) e substituida pela regra do novo cliente. Notas vinculadas a cobranca ou acerto precisam ser liberadas primeiro.</p>
+        <section className="coffee-return-card">
+          <header><span>Servico financeiro</span><strong>Define o valor por saca desta nota</strong></header>
+          <label className="inline-check">
+            <input type="checkbox" checked={financialServiceEnabled} onChange={(event) => setFinancialServiceEnabled(event.target.checked)} />
+            Esta nota possui financeiro
+          </label>
+          <p className="muted">Quando marcado, o sistema usa o valor "com financeiro" cadastrado na regra por saca do cliente. Sem essa marca, usa o valor normal.</p>
+          <button className="invoice-action-button invoice-action-button--primary" disabled={detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
+            try {
+              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
+                ...detail.document,
+                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
+                hasFinancialService: financialServiceEnabled
+              });
+              setDetail(updated);
+              await load();
+              setMessage(`Condicao financeira salva. A tarifa foi recalculada para ${financialServiceEnabled ? "com financeiro" : "sem financeiro"}.`);
+            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar a condicao financeira."}`); }
+          }}>Salvar condicao e recalcular</button>
+        </section>
+        <section className="coffee-return-card">
+          <header><span>DAE de frete</span><strong>Valor adicional vinculado à NF {detail.document.documentNumber}</strong></header>
+          <label className="inline-check">
+            <input type="checkbox" checked={freightDaeEnabled} onChange={(event) => {
+              setFreightDaeEnabled(event.target.checked);
+              if (!event.target.checked) { setFreightDaeReference(""); setFreightDaeAmount(""); }
+            }} />
+            Foi feito DAE de frete para esta nota
+          </label>
+          {freightDaeEnabled ? <FormGrid>
+            <TextField label="Numero ou referencia do DAE (opcional)" value={freightDaeReference} onChange={setFreightDaeReference} />
+            <TextField label="Valor a cobrar (R$)" value={freightDaeAmount} onChange={setFreightDaeAmount} />
+          </FormGrid> : null}
+          <p className="muted">Ao gerar uma cobranca com esta nota, o DAE entra automaticamente no total e aparece identificado no PDF e na planilha.</p>
+          <button className="invoice-action-button invoice-action-button--primary" onClick={async () => {
+            const amountCents = freightDaeEnabled ? parseCurrency(freightDaeAmount) : 0;
+            if (freightDaeEnabled && amountCents <= 0) { setMessage("Informe um valor de DAE maior que zero."); return; }
+            try {
+              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
+                ...detail.document,
+                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
+                freightDaeReference: freightDaeEnabled ? freightDaeReference.trim() || null : null,
+                freightDaeAmountCents: amountCents
+              });
+              setDetail(updated);
+              setFreightDaeEnabled((updated.document.freightDaeAmountCents ?? 0) > 0);
+              setFreightDaeReference(updated.document.freightDaeReference ?? "");
+              setFreightDaeAmount((updated.document.freightDaeAmountCents ?? 0) > 0 ? formatCurrencyFromCents(updated.document.freightDaeAmountCents ?? 0) : "");
+              await load();
+              setMessage(amountCents > 0 ? "DAE de frete salvo. O valor entrara automaticamente na cobranca desta nota." : "DAE de frete removido desta nota.");
+            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar o DAE de frete."}`); }
+          }}>Salvar DAE de frete</button>
+        </section>
         <h3>Revisao para cobranca</h3>
         <p>Contrato: <strong>{detail.document.contractNumber || "Nao informado"}</strong></p>
         {detail.operations.map((op) => <div className="operation-warning-card operation-warning-card--neutral" key={op.id}>
@@ -1221,6 +1494,113 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       {pageTab === "xml" && <>
       <AdminBlock title="Importacao automatica de NF-e">
         <p className="muted">Leitura de XML e captura automatica dos dados.</p>
+        {vulpeDevAvailable ? (
+          <div className="operation-warning-card operation-warning-card--neutral">
+            <strong>Caixa de entrada de NF-e</strong>
+            <span>Busca as NF-e autorizadas no periodo escolhido, remove as chaves ja cadastradas e envia as restantes para revisao. O mes atual ja vem selecionado e nenhuma nota e lancada antes da sua confirmacao.</span>
+            <section className="collector-monitor" aria-label="Monitor do coletor remoto">
+              <div className="collector-monitor__heading">
+                <div>
+                  <strong>Monitor do coletor da Grao &amp; Grao</strong>
+                  <small>O estado e atualizado automaticamente a cada 30 segundos.</small>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void window.operationsCafe
+                      .getVulpeDevStatus()
+                      .then((status) => {
+                        setCollectorStatuses(status.collectors);
+                        setCollectorMonitorError(status.collectorMonitorError);
+                      })
+                      .catch(() => setMessage("Nao foi possivel atualizar o status do coletor agora."));
+                  }}
+                >
+                  Atualizar status
+                </button>
+              </div>
+              {collectorStatuses.length ? (
+                <div className="collector-monitor__list">
+                  {collectorStatuses.map((collector) => {
+                    const tone = !collector.online || collector.status === "ERROR" ? "danger" : collector.status === "PENDING_RETRY" ? "warning" : "success";
+                    const label = !collector.online ? "Sem sinal" : collector.status === "OK" ? "Funcionando agora" : collector.status === "PENDING_RETRY" ? "Online, com envio pendente" : "Online, com erro";
+                    return (
+                      <article className={`collector-monitor__item collector-monitor__item--${tone}`} key={`${collector.sourceCode}-${collector.machineId}`}>
+                        <div className="collector-monitor__title">
+                          <strong>{collector.sourceLabel}</strong>
+                          <span className={`collector-monitor__badge collector-monitor__badge--${tone}`}>{label}</span>
+                        </div>
+                        <small>{collectorCompanyLabels(collector.emitterCnpjs)} · coletor {collector.collectorVersion ?? "sem versao"}</small>
+                        <dl>
+                          <div><dt>Ultima atividade</dt><dd>{formatCollectorActivity(collector.updatedAt)}</dd></div>
+                          <div><dt>Ultima varredura correta</dt><dd>{formatCollectorActivity(collector.lastSuccessAt)}</dd></div>
+                          <div><dt>Ultimo XML enviado</dt><dd>{formatCollectorActivity(collector.lastUploadAt ?? collector.lastFileReceivedAt)}</dd></div>
+                          <div><dt>Fila no servidor</dt><dd>{collector.pendingFiles} arquivo(s)</dd></div>
+                          <div><dt>Iniciado em</dt><dd>{formatCollectorActivity(collector.startedAt)}</dd></div>
+                          <div><dt>Tempo ativo</dt><dd>{formatCollectorUptime(collector.uptimeSeconds)}</dd></div>
+                          <div><dt>Inicializacao automatica</dt><dd>{collector.startupConfigured ? "Configurada" : "Nao confirmada"}</dd></div>
+                          <div><dt>Ultima busca de atualizacao</dt><dd>{formatCollectorActivity(collector.lastUpdateCheckAt)}</dd></div>
+                        </dl>
+                        {collector.lastCommand ? (
+                          <p>Ultimo comando: <strong>{collectorCommandLabel(collector.lastCommand)}</strong> · {collectorCommandStatusLabel(collector.lastCommandStatus)}{collector.lastCommandResult ? ` · ${collector.lastCommandResult}` : ""}</p>
+                        ) : null}
+                        {collector.lastError ? <p>{collector.lastError}</p> : null}
+                        <div className="collector-monitor__actions">
+                          {(["SCAN_NOW", "UPDATE_NOW", "RESTART"] as const).map((command) => {
+                            const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
+                            return (
+                              <button type="button" key={command} disabled={collectorCommandBusy !== null} onClick={() => void sendCollectorCommand(collector, command)}>
+                                {collectorCommandBusy === key ? "Enviando..." : collectorCommandLabel(command)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <details className="collector-monitor__diagnostics">
+                          <summary>Ver diagnostico e registros recentes</summary>
+                          <pre>{collector.recentLogs?.trim() || "O coletor ainda nao enviou registros detalhados."}</pre>
+                        </details>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="collector-monitor__empty">
+                  {collectorMonitorError ?? <>O servidor ainda nao recebeu o sinal de monitoramento. O coletor antigo continua enviando notas, mas precisa ser atualizado uma vez para mostrar o estado remoto.</>}
+                </div>
+              )}
+            </section>
+            <FormGrid>
+              <DateInput
+                label="Data inicial"
+                value={vulpePeriodStart}
+                onChange={(event) => {
+                  setVulpePeriodStart(event.target.value);
+                  setVulpeScan(null);
+                }}
+              />
+              <DateInput
+                label="Data final"
+                value={vulpePeriodEnd}
+                onChange={(event) => {
+                  setVulpePeriodEnd(event.target.value);
+                  setVulpeScan(null);
+                }}
+              />
+            </FormGrid>
+            <div className="toolbar vulpe-search-actions">
+              {[...vulpeDevSources].sort((left, right) => Number(right.source === "ALL") - Number(left.source === "ALL")).map((source) => (
+                <button key={source.source} className={source.source === "ALL" ? "vulpe-search-all" : undefined} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
+                  Buscar {source.label}
+                </button>
+              ))}
+            </div>
+            {vulpeScan ? (
+              <span>
+                {vulpeScan.label}: {vulpeScan.authorized} NF-e autorizada(s), {vulpeScan.alreadyImported} ja cadastrada(s), {vulpeScan.ignoredByUser} marcada(s) para nao cadastrar, {vulpeScan.canceledInvoicesHidden} cancelada(s) ocultada(s) e {vulpeScan.pendingReview} arquivo(s) aguardando revisao. Cancelamentos encontrados: {vulpeScan.cancellationEvents} ({vulpeScan.cancellationsAlreadyApplied} ja aplicado(s)).
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="import-columns">
           <div className="import-column" ref={xmlDataRef}>
             <h3>Importar NF-e</h3>
@@ -1254,13 +1634,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
             )}
             <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || !partnerId}>Validar fila</button>
+              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan)}>Validar fila</button>
             </div>
           </div>
 
           <div className="import-column">
             <h3>Dados extraidos</h3>
-            {selectedXmlPreview ? (
+            {selectedXmlEvent ? (
+              <>
+                <div className="operation-warning-card operation-warning-card--neutral">
+                  <strong>Cancelamento autorizado encontrado na Vulpe</strong>
+                  <span>Este evento sera ligado a nota pela chave de acesso quando a fila for concluida.</span>
+                </div>
+                <dl className="kv-list">
+                  <div><dt>Chave da NF-e</dt><dd>{String(selectedXmlEvent.accessKey ?? selectedXmlFile?.accessKey ?? "-")}</dd></div>
+                  <div><dt>Data do evento</dt><dd>{selectedXmlEvent.eventDate ? formatDateBr(String(selectedXmlEvent.eventDate)) : "-"}</dd></div>
+                  <div><dt>Protocolo</dt><dd>{String(selectedXmlEvent.protocolNumber ?? "-")}</dd></div>
+                  <div><dt>Situacao SEFAZ</dt><dd>{String(selectedXmlEvent.statusCode ?? "-")} - {String(selectedXmlEvent.statusMessage ?? "-")}</dd></div>
+                </dl>
+              </>
+            ) : selectedXmlPreview ? (
               <>
                 {selectedXmlOwnMismatch ? (
                   <div className="operation-warning-card">
@@ -1304,6 +1697,29 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <FormGrid>
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
                     <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
+                    <label className="inline-check">
+                      <input type="checkbox" checked={xmlFinancialServiceEnabled[selectedXmlFile.token] === true} onChange={(event) => {
+                        setXmlJob(null);
+                        setXmlFinancialServiceEnabled((current) => ({ ...current, [selectedXmlFile.token]: event.target.checked }));
+                      }} />
+                      Esta nota possui financeiro
+                    </label>
+                    <label className="inline-check">
+                      <input type="checkbox" checked={xmlFreightDaeEnabled[selectedXmlFile.token] === true} onChange={(event) => {
+                        const checked = event.target.checked;
+                        setXmlJob(null);
+                        setXmlFreightDaeEnabled((current) => ({ ...current, [selectedXmlFile.token]: checked }));
+                        if (!checked) {
+                          setXmlFreightDaeReferences((current) => ({ ...current, [selectedXmlFile.token]: "" }));
+                          setXmlFreightDaeAmounts((current) => ({ ...current, [selectedXmlFile.token]: "" }));
+                        }
+                      }} />
+                      Esta NF possui DAE de frete
+                    </label>
+                    {xmlFreightDaeEnabled[selectedXmlFile.token] ? <>
+                      <label>Numero ou referencia do DAE (opcional)<input maxLength={120} value={xmlFreightDaeReferences[selectedXmlFile.token] ?? ""} onChange={(event) => { setXmlJob(null); setXmlFreightDaeReferences((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} placeholder="Ex.: DAE 12345" /></label>
+                      <label>Valor do DAE a cobrar (R$)<input value={xmlFreightDaeAmounts[selectedXmlFile.token] ?? ""} onChange={(event) => { setXmlJob(null); setXmlFreightDaeAmounts((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} placeholder="R$ 0,00" /></label>
+                    </> : null}
                   </FormGrid>
                 ) : null}
               </>
@@ -1319,23 +1735,61 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
             <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
-            <FormGrid>
-              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
-              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <SelectField
-                label="UF da venda"
-                value={selectedXmlScope}
-                onChange={(value) => {
-                  const nextScope = value as OperationScope;
-                  if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: nextScope }));
-                  setScope(nextScope);
-                }}
-                options={OPERATION_SCOPE_OPTIONS}
-              />
-            </FormGrid>
+            {selectedXmlIsEvent ? (
+              <div className="operation-warning-card operation-warning-card--neutral">
+                <strong>Evento de cancelamento</strong>
+                <span>Ao concluir a fila, o sistema registra o evento e cancela automaticamente a nota e suas operacoes, quando a chave ja estiver cadastrada.</span>
+              </div>
+            ) : (
+              <>
+                <FormGrid>
+                  <PartnerQuickSearch
+                    label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"}
+                    value={selectedXmlPartnerId}
+                    onChange={(value) => {
+                      setXmlJob(null);
+                      if (vulpeScan && selectedXmlFile) {
+                        setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: value }));
+                        if (value) setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: false }));
+                      } else {
+                        setPartnerId(value);
+                      }
+                    }}
+                    partners={partners}
+                    legalEntities={partnerLegalEntities}
+                  />
+                  <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
+                  <SelectField
+                    label="UF da venda"
+                    value={selectedXmlScope}
+                    onChange={(value) => {
+                      const nextScope = value as OperationScope;
+                      if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: nextScope }));
+                      setScope(nextScope);
+                    }}
+                    options={OPERATION_SCOPE_OPTIONS}
+                  />
+                </FormGrid>
+                {vulpeScan && selectedXmlFile ? (
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={xmlIgnoredSelections[selectedXmlFile.token] === true}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setXmlJob(null);
+                        setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: checked }));
+                        if (checked) setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: "" }));
+                      }}
+                    />
+                    Nao cadastrar esta nota nem mostrar novamente nas buscas da Vulpe
+                  </label>
+                ) : null}
+              </>
+            )}
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setSelectedXmlToken(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
-              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || !partnerId}>Salvar nota</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan)}>Importar XMLs</button>
             </div>
           </div>
         </div>
@@ -1349,7 +1803,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
             </div>
             <div className="table">
-              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Status</span></div>
+              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
               {xmlBatchRows.map((row) => (
                 <button
                   key={row.file.token}
@@ -1370,7 +1824,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     )}
                   </span>
                   <span>{formatOperationScope(row.operationScope)}</span>
-                  <span><StatusBadge status={row.file.status} /></span>
+                  <span><strong>{row.classificationLabel}</strong><small><StatusBadge status={row.file.status} /></small></span>
                 </button>
               ))}
             </div>

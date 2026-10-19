@@ -45,6 +45,18 @@ export function fiscalDocumentIssuerNameFromSnapshot(document: FiscalDocument): 
   }
 }
 
+/** Razao social do destinatario exatamente como veio no XML da NF-e. */
+export function fiscalDocumentRecipientNameFromSnapshot(document: FiscalDocument): string | null {
+  if (!document.fiscalSnapshotJson) return null;
+  try {
+    const snapshot = JSON.parse(document.fiscalSnapshotJson) as Record<string, unknown>;
+    const recipient = snapshot.recipient && typeof snapshot.recipient === "object" ? snapshot.recipient as FiscalSnapshotParty : null;
+    return partyName(recipient);
+  } catch {
+    return null;
+  }
+}
+
 function partyName(party: FiscalSnapshotParty | null): string | null {
   const name = (party?.legalName || party?.tradeName) as string | undefined;
   return name?.trim() || null;

@@ -5,6 +5,10 @@ import log from "electron-log/main.js";
 const API_URL = "https://mindful-peace-production.up.railway.app";
 const SYNC_INTERVAL_MS = 8_000;
 const MUTATION_SYNC_DELAY_MS = 750;
+// Cada nota fiscal carrega muitos campos. Migracoes que acrescentam colunas
+// podem tornar milhares de notas "alteradas" de uma vez; lotes menores evitam
+// ultrapassar o limite de corpo da API central e permitem retomar gradualmente.
+const MAX_PUSH_CHANGES_PER_BATCH = 300;
 export const CENTRAL_SYNCED_TABLES = [
   "organizations", "legal_entities", "locations", "document_sequences",
   "business_partners", "business_partner_roles", "business_partner_merges", "partner_legal_entities",
@@ -13,6 +17,7 @@ export const CENTRAL_SYNCED_TABLES = [
   "operation_classification_rules", "fiscal_documents", "fiscal_document_items", "fiscal_document_events",
   "fiscal_document_returns", "fiscal_document_merge_history", "operations", "third_party_operations",
   "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history",
+  "billing_alert_ignores",
   "client_ledger_entries", "client_credit_allocations", "client_payments", "client_payment_allocations",
   "transfer_reconciliations", "transfer_reconciliation_invoices", "transfer_reconciliation_payments",
   "expense_categories", "cost_centers", "financial_accounts", "accounts_payable", "account_payable_operations",
@@ -45,6 +50,60 @@ export interface CentralDesktopProfile {
   mustChangePassword: boolean;
   roleAssignments: Array<{ roleId: string; organizationId: string | null; legalEntityId: string | null; assignedAt: string; expiresAt: string | null; isActive: boolean }>;
   legalEntityAccess: Array<{ organizationId: string; legalEntityId: string | null; accessMode: "ALL" | "SPECIFIC" }>;
+}
+
+export interface CollectorInboxFile {
+  id: string;
+  sourceCode: string;
+  sourceLabel: string;
+  originalFileName: string;
+  fileHash: string;
+  fileSize: number;
+  accessKey: string | null;
+  xmlType: "NFE" | "CANCELLATION";
+  receivedAt: string;
+}
+
+export interface CollectorMonitorStatus {
+  sourceCode: string;
+  sourceLabel: string;
+  machineId: string;
+  emitterCnpjs: string[];
+  collectorVersion: string | null;
+  scanIntervalSeconds: number;
+  status: "OK" | "PENDING_RETRY" | "ERROR";
+  online: boolean;
+  inspected: number;
+  eligible: number;
+  uploaded: number;
+  pendingUpload: number;
+  pendingFiles: number;
+  lastScanAt: string;
+  lastSuccessAt: string | null;
+  lastUploadAt: string | null;
+  lastFileReceivedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+  startedAt: string | null;
+  uptimeSeconds: number | null;
+  lastUpdateCheckAt: string | null;
+  recentLogs: string | null;
+  startupConfigured: boolean;
+  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | null;
+  lastCommandStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | null;
+  lastCommandRequestedAt: string | null;
+  lastCommandResult: string | null;
+}
+
+export interface AssistantChatResponse {
+  answer: string;
+  model: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    monthInputTokens: number;
+    monthOutputTokens: number;
+  };
 }
 
 function jsonValue(value: unknown): unknown {
@@ -117,6 +176,52 @@ export class CentralSyncService {
     };
   }
 
+  // Uma falha momentanea de rede marca o status como ERROR ate a proxima
+  // sincronizacao; para recursos sob demanda basta existir uma sessao.
+  hasSession(): boolean {
+    return this.token !== null;
+  }
+
+  async listCollectorInbox(sourceCode: string): Promise<CollectorInboxFile[]> {
+    const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?source=${encodeURIComponent(sourceCode)}&limit=1000`);
+    return response.files;
+  }
+
+  async listCollectorStatuses(): Promise<CollectorMonitorStatus[]> {
+    const response = await this.request<{ collectors: CollectorMonitorStatus[] }>("/v1/collector/status");
+    return response.collectors;
+  }
+
+  async sendCollectorCommand(sourceCode: string, machineId: string, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART"): Promise<{ id: string; status: "PENDING"; command: string }> {
+    return this.request("/v1/collector/commands", {
+      method: "POST",
+      body: JSON.stringify({ sourceCode, machineId, command })
+    });
+  }
+
+  async askAssistant(input: {
+    question: string;
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+    context: Record<string, unknown>;
+  }): Promise<AssistantChatResponse> {
+    return this.request("/v1/assistant/chat", {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+  }
+
+  async downloadCollectorInboxFile(id: string): Promise<Buffer> {
+    const response = await this.request<{ xmlBase64: string }>(`/v1/collector/inbox/${encodeURIComponent(id)}/content`);
+    return Buffer.from(response.xmlBase64, "base64");
+  }
+
+  async resolveCollectorInboxFile(id: string, status: "IMPORTED" | "IGNORED", note: string | null = null): Promise<void> {
+    await this.request(`/v1/collector/inbox/${encodeURIComponent(id)}/resolve`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, note })
+    });
+  }
+
   async login(username: string, password: string): Promise<CentralDesktopProfile | null> {
     const installationId = this.getInstallationId() ?? `unconfigured-${randomUUID()}`;
     const response = await this.request<{ token: string; user: { desktopProfile?: CentralDesktopProfile | null } }>("/v1/session/login", {
@@ -131,8 +236,15 @@ export class CentralSyncService {
     try {
       await this.synchronize();
     } catch (error) {
-      this.stop();
       log.warn("Central sync during login failed", error instanceof Error ? error.message : String(error));
+      if (this.hasUsableLocalSnapshot()) {
+        // Uma oscilacao curta do servidor nao deve bloquear um computador que
+        // ja concluiu ao menos uma sincronizacao. O erro continua registrado no
+        // rodape e o ciclo automatico tenta atualizar os dados novamente.
+        this.start();
+        return response.user?.desktopProfile ?? null;
+      }
+      this.stop();
       throw new Error(`Nao foi possivel carregar os dados do servidor central. Tente entrar novamente. Detalhe: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.start();
@@ -295,12 +407,17 @@ export class CentralSyncService {
       changes.push({ table: identity.slice(0, separator), key: identity.slice(separator + 1), operation: "DELETE" });
     }
 
-    for (let index = 0; index < changes.length; index += 1000) {
-      const batch = changes.slice(index, index + 1000);
-      await this.request<{ revision: number }>("/v1/sync/push", {
-        method: "POST",
-        body: JSON.stringify({ idempotencyKey: randomUUID(), baseRevision: this.getServerRevision(), changes: batch })
-      });
+    for (let index = 0; index < changes.length; index += MAX_PUSH_CHANGES_PER_BATCH) {
+      const batch = changes.slice(index, index + MAX_PUSH_CHANGES_PER_BATCH);
+      try {
+        await this.request<{ revision: number }>("/v1/sync/push", {
+          method: "POST",
+          body: JSON.stringify({ idempotencyKey: randomUUID(), baseRevision: this.getServerRevision(), changes: batch })
+        });
+      } catch (error) {
+        const first = batch[0];
+        throw new Error(`Falha ao enviar ${first?.table ?? "registro"}/${first?.key ?? "desconhecido"}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       this.updateBaselineForLocalBatch(batch);
     }
   }
@@ -473,6 +590,14 @@ export class CentralSyncService {
     return Number(row.revision);
   }
 
+  private hasUsableLocalSnapshot(): boolean {
+    const row = this.db.prepare(`
+      SELECT server_revision AS revision, last_success_at AS lastSuccessAt
+      FROM central_sync_state WHERE singleton = 1
+    `).get() as { revision: number; lastSuccessAt: string | null };
+    return Number(row.revision) > 0 && Boolean(row.lastSuccessAt);
+  }
+
   private setServerRevision(revision: number): void {
     this.db.prepare("UPDATE central_sync_state SET server_revision = ? WHERE singleton = 1").run(revision);
   }
@@ -486,14 +611,23 @@ export class CentralSyncService {
     }
     const requestInit = { ...init, headers };
     if (requestInit.method && requestInit.method !== "GET" && requestInit.body === undefined) requestInit.body = "{}";
-    const response = await fetch(`${API_URL}${path}`, requestInit);
+    let response: Response;
+    try {
+      response = await fetch(`${API_URL}${path}`, requestInit);
+    } catch (error) {
+      // Leituras sao seguras para repetir; a conexao deste computador com o
+      // servidor apresenta quedas curtas e uma nova tentativa costuma bastar.
+      if (requestInit.method && requestInit.method !== "GET") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      response = await fetch(`${API_URL}${path}`, requestInit);
+    }
     const text = await response.text();
     let body: unknown = null;
     try { body = text ? JSON.parse(text) : null; }
     catch { body = { message: text }; }
     if (!response.ok) {
       const detail = body && typeof body === "object" && "message" in body ? String((body as { message: unknown }).message) : text;
-      throw new Error(`Servidor central (${response.status}): ${detail || "falha na requisicao"}`);
+      throw new Error(`Servidor central (${response.status}) em ${path}: ${detail || "falha na requisicao"}`);
     }
     return body as T;
   }

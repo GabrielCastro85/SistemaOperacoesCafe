@@ -10,7 +10,11 @@ const schema = z.object({
   DATABASE_SSL: booleanFromText,
   SESSION_TTL_HOURS: z.coerce.number().positive().max(168).default(12),
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
-  BOOTSTRAP_SECRET: z.string().min(24).optional()
+  BOOTSTRAP_SECRET: z.string().min(24).optional(),
+  COLLECTOR_INGEST_SECRET: z.string().min(32).optional(),
+  OPENAI_API_KEY: z.string().startsWith("sk-").optional(),
+  OPENAI_MODEL: z.string().min(1).default("gpt-6-luna"),
+  OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(200).max(4000).default(1800)
 });
 
 export type ServerConfig = ReturnType<typeof loadConfig>;

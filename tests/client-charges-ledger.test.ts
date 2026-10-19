@@ -82,6 +82,34 @@ describe("client charges and ledger", () => {
     } finally { db.close(); }
   });
 
+  it("reverses an accidental client payment and reopens the charge", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "REVERSAL-101", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: issued.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: "REVERSAL-101", notes: null, attachmentPath: null });
+      const paid = repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: issued.charge.finalAmountCents });
+      expect(paid.charge.status).toBe("PAID");
+
+      const cancelledPayment = repo.cancelClientPayment(payment.id, "Baixa feita por engano");
+      const reopened = repo.getClientCharge(issued.charge.id);
+      expect(cancelledPayment.status).toBe("CANCELLED");
+      expect(["ISSUED", "OVERDUE"]).toContain(reopened.charge.status);
+      expect(reopened.charge.paidAmountCents).toBe(0);
+      expect(reopened.charge.openAmountCents).toBe(reopened.charge.finalAmountCents);
+      expect(reopened.payments.filter((allocation) => !allocation.cancelledAt)).toHaveLength(0);
+      expect(db.prepare("SELECT entry_type, effect, amount_cents FROM client_ledger_entries WHERE client_charge_id = ? AND entry_type = 'REVERSAL'").get(issued.charge.id)).toEqual({
+        entry_type: "REVERSAL",
+        effect: "INCREASE_RECEIVABLE",
+        amount_cents: issued.charge.finalAmountCents
+      });
+      expect(() => repo.cancelClientPayment(payment.id, "Repetido")).toThrow("ja foi estornado");
+    } finally { db.close(); }
+  });
+
   it("generates a branded receipt with the client name and partial note payment", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {
@@ -99,6 +127,32 @@ describe("client charges and ledger", () => {
       expect(imageText).toContain("Cliente Cobranca");
       expect(imageText).toContain("RECIBO-101");
       expect(imageText).toContain("Pagamento parcial");
+    } finally { db.close(); }
+  });
+
+  it("reconstructs a missing synchronized payment before generating its receipt", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "RECIBO-ORFAO", "20");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-03", amountCents: issued.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: "NF RECIBO-ORFAO", notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: issued.charge.finalAmountCents });
+
+      db.pragma("foreign_keys = OFF");
+      db.prepare("DELETE FROM client_payments WHERE id = ?").run(payment.id);
+      db.pragma("foreign_keys = ON");
+
+      const repaired = await repo.generateClientPaymentReceipt(payment.id);
+      expect(repaired.id).toBe(payment.id);
+      expect(repaired.paymentDate).toBe("2026-08-03");
+      expect(repaired.amountCents).toBe(issued.charge.finalAmountCents);
+      expect(repaired.paymentMethod).toBe("OTHER");
+      expect(repaired.transactionReference).toBe("NF RECIBO-ORFAO");
+      expect(repaired.receiptPdfFilePath && existsSync(repaired.receiptPdfFilePath)).toBe(true);
+      expect(repaired.receiptImageFilePath && existsSync(repaired.receiptImageFilePath)).toBe(true);
     } finally { db.close(); }
   });
 
@@ -153,6 +207,7 @@ describe("client charges and ledger", () => {
       createConfirmedOperation(repo, partnerId, productId, "QA-500", "500");
       const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
       const document = repo.getFiscalDocument(eligible[0].fiscalDocumentId).document;
+      db.prepare("UPDATE operations SET operation_date = '2026-07-20' WHERE id = ?").run(eligible[0].id);
       repo.updateFiscalDocument(document.id, { ...document, contractNumber: "MCU-103265", billingObservations: "Lote 123\nContrato complementar ABC-456" });
       db.prepare("UPDATE fiscal_documents SET status = 'DRAFT' WHERE id = ?").run(document.id);
       db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(document.id);
@@ -160,13 +215,24 @@ describe("client charges and ledger", () => {
       const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
       const issued = await repo.issueClientCharge(draft.charge.id);
       expect(issued.charge.subtotalServicesCents).toBe(250000);
+      expect(issued.operations[0].operationDateSnapshot).toBe("2026-07-16");
       expect(issued.operations[0].billingObservationsSnapshot).toBe("Lote 123\nContrato complementar ABC-456");
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(issued.charge.excelFilePath!);
       const sheet = workbook.getWorksheet("Operacoes");
+      expect(sheet?.getRow(1).getCell(2).value).toBe("Data de emissao da NF");
+      expect(sheet?.getRow(2).getCell(2).value).toBe("2026-07-16");
+      expect(sheet?.getRow(2).getCell(6).value).toBe("Externo");
       expect(sheet?.getRow(2).getCell(10).value).toBe("MCU-103265");
       expect(sheet?.getRow(2).getCell(11).value).toBe("Lote 123\nContrato complementar ABC-456");
       expect(sheet?.getRow(2).getCell(9).value).toBe(2500);
+      if (extname(issued.charge.imageFilePath ?? "") === ".svg") {
+        const imageText = readFileSync(issued.charge.imageFilePath!, "utf8");
+        expect(imageText).toContain("DATA NF");
+        expect(imageText).toContain("16/07/2026");
+        expect(imageText).toContain("Externo");
+        expect(imageText).not.toContain("Outra UF");
+      }
       if (process.env.CAFE_QA_REPORT_DIR) {
         mkdirSync(process.env.CAFE_QA_REPORT_DIR, { recursive: true });
         copyFileSync(issued.charge.pdfFilePath!, join(process.env.CAFE_QA_REPORT_DIR, "cobranca-exemplo.pdf"));
@@ -264,6 +330,80 @@ describe("client charges and ledger", () => {
     ]));
     expect(repo.listLedgerEntries({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId }).find((entry) => entry.id === surcharge.id)?.availableAmountCents).toBe(0);
     db.close();
+  });
+
+  it("repairs a stale internal preview reservation before creating another charge", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "STALE-PREVIEW", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const preview = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: "PREVIA INTERNA", internalNotes: null, operationIds: [operation.id] });
+
+      db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL WHERE id = ?").run(operation.id);
+
+      const repairedEligible = repo.findEligibleOperations(filters);
+      expect(repairedEligible.map((item) => item.id)).toContain(operation.id);
+      expect(repo.getClientCharge(preview.charge.id).charge.status).toBe("CANCELLED");
+      const activeOldLink = db.prepare("SELECT id FROM client_charge_operations WHERE client_charge_id = ? AND released_at IS NULL").get(preview.charge.id);
+      expect(activeOldLink).toBeUndefined();
+
+      const next = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      expect(next.operations).toHaveLength(1);
+      expect(next.operations[0].operationId).toBe(operation.id);
+    } finally { db.close(); }
+  });
+
+  it("restores billed status when a paid charge link is newer than an inconsistent operation row", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "PAID-LINK", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const payment = repo.createClientPayment({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, paymentDate: "2026-08-01", amountCents: issued.charge.finalAmountCents, paymentMethod: "PIX", bankAccountDescription: null, transactionReference: null, notes: null, attachmentPath: null });
+      repo.allocatePayment({ clientPaymentId: payment.id, clientChargeId: issued.charge.id, amountCents: issued.charge.finalAmountCents });
+
+      db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL WHERE id = ?").run(operation.id);
+
+      expect(repo.findEligibleOperations(filters)).toHaveLength(0);
+      const repaired = repo.listOperations({ organizationId: villaId, responsiblePartnerId: partnerId, billingStatus: "all" }).find((item) => item.id === operation.id);
+      expect(repaired).toBeDefined();
+      if (!repaired) throw new Error("Operacao reparada nao encontrada.");
+      expect(repaired.billingStatus).toBe("BILLED");
+      expect(repaired.clientChargeId).toBe(issued.charge.id);
+    } finally { db.close(); }
+  });
+
+  it("includes CT-e transport fees in the charge total and generated PDF", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "CTE-7002", "10");
+      const eligible = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: eligible.map((item) => item.id) });
+      const withCte = repo.addChargeAdjustment({
+        clientChargeId: draft.charge.id,
+        ledgerEntryId: null,
+        adjustmentType: "SURCHARGE",
+        effect: "INCREASE_RECEIVABLE",
+        description: "CT-e (4 x R$ 1,50)",
+        amountCents: 600,
+        sortOrder: 40,
+        reason: "4 transporte(s) cobrados a R$ 1,50 cada."
+      });
+
+      expect(withCte.charge.subtotalServicesCents).toBe(5000);
+      expect(withCte.charge.additionsCents).toBe(600);
+      expect(withCte.charge.finalAmountCents).toBe(5600);
+      expect(withCte.adjustments).toEqual(expect.arrayContaining([
+        expect.objectContaining({ description: "CT-e (4 x R$ 1,50)", amountCents: 600, effect: "INCREASE_RECEIVABLE" })
+      ]));
+
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      expect(issued.charge.pdfFilePath).toBeTruthy();
+      expect(existsSync(issued.charge.pdfFilePath ?? "")).toBe(true);
+    } finally { db.close(); }
   });
 
   it("listLedgerEntries filtra por periodo (entry_date)", async () => {
@@ -490,7 +630,7 @@ describe("client charges and ledger", () => {
       });
 
       expect(draft.operations[0].issuerNameSnapshot).toBe("MUNIZ COMERCIO DE GRAOS LTDA");
-      expect(draft.operations[0].destinationNameSnapshot).toBe("Cliente Cobranca");
+      expect(draft.operations[0].destinationNameSnapshot).toBe("JH CAFE LTDA");
     } finally { db.close(); }
   });
 
@@ -519,6 +659,36 @@ describe("client charges and ledger", () => {
     repo.cancelClientCharge(draft.charge.id, "Rascunho incorreto");
     expect(repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(1);
     db.close();
+  });
+
+  it("adds one freight DAE per fiscal document to the charge and removes it when the note is released", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "DAE-900", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const fiscal = repo.getFiscalDocument(operation.fiscalDocumentId).document;
+      repo.updateFiscalDocument(fiscal.id, {
+        ...fiscal,
+        operationType: "SALE",
+        freightDaeReference: "GUIA-123",
+        freightDaeAmountCents: 12345
+      });
+
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      expect(draft.charge.subtotalServicesCents).toBe(5000);
+      expect(draft.charge.additionsCents).toBe(12345);
+      expect(draft.charge.finalAmountCents).toBe(17345);
+      expect(draft.adjustments).toEqual(expect.arrayContaining([expect.objectContaining({
+        sourceFiscalDocumentId: fiscal.id,
+        description: "DAE de frete referente a NF DAE-900 - DAE GUIA-123",
+        amountCents: 12345
+      })]));
+
+      const released = repo.releaseOperations(draft.charge.id, [operation.id]);
+      expect(released.adjustments).toHaveLength(0);
+      expect(released.charge.finalAmountCents).toBe(0);
+    } finally { db.close(); }
   });
 
   it("subtracts manual returns in sacks or kilograms and recalculates an open charge", async () => {

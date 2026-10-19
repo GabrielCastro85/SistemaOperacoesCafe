@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { variants } from "./variant-config.mjs";
 
@@ -25,6 +26,13 @@ for (const name of requested) {
   if (!existsSync(join(unpacked, "resources", "app.asar"))) errors.push(`app.asar ausente para ${name}`);
   const sqliteNative = findFile(unpacked, "better_sqlite3.node");
   if (!sqliteNative) errors.push(`better_sqlite3.node ausente para ${name}`);
+  else {
+    const electronExecutable = join(root, "node_modules", "electron", "dist", process.platform === "win32" ? "electron.exe" : "electron");
+    const abiCheck = spawnSync(electronExecutable, [join(root, "scripts", "check-packaged-sqlite.cjs"), sqliteNative], {
+      encoding: "utf8"
+    });
+    if (abiCheck.status !== 0) errors.push(`better_sqlite3.node incompativel com Electron para ${name}: ${abiCheck.stderr || abiCheck.stdout}`);
+  }
   const size = existsSync(exe) ? statSync(exe).size : 0;
   if (size < 1024 * 1024) errors.push(`Executavel pequeno demais para ${name}`);
 }

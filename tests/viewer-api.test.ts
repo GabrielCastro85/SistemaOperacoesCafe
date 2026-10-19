@@ -48,7 +48,8 @@ function fixture(): Record<string, Row[]> {
       { id: "operation", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, fiscal_document_id: "document", operation_date: "2026-09-10", operation_type: "SALE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "500", applied_rate_value_cents: 400, service_amount_cents: 150000 },
       { id: "third-operation", organization_id: organizationId, own_legal_entity_id: "third-party", responsible_partner_id: clientId, fiscal_document_id: "third-document", operation_date: "2026-09-11", operation_type: "SALE", operation_scope: "EXTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "100", applied_rate_value_cents: 800, service_amount_cents: 80000 },
       { id: "operation-org2", organization_id: "org2", own_legal_entity_id: "entity2", responsible_partner_id: "client2", operation_date: "2026-09-12", operation_type: "SALE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "50", applied_rate_value_cents: 400, service_amount_cents: 20000 },
-      { id: "operation-paid", organization_id: "org2", own_legal_entity_id: "entity2", responsible_partner_id: "client2", operation_date: "2026-09-13", operation_type: "SALE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "BILLED", client_charge_id: "charge-paid", quantity_sacks_decimal: "30", applied_rate_value_cents: 1500, service_amount_cents: 45000 }
+      { id: "operation-paid", organization_id: "org2", own_legal_entity_id: "entity2", responsible_partner_id: "client2", operation_date: "2026-09-13", operation_type: "SALE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "BILLED", client_charge_id: "charge-paid", quantity_sacks_decimal: "30", applied_rate_value_cents: 1500, service_amount_cents: 45000 },
+      { id: "purchase", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, operation_date: "2026-09-14", operation_type: "PURCHASE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "900", applied_rate_value_cents: 400, service_amount_cents: 360000 }
     ],
     fiscal_documents: [
       { id: "document", document_number: "123", status: "CONFIRMED", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Villa Coffee LTDA", cnpjCpf: "44963370000523" }, recipient: { legalName: "Cliente Teste", cnpjCpf: "11111111000111" } }) },
@@ -81,6 +82,7 @@ describe("viewer API", () => {
     // operacao SALE ligada a uma cobranca PAID no periodo).
     expect(dashboard.json()).toMatchObject({
       sacks: 500,
+      operationCount: 1,
       receivableCents: 450000,
       receivedCents: 45000,
       unbilledCount: 3,

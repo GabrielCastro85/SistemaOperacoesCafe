@@ -89,6 +89,7 @@ export function parseXmlContent(content: string): ParsedXmlNfe {
   if (root === "NFe") return parseNfe(asRecord(parsed[root]), null);
   if (root === "procEventoNFe") return parseProcEvento(asRecord(parsed[root]));
   if (root === "evento") return parseEvento(asRecord(parsed[root]), null);
+  if (root === "retEnvEvento") return parseRetEnvEvento(asRecord(parsed[root]));
   return { xmlType: "UNKNOWN", accessKey: null, extractedData: { root }, warnings: ["XML_NFE_DESCONHECIDO"] };
 }
 
@@ -205,6 +206,31 @@ export function extractContractNumber(values: string[]): string | null {
 
 function parseProcEvento(data: Record<string, unknown>): ParsedXmlNfe {
   return parseEvento(asRecord(data.evento), asRecord(data.retEvento));
+}
+
+function parseRetEnvEvento(data: Record<string, unknown>): ParsedXmlNfe {
+  const returnedEvent = asRecord(data.retEvento);
+  const ret = asRecord(returnedEvent.infEvento);
+  const typeCode = text(ret.tpEvento);
+  const eventType = typeCode === "110111" ? "EVENT_CANCELLATION" : typeCode === "110110" ? "EVENT_CORRECTION_LETTER" : "EVENT_OTHER";
+  const accessKey = digits(text(ret.chNFe));
+  if (accessKey && !isValidAccessKey(accessKey)) throw new Error("Digito verificador da chave de evento invalido.");
+  return {
+    xmlType: eventType,
+    accessKey: accessKey || null,
+    warnings: [],
+    extractedData: {
+      accessKey,
+      eventType,
+      sequenceNumber: text(ret.nSeqEvento) || "1",
+      eventDate: dateOnly(text(ret.dhRegEvento)),
+      protocolNumber: text(ret.nProt),
+      statusCode: text(ret.cStat),
+      statusMessage: text(ret.xMotivo),
+      correctionText: null,
+      rawEventCode: typeCode
+    }
+  };
 }
 
 function parseEvento(evento: Record<string, unknown>, retEvento: Record<string, unknown> | null): ParsedXmlNfe {

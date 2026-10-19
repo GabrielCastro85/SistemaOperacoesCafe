@@ -1295,7 +1295,7 @@ export class AppRepository {
     const row: DbRecord = {
       id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
       counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
-      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, financial_rate_value_cents: data.financialRateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
     };
     this.upsertLocalRow("service_rate_rules", row);
@@ -1311,7 +1311,7 @@ export class AppRepository {
     const row: DbRecord = {
       id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
       counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
-      rate_type: data.rateType, rate_value_cents: data.rateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
+      rate_type: data.rateType, rate_value_cents: data.rateValueCents, financial_rate_value_cents: data.financialRateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
       priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
     };
     this.db.transaction(() => {
@@ -1429,7 +1429,10 @@ export class AppRepository {
     const best = specific.filter((item) => item.rule.priority === priority);
     if (best.length > 1) return { status: "conflict", rule: null, rateValueCents: null, origin: "conflict", message: "Mais de uma regra igualmente especifica foi encontrada." };
     const rule = best[0].rule;
-    return { status: "found", rule, rateValueCents: rule.rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
+    const rateValueCents = data.hasFinancialService && rule.financialRateValueCents !== null
+      ? rule.financialRateValueCents
+      : rule.rateValueCents;
+    return { status: "found", rule, rateValueCents, origin: rule.counterpartyPartnerLegalEntityId || rule.productId || rule.ownLegalEntityId ? "specific" : "general", message: null };
   }
 
   // Espelha o bloco service_rate_rules acima -- mesma logica de resolucao por
@@ -1750,7 +1753,9 @@ export class AppRepository {
       notes, confirmed_at, canceled_at, cancel_reason, created_at, updated_at, direction
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
       .run(id, data.organizationId, data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, status, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, now, now, direction);
-    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ? WHERE id = ?").run(data.contractNumber?.trim() || null, data.billingObservations ?? null, id);
+    const freightDaeAmountCents = data.freightDaeAmountCents ?? 0;
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ?, has_financial_service = ? WHERE id = ?")
+      .run(data.contractNumber?.trim() || null, data.billingObservations ?? null, freightDaeAmountCents > 0 ? data.freightDaeReference?.trim() || null : null, freightDaeAmountCents, data.hasFinancialService ? 1 : 0, id);
     return this.getFiscalDocument(id);
   }
 
@@ -1772,18 +1777,27 @@ export class AppRepository {
     const secondaryOperationType = data.secondaryResponsiblePartnerId ? (data.secondaryOperationType ?? (data.operationType === "PURCHASE" ? "SALE" : "PURCHASE")) : null;
     this.db.prepare(`UPDATE fiscal_documents SET own_legal_entity_id = ?, responsible_partner_id = ?, partner_legal_entity_id = ?, secondary_responsible_partner_id = ?, secondary_operation_type = ?, access_key = ?, document_number = ?, series = ?, issue_date = ?, total_amount_cents = ?, has_pending_issues = ?, pending_notes = ?, duplicate_warning = ?, notes = ?, updated_at = ?, direction = ? WHERE id = ?`)
       .run(data.ownLegalEntityId, data.responsiblePartnerId, data.partnerLegalEntityId, data.secondaryResponsiblePartnerId ?? null, secondaryOperationType, data.accessKey, data.documentNumber, data.series, data.issueDate, data.totalAmountCents, data.hasPendingIssues ? 1 : 0, data.pendingNotes, duplicateWarning, data.notes, new Date().toISOString(), direction, id);
-    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ? WHERE id = ?").run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, id);
-    if (reassigning) {
+    const freightDaeAmountCents = data.freightDaeAmountCents === undefined ? previous.document.freightDaeAmountCents ?? 0 : data.freightDaeAmountCents;
+    const freightDaeReference = freightDaeAmountCents > 0
+      ? (data.freightDaeReference === undefined ? previous.document.freightDaeReference : data.freightDaeReference?.trim() || null)
+      : null;
+    const hasFinancialService = data.hasFinancialService ?? previous.document.hasFinancialService ?? false;
+    this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ?, has_financial_service = ? WHERE id = ?")
+      .run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, freightDaeReference, freightDaeAmountCents, hasFinancialService ? 1 : 0, id);
+    const financialServiceChanged = hasFinancialService !== (previous.document.hasFinancialService ?? false);
+    if (reassigning || financialServiceChanged) {
       const now = new Date().toISOString();
       for (const op of previous.operations.filter((item) => item.responsiblePartnerId === previous.document.responsiblePartnerId)) {
-        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate };
+        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate, hasFinancialService };
         const resolved = op.operationType === "PURCHASE" ? this.resolvePurchaseRateRule(input) : this.resolveServiceRateRule(input);
         if (resolved.status === "conflict") throw new Error("O novo responsavel possui tarifas conflitantes. Ajuste as regras antes de trocar.");
         const rate = resolved.rateValueCents ?? 0;
         const amount = multiplyDecimalByCents(op.quantitySacks, rate);
         this.db.prepare(`UPDATE operations SET responsible_partner_id = ?, service_rate_rule_id = ?, purchase_rate_rule_id = ?, applied_rate_value_cents = ?, service_amount_cents = ?, rate_was_manually_overridden = 0, manual_rate_value_cents = NULL, manual_override_reason = NULL, updated_at = ? WHERE id = ?`)
           .run(data.responsiblePartnerId, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, op.operationType === "PURCHASE" ? resolved.rule?.id ?? null : null, rate, amount, now, op.id);
-        const reason = `Responsavel alterado: ${previous.document.responsiblePartnerId} -> ${data.responsiblePartnerId}. Tarifa recalculada para o novo responsavel.`;
+        const reason = reassigning
+          ? `Responsavel alterado: ${previous.document.responsiblePartnerId} -> ${data.responsiblePartnerId}. Tarifa recalculada para o novo responsavel.`
+          : `Condicao de financeiro alterada para ${hasFinancialService ? "com financeiro" : "sem financeiro"}.`;
         this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(randomUUID(), op.id, op.serviceRateRuleId, op.appliedRateValueCents, op.serviceAmountCents, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, rate, amount, reason, now);
       }
@@ -1895,7 +1909,8 @@ export class AppRepository {
           counterpartyPartnerLegalEntityId,
           productId: data.productId,
           operationScope: data.operationScope,
-          operationDate: data.operationDate
+          operationDate: data.operationDate,
+          hasFinancialService: detail.document.hasFinancialService
         })
       : this.resolveServiceRateRule({
           organizationId: detail.document.organizationId,
@@ -1904,7 +1919,8 @@ export class AppRepository {
           counterpartyPartnerLegalEntityId,
           productId: data.productId,
           operationScope: data.operationScope,
-          operationDate: data.operationDate
+          operationDate: data.operationDate,
+          hasFinancialService: detail.document.hasFinancialService
         });
     if (resolved.status === "conflict") throw new Error(isPurchase ? "Conflito ao resolver preco de compra por saca." : "Conflito ao resolver regra por saca.");
     const manual = data.manualRateValueCents !== null;
@@ -2010,7 +2026,7 @@ export class AppRepository {
     return this.getFiscalDocument(id);
   }
 
-  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number } {
+  getOperationalIndicators(input: string | { organizationId: string; ownLegalEntityId?: string | null; periodStart?: string | null; periodEnd?: string | null }): { documents: number; pending: number; confirmed: number; operations: number; sacksDecimal: string; fiscalAmountCents: number; serviceAmountCents: number; allCompaniesServiceAmountCents: number } {
     const organizationId = typeof input === "string" ? input : input.organizationId;
     const ownLegalEntityId = typeof input === "string" ? undefined : input.ownLegalEntityId ?? undefined;
     const periodStart = typeof input === "string" ? null : input.periodStart ?? null;
@@ -2023,17 +2039,28 @@ export class AppRepository {
     const operations = this.listOperations({ organizationId, ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined });
     const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
     const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
+    const activeSales = activeOperations.filter((operation) => operation.operationType === "SALE");
+    // O total bruto do Dashboard e' corporativo: soma Villa e Grao & Grao,
+    // todos os CNPJs, cobrados ou nao, respeitando somente o periodo escolhido.
+    const allCompaniesSales = this.listOperations({
+      periodStart: periodStart ?? undefined,
+      periodEnd: periodEnd ?? undefined,
+      status: "all"
+    }).filter((operation) => operation.status !== "CANCELED" && operation.operationType === "SALE");
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
       confirmed: docs.filter((doc) => doc.status === "CONFIRMED").length,
       operations: operations.length,
-      sacksDecimal: activeOperations.length ? sumDecimalTexts(activeOperations.map((operation) => operation.quantitySacks)) : "0",
+      // O card principal representa o volume vendido. Compras aparecem nos
+      // fluxos proprios, mas nao devem aumentar o total comercial de sacas.
+      sacksDecimal: activeSales.length ? sumDecimalTexts(activeSales.map((operation) => operation.quantitySacks)) : "0",
       fiscalAmountCents: activeDocs.reduce((sum, doc) => sum + doc.totalAmountCents, 0),
       // So' soma o lado de venda -- serviceAmountCents de uma operacao de
       // COMPRA guarda o que devemos ao fornecedor, nao receita de comissao;
       // somar os dois juntos misturaria a pagar com a receber.
-      serviceAmountCents: activeOperations.filter((operation) => operation.operationType !== "PURCHASE").reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
+      serviceAmountCents: activeSales.reduce((sum, operation) => sum + operation.serviceAmountCents, 0),
+      allCompaniesServiceAmountCents: allCompaniesSales.reduce((sum, operation) => sum + operation.serviceAmountCents, 0)
     };
   }
 
@@ -2652,6 +2679,7 @@ export class AppRepository {
   findEligibleOperations(input: unknown): Operation[] {
     const data = eligibleOperationsInputSchema.parse(input);
     this.assertOrganizationWritable(data.organizationId);
+    this.reconcileClientChargeOperationLinks();
     if (data.includeAllCompanies) {
       this.refreshAllOrganizationOperationServiceRates({ responsiblePartnerId: data.clientPartnerId, periodStart: data.periodStart, periodEnd: data.periodEnd, repriceExisting: true });
     } else {
@@ -2859,7 +2887,8 @@ export class AppRepository {
         counterpartyPartnerLegalEntityId: this.getOperationCounterpartyPartnerLegalEntityId(operation.fiscalDocumentId, operation.responsiblePartnerId),
         productId: operation.productId,
         operationScope: operation.operationScope,
-        operationDate: operation.operationDate
+        operationDate: operation.operationDate,
+        hasFinancialService: this.fiscalDocumentHasFinancialService(operation.fiscalDocumentId)
       });
       const backfilled = resolved;
       if (backfilled.status !== "found" || backfilled.rateValueCents === null) continue;
@@ -2947,6 +2976,15 @@ export class AppRepository {
       this.db.prepare("UPDATE client_charge_operations SET released_at = ? WHERE client_charge_id = ? AND operation_id = ? AND released_at IS NULL").run(now, clientChargeId, operationId);
       this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE id = ? AND client_charge_id = ?").run(now, operationId, clientChargeId);
     });
+    this.db.prepare(`DELETE FROM client_charge_adjustments
+      WHERE client_charge_id = ?
+        AND source_fiscal_document_id IS NOT NULL
+        AND source_fiscal_document_id NOT IN (
+          SELECT DISTINCT o.fiscal_document_id
+          FROM client_charge_operations cco
+          JOIN operations o ON o.id = cco.operation_id
+          WHERE cco.client_charge_id = ? AND cco.released_at IS NULL
+        )`).run(clientChargeId, clientChargeId);
     this.recalculateClientCharge(clientChargeId);
     return this.getClientCharge(clientChargeId);
   }
@@ -2965,8 +3003,9 @@ export class AppRepository {
   }
 
   removeChargeAdjustment(id: string): ClientChargeDetail {
-    const row = this.db.prepare("SELECT client_charge_id AS chargeId FROM client_charge_adjustments WHERE id = ?").get(id) as { chargeId: string } | undefined;
+    const row = this.db.prepare("SELECT client_charge_id AS chargeId, source_fiscal_document_id AS sourceFiscalDocumentId FROM client_charge_adjustments WHERE id = ?").get(id) as { chargeId: string; sourceFiscalDocumentId: string | null } | undefined;
     if (!row) throw new Error("Ajuste nao encontrado.");
+    if (row.sourceFiscalDocumentId) throw new Error("O DAE de frete vem da nota fiscal. Libere a nota da cobranca e altere o DAE no cadastro da nota.");
     const charge = this.getClientCharge(row.chargeId).charge;
     if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status)) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
     this.db.prepare("DELETE FROM client_charge_adjustments WHERE id = ?").run(id);
@@ -3153,9 +3192,43 @@ export class AppRepository {
     return this.getClientCharge(charge.id);
   }
 
+  cancelClientPayment(id: string, reason: string): ClientPayment {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) throw new Error("Motivo obrigatorio.");
+    const payment = this.getClientPayment(id);
+    if (payment.status === "CANCELLED") throw new Error("Este pagamento ja foi estornado.");
+    const allocations = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_payment_id = ? AND cancelled_at IS NULL").all(id) as DbRecord[];
+    if (!allocations.length) throw new Error("Este pagamento nao possui baixa ativa para estornar.");
+    const now = new Date().toISOString();
+    const entryDate = now.slice(0, 10);
+    const chargeIds = [...new Set(allocations.map((allocation) => String(allocation.client_charge_id)))];
+    const run = this.db.transaction(() => {
+      this.db.prepare("UPDATE client_payments SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?")
+        .run(now, trimmedReason, now, id);
+      this.db.prepare("UPDATE client_payment_allocations SET cancelled_at = ?, cancellation_reason = ? WHERE client_payment_id = ? AND cancelled_at IS NULL")
+        .run(now, trimmedReason, id);
+      for (const allocation of allocations) {
+        this.db.prepare(`INSERT INTO client_ledger_entries (
+          id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id,
+          entry_type, effect, amount_cents, entry_date, description, reference_number,
+          notes, attachment_path, status, available_amount_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'REVERSAL', 'INCREASE_RECEIVABLE', ?, ?, ?, ?, ?, NULL, 'CONFIRMED', NULL, ?, ?)`)
+          .run(
+            randomUUID(), payment.organizationId, payment.ownLegalEntityId, payment.clientPartnerId,
+            String(allocation.client_charge_id), Number(allocation.amount_cents), entryDate,
+            "Estorno de pagamento recebido", payment.transactionReference,
+            `Pagamento estornado: ${trimmedReason}`, now, now
+          );
+      }
+      chargeIds.forEach((chargeId) => this.recalculateClientCharge(chargeId));
+    });
+    run();
+    return this.getClientPayment(id);
+  }
+
   async generateClientPaymentReceipt(id: string): Promise<ClientPayment> {
     if (!this.directories) throw new Error("Diretorios locais nao configurados.");
-    const payment = this.getClientPayment(id);
+    const payment = this.getOrRepairClientPayment(id);
     const allocationRows = this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_payment_id = ? AND cancelled_at IS NULL ORDER BY allocated_at").all(id) as DbRecord[];
     if (!allocationRows.length) throw new Error("O pagamento ainda nao foi vinculado a nenhuma cobranca.");
     const allocations = allocationRows.map((row) => ({ amountCents: Number(row.amount_cents), charge: this.getClientCharge(String(row.client_charge_id)) }));
@@ -3172,11 +3245,78 @@ export class AppRepository {
     return this.getClientPayment(id);
   }
 
+  private getOrRepairClientPayment(id: string): ClientPayment {
+    const existing = this.db.prepare("SELECT * FROM client_payments WHERE id = ?").get(id) as DbRecord | undefined;
+    if (existing) return mapClientPayment(existing);
+
+    // Bases sincronizadas por versoes antigas podem conter a alocacao e o
+    // lancamento financeiro, mas nao a linha-pai do pagamento. A cobranca
+    // continua quitada, porem o recibo nao pode ser refeito. Reconstroi apenas
+    // os dados comprovados pelas alocacoes existentes, sem criar nova baixa.
+    const allocations = this.db.prepare(`
+      SELECT a.amount_cents, a.allocated_at,
+             c.organization_id, c.own_legal_entity_id, c.client_partner_id, c.id AS client_charge_id
+      FROM client_payment_allocations a
+      JOIN client_charges c ON c.id = a.client_charge_id
+      WHERE a.client_payment_id = ? AND a.cancelled_at IS NULL
+      ORDER BY a.allocated_at, a.id
+    `).all(id) as Array<{
+      amount_cents: number;
+      allocated_at: string;
+      organization_id: string;
+      own_legal_entity_id: string;
+      client_partner_id: string;
+      client_charge_id: string;
+    }>;
+    if (!allocations.length) throw new Error("Pagamento nao encontrado.");
+
+    const first = allocations[0];
+    if (allocations.some((item) => item.organization_id !== first.organization_id
+      || item.own_legal_entity_id !== first.own_legal_entity_id
+      || item.client_partner_id !== first.client_partner_id)) {
+      throw new Error("As alocacoes do pagamento recuperado pertencem a escopos diferentes.");
+    }
+
+    const chargeIds = [...new Set(allocations.map((item) => item.client_charge_id))];
+    const ledgerEvidence = chargeIds.flatMap((chargeId) => {
+      const rows = this.db.prepare(`
+        SELECT entry_date, reference_number
+        FROM client_ledger_entries
+        WHERE client_charge_id = ? AND entry_type = 'PAYMENT_RECEIVED'
+          AND status = 'CONFIRMED'
+        ORDER BY created_at
+      `).all(chargeId) as Array<{ entry_date: string; reference_number: string | null }>;
+      return rows;
+    });
+    const references = ledgerEvidence.map((row) => row.reference_number?.trim() ?? "").filter(Boolean);
+    const amountCents = allocations.reduce((total, item) => total + Number(item.amount_cents), 0);
+    const createdAt = first.allocated_at;
+    const paymentDate = ledgerEvidence.map((row) => row.entry_date).sort()[0] ?? createdAt.slice(0, 10);
+    const transactionReference = [...new Set(references)].join(", ") || null;
+    this.db.prepare(`
+      INSERT OR IGNORE INTO client_payments (
+        id, organization_id, own_legal_entity_id, client_partner_id, payment_date,
+        amount_cents, payment_method, bank_account_description, transaction_reference,
+        notes, attachment_path, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'OTHER', NULL, ?, ?, NULL, 'CONFIRMED', ?, ?)
+    `).run(
+      id, first.organization_id, first.own_legal_entity_id, first.client_partner_id,
+      paymentDate, amountCents, transactionReference,
+      "Pagamento recuperado automaticamente a partir da alocacao da cobranca.",
+      createdAt, new Date().toISOString()
+    );
+    return this.getClientPayment(id);
+  }
+
   getClientPaymentReceiptPath(id: string, kind: "pdf" | "image"): string {
     const payment = this.getClientPayment(id);
     const filePath = kind === "pdf" ? payment.receiptPdfFilePath : payment.receiptImageFilePath;
     if (!filePath) throw new Error("Recibo ainda nao foi gerado.");
     return filePath;
+  }
+
+  getClientPaymentForReport(id: string): ClientPayment {
+    return this.getOrRepairClientPayment(id);
   }
 
   // Exclusao definitiva (nao so' cancelamento): apaga a cobranca e o historico
@@ -3261,6 +3401,7 @@ export class AppRepository {
         const sourceOperation = this.getOperation(operation.operationId);
         const document = this.getFiscalDocument(sourceOperation.fiscalDocumentId).document;
         const ownLegalEntity = this.getLegalEntity(sourceOperation.ownLegalEntityId);
+        operation.operationDateSnapshot = document.issueDate;
         const mustRefreshDestination = document.secondaryResponsiblePartnerId
           || !operation.destinationNameSnapshot
           || operation.destinationNameSnapshot === operation.ownLegalEntityNameSnapshot;
@@ -3574,12 +3715,149 @@ export class AppRepository {
 
   private static readonly WAITING_SIGNATURE_ALERT_DAYS = 7;
   private static readonly CREDIT_LIMIT_ALERT_PERCENT = 90;
+  private static readonly PAYABLE_ALERT_DAYS_AHEAD = 7;
+
+  private getPreviousPeriodUnbilledAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts["previousPeriodUnbilled"] {
+    const today = parseLocalDate(isoDate(new Date()));
+    const periodStart = isoDate(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+    const periodEnd = isoDate(new Date(today.getFullYear(), today.getMonth(), 0));
+    const rows = this.db.prepare(`
+      SELECT
+        operations.id AS operation_id,
+        operations.own_legal_entity_id,
+        legal_entities.trade_name AS own_legal_entity_name,
+        operations.responsible_partner_id,
+        business_partners.display_name AS partner_name,
+        operations.fiscal_document_id,
+        fiscal_documents.document_number,
+        operations.service_amount_cents,
+        COALESCE(fiscal_documents.freight_dae_amount_cents, 0) AS freight_dae_amount_cents
+      FROM operations
+      INNER JOIN fiscal_documents ON fiscal_documents.id = operations.fiscal_document_id
+      INNER JOIN business_partners ON business_partners.id = operations.responsible_partner_id
+      INNER JOIN legal_entities ON legal_entities.id = operations.own_legal_entity_id
+      LEFT JOIN billing_alert_ignores ON billing_alert_ignores.operation_id = operations.id
+      WHERE operations.organization_id = ?
+        AND (? IS NULL OR operations.own_legal_entity_id = ?)
+        AND operations.operation_date BETWEEN ? AND ?
+        AND operations.operation_type = 'SALE'
+        AND operations.status IN ('DRAFT', 'CONFIRMED')
+        AND operations.billing_status = 'UNBILLED'
+        AND operations.applied_rate_value_cents > 0
+        AND operations.service_amount_cents > 0
+        AND fiscal_documents.status IN ('DRAFT', 'CONFIRMED')
+        AND fiscal_documents.has_pending_issues = 0
+        AND billing_alert_ignores.id IS NULL
+      ORDER BY business_partners.display_name, legal_entities.trade_name, fiscal_documents.document_number
+    `).all(organizationId, ownLegalEntityId ?? null, ownLegalEntityId ?? null, periodStart, periodEnd) as Array<{
+      operation_id: string;
+      own_legal_entity_id: string;
+      own_legal_entity_name: string;
+      responsible_partner_id: string;
+      partner_name: string;
+      fiscal_document_id: string;
+      document_number: string;
+      service_amount_cents: number;
+      freight_dae_amount_cents: number;
+    }>;
+
+    const groups = new Map<string, DashboardAlerts["previousPeriodUnbilled"][number] & { documentIds: Set<string> }>();
+    for (const row of rows) {
+      const key = `${row.own_legal_entity_id}\u0000${row.responsible_partner_id}`;
+      const group = groups.get(key) ?? {
+        organizationId,
+        ownLegalEntityId: row.own_legal_entity_id,
+        ownLegalEntityName: row.own_legal_entity_name,
+        partnerId: row.responsible_partner_id,
+        partnerName: row.partner_name,
+        periodStart,
+        periodEnd,
+        operationIds: [],
+        operationCount: 0,
+        documentCount: 0,
+        documentNumbers: [],
+        serviceAmountCents: 0,
+        freightDaeAmountCents: 0,
+        totalAmountCents: 0,
+        documentIds: new Set<string>()
+      };
+      group.operationIds.push(row.operation_id);
+      group.operationCount += 1;
+      group.serviceAmountCents += Number(row.service_amount_cents);
+      if (!group.documentIds.has(row.fiscal_document_id)) {
+        group.documentIds.add(row.fiscal_document_id);
+        group.documentNumbers.push(row.document_number);
+        group.freightDaeAmountCents += Number(row.freight_dae_amount_cents);
+      }
+      group.documentCount = group.documentIds.size;
+      group.totalAmountCents = group.serviceAmountCents + group.freightDaeAmountCents;
+      groups.set(key, group);
+    }
+
+    return [...groups.values()]
+      .map(({ documentIds: _documentIds, ...alert }) => alert)
+      .sort((left, right) => right.totalAmountCents - left.totalAmountCents || left.partnerName.localeCompare(right.partnerName, "pt-BR"));
+  }
+
+  ignorePreviousPeriodBillingAlert(input: {
+    organizationId: string;
+    ownLegalEntityId: string;
+    clientPartnerId: string;
+    periodStart: string;
+    periodEnd: string;
+    reason: string;
+  }): DashboardAlerts {
+    this.assertOrganizationWritable(input.organizationId);
+    const reason = input.reason.trim();
+    if (reason.length < 3) throw new Error("Informe o motivo para ignorar esta cobranca.");
+    const alert = this.getPreviousPeriodUnbilledAlerts(input.organizationId, input.ownLegalEntityId)
+      .find((item) => item.partnerId === input.clientPartnerId && item.periodStart === input.periodStart && item.periodEnd === input.periodEnd);
+    if (!alert) throw new Error("A pendencia nao esta mais disponivel. Atualize o Dashboard.");
+    const now = new Date().toISOString();
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO billing_alert_ignores(
+        id, organization_id, own_legal_entity_id, client_partner_id, operation_id,
+        period_start, period_end, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const operationId of alert.operationIds) {
+        insert.run(randomUUID(), input.organizationId, input.ownLegalEntityId, input.clientPartnerId, operationId, input.periodStart, input.periodEnd, reason, now);
+      }
+    })();
+    return this.getDashboardAlerts(input.organizationId, input.ownLegalEntityId);
+  }
 
   getDashboardAlerts(organizationId: string, ownLegalEntityId?: string | null): DashboardAlerts {
     this.assertOrganizationWritable(organizationId);
     const today = new Date().toISOString().slice(0, 10);
     const partners = this.listBusinessPartners({ role: "CLIENT", status: "active" });
     const partnerName = (id: string): string => partners.find((item) => item.id === id)?.displayName ?? id;
+    const previousPeriodUnbilled = this.getPreviousPeriodUnbilledAlerts(organizationId, ownLegalEntityId);
+
+    // Contas a pagar sao lembretes administrativos globais: quem esta no
+    // painel da Grao MG ainda precisa enxergar, por exemplo, uma conta de agua
+    // da Villa ES. O nome da empresa em cada linha deixa o escopo explicito.
+    const accessibleEntities = this.listLegalEntities({ status: "all" });
+    const accessibleEntityIds = new Set(accessibleEntities.map((entity) => entity.id));
+    const entityNames = new Map(accessibleEntities.map((entity) => [entity.id, entity.tradeName]));
+    const accessibleOrganizationIds = [...new Set(accessibleEntities.map((entity) => entity.organizationId))];
+    const payablesDueSoon = accessibleOrganizationIds.flatMap((accessibleOrganizationId) => this.listAccountsPayable({ organizationId: accessibleOrganizationId }))
+      .filter((payable) => accessibleEntityIds.has(payable.ownLegalEntityId))
+      .filter((payable) => ["SCHEDULED", "OPEN", "PARTIALLY_PAID", "OVERDUE"].includes(payable.status))
+      .filter((payable) => (payable.openAmountCents ?? 0) > 0)
+      .map((payable) => ({ payable, daysUntilDue: daysBetweenDates(today, payable.dueDate) }))
+      .filter((item) => item.daysUntilDue <= AppRepository.PAYABLE_ALERT_DAYS_AHEAD)
+      .sort((left, right) => left.payable.dueDate.localeCompare(right.payable.dueDate))
+      .map(({ payable, daysUntilDue }) => ({
+        payableId: payable.id,
+        description: payable.description,
+        payeeName: payable.payeeNameSnapshot,
+        ownLegalEntityName: entityNames.get(payable.ownLegalEntityId) ?? "Empresa",
+        dueDate: payable.dueDate,
+        openAmountCents: payable.openAmountCents ?? 0,
+        daysUntilDue
+      }));
 
     const overdueCharges = this.listClientCharges({ organizationId })
       .filter((charge) => !ownLegalEntityId || charge.ownLegalEntityId === ownLegalEntityId)
@@ -3655,7 +3933,7 @@ export class AppRepository {
       }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-    return { overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
+    return { previousPeriodUnbilled, payablesDueSoon, overdueCharges, waitingSignatureConfirmations, partnersNearCreditLimit, loansDueForCollection };
   }
 
   markLoanCollected(id: string): ClientLedgerEntry {
@@ -3878,6 +4156,9 @@ export class AppRepository {
       pendingNotes: pending.length ? pending.join(" ") : null,
       contractNumber: typeof fileResolution.contractNumber === "string" ? fileResolution.contractNumber : (typeof resolution.contractNumber === "string" ? resolution.contractNumber : this.stringOrNull(extracted.contractNumber)),
       billingObservations: typeof fileResolution.billingObservations === "string" ? fileResolution.billingObservations : (typeof resolution.billingObservations === "string" ? resolution.billingObservations : null),
+      freightDaeReference: typeof fileResolution.freightDaeReference === "string" ? fileResolution.freightDaeReference : (typeof resolution.freightDaeReference === "string" ? resolution.freightDaeReference : null),
+      freightDaeAmountCents: typeof fileResolution.freightDaeAmountCents === "number" ? fileResolution.freightDaeAmountCents : (typeof resolution.freightDaeAmountCents === "number" ? resolution.freightDaeAmountCents : 0),
+      hasFinancialService: typeof fileResolution.hasFinancialService === "boolean" ? fileResolution.hasFinancialService : resolution.hasFinancialService === true,
       notes: [String(extracted.nature ?? ""), isThirdPartyDocument ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
     const protocol = extracted.protocol as Record<string, unknown> | undefined;
@@ -4578,12 +4859,12 @@ export class AppRepository {
   }
 
   private fiscalDocumentChargeDestinationName(document: FiscalDocument, operation: Operation, ownLegalEntity: LegalEntity): string | null {
-    // Numa nota triangulada, partnerLegalEntityId representa o emissor fisico
-    // da NF. Para a cobranca da ponta de venda, o destino comercial e' o
-    // cliente responsavel pela operacao (ex.: MUNIZ -> UNI GRAO), nao o
-    // emissor nem o CNPJ proprio usado para contabilizar a corretagem.
+    // Numa nota triangulada, o responsavel pela cobranca e o cliente/corretor,
+    // enquanto o destino exibido na nota e no PDF deve ser a razao social do
+    // destinatario fiscal lida do XML (ex.: JH CAFE LTDA).
     if (document.secondaryResponsiblePartnerId && operation.operationType === "SALE") {
-      return this.getBusinessPartner(operation.responsiblePartnerId).displayName;
+      return this.fiscalSnapshotPartyName(document, "recipient")
+        ?? this.fiscalDocumentCompanyName(document, ownLegalEntity);
     }
     return this.fiscalDocumentCompanyName(document, ownLegalEntity);
   }
@@ -4591,6 +4872,13 @@ export class AppRepository {
   private reserveOperationsForCharge(clientChargeId: string, operationIds: string[]): void {
     const charge = this.getClientCharge(clientChargeId).charge;
     const now = new Date().toISOString();
+
+    // A sincronizacao trabalha tabela por tabela. Se uma previa interna foi
+    // criada e removida entre dois ciclos, uma versao antiga podia reaparecer
+    // apenas em client_charge_operations, enquanto operations continuava como
+    // UNBILLED. Repara esse estado antes de tentar reservar para evitar a
+    // mensagem tecnica de UNIQUE constraint e, principalmente, dupla cobranca.
+    this.reconcileClientChargeOperationLinks();
 
     // Garante a mesma conversao usada na tela de notas antes de congelar o
     // snapshot da cobranca. E' uma segunda barreira para rascunhos criados por
@@ -4623,9 +4911,65 @@ export class AppRepository {
         fiscal_document_series_snapshot, issuer_name_snapshot, destination_name_snapshot, product_name_snapshot, operation_scope_snapshot, quantity_sacks_decimal_snapshot,
         service_rate_cents_snapshot, service_amount_cents_snapshot, created_at, contract_number_snapshot, billing_observations_snapshot
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, operation.operationDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
+        .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, doc.issueDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
+      if ((doc.freightDaeAmountCents ?? 0) > 0) {
+        const reference = doc.freightDaeReference ? ` - DAE ${doc.freightDaeReference}` : "";
+        this.db.prepare(`INSERT OR IGNORE INTO client_charge_adjustments (
+          id, client_charge_id, ledger_entry_id, source_fiscal_document_id, adjustment_type, effect, description, reason, amount_cents, sort_order, created_at, updated_at
+        ) VALUES (?, ?, NULL, ?, 'SURCHARGE', 'INCREASE_RECEIVABLE', ?, ?, ?, 40, ?, ?)`)
+          .run(randomUUID(), charge.id, doc.id, `DAE de frete referente a NF ${doc.documentNumber}${reference}`, `Valor de DAE de frete registrado na nota fiscal ${doc.documentNumber}.`, doc.freightDaeAmountCents ?? 0, now, now);
+      }
     });
+  }
+
+  private reconcileClientChargeOperationLinks(): void {
+    const now = new Date().toISOString();
+    const stalePreviewRows = this.db.prepare(`
+      SELECT DISTINCT cc.id
+      FROM client_charges cc
+      JOIN client_charge_operations cco ON cco.client_charge_id = cc.id AND cco.released_at IS NULL
+      JOIN operations o ON o.id = cco.operation_id
+      WHERE cc.status = 'DRAFT'
+        AND cc.notes = 'PREVIA INTERNA'
+        AND (o.billing_status = 'UNBILLED' OR o.client_charge_id IS NULL OR o.client_charge_id <> cc.id)
+    `).all() as Array<{ id: string }>;
+
+    const run = this.db.transaction(() => {
+      for (const row of stalePreviewRows) {
+        this.db.prepare("UPDATE client_charge_operations SET released_at = ? WHERE client_charge_id = ? AND released_at IS NULL").run(now, row.id);
+        this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE client_charge_id = ?").run(now, row.id);
+        this.db.prepare(`UPDATE client_charges
+          SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ?
+          WHERE id = ? AND status = 'DRAFT'`)
+          .run(now, "Previa interna temporaria liberada automaticamente apos sincronizacao incompleta.", now, row.id);
+        this.recordChargeStatus(row.id, "DRAFT", "CANCELLED", "Previa interna temporaria liberada automaticamente apos sincronizacao incompleta.");
+      }
+
+      const activeLinks = this.db.prepare(`
+        SELECT cco.id AS linkId, cco.client_charge_id AS chargeId, o.id AS operationId,
+          o.billing_status AS billingStatus, o.client_charge_id AS operationChargeId, cc.status AS chargeStatus
+        FROM client_charge_operations cco
+        JOIN operations o ON o.id = cco.operation_id
+        JOIN client_charges cc ON cc.id = cco.client_charge_id
+        WHERE cco.released_at IS NULL
+      `).all() as Array<{ linkId: string; chargeId: string; operationId: string; billingStatus: string; operationChargeId: string | null; chargeStatus: ClientCharge["status"] }>;
+
+      for (const link of activeLinks) {
+        if (["CANCELLED", "REPLACED"].includes(link.chargeStatus)) {
+          this.db.prepare("UPDATE client_charge_operations SET released_at = ? WHERE id = ?").run(now, link.linkId);
+          this.db.prepare("UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE id = ? AND client_charge_id = ?")
+            .run(now, link.operationId, link.chargeId);
+          continue;
+        }
+        const expectedBillingStatus = ["DRAFT", "PENDING_REVIEW"].includes(link.chargeStatus) ? "RESERVED" : "BILLED";
+        if (link.billingStatus !== expectedBillingStatus || link.operationChargeId !== link.chargeId) {
+          this.db.prepare("UPDATE operations SET billing_status = ?, client_charge_id = ?, updated_at = ? WHERE id = ?")
+            .run(expectedBillingStatus, link.chargeId, now, link.operationId);
+        }
+      }
+    });
+    run();
   }
 
   private recalculateClientCharge(id: string): void {
@@ -7340,6 +7684,12 @@ export class AppRepository {
       return secondaryEntity?.id ?? null;
     }
     return row.partner_legal_entity_id ?? null;
+  }
+
+  private fiscalDocumentHasFinancialService(fiscalDocumentId: string): boolean {
+    const row = this.db.prepare("SELECT has_financial_service FROM fiscal_documents WHERE id = ?")
+      .get(fiscalDocumentId) as { has_financial_service: number } | undefined;
+    return Boolean(row?.has_financial_service);
   }
 
   private getSpreadsheetMappingTemplate(id: string): SpreadsheetMappingTemplate {

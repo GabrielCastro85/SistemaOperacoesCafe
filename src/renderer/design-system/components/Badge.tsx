@@ -21,7 +21,7 @@ const statusToneMap: Record<string, StatusTone> = {
   REPLACED: "neutral",
   VALID: "success",
   WARNING: "warning",
-  DUPLICATE: "warning",
+  DUPLICATE: "info",
   ERROR: "danger",
   IMPORTED: "success",
   SKIPPED: "neutral",

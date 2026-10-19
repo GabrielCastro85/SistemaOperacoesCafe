@@ -29,11 +29,12 @@ afterEach(() => {
   tempDirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
 });
 
-function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, entityId = ownLegalEntityId): void {
-  const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId: entityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-16", totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
+function createConfirmedOperation(repo: AppRepository, partnerId: string, productId: string, documentNumber: string, sacks: string, entityId = ownLegalEntityId, operationDate = "2026-07-16"): string {
+  const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId: entityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: operationDate, totalAmountCents: 100000, hasPendingIssues: false, pendingNotes: null, notes: null });
   const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId, description: "Cafe", quantity: sacks, unit: "SACK", unitPriceDecimal: "1000.000", totalAmountCents: 100000, sacksQuantity: sacks });
-  repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId: entityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-16", quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
+  const operation = repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId: entityId, responsiblePartnerId: partnerId, productId, operationType: "SALE", operationScope: "EXTERNAL", operationDate, quantitySacks: sacks, manualRateValueCents: null, manualOverrideReason: null, notes: null });
   repo.confirmFiscalDocument(doc.document.id);
+  return operation.id;
 }
 
 async function issueCharge(repo: AppRepository, partnerId: string, entityId: string, periodEnd: string, dueDate: string): Promise<void> {
@@ -43,6 +44,52 @@ async function issueCharge(repo: AppRepository, partnerId: string, entityId: str
 }
 
 describe("dashboard alerts", () => {
+  it("groups unbilled notes from the previous month and permanently hides an ignored group", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    const today = new Date();
+    const formatDate = (date: Date): string => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const periodStart = formatDate(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+    const periodEnd = formatDate(new Date(today.getFullYear(), today.getMonth(), 0));
+    const operationDate = periodStart.slice(0, 8) + "15";
+    const operationId = createConfirmedOperation(repo, partnerId, productId, "7998", "4", ownLegalEntityId, operationDate);
+    db.prepare("UPDATE fiscal_documents SET freight_dae_amount_cents = 700 WHERE id = (SELECT fiscal_document_id FROM operations WHERE id = ?)").run(operationId);
+
+    const before = repo.getDashboardAlerts(villaId, ownLegalEntityId).previousPeriodUnbilled;
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ partnerId, periodStart, periodEnd, operationCount: 1, documentCount: 1, serviceAmountCents: 2000, freightDaeAmountCents: 700, totalAmountCents: 2700 });
+    expect(before[0].documentNumbers).toEqual(["7998"]);
+
+    const after = repo.ignorePreviousPeriodBillingAlert({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart, periodEnd, reason: "Acordo comercial sem cobranca" });
+    expect(after.previousPeriodUnbilled).toHaveLength(0);
+    expect((db.prepare("SELECT reason FROM billing_alert_ignores WHERE operation_id = ?").get(operationId) as { reason: string }).reason).toBe("Acordo comercial sem cobranca");
+
+    createConfirmedOperation(repo, partnerId, productId, "7999", "2", ownLegalEntityId, operationDate);
+    expect(repo.getDashboardAlerts(villaId, ownLegalEntityId).previousPeriodUnbilled).toHaveLength(1);
+    expect(repo.getDashboardAlerts(villaId, ownLegalEntityId).previousPeriodUnbilled[0].documentNumbers).toEqual(["7999"]);
+    db.close();
+  });
+
+  it("highlights open accounts payable due within the next seven days", async () => {
+    const { repo, db } = await setup();
+    const category = (await repo.listExpenseCategories(villaId))[0];
+    const dateFromNow = (days: number): string => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+    const createPayable = (description: string, dueDate: string): void => {
+      const draft = repo.createAccountPayableDraft({ organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Fornecedor", payeeTaxIdSnapshot: null, categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null, source: "MANUAL", description, documentType: "BOLETO", documentNumber: null, competenceDate: dueDate.slice(0, 8) + "01", issueDate: null, dueDate, originalAmountCents: 25000, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", plannedPaymentMethod: "BOLETO", pixKey: null, notes: null, internalNotes: null });
+      repo.confirmAccountPayable(draft.payable.id);
+    };
+    createPayable("Conta de agua", dateFromNow(1));
+    createPayable("Conta distante", dateFromNow(10));
+
+    const alerts = repo.getDashboardAlerts(villaId, ownLegalEntityId);
+    expect(alerts.payablesDueSoon).toHaveLength(1);
+    expect(alerts.payablesDueSoon[0]).toMatchObject({ description: "Conta de agua", payeeName: "Fornecedor", openAmountCents: 25000, daysUntilDue: 1 });
+    db.close();
+  });
+
   it("flags an issued charge as overdue once its due date has passed", async () => {
     const { repo, db, partnerId, productId } = await setup();
     createConfirmedOperation(repo, partnerId, productId, "8001", "10.5");

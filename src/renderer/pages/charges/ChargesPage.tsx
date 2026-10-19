@@ -1,15 +1,15 @@
 import { chargePeriodLabel } from "../../../shared/utils/chargeLabel";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BillingPeriodicity, BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, ClientCharge, ClientChargeDetail, ClientChargeOperation, ClientLedgerEntry, ClientPayment, FiscalDocument, LegalEntity, Operation, PartnerRateSummaryRow } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatCurrencyInput, formatDateOnlyBr, formatDateTimeBr, parseCurrencyToCents } from "../../../shared/utils/format";
-import { DateInput, EmptyState, Input, PageHeader, Tabs } from "../../design-system";
+import { DateInput, EmptyState, FilterBar, Input, PageHeader, Select, Tabs } from "../../design-system";
 import { Feedback } from "../../components/feedback/Feedback";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { formatOperationScope } from "../../../shared/utils/operationLabels";
-import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
+import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentRecipientNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
@@ -19,6 +19,10 @@ function decimalTextBr(value: string | null | undefined): string {
   return value ? value.replace(".", ",") : "0";
 }
 
+function normalizeSearchText(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").trim();
+}
+
 const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
   { id: "WEEKLY", label: "Semanal" },
   { id: "MONTHLY", label: "Mensal" },
@@ -26,6 +30,12 @@ const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
 ];
 
 const INCLUDE_ALL_COMPANIES_IN_CHARGES = true;
+const HISTORY_PAGE_SIZE = 10;
+
+function chargeHashParam(name: string): string {
+  const query = window.location.hash.split("?")[1] ?? "";
+  return new URLSearchParams(query).get(name) ?? "";
+}
 
 function localDateInputValue(date: Date): string {
   const year = date.getFullYear();
@@ -60,6 +70,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [partnerLegalEntities, setPartnerLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [legalEntities, setLegalEntities] = useState<LegalEntity[]>(data.legalEntities);
   const [charges, setCharges] = useState<ClientCharge[]>([]);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("all");
+  const [historyLegalEntityId, setHistoryLegalEntityId] = useState("all");
+  const [historyMonth, setHistoryMonth] = useState("");
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
+  const [exportingChargeControl, setExportingChargeControl] = useState(false);
+  const [printingChargeControl, setPrintingChargeControl] = useState(false);
+  const [controlPeriodStart, setControlPeriodStart] = useState(() => currentBillingRange("MONTHLY").periodStart);
+  const [controlPeriodEnd, setControlPeriodEnd] = useState(() => localDateInputValue(new Date()));
+  const [controlIncludeAllOpen, setControlIncludeAllOpen] = useState(false);
   const [bankEditor, setBankEditor] = useState<LegalEntity | null>(null);
   const [savingBank, setSavingBank] = useState(false);
   useEffect(() => { setBankEditor(null); }, [ownLegalEntityId]);
@@ -92,24 +112,28 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [operationDocuments, setOperationDocuments] = useState<Record<string, FiscalDocument>>({});
   const [detail, setDetail] = useState<ClientChargeDetail | null>(null);
   const [selectedPaymentOperationIds, setSelectedPaymentOperationIds] = useState<Set<string>>(new Set());
+  const [selectedPaymentAdjustmentIds, setSelectedPaymentAdjustmentIds] = useState<Set<string>>(new Set());
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [partnerSummary, setPartnerSummary] = useState<PartnerRateSummaryRow[]>([]);
   const [partnerSummarySearch, setPartnerSummarySearch] = useState("");
   const [includeAlreadyBilled, setIncludeAlreadyBilled] = useState(false);
-  const [clientId, setClientId] = useState("");
+  const [clientId, setClientId] = useState(() => chargeHashParam("clientId"));
   const [periodicity, setPeriodicity] = useState<BillingPeriodicity>("MONTHLY");
-  const [periodStart, setPeriodStart] = useState(() => currentBillingRange("MONTHLY").periodStart);
-  const [periodEnd, setPeriodEnd] = useState(() => localDateInputValue(new Date()));
+  const [periodStart, setPeriodStart] = useState(() => chargeHashParam("periodStart") || currentBillingRange("MONTHLY").periodStart);
+  const [periodEnd, setPeriodEnd] = useState(() => chargeHashParam("periodEnd") || localDateInputValue(new Date()));
   const [dueDate, setDueDate] = useState(() => localDateInputValue(new Date()));
   const [advanceInput, setAdvanceInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [surchargeInput, setSurchargeInput] = useState("");
+  const [cteQuantityInput, setCteQuantityInput] = useState("");
+  const [cteUnitValueInput, setCteUnitValueInput] = useState("1,50");
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [clientCredits, setClientCredits] = useState<ClientLedgerEntry[]>([]);
   const [clientSurcharges, setClientSurcharges] = useState<ClientLedgerEntry[]>([]);
   const ledgerAutofillChargeIdRef = useRef<string | null>(null);
   const ledgerAutofillClientIdRef = useRef<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [generatingPreview, setGeneratingPreview] = useState<"pdf" | "image" | null>(null);
   const [lastReceipt, setLastReceipt] = useState<ClientPayment | null>(null);
   const [chargeReceipts, setChargeReceipts] = useState<ClientPayment[]>([]);
   const [searchedOperations, setSearchedOperations] = useState(false);
@@ -118,6 +142,58 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const operationsRef = useRef<HTMLDivElement | null>(null);
   const detailRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
+
+  const filteredHistoryCharges = useMemo(() => {
+    const query = normalizeSearchText(historySearch);
+    const monthStart = historyMonth ? `${historyMonth}-01` : "";
+    const monthEnd = historyMonth ? `${historyMonth}-31` : "";
+    return charges.filter((charge) => {
+      const partnerName = partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? "";
+      const matchesSearch = !query || normalizeSearchText([
+        partnerName,
+        charge.chargeNumber ?? "",
+        charge.referenceCode ?? "",
+        formatStatusLabel(charge.status)
+      ].join(" ")).includes(query);
+      const matchesStatus = historyStatus === "all"
+        || (historyStatus === "open" && charge.openAmountCents > 0 && charge.status !== "CANCELLED")
+        || charge.status === historyStatus;
+      const matchesCompany = historyLegalEntityId === "all" || charge.ownLegalEntityId === historyLegalEntityId;
+      const matchesMonth = !historyMonth || (charge.periodStart <= monthEnd && charge.periodEnd >= monthStart);
+      return matchesSearch && matchesStatus && matchesCompany && matchesMonth;
+    });
+  }, [charges, historyLegalEntityId, historyMonth, historySearch, historyStatus, partners]);
+
+  const historyFilterCount = [historySearch.trim(), historyStatus !== "all", historyLegalEntityId !== "all", historyMonth]
+    .filter(Boolean).length;
+  const visibleHistoryCharges = filteredHistoryCharges.slice(0, historyVisibleCount);
+  const hiddenHistoryCharges = Math.max(0, filteredHistoryCharges.length - visibleHistoryCharges.length);
+  const printableCharges = useMemo(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(controlPeriodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(controlPeriodEnd) || controlPeriodStart > controlPeriodEnd) return [];
+    return charges
+      .filter((charge) => {
+        if (["DRAFT", "CANCELLED", "REPLACED"].includes(charge.status)) return false;
+        const isInPeriod = charge.periodStart <= controlPeriodEnd && charge.periodEnd >= controlPeriodStart;
+        const isOpen = charge.openAmountCents > 0;
+        return isOpen && (isInPeriod || controlIncludeAllOpen);
+      })
+      .sort((left, right) => {
+        const leftName = partners.find((item) => item.id === left.clientPartnerId)?.displayName ?? "";
+        const rightName = partners.find((item) => item.id === right.clientPartnerId)?.displayName ?? "";
+        return leftName.localeCompare(rightName, "pt-BR") || left.periodStart.localeCompare(right.periodStart);
+      });
+  }, [charges, controlIncludeAllOpen, controlPeriodEnd, controlPeriodStart, partners]);
+
+  useEffect(() => {
+    setHistoryVisibleCount(HISTORY_PAGE_SIZE);
+  }, [historySearch, historyStatus, historyLegalEntityId, historyMonth]);
+
+  function clearHistoryFilters(): void {
+    setHistorySearch("");
+    setHistoryStatus("all");
+    setHistoryLegalEntityId("all");
+    setHistoryMonth("");
+  }
 
   const load = useCallback(async () => {
     const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
@@ -134,7 +210,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
     setCharges(await window.operationsCafe.listClientCharges({ status: "all" }));
-  }, [organizationId, includeAllCompanies]);
+  }, [organizationId]);
 
   useEffect(() => { void load(); }, [load]);
   const summaryRequestRef = useRef(0);
@@ -151,8 +227,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }, [organizationId, includeAllCompanies, periodStart, periodEnd]);
   useEffect(() => {
     // Uma cobranca aberta exige uma escolha explicita das notas que estao
-    // sendo recebidas. Evita reaproveitar a selecao de outra cobranca.
+    // sendo recebidas e dos acrescimos que entram na baixa. Evita reaproveitar
+    // a selecao de outra cobranca.
     setSelectedPaymentOperationIds(new Set());
+    setSelectedPaymentAdjustmentIds(new Set());
   }, [detail?.charge.id]);
   useEffect(() => {
     if (detail?.charge.clientPartnerId === clientId) return;
@@ -165,6 +243,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setAdvanceInput("");
     setDiscountInput("");
     setSurchargeInput("");
+    setCteQuantityInput("");
+    setCteUnitValueInput("1,50");
     setAdjustmentReason("");
     ledgerAutofillChargeIdRef.current = null;
     ledgerAutofillClientIdRef.current = null;
@@ -237,6 +317,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const periodRequestRef = useRef(0);
+  const dashboardPrefillHandledRef = useRef(false);
   const [loadingPeriod, setLoadingPeriod] = useState(false);
   async function findOperationsForRange(nextPeriodStart: string, nextPeriodEnd: string, selectedClientId = clientId): Promise<void> {
     const request = ++periodRequestRef.current;
@@ -271,6 +352,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       if (request === periodRequestRef.current) setLoadingPeriod(false);
     }
   }
+
+  useEffect(() => {
+    if (dashboardPrefillHandledRef.current || chargeHashParam("from") !== "dashboard" || !clientId) return;
+    dashboardPrefillHandledRef.current = true;
+    void findOperationsForRange(periodStart, periodEnd, clientId);
+  }, [clientId, periodEnd, periodStart]);
 
   async function applyPeriodicityFilter(nextPeriodicity: BillingPeriodicity): Promise<void> {
     const range = currentBillingRange(nextPeriodicity);
@@ -328,12 +415,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   // segundo plano.
   function counterpartyLabel(operation: Operation): string {
     const document = operationDocument(operation);
-    // Nas operacoes trianguladas/terceirizadas, partnerLegalEntityId aponta
-    // para quem emitiu a NF fisica. O destino comercial da linha de venda e'
-    // o cliente/corretor responsavel pela cobranca.
-    if (document?.secondaryResponsiblePartnerId) {
-      const responsible = partners.find((item) => item.id === operation.responsiblePartnerId);
-      if (responsible) return responsible.displayName;
+    // Nas operacoes trianguladas/terceirizadas, o cliente/corretor continua
+    // responsavel pela cobranca, mas a coluna Empresa deve identificar quem
+    // recebeu a NF de venda conforme a razao social gravada no XML.
+    if (document?.secondaryResponsiblePartnerId && operation.operationType === "SALE") {
+      const recipientName = fiscalDocumentRecipientNameFromSnapshot(document);
+      if (recipientName) return recipientName;
     }
     const entityId = document?.partnerLegalEntityId;
     if (entityId) {
@@ -420,14 +507,24 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const advanceCents = parseCurrencyToCents(advanceInput);
   const discountCents = parseCurrencyToCents(discountInput);
   const surchargeCents = parseCurrencyToCents(surchargeInput);
+  const cteQuantity = /^\d+$/.test(cteQuantityInput.trim()) ? Number(cteQuantityInput.trim()) : 0;
+  const cteUnitValueCents = parseCurrencyToCents(cteUnitValueInput);
+  const cteTotalCents = cteQuantity * cteUnitValueCents;
   const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
+  const selectedFreightDaes = Array.from(new Set(selectedOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
+    const document = operationDocuments[documentId];
+    return document && (document.freightDaeAmountCents ?? 0) > 0 ? [document] : [];
+  });
+  const selectedFreightDaeCents = selectedFreightDaes.reduce((total, document) => total + (document.freightDaeAmountCents ?? 0), 0);
   const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
   const eligibleSacks = selectedOperations.length ? sumDecimalTexts(selectedOperations.map((operation) => operation.quantitySacks)) : "0";
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const paidSacks = paidOperations.length ? sumDecimalTexts(paidOperations.map((operation) => operation.quantitySacks)) : "0";
-  const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents;
-  const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents, discountCents, advanceCents);
-  const hasPendingAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
+  const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + selectedFreightDaeCents;
+  const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents + cteTotalCents, discountCents, advanceCents);
+  const hasPendingManualAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
+  const hasPendingCte = cteTotalCents > 0;
+  const hasPendingAdjustments = hasPendingManualAdjustments || hasPendingCte;
   const visibleFinalCents = previewFinalCents;
   const draftDisabledReason = draftGenerationBlockedReason();
   const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
@@ -504,7 +601,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function issue(): Promise<void> {
     if (!detail) return;
 
-    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
       return;
     }
@@ -528,6 +625,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setAdvanceInput("");
         setDiscountInput("");
         setSurchargeInput("");
+        setCteQuantityInput("");
+        setCteUnitValueInput("1,50");
         setAdjustmentReason("");
       }
 
@@ -584,23 +683,36 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: adjustmentReason.trim() || "Ajuste manual" });
       }
     }
+    if (hasPendingCte) {
+      const unitValue = formatCurrencyFromCents(cteUnitValueCents);
+      current = await window.operationsCafe.addChargeAdjustment({
+        clientChargeId: current.charge.id,
+        ledgerEntryId: null,
+        adjustmentType: "SURCHARGE",
+        effect: "INCREASE_RECEIVABLE",
+        description: `CT-e (${cteQuantity} x ${unitValue})`,
+        amountCents: cteTotalCents,
+        sortOrder: 40,
+        reason: `${cteQuantity} transporte(s) cobrados a ${unitValue} cada.`
+      });
+    }
     return shouldRegenerateDocuments && hasPendingAdjustments ? window.operationsCafe.regenerateChargeDocuments(current.charge.id) : current;
   }
 
   async function applyAdjustments(): Promise<void> {
     if (!detail) {
       if (!hasPendingAdjustments) {
-        setMessage("Informe ao menos um adiantamento, desconto ou acrescimo.");
+        setMessage("Informe ao menos um adiantamento, desconto, acrescimo ou CT-e.");
         return;
       }
-      if (!adjustmentReason.trim()) {
+      if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
         setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
         return;
       }
       setMessage("Ajustes aplicados na previa. O valor final e os documentos internos ja consideram esses valores.");
       return;
     }
-    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
       return;
     }
@@ -612,6 +724,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
+      setCteQuantityInput("");
+      setCteUnitValueInput("1,50");
       setAdjustmentReason("");
       setMessage(shouldRegenerateDocuments ? "Ajustes aplicados. Escolha PDF ou Imagem para salvar uma nova copia." : "Ajustes aplicados.");
       await load();
@@ -625,11 +739,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     if (!detail) return;
 
     const selectedForPayment = detail.operations.filter((operation) => selectedPaymentOperationIds.has(operation.id));
-    if (selectedForPayment.length === 0) {
-      setMessage("Marque pelo menos uma nota da cobranca para registrar o pagamento.");
+    const selectedAdjustmentsForPayment = detail.adjustments.filter((adjustment) =>
+      adjustment.effect === "INCREASE_RECEIVABLE" && selectedPaymentAdjustmentIds.has(adjustment.id)
+    );
+    if (selectedForPayment.length === 0 && selectedAdjustmentsForPayment.length === 0) {
+      setMessage("Marque pelo menos uma nota ou acrescimo da cobranca para registrar o pagamento.");
       return;
     }
-    const selectedAmountCents = selectedForPayment.reduce((total, operation) => total + operation.serviceAmountCentsSnapshot, 0);
+    const selectedAmountCents = selectedForPayment.reduce((total, operation) => total + operation.serviceAmountCentsSnapshot, 0)
+      + selectedAdjustmentsForPayment.reduce((total, adjustment) => total + adjustment.amountCents, 0);
     const suggestedAmountCents = Math.min(selectedAmountCents, detail.charge.openAmountCents);
 
     const value = await requestTextInput({
@@ -642,7 +760,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
     const amountCents = parseCurrencyToCents(value);
     if (amountCents <= 0 || amountCents > suggestedAmountCents) {
-      setMessage(`Informe um valor entre R$ 0,01 e ${formatCurrencyFromCents(suggestedAmountCents)} para as notas selecionadas.`);
+      setMessage(`Informe um valor entre R$ 0,01 e ${formatCurrencyFromCents(suggestedAmountCents)} para os itens selecionados.`);
       return;
     }
 
@@ -655,6 +773,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setDetail(payableDetail);
     }
 
+    const paymentReferences = [
+      ...selectedForPayment.map((operation) => `NF ${operation.fiscalDocumentNumberSnapshot ?? "-"}`),
+      ...selectedAdjustmentsForPayment.map((adjustment) => `Acrescimo: ${adjustment.description}`)
+    ];
     const payment = await window.operationsCafe.createClientPayment({
       organizationId,
       ownLegalEntityId,
@@ -663,8 +785,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       amountCents,
       paymentMethod: "PIX",
       bankAccountDescription: null,
-      transactionReference: selectedForPayment.map((operation) => `NF ${operation.fiscalDocumentNumberSnapshot ?? "-"}`).join(", "),
-      notes: `Recebimento referente a ${selectedForPayment.length} nota(s) selecionada(s).`,
+      transactionReference: paymentReferences.join(", "),
+      notes: `Recebimento referente a ${selectedForPayment.length} nota(s) e ${selectedAdjustmentsForPayment.length} acrescimo(s) selecionado(s).`,
       attachmentPath: null
     });
 
@@ -678,6 +800,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setChargeReceipts((current) => [...current.filter((item) => item.id !== receipt.id), receipt]);
     setDetail(updatedDetail);
     setSelectedPaymentOperationIds(new Set());
+    setSelectedPaymentAdjustmentIds(new Set());
     setMessage(`Pagamento de ${formatCurrencyFromCents(amountCents)} registrado. O recibo em PDF e imagem esta pronto.`);
 
     await load();
@@ -711,6 +834,33 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage("Cobranca aberta. Nao foi possivel recuperar um dos recibos antigos.");
     }
     window.setTimeout(() => scrollTo(detailRef, 120), 0);
+  }
+
+  async function reversePayment(paymentId: string): Promise<void> {
+    if (!detail) return;
+    const confirmed = await requestDecision({
+      title: "Estornar baixa",
+      message: "Estornar este pagamento? O valor voltara para o saldo em aberto da cobranca e o estorno ficara registrado no historico."
+    });
+    if (!confirmed) return;
+    const reason = await requestTextInput({
+      title: "Motivo do estorno",
+      label: "Informe por que esta baixa esta sendo estornada",
+      required: true
+    });
+    if (!reason?.trim()) return;
+    try {
+      await window.operationsCafe.cancelClientPayment(paymentId, reason.trim());
+      const refreshed = await window.operationsCafe.getClientCharge(detail.charge.id);
+      setDetail(refreshed);
+      setChargeReceipts((current) => current.filter((item) => item.id !== paymentId));
+      setLastReceipt((current) => current?.id === paymentId ? null : current);
+      await load();
+      setSummary(await window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies, periodStart, periodEnd }));
+      setMessage("Baixa estornada. O valor voltou para o saldo em aberto da cobranca.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao estornar a baixa."}`);
+    }
   }
 
   async function settleSingleOperation(operation: Operation): Promise<void> {
@@ -766,16 +916,19 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function generateInternalPreview(kind: "pdf" | "image"): Promise<void> {
+    if (generatingPreview) return;
     if (!clientId || selectedOperations.length === 0) {
       setMessage("Selecione o cliente e marque as notas antes de gerar a previa.");
       return;
     }
-    if (hasPendingAdjustments && !adjustmentReason.trim()) {
+    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
       setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
       return;
     }
 
     let temporaryChargeId: string | null = null;
+    setGeneratingPreview(kind);
+    setMessage(`Gerando a previa em ${kind === "pdf" ? "PDF" : "imagem"}. Aguarde a janela para escolher onde salvar.`);
     try {
       const draft = await window.operationsCafe.createClientChargeDraft({
         organizationId,
@@ -814,8 +967,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           setMessage(`A previa foi processada, mas o rascunho temporario nao pôde ser removido: ${cleanupError instanceof Error ? cleanupError.message : "erro desconhecido"}.`);
         }
       }
-      await load();
-      await findOperations();
+      try {
+        await load();
+        await findOperations();
+      } finally {
+        setGeneratingPreview(null);
+      }
     }
   }
 
@@ -826,6 +983,45 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage(exported ? `${kind === "pdf" ? "PDF" : "Imagem"} da cobranca salvo na pasta escolhida.` : "Exportacao cancelada. Nenhuma pasta foi escolhida.");
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao abrir documento."}`);
+    }
+  }
+
+  async function exportChargeControl(): Promise<void> {
+    if (printableCharges.length === 0 || exportingChargeControl) return;
+    setExportingChargeControl(true);
+    try {
+      const exported = await window.operationsCafe.exportChargeControlWorkbook({
+        chargeIds: printableCharges.map((charge) => charge.id),
+        filterDescription: chargeControlFilterDescription()
+      });
+      setMessage(exported
+        ? "Planilha de controle interno salva e aberta, pronta para preencher ou imprimir."
+        : "Exportacao cancelada. Nenhuma pasta foi escolhida.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao gerar o controle interno."}`);
+    } finally {
+      setExportingChargeControl(false);
+    }
+  }
+
+  function chargeControlFilterDescription(): string {
+    const period = `Período das cobranças: ${formatDateOnlyBr(controlPeriodStart)} a ${formatDateOnlyBr(controlPeriodEnd)}`;
+    return controlIncludeAllOpen ? `${period} | Inclui todas as cobranças em aberto` : period;
+  }
+
+  async function printChargeControl(): Promise<void> {
+    if (printableCharges.length === 0 || printingChargeControl) return;
+    setPrintingChargeControl(true);
+    try {
+      const printed = await window.operationsCafe.printChargeControl({
+        chargeIds: printableCharges.map((charge) => charge.id),
+        filterDescription: chargeControlFilterDescription()
+      });
+      setMessage(printed ? "Controle enviado para a impressora." : "Impressão cancelada.");
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao imprimir o controle."}`);
+    } finally {
+      setPrintingChargeControl(false);
     }
   }
 
@@ -851,6 +1047,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao excluir cobranca."}`);
     }
   }
+
+  const payableAdjustments = detail?.adjustments.filter((adjustment) => adjustment.effect === "INCREASE_RECEIVABLE") ?? [];
 
   return (
     <section className="content-section settings">
@@ -912,7 +1110,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <article>
                 <span>Notas novas para cobrar</span>
                 <strong>{selectedNoteCount} nota(s) selecionada(s)</strong>
-                <small>{decimalTextBr(eligibleSacks)} sacas · {formatCurrencyFromCents(eligibleSubtotalCents)}</small>
+                <small>{decimalTextBr(eligibleSacks)} sacas · {formatCurrencyFromCents(eligibleSubtotalCents)}{selectedFreightDaeCents > 0 ? ` + ${formatCurrencyFromCents(selectedFreightDaeCents)} em DAE` : ""}</small>
               </article>
               <article>
                 <span>Ja em cobranca aberta</span>
@@ -1005,6 +1203,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     </div>
                   );
                 })}
+                {!detail ? selectedFreightDaes.map((document) => (
+                  <div key={`dae-${document.id}`} className="table-row charge-operation-grid charge-row--adjustment">
+                    <span><strong>DAE de frete</strong><small>Referente à NF {document.documentNumber}</small></span>
+                    <span>DAE</span>
+                    <span>{document.freightDaeReference ? `Referência ${document.freightDaeReference}` : "Frete"}</span>
+                    <span><strong>+ {formatCurrencyFromCents(document.freightDaeAmountCents ?? 0)}</strong></span>
+                    <span>Automático</span>
+                    <span>Entra na cobrança</span>
+                  </div>
+                )) : null}
               </div>
             ) : (
               <EmptyState
@@ -1060,6 +1268,14 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                       <span>Previa</span><span>Aumenta o valor final</span>
                     </div>
                   ) : null}
+                  {!detail && hasPendingCte ? (
+                    <div className="table-row charge-operation-grid charge-row--adjustment">
+                      <span><strong>CT-e</strong><small>{cteQuantity} transporte(s) x {formatCurrencyFromCents(cteUnitValueCents)}</small></span>
+                      <span>CT-E</span><span>Transporte</span>
+                      <span>+ {formatCurrencyFromCents(cteTotalCents)}</span>
+                      <span>Previa</span><span>Aumenta o valor final</span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1074,6 +1290,24 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" /></dd></div>
               <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" /></dd></div>
+            </div>
+            <div className="charge-cte-card">
+              <div>
+                <strong>CT-e / transportes</strong>
+                <small>Informe quantos transportes serao cobrados e o valor unitario.</small>
+              </div>
+              <label>
+                <span>Quantidade</span>
+                <input type="number" min="0" step="1" value={cteQuantityInput} onChange={(event) => setCteQuantityInput(event.target.value)} placeholder="0" />
+              </label>
+              <label>
+                <span>Valor por transporte</span>
+                <input value={cteUnitValueInput} onChange={(event) => setCteUnitValueInput(event.target.value)} onBlur={() => formatMoneyState(cteUnitValueInput, setCteUnitValueInput)} placeholder="R$ 1,50" />
+              </label>
+              <div className="charge-cte-total">
+                <span>Total de CT-e</span>
+                <strong>{formatCurrencyFromCents(cteTotalCents)}</strong>
+              </div>
             </div>
             <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
               <span>Motivo do ajuste</span>
@@ -1091,16 +1325,17 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
               <strong aria-live="polite">{loadingPeriod ? "Calculando..." : formatCurrencyFromCents(visibleFinalCents)}</strong>
-              {!detail && clientPeriodOperations.length > 0 && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Notas lancadas no periodo + acrescimos - descontos - adiantamentos.</small> : null}
-              {!detail && clientPeriodOperations.length > 0 && advanceCents === 0 && discountCents === 0 && surchargeCents === 0 ? <small>Soma das notas lancadas no periodo, incluindo rascunhos.</small> : null}
+              {!detail && clientPeriodOperations.length > 0 && hasPendingAdjustments ? <small>Notas lancadas no periodo + CT-e e acrescimos - descontos - adiantamentos.</small> : null}
+              {!detail && clientPeriodOperations.length > 0 && !hasPendingAdjustments ? <small>Soma das notas lancadas no periodo, incluindo rascunhos.</small> : null}
               {!detail ? <small>Somente notas selecionadas, com os ajustes informados.</small> : null}
-              {detail && (advanceCents > 0 || discountCents > 0 || surchargeCents > 0) ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
+              {detail && hasPendingAdjustments ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
               {!detail ? (
                 <>
                   <div className="inline-actions">
-                    <button onClick={() => void generateInternalPreview("pdf")} disabled={Boolean(draftDisabledReason)}>Previa interna PDF</button>
-                    <button onClick={() => void generateInternalPreview("image")} disabled={Boolean(draftDisabledReason)}>Previa interna imagem</button>
+                    <button onClick={() => void generateInternalPreview("pdf")} disabled={Boolean(draftDisabledReason) || Boolean(generatingPreview)}>{generatingPreview === "pdf" ? "Gerando PDF..." : "Previa interna PDF"}</button>
+                    <button onClick={() => void generateInternalPreview("image")} disabled={Boolean(draftDisabledReason) || Boolean(generatingPreview)}>{generatingPreview === "image" ? "Gerando imagem..." : "Previa interna imagem"}</button>
                   </div>
+                  {generatingPreview ? <small role="status">Preparando o arquivo. A janela para escolher onde salvar aparecera em seguida.</small> : null}
                   <span className="disabled-action-tip" tabIndex={draftDisabledReason ? 0 : -1}>
                     <button className="primary" onClick={() => void createDraft()} disabled={Boolean(draftDisabledReason)}>Preparar cobranca definitiva</button>
                     {draftDisabledReason ? <span className="disabled-action-tip__card" role="tooltip">{draftDisabledReason}</span> : null}
@@ -1173,7 +1408,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             checked={detail.operations.length > 0 && selectedPaymentOperationIds.size === detail.operations.length}
             onChange={(event) => setSelectedPaymentOperationIds(event.target.checked ? new Set(detail.operations.map((operation) => operation.id)) : new Set())}
           /> Selecionar todas as notas</label>
-          <span>{selectedPaymentOperationIds.size} de {detail.operations.length} nota(s) selecionada(s)</span>
+          <span>{selectedPaymentOperationIds.size} de {detail.operations.length} nota(s) e {selectedPaymentAdjustmentIds.size} de {payableAdjustments.length} acrescimo(s) selecionado(s)</span>
         </div>
         <div className="table">
           <div className="table-head charge-detail-operation-grid"><span>Nota fiscal</span><span>Empresa</span><span>Data</span><span>Produto</span><span>Sacas</span><span>Servico</span><span>Situação</span></div>
@@ -1203,6 +1438,33 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             );
           })}
         </div>
+        {detail.adjustments.length > 0 ? (
+          <div className="charge-adjustments-detail">
+            <h4>Valores adicionais e descontos</h4>
+            {payableAdjustments.length > 0 && detail.charge.openAmountCents > 0 ? <p className="muted">Marque o acrescimo abaixo para inclui-lo na baixa. Ele pode ser recebido sozinho ou junto com as notas.</p> : null}
+            <div className="table">
+              <div className="table-head charge-adjustment-detail-grid"><span>Descricao</span><span>Detalhe</span><span>Tipo</span><span>Valor</span></div>
+              {detail.adjustments.map((adjustment) => (
+                <div key={adjustment.id} className="table-row charge-adjustment-detail-grid">
+                  <span><label>{adjustment.effect === "INCREASE_RECEIVABLE" ? <input
+                    type="checkbox"
+                    disabled={detail.charge.openAmountCents <= 0}
+                    checked={selectedPaymentAdjustmentIds.has(adjustment.id)}
+                    onChange={() => setSelectedPaymentAdjustmentIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(adjustment.id)) next.delete(adjustment.id); else next.add(adjustment.id);
+                      return next;
+                    })}
+                    aria-label={`Selecionar acrescimo ${adjustment.description} para pagamento`}
+                  /> : null} <strong>{adjustment.description}</strong></label></span>
+                  <span>{adjustment.reason ?? "-"}</span>
+                  <span>{adjustment.effect === "INCREASE_RECEIVABLE" ? "Acrescimo" : "Desconto"}</span>
+                  <span>{adjustment.effect === "INCREASE_RECEIVABLE" ? "+" : "-"} {formatCurrencyFromCents(adjustment.amountCents)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {detail.payments.some((allocation) => !allocation.cancelledAt) ? (
           <div className="charge-payment-history">
             <h4>Pagamentos e recibos</h4>
@@ -1221,6 +1483,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     <span className="row-actions">
                       <button disabled={!receipt?.receiptPdfFilePath} onClick={() => receipt && void window.operationsCafe.openClientPaymentReceipt({ paymentId: receipt.id, kind: "pdf" })}>Salvar PDF</button>
                       <button disabled={!receipt?.receiptImageFilePath} onClick={() => receipt && void window.operationsCafe.openClientPaymentReceipt({ paymentId: receipt.id, kind: "image" })}>Salvar imagem</button>
+                      <button className="danger" onClick={() => void reversePayment(paymentId)}>Estornar baixa</button>
                     </span>
                   </div>
                 );
@@ -1229,16 +1492,53 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           </div>
         ) : null}
         <div className="toolbar">
-          <button disabled={selectedPaymentOperationIds.size === 0 || detail.charge.openAmountCents <= 0} onClick={() => void registerPayment()}>Registrar pagamento das notas selecionadas</button>
+          <button disabled={(selectedPaymentOperationIds.size === 0 && selectedPaymentAdjustmentIds.size === 0) || detail.charge.openAmountCents <= 0} onClick={() => void registerPayment()}>Registrar pagamento dos itens selecionados</button>
           {lastReceipt ? <><button onClick={() => void window.operationsCafe.openClientPaymentReceipt({ paymentId: lastReceipt.id, kind: "pdf" })}>Salvar recibo PDF</button><button onClick={() => void window.operationsCafe.openClientPaymentReceipt({ paymentId: lastReceipt.id, kind: "image" })}>Salvar recibo em imagem</button></> : null}
         </div>
       </AdminBlock></div> : null}
 
       {chargesTab === "historico" && (
-      <div ref={historyRef}><AdminBlock title="Historico de cobrancas">
+      <div ref={historyRef}><AdminBlock title="Histórico de cobranças">
+        <FilterBar activeCount={historyFilterCount} onClear={clearHistoryFilters}>
+          <Input label="Pesquisar" type="search" value={historySearch} placeholder="Cliente, número ou referência" onChange={(event) => setHistorySearch(event.target.value)} />
+          <Select label="Situação" value={historyStatus} onChange={(event) => setHistoryStatus(event.target.value)}>
+            <option value="all">Todas</option>
+            <option value="open">Em aberto</option>
+            <option value="PAID">Pagas</option>
+            <option value="PARTIALLY_PAID">Parcialmente pagas</option>
+            <option value="OVERDUE">Vencidas</option>
+            <option value="DRAFT">Rascunhos</option>
+            <option value="CANCELLED">Canceladas</option>
+          </Select>
+          <Select label="Empresa" value={historyLegalEntityId} onChange={(event) => setHistoryLegalEntityId(event.target.value)}>
+            <option value="all">Todas as empresas</option>
+            {legalEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}
+          </Select>
+          <Input label="Mês do período" type="month" value={historyMonth} onChange={(event) => setHistoryMonth(event.target.value)} />
+        </FilterBar>
+        <div className="charge-control-print-panel">
+          <div>
+            <h3>Controle para impressão</h3>
+            <p className="muted">O arquivo inclui somente cobranças com saldo em aberto dentro do período escolhido.</p>
+          </div>
+          <FormGrid>
+            <DateInput label="Período inicial" value={controlPeriodStart} onChange={(event) => setControlPeriodStart(event.target.value)} />
+            <DateInput label="Período final" value={controlPeriodEnd} onChange={(event) => setControlPeriodEnd(event.target.value)} />
+            <label className="checkbox"><input type="checkbox" checked={controlIncludeAllOpen} onChange={(event) => setControlIncludeAllOpen(event.target.checked)} /> Incluir também cobranças em aberto fora do período</label>
+          </FormGrid>
+          <div className="toolbar charge-control-export">
+            <button className="primary" disabled={printableCharges.length === 0 || printingChargeControl || exportingChargeControl} onClick={() => void printChargeControl()}>
+              {printingChargeControl ? "Abrindo impressão..." : "Imprimir controle"}
+            </button>
+            <button disabled={printableCharges.length === 0 || exportingChargeControl || printingChargeControl} onClick={() => void exportChargeControl()}>
+              {exportingChargeControl ? "Gerando planilha..." : "Exportar Excel"}
+            </button>
+            <span className="muted">{printableCharges.length} cobrança(s) incluída(s).</span>
+          </div>
+        </div>
         <div className="table">
-          <div className="table-head charge-grid"><span>Criada em</span><span>Cliente/corretor</span><span>Periodo</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Status</span><span>Acoes</span></div>
-          {charges.map((charge) => {
+          <div className="table-head charge-grid"><span>Criada em</span><span>Cliente/corretor</span><span>Período</span><span>Total</span><span>Pago</span><span>Aberto</span><span>Situação</span><span>Ações</span></div>
+          {visibleHistoryCharges.map((charge) => {
             const deleteBlockedReason = deleteChargeBlockedReason(charge);
             return (
               <div key={charge.id} className="table-row charge-grid">
@@ -1259,7 +1559,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               </div>
             );
           })}
+          {filteredHistoryCharges.length === 0 ? <div className="table-row"><span>Nenhuma cobrança encontrada com os filtros selecionados.</span></div> : null}
         </div>
+        {filteredHistoryCharges.length > HISTORY_PAGE_SIZE ? (
+          <div className="charge-history-more">
+            <span>Exibindo {visibleHistoryCharges.length} de {filteredHistoryCharges.length} cobranças</span>
+            {hiddenHistoryCharges > 0 ? <button onClick={() => setHistoryVisibleCount((current) => current + HISTORY_PAGE_SIZE)}>Mostrar mais ({Math.min(HISTORY_PAGE_SIZE, hiddenHistoryCharges)})</button> : null}
+            {historyVisibleCount > HISTORY_PAGE_SIZE ? <button onClick={() => setHistoryVisibleCount(HISTORY_PAGE_SIZE)}>Mostrar menos</button> : null}
+          </div>
+        ) : null}
       </AdminBlock>
       </div>
       )}

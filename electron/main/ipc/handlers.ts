@@ -1,4 +1,5 @@
-import { clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import { BrowserWindow, clipboard, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import log from "electron-log/main.js";
 import { z } from "zod";
 import { brandingAssetKindSchema, businessPartnerRoleSchema } from "../../../src/shared/schemas/domainSchemas.js";
 import { IPC_CHANNELS } from "../../../src/shared/ipc/channels.js";
@@ -6,6 +7,7 @@ import type { BrandingAssetKind } from "../../../src/shared/types/domain.js";
 import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { buildPartnerPeriodReportPdf, getPartnerPeriodReport } from "../services/partnerPeriodReport.js";
+import { buildChargeControlPrintHtml, buildChargeControlWorkbook } from "../services/chargeControlWorkbook.js";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
@@ -19,17 +21,46 @@ import { lookupCnpj } from "../services/cnpjLookupService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
 import { checkForUpdates, getUpdateStatus, quitAndInstallUpdate } from "../services/updaterService.js";
-import type { CentralSyncService } from "../services/centralSyncService.js";
+import type { CentralSyncService, CollectorMonitorStatus } from "../services/centralSyncService.js";
 import { CentralCredentialStore } from "../services/centralCredentialStore.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
+const collectorInboxTokens = new Map<string, string>();
 const payableAttachmentTokens = new Map<string, string>();
 const signedDealPdfTokens = new Map<string, string>();
+const vulpeDevSources = {
+  VILLA_MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO", cnpj: "44963370000523" },
+  VILLA_ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO", cnpj: "44963370000280" }
+} as const;
+const graoCollectorSources = {
+  GRAO_MG: { label: "Grao & Grao MG", cnpj: "16594876000224" },
+  GRAO_SP: { label: "Grao & Grao SP", cnpj: "16594876000496" }
+} as const;
+type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof graoCollectorSources | "ALL";
+
+function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
+  return [...new Set(chargeIds)].map((chargeId) => {
+    const detail = repository.getClientCharge(chargeId);
+    const allocations = new Map<string, number>();
+    detail.payments.filter((allocation) => !allocation.cancelledAt).forEach((allocation) => {
+      allocations.set(allocation.clientPaymentId, (allocations.get(allocation.clientPaymentId) ?? 0) + allocation.amountCents);
+    });
+    return {
+      charge: detail.charge,
+      clientName: repository.getBusinessPartner(detail.charge.clientPartnerId).displayName,
+      companyName: repository.getLegalEntity(detail.charge.ownLegalEntityId).legalName,
+      payments: [...allocations.entries()].map(([paymentId, allocatedAmountCents]) => ({
+        payment: repository.getClientPaymentForReport(paymentId),
+        allocatedAmountCents
+      }))
+    };
+  }).filter((row) => row.charge.openAmountCents > 0 && !["DRAFT", "CANCELLED", "REPLACED", "PAID"].includes(row.charge.status));
+}
 
 function isLikelyDataMutation(channel: string): boolean {
   if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
-  return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return)/i.test(channel);
+  return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return|ignore)/i.test(channel);
 }
 
 export function createDiagnostics(context: AppContext, repository: AppRepository, centralSync?: CentralSyncService): Diagnostics {
@@ -653,6 +684,288 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const files = findXmlFiles(result.filePaths[0], data.includeSubfolders === true);
     return { folder: result.filePaths[0], files: registerXmlPaths(files) };
   });
+  handle(IPC_CHANNELS.getVulpeDevStatus, async () => {
+    const collectorAvailable = centralSync.hasSession();
+    let collectors: CollectorMonitorStatus[] = [];
+    let collectorMonitorError: string | null = collectorAvailable ? null : "Entre no servidor central para consultar o coletor.";
+    if (collectorAvailable) {
+      try {
+        collectors = await centralSync.listCollectorStatuses();
+      } catch (error) {
+        log.warn("Falha ao consultar o monitor dos coletores", error instanceof Error ? error.message : String(error));
+        collectorMonitorError = "Nao foi possivel consultar o servidor agora. Uma nova tentativa sera feita em 30 segundos.";
+      }
+    }
+    const localSources = Object.entries(vulpeDevSources).map(([source, config]) => ({
+      source: source as keyof typeof vulpeDevSources,
+      label: config.label,
+      available: existsSync(config.root)
+    }));
+    const collectorSources = Object.entries(graoCollectorSources).map(([source, config]) => ({
+      source: source as keyof typeof graoCollectorSources,
+      label: config.label,
+      available: collectorAvailable
+    }));
+    return {
+      available: true,
+      collectors,
+      collectorMonitorError,
+      sources: [
+        ...localSources,
+        ...collectorSources,
+        {
+          source: "ALL" as const,
+          label: "Todas as empresas",
+          available: collectorAvailable && localSources.every((item) => item.available)
+        }
+      ]
+    };
+  });
+  handle(IPC_CHANNELS.sendCollectorCommand, async (_event, payload: unknown) => {
+    const data = z.object({
+      sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
+      machineId: z.string().trim().min(4).max(200),
+      command: z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART"])
+    }).parse(payload);
+    if (!centralSync.hasSession()) throw new Error("Entre no servidor central para controlar o coletor.");
+    return centralSync.sendCollectorCommand(data.sourceCode, data.machineId, data.command);
+  });
+  handle(IPC_CHANNELS.askAssistant, async (_event, payload: unknown) => {
+    const data = z.object({
+      question: z.string().trim().min(2).max(2000),
+      organizationId: z.string().uuid(),
+      ownLegalEntityId: z.string().uuid().nullable().optional(),
+      history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().trim().min(1).max(4000) })).max(8).optional()
+    }).parse(payload);
+    if (!centralSync.hasSession()) throw new Error("Entre no servidor central para usar o Assistente.");
+    await centralSync.synchronize().catch(() => undefined);
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = `${today.slice(0, 8)}01`;
+    const ownLegalEntityId = data.ownLegalEntityId ?? null;
+    const billing = repository.getBillingSummary({
+      organizationId: data.organizationId,
+      ownLegalEntityId,
+      periodStart: monthStart,
+      periodEnd: today
+    });
+    const operational = repository.getOperationalIndicators({
+      organizationId: data.organizationId,
+      ownLegalEntityId,
+      periodStart: monthStart,
+      periodEnd: today
+    });
+    const alerts = repository.getDashboardAlerts(data.organizationId, ownLegalEntityId);
+    const financial = repository.getFinancialSummary(data.organizationId);
+    const openCharges = repository.listClientCharges({ organizationId: data.organizationId })
+      .filter((charge) => charge.openAmountCents > 0 && !["DRAFT", "CANCELLED", "REPLACED", "PAID"].includes(charge.status))
+      .slice(0, 60)
+      .map((charge) => ({
+        number: charge.chargeNumber,
+        client: repository.getBusinessPartner(charge.clientPartnerId).displayName,
+        periodStart: charge.periodStart,
+        periodEnd: charge.periodEnd,
+        dueDate: charge.dueDate,
+        status: charge.status,
+        openAmountCents: charge.openAmountCents
+      }));
+    const openPayables = repository.listAccountsPayable({ organizationId: data.organizationId })
+      .filter((payable) => Number(payable.openAmountCents ?? 0) > 0 && !["DRAFT", "CANCELLED", "PAID"].includes(payable.status))
+      .slice(0, 40)
+      .map((payable) => ({ description: payable.description, dueDate: payable.dueDate, status: payable.status, openAmountCents: Number(payable.openAmountCents ?? 0) }));
+    const collectors = await centralSync.listCollectorStatuses().catch(() => []);
+    const activeContext = repository.getActiveContext();
+    const activeLegalEntity = ownLegalEntityId || activeContext.legalEntityId
+      ? repository.getLegalEntity(ownLegalEntityId ?? activeContext.legalEntityId ?? "")
+      : null;
+    return centralSync.askAssistant({
+      question: data.question,
+      history: data.history ?? [],
+      context: {
+        generatedAt: new Date().toISOString(),
+        period: { start: monthStart, end: today },
+        activeCompany: activeLegalEntity ? { name: activeLegalEntity.tradeName, cnpj: activeLegalEntity.cnpj } : null,
+        operational,
+        billing,
+        financial,
+        alerts,
+        openCharges,
+        openPayables,
+        collectors: collectors.map((collector) => ({
+          name: collector.sourceLabel,
+          online: collector.online,
+          status: collector.status,
+          lastScanAt: collector.lastScanAt,
+          lastSuccessAt: collector.lastSuccessAt,
+          lastError: collector.lastError,
+          pendingFiles: collector.pendingFiles
+        }))
+      }
+    });
+  });
+  handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
+    const data = z.object({
+      source: z.enum(["VILLA_MG", "VILLA_ES", "GRAO_MG", "GRAO_SP", "ALL"]),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+    }).parse(payload);
+    if (data.periodStart > data.periodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
+
+    const source = data.source as VulpeDevSource;
+    const selectedLocalSources = source === "ALL"
+      ? (Object.keys(vulpeDevSources) as Array<keyof typeof vulpeDevSources>)
+      : source in vulpeDevSources ? [source as keyof typeof vulpeDevSources] : [];
+    const selectedCollectorSources = source === "ALL"
+      ? (Object.keys(graoCollectorSources) as Array<keyof typeof graoCollectorSources>)
+      : source in graoCollectorSources ? [source as keyof typeof graoCollectorSources] : [];
+    const allowedCnpjs = new Set<string>([
+      ...selectedLocalSources.map((key) => vulpeDevSources[key].cnpj),
+      ...selectedCollectorSources.map((key) => graoCollectorSources[key].cnpj)
+    ]);
+    const label = source === "ALL"
+      ? "Todas as empresas"
+      : source in vulpeDevSources
+        ? vulpeDevSources[source as keyof typeof vulpeDevSources].label
+        : graoCollectorSources[source as keyof typeof graoCollectorSources].label;
+
+    const hasAccessKey = context.db.prepare("SELECT 1 FROM fiscal_documents WHERE access_key = ? LIMIT 1");
+    const hasAcceptedCancellation = context.db.prepare(`
+      SELECT 1 FROM fiscal_document_events
+      WHERE access_key = ? AND event_type = 'CANCELLATION' AND status_code IN ('135', '155')
+        AND COALESCE(protocol_number, '') <> ''
+      LIMIT 1
+    `);
+    const wasIgnoredByUser = context.db.prepare("SELECT 1 FROM xml_import_files WHERE access_key = ? AND status = 'SKIPPED' AND json_extract(resolution_data_json, '$.ignore') = 1 LIMIT 1");
+    const hasFiscalEvent = context.db.prepare(`
+      SELECT 1 FROM fiscal_document_events
+      WHERE access_key = ? AND event_type = ? AND sequence_number = ? AND COALESCE(protocol_number, '') = COALESCE(?, '')
+      LIMIT 1
+    `);
+    const pending: Array<{ filePath: string; remoteId: string | null; accessKey: string; xmlType: "NFE" | "CANCELLATION" }> = [];
+    const acceptedCancellationKeys = new Set<string>();
+    let authorized = 0;
+    let alreadyImported = 0;
+    let ignored = 0;
+    let ignoredByUser = 0;
+    let cancellationEvents = 0;
+    let cancellationsAlreadyApplied = 0;
+    let canceledInvoicesHidden = 0;
+
+    const inspectCandidate = (filePath: string, remoteId: string | null): void => {
+      const inspection = inspectXmlFile(filePath, randomUUID());
+      const extracted = inspection.extractedData as Record<string, unknown> | null;
+      const issuer = extracted?.issuer as Record<string, unknown> | undefined;
+      const issuerCnpj = inspection.xmlType === "EVENT_CANCELLATION"
+        ? inspection.accessKey?.slice(6, 20) ?? ""
+        : String(issuer?.cnpjCpf ?? "").replace(/\D/g, "");
+      const documentDate = String(
+        inspection.xmlType === "EVENT_CANCELLATION" ? extracted?.eventDate ?? "" : extracted?.issuedAt ?? ""
+      ).slice(0, 10);
+      if (!allowedCnpjs.has(issuerCnpj) || documentDate < data.periodStart || documentDate > data.periodEnd) return;
+
+      if (inspection.xmlType === "EVENT_CANCELLATION") {
+        const statusCode = String(extracted?.statusCode ?? "");
+        const protocolNumber = String(extracted?.protocolNumber ?? "");
+        if (inspection.status === "ERROR" || !inspection.accessKey || !["135", "155"].includes(statusCode) || !protocolNumber) {
+          ignored += 1;
+          return;
+        }
+        cancellationEvents += 1;
+        acceptedCancellationKeys.add(inspection.accessKey);
+        const existing = hasFiscalEvent.get(
+          inspection.accessKey,
+          "CANCELLATION",
+          String(extracted?.sequenceNumber ?? "1"),
+          protocolNumber
+        );
+        if (existing) cancellationsAlreadyApplied += 1;
+        else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "CANCELLATION" });
+        return;
+      }
+      if (inspection.xmlType !== "NFE_PROC" && inspection.xmlType !== "NFE") {
+        ignored += 1;
+        return;
+      }
+      const protocol = extracted?.protocol as Record<string, unknown> | undefined;
+      const statusCode = String(protocol?.statusCode ?? "");
+      if (inspection.status === "ERROR" || !inspection.accessKey || !["100", "150"].includes(statusCode)) {
+        ignored += 1;
+        return;
+      }
+      authorized += 1;
+      if (hasAcceptedCancellation.get(inspection.accessKey)) canceledInvoicesHidden += 1;
+      else if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
+      else if (hasAccessKey.get(inspection.accessKey)) alreadyImported += 1;
+      else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "NFE" });
+    };
+
+    for (const localSource of selectedLocalSources) {
+      const config = vulpeDevSources[localSource];
+      if (!existsSync(config.root)) {
+        if (source !== "ALL") throw new Error(`Pasta da ${config.label} nao encontrada neste computador.`);
+        continue;
+      }
+      for (const period of brazilYearMonthsBetween(data.periodStart, data.periodEnd)) {
+        const periodFolder = join(config.root, period);
+        if (!existsSync(periodFolder)) continue;
+        const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
+          const name = basename(filePath);
+          return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
+        });
+        candidates.forEach((filePath) => inspectCandidate(filePath, null));
+      }
+    }
+
+    if (selectedCollectorSources.length > 0) {
+      const remoteFiles = await centralSync.listCollectorInbox("GRAO_GRAO");
+      const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
+      mkdirSync(downloadDir, { recursive: true });
+      const allowedYearMonths = new Set(brazilYearMonthsBetween(data.periodStart, data.periodEnd).map((period) => period.slice(2)));
+      const matchingRemoteFiles = remoteFiles.filter((remoteFile) => {
+        const accessKey = remoteFile.accessKey ?? "";
+        return accessKey.length === 44
+          && allowedYearMonths.has(accessKey.slice(2, 6))
+          && allowedCnpjs.has(accessKey.slice(6, 20));
+      });
+      for (let offset = 0; offset < matchingRemoteFiles.length; offset += 12) {
+        const batch = matchingRemoteFiles.slice(offset, offset + 12);
+        const downloaded = await Promise.all(batch.map(async (remoteFile) => {
+          const content = await centralSync.downloadCollectorInboxFile(remoteFile.id);
+          const targetPath = join(downloadDir, `${remoteFile.id}-${basename(remoteFile.originalFileName)}`);
+          writeFileSync(targetPath, content);
+          return { targetPath, remoteId: remoteFile.id };
+        }));
+        downloaded.forEach(({ targetPath, remoteId }) => inspectCandidate(targetPath, remoteId));
+      }
+    }
+
+    const visiblePending = pending.filter((candidate) => {
+      if (candidate.xmlType !== "NFE" || !acceptedCancellationKeys.has(candidate.accessKey)) return true;
+      canceledInvoicesHidden += 1;
+      return false;
+    });
+    const files = visiblePending.flatMap(({ filePath, remoteId }) => {
+      const [registered] = registerXmlPaths([filePath]);
+      if (!registered) return [];
+      if (remoteId) collectorInboxTokens.set(registered.token, remoteId);
+      return [registered];
+    });
+    return {
+      source,
+      label,
+      period: data.periodStart.slice(0, 7).replace("-", ""),
+      periodStart: data.periodStart,
+      periodEnd: data.periodEnd,
+      authorized,
+      alreadyImported,
+      pendingReview: files.length,
+      ignored,
+      ignoredByUser,
+      cancellationEvents,
+      cancellationsAlreadyApplied,
+      canceledInvoicesHidden,
+      files
+    };
+  });
   handle(IPC_CHANNELS.registerDroppedXmlFiles, (_event, payload: unknown) => {
     const data = z.object({ paths: z.array(z.string().min(1)).min(1).max(100) }).parse(payload);
     const xmlPaths = data.paths.filter((filePath) => filePath.toLowerCase().endsWith(".xml"));
@@ -704,7 +1017,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ jobId: z.string().uuid(), fileIds: z.array(z.string().uuid()), resolution: z.unknown() }).parse(payload);
     return repository.applyXmlBulkResolution(data.jobId, data.fileIds, data.resolution);
   });
-  handle(IPC_CHANNELS.executeXmlImportJob, (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.executeXmlImportJob, async (_event, payload: unknown) => {
     const data = z.object({ jobId: z.string().uuid(), tokens: z.array(z.string().uuid()).optional() }).parse(payload);
     const details = repository.getXmlImportJob(data.jobId);
     const filesByHash = new Map(details.files.map((file) => [file.fileHash, file]));
@@ -720,7 +1033,25 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       copyFileSync(filePath, targetPath);
       repository.setXmlImportFileStoredPath(file.id, targetPath);
     });
-    return repository.executeXmlImportJob(data.jobId);
+    const result = await repository.executeXmlImportJob(data.jobId);
+    const completedByHash = new Map(result.files.map((file) => [file.fileHash, file]));
+    const resolutions: Array<Promise<void>> = [];
+    for (const token of data.tokens ?? []) {
+      const collectorId = collectorInboxTokens.get(token);
+      const filePath = xmlTokens.get(token);
+      if (!collectorId || !filePath) continue;
+      const inspection = inspectXmlFile(filePath, token);
+      const completed = completedByHash.get(inspection.fileHash);
+      if (completed?.status === "IMPORTED") {
+        resolutions.push(centralSync.resolveCollectorInboxFile(collectorId, "IMPORTED", "Processado pelo Operacoes Cafe"));
+        collectorInboxTokens.delete(token);
+      } else if (completed?.status === "SKIPPED") {
+        resolutions.push(centralSync.resolveCollectorInboxFile(collectorId, "IGNORED", "Marcado como nao cadastrar"));
+        collectorInboxTokens.delete(token);
+      }
+    }
+    await Promise.allSettled(resolutions);
+    return result;
   });
   handle(IPC_CHANNELS.getXmlImportJobProgress, (_event, payload: unknown) => repository.getXmlImportJobProgress(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listXmlImportJobs, (_event, payload: unknown) => repository.listXmlImportJobs(z.string().uuid().parse(payload)));
@@ -823,13 +1154,74 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     if (error) throw new Error(error);
     return true;
   });
-  handle(IPC_CHANNELS.openChargeDocument, async (_event, payload: unknown) => {
+  handle(IPC_CHANNELS.exportChargeControlWorkbook, async (event, payload: unknown) => {
+    const data = z.object({
+      chargeIds: z.array(z.string().uuid()).min(1).max(10_000),
+      filterDescription: z.string().trim().max(500).optional()
+    }).parse(payload);
+    const rows = getChargeControlRows(repository, data.chargeIds);
+    const workbook = await buildChargeControlWorkbook({ rows, filterDescription: data.filterDescription });
+    const today = new Date().toISOString().slice(0, 10);
+    const dialogOptions = {
+      title: "Salvar controle interno de cobrancas",
+      defaultPath: `Controle-interno-cobrancas-${today}.xlsx`,
+      filters: [{ name: "Planilha Excel", extensions: ["xlsx"] }]
+    };
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const destination = parentWindow
+      ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
+    if (destination.canceled || !destination.filePath) return false;
+    writeFileSync(destination.filePath, workbook);
+    const openError = await shell.openPath(destination.filePath);
+    if (openError) throw new Error(openError);
+    return true;
+  });
+  handle(IPC_CHANNELS.printChargeControl, async (event, payload: unknown) => {
+    const data = z.object({
+      chargeIds: z.array(z.string().uuid()).min(1).max(10_000),
+      filterDescription: z.string().trim().max(500).optional()
+    }).parse(payload);
+    const rows = getChargeControlRows(repository, data.chargeIds);
+    const html = buildChargeControlPrintHtml({ rows, filterDescription: data.filterDescription });
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const printWindow = new BrowserWindow({
+      show: false,
+      parent: parentWindow ?? undefined,
+      webPreferences: { sandbox: true }
+    });
+    try {
+      await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      return await new Promise<boolean>((resolve, reject) => {
+        printWindow.webContents.print(
+          { silent: false, printBackground: true, landscape: false },
+          (success, failureReason) => {
+            if (!success && failureReason && !/cancel/i.test(failureReason)) {
+              reject(new Error(failureReason));
+              return;
+            }
+            resolve(success);
+          }
+        );
+      });
+    } finally {
+      if (!printWindow.isDestroyed()) printWindow.destroy();
+    }
+  });
+  handle(IPC_CHANNELS.openChargeDocument, async (event, payload: unknown) => {
     const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);
     const regenerated = await repository.regenerateChargeDocuments(data.chargeId);
     const filePath = repository.getChargeDocumentPath(regenerated.charge.id, data.kind);
     const client = repository.getBusinessPartner(regenerated.charge.clientPartnerId);
     const exportFileName = buildChargeExportFileName(client.displayName, regenerated.charge.periodStart, regenerated.charge.periodEnd, data.kind);
-    const destination = await dialog.showSaveDialog({ title: "Salvar cobranca por periodo", defaultPath: exportFileName, filters: [{ name: data.kind === "pdf" ? "PDF" : "Imagem PNG", extensions: [data.kind === "pdf" ? "pdf" : "png"] }] });
+    const dialogOptions = { title: "Salvar cobranca por periodo", defaultPath: exportFileName, filters: [{ name: data.kind === "pdf" ? "PDF" : "Imagem PNG", extensions: [data.kind === "pdf" ? "pdf" : "png"] }] };
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    // A geracao da imagem usa uma janela Electron oculta. Sem vincular o
+    // dialogo de salvamento a janela principal, o Windows pode abri-lo atras
+    // do aplicativo e o clique parece nao ter funcionado.
+    const destination = parentWindow
+      ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
     if (destination.canceled || !destination.filePath) return false;
     const exportedPath = copyGeneratedFileToPath(filePath, destination.filePath);
     const result = await shell.openPath(exportedPath);
@@ -860,6 +1252,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.allocateClientPayment, async (_event, payload: unknown) => {
     const result = repository.allocatePayment(payload);
     return result;
+  });
+  handle(IPC_CHANNELS.cancelClientPayment, async (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().trim().min(1) }).parse(payload);
+    return repository.cancelClientPayment(data.id, data.reason);
   });
   handle(IPC_CHANNELS.generateClientPaymentReceipt, (_event, payload: unknown) => repository.generateClientPaymentReceipt(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.openClientPaymentReceipt, async (_event, payload: unknown) => {
@@ -897,6 +1293,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.getDashboardAlerts, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload);
     return repository.getDashboardAlerts(data.organizationId, data.ownLegalEntityId);
+  });
+  handle(IPC_CHANNELS.ignorePreviousPeriodBillingAlert, (_event, payload: unknown) => {
+    const data = z.object({
+      organizationId: z.string().uuid(),
+      ownLegalEntityId: z.string().uuid(),
+      clientPartnerId: z.string().uuid(),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      reason: z.string().trim().min(3).max(500)
+    }).parse(payload);
+    return repository.ignorePreviousPeriodBillingAlert(data);
   });
   handle(IPC_CHANNELS.listTransferReconciliations, (_event, payload: unknown) => repository.listTransferReconciliations(
     z.object({ organizationId: z.string().uuid(), clientPartnerId: z.string().uuid().optional(), status: z.enum(["ALL", "DRAFT", "COMPLETED", "CANCELLED"]).optional() }).parse(payload)
@@ -1344,6 +1751,21 @@ function findXmlFiles(folder: string, includeSubfolders: boolean): string[] {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".xml")) result.push(full);
   });
   return result;
+}
+
+function brazilYearMonthsBetween(periodStart: string, periodEnd: string): string[] {
+  const [startYear, startMonth] = periodStart.split("-").map(Number);
+  const [endYear, endMonth] = periodEnd.split("-").map(Number);
+  const startIndex = startYear * 12 + startMonth - 1;
+  const endIndex = endYear * 12 + endMonth - 1;
+  if (endIndex - startIndex > 35) throw new Error("Escolha um periodo de no maximo 36 meses.");
+  const periods: string[] = [];
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    const year = Math.floor(index / 12);
+    const month = index % 12 + 1;
+    periods.push(`${year}${String(month).padStart(2, "0")}`);
+  }
+  return periods;
 }
 
 async function selectExportDirectory(title: string): Promise<string | null> {

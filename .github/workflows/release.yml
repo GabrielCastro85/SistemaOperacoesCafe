@@ -26,7 +26,7 @@ jobs:
         run: npm run build
 
       - name: Empacotar e publicar release no GitHub
-        run: npx electron-builder --win nsis --publish always
+        run: npm run release
         env:
           # O GITHUB_TOKEN automatico do Actions so' tem permissao neste
           # repositorio -- publicar em SistemaOperacoesCafe-releases (o repo

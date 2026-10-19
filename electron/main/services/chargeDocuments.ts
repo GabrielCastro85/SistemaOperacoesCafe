@@ -6,7 +6,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDirectories, ClientChargeDetail, LegalEntity, Organization, BusinessPartner, BusinessPartnerLegalEntity } from "../../../src/shared/types/domain.js";
-import { formatOperationScope } from "../../../src/shared/utils/operationLabels.js";
 
 export interface ChargeDocumentResult {
   pdfFilePath: string;
@@ -41,6 +40,10 @@ function chargeOperationCompanyName(operation: ChargeOperationSnapshot): string 
     || operation.issuerNameSnapshot?.trim()
     || operation.ownLegalEntityNameSnapshot?.trim()
     || "-";
+}
+
+function formatChargeOperationScope(scope: ChargeOperationSnapshot["operationScopeSnapshot"]): string {
+  return scope === "INTERNAL" ? "Interno" : "Externo";
 }
 
 export async function generateChargeDocuments(input: ChargeDocumentsInput): Promise<ChargeDocumentResult> {
@@ -118,14 +121,14 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   y -= 102;
   const chargeCount = 1;
   const totalOpenCents = detail.charge.openAmountCents;
-  drawSectionTitle(page, "Operacoes do periodo", margin, y, bold, ink, green);
+  drawSectionTitle(page, detail.charge.openAmountCents > 0 ? "Notas em aberto desta cobranca" : "Notas desta cobranca (pagas)", margin, y, bold, ink, green);
   y -= 16;
   const sections = summaryImageSections({ ...input, relatedOpenChargeDetails: [] });
   const columns = [
-    { title: "PERIODO", x: margin + 8, width: 68 },
+    { title: "DATA NF", x: margin + 8, width: 68 },
     { title: "NF", x: margin + 84, width: 38 },
     { title: "EMPRESA", x: margin + 130, width: 178 },
-    { title: "UF", x: margin + 318, width: 60 },
+    { title: "TIPO", x: margin + 318, width: 60 },
     { title: "SACAS", x: margin + 390, width: 48 },
     { title: "VALOR", x: margin + 452, width: 78 }
   ];
@@ -140,6 +143,35 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
     gold,
     green
   }));
+
+  const paidChargeDetails = input.relatedPaidChargeDetails ?? [];
+  if (paidChargeDetails.length > 0) {
+    if (y < 110) {
+      page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
+      y = pageHeight - margin - 70;
+    }
+    y -= 10;
+    drawSectionTitle(page, "Notas ja pagas no periodo (informativo)", margin, y, bold, ink, green);
+    y -= 16;
+    const [firstPaidCharge, ...otherPaidCharges] = paidChargeDetails;
+    const paidSections = summaryImageSections({
+      ...input,
+      detail: firstPaidCharge,
+      relatedOpenChargeDetails: otherPaidCharges,
+      relatedPaidChargeDetails: []
+    });
+    ({ page, y } = drawChargeOperationSectionsPdf(doc, page, paidSections, [], chargePeriodLabel(charge, true), columns, margin, y, contentWidth, {
+      font,
+      bold,
+      ink,
+      muted,
+      soft,
+      paper,
+      border,
+      gold,
+      green
+    }, " - PAGA"));
+  }
   y -= 20;
 
   if (y < 238) {
@@ -183,8 +215,8 @@ async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput
     ["Aberto", charge.openAmountCents / 100]
   ]);
   const operations = workbook.addWorksheet("Operacoes");
-  operations.addRow(["Empresa", "Data", "NF", "Serie", "Produto", "UF da venda", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
-  input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
+  operations.addRow(["Empresa", "Data de emissao da NF", "NF", "Serie", "Produto", "Tipo", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
+  input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatChargeOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
   const adjustments = workbook.addWorksheet("Ajustes");
   adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor"]);
   input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
@@ -241,7 +273,8 @@ function drawChargeOperationSectionsPdf(
   margin: number,
   startY: number,
   contentWidth: number,
-  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; soft: PdfColor; paper: PdfColor; border: PdfColor; gold: PdfColor; green: PdfColor }
+  style: { font: PDFFont; bold: PDFFont; ink: PdfColor; muted: PdfColor; soft: PdfColor; paper: PdfColor; border: PdfColor; gold: PdfColor; green: PdfColor },
+  sectionTitleSuffix = ""
 ): { page: PDFPage; y: number } {
   const pageWidth = page.getWidth();
   const pageHeight = page.getHeight();
@@ -272,7 +305,7 @@ function drawChargeOperationSectionsPdf(
   sections.forEach((section) => {
     ensureSpace(35);
     currentPage.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
-    currentPage.drawText(truncate(section.title, style.bold, 6.8, contentWidth - 20), { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
+    currentPage.drawText(truncate(`${section.title}${sectionTitleSuffix}`, style.bold, 6.8, contentWidth - 20), { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
     cursorY -= 13;
 
     section.rows.forEach((row) => {
@@ -285,10 +318,10 @@ function drawChargeOperationSectionsPdf(
         currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: brandColors.background });
         currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: brandColors.stripe });
       }
-      currentPage.drawText(truncate(row.chargeNumber, style.font, 5.8, columns[0].width), { x: columns[0].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+      currentPage.drawText(row.issueDate, { x: columns[0].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       currentPage.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 5.8, columns[1].width), { x: columns[1].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       currentPage.drawText(truncate(companyName, style.font, 5.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
-      currentPage.drawText(formatOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+      currentPage.drawText(formatChargeOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
       drawRightText(currentPage, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 5.8, style.ink);
       drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
       cursorY -= 12;
@@ -545,7 +578,7 @@ async function writeSummaryImage(basePath: string, input: ChargeDocumentsInput):
 }
 
 type SummaryOperationRow = {
-  chargeNumber: string;
+  issueDate: string;
   operation: ClientChargeDetail["operations"][number];
 };
 
@@ -561,7 +594,7 @@ type SummarySection = {
 function summaryImageOperationRows(input: ChargeDocumentsInput): SummaryOperationRow[] {
   return [input.detail, ...(input.relatedOpenChargeDetails ?? [])].flatMap((detail) =>
     detail.operations.map((operation) => ({
-      chargeNumber: chargePeriodLabel(detail.charge, true),
+      issueDate: formatDate(operation.operationDateSnapshot),
       operation
     }))
   );
@@ -602,10 +635,10 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
       return `
       ${rowBackground}
       ${contract.map((line, index) => `<text x="236" y="${y + 17 + index * 19}" class="cell">${escapeXml(line)}</text>`).join("")}
-      <text x="48" y="${y}" class="cell">${escapeXml(clipText(item.chargeNumber, 24))}</text>
+      <text x="48" y="${y}" class="cell">${escapeXml(item.issueDate)}</text>
       <text x="166" y="${y}" class="cell">${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
       <text x="236" y="${y}" class="cell">${escapeXml(clipText(companyName, 46))}</text>
-      <text x="622" y="${y}" class="cell">${escapeXml(formatOperationScope(operation.operationScopeSnapshot))}</text>
+      <text x="622" y="${y}" class="cell">${escapeXml(formatChargeOperationScope(operation.operationScopeSnapshot))}</text>
       <text x="760" y="${y}" class="cell right">${escapeXml(decimalTextBr(operation.quantitySacksDecimalSnapshot))}</text>
       <text x="${rightX}" y="${y}" class="cell right">R$ ${escapeXml(formatCents(operation.serviceAmountCentsSnapshot))} x NF ${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
     `;
@@ -658,10 +691,10 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
 
   <text x="34" y="202" class="label">${chargeCount > 1 ? `Operacoes em ${chargeCount} cobrancas abertas` : "Operacoes cobradas"}</text>
   <rect x="${innerX}" y="216" width="${innerWidth}" height="1" fill="#d8c8aa"/>
-  <text x="48" y="236" class="head">PERIODO</text>
+  <text x="48" y="236" class="head">DATA NF</text>
   <text x="166" y="236" class="head">NF</text>
   <text x="236" y="236" class="head">EMPRESA</text>
-  <text x="622" y="236" class="head">UF DA VENDA</text>
+  <text x="622" y="236" class="head">TIPO</text>
   <text x="760" y="236" class="head right">SACAS</text>
   <text x="${rightX}" y="236" class="head right">VALOR X NF</text>
   ${sectionMarkup}

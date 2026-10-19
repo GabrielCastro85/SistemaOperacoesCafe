@@ -1,6 +1,7 @@
 /* global console, fetch */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { request as httpsRequest } from "node:https";
 import { basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -9,12 +10,23 @@ import { getVariant, variants } from "./variant-config.mjs";
 const variantName = process.argv[2] ?? "multiempresa";
 const mode = process.argv.includes("--installer") ? "installer" : "dir";
 const skipBuild = process.argv.includes("--skip-build");
+const collectorOnly = process.argv.includes("--collector-only");
 const variant = getVariant(variantName);
 const root = process.cwd();
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
 const outputDir = join(root, "release", variant.variant, version);
 const configPath = join(outputDir, `electron-builder.${variant.variant}.json`);
+const UPDATE_FEED_OWNER = "GabrielCastro85";
+const UPDATE_FEED_REPO = "SistemaOperacoesCafe-releases";
+
+if (collectorOnly) {
+  const token = readGithubToken();
+  const executablePath = join(root, "output", "collector", `ColetorGraoBase-${version}-portable.exe`);
+  if (!existsSync(executablePath)) run("npm", ["run", "collector:build"]);
+  await publishCollectorAssets(token, `v${version}`);
+  process.exit(0);
+}
 
 mkdirSync(outputDir, { recursive: true });
 
@@ -33,9 +45,6 @@ run("npm", ["run", "rebuild:electron"]);
 // no repositorio privado/principal). Publico porque o electron-updater dos
 // PCs baixa os assets sem token nenhum -- um repo privado exigiria embutir
 // uma credencial no app instalado, o que nao vale a pena aqui.
-const UPDATE_FEED_OWNER = "GabrielCastro85";
-const UPDATE_FEED_REPO = "SistemaOperacoesCafe-releases";
-
 const config = {
   appId: variant.appId,
   productName: variant.productName,
@@ -64,6 +73,10 @@ const config = {
     license: pkg.license
   },
   asar: true,
+  // O modulo nativo ja foi compilado explicitamente por rebuild:electron
+  // logo acima. Impede o electron-builder de recompila-lo novamente usando
+  // o ABI do Node que esta executando o empacotamento.
+  npmRebuild: false,
   asarUnpack: ["node_modules/better-sqlite3/**"],
   extraResources: [{ from: variant.iconPath, to: `icons/${basename(variant.iconPath)}` }],
   afterPack: "scripts/after-pack-prune.mjs",
@@ -103,6 +116,7 @@ run("npx", ["electron-builder", "--win", "--config", configPath, "--publish", sh
   VITE_APP_BUILD_VARIANT: variant.variant,
   GH_TOKEN: githubToken
 });
+run("npm", ["run", "smoke:packaged", "--", variant.variant]);
 
 if (shouldPublish) {
   // electron-builder sempre cria a release como rascunho (draft) primeiro e
@@ -112,6 +126,8 @@ if (shouldPublish) {
   // direta que ela fica publicada, independente do comportamento interno do
   // electron-builder.
   await publishGithubRelease(githubToken, `v${version}`);
+  run("npm", ["run", "collector:build"]);
+  await publishCollectorAssets(githubToken, `v${version}`);
 }
 
 writeReleaseFiles(outputDir, variant, version, mode);
@@ -136,7 +152,12 @@ async function publishGithubRelease(token, tagName) {
   const patchResponse = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${release.id}`, {
     method: "PATCH",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ draft: false, prerelease: version.includes("-") })
+    body: JSON.stringify({
+      draft: false,
+      prerelease: version.includes("-"),
+      name: `${variant.displayName} ${version}`,
+      body: releaseNotes(variant, version)
+    })
   });
   if (!patchResponse.ok) {
     console.error(`Falha ao publicar a release ${tagName} (status ${patchResponse.status}) -- ela ficou como rascunho, publique manualmente no GitHub.`);
@@ -236,6 +257,66 @@ function gitCommit() {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+async function publishCollectorAssets(token, tagName) {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "sistema-operacoes-cafe-release-script"
+  };
+  const releaseResponse = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/tags/${tagName}`, { headers });
+  if (!releaseResponse.ok) throw new Error(`Release ${tagName} nao encontrada para publicar o coletor.`);
+  const release = await releaseResponse.json();
+  const executableName = `ColetorGraoBase-${version}-portable.exe`;
+  const executablePath = join(root, "output", "collector", executableName);
+  if (!existsSync(executablePath)) throw new Error(`Executavel do coletor nao encontrado: ${executablePath}`);
+  const checksum = sha256Path(executablePath);
+  const checksumPath = `${executablePath}.sha256`;
+  writeFileSync(checksumPath, `${checksum}  ${executableName}\n`, "utf8");
+
+  for (const assetPath of [executablePath, checksumPath]) {
+    const name = basename(assetPath);
+    const existing = Array.isArray(release.assets) ? release.assets.find((asset) => asset.name === name) : null;
+    if (existing) {
+      const deletion = await fetch(`https://api.github.com/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/assets/${existing.id}`, { method: "DELETE", headers });
+      if (!deletion.ok && deletion.status !== 404) throw new Error(`Falha ao substituir o arquivo ${name} (${deletion.status}).`);
+    }
+    await uploadReleaseAsset(token, release.id, assetPath);
+    console.log(`Arquivo do coletor publicado: ${name}`);
+  }
+}
+
+function uploadReleaseAsset(token, releaseId, assetPath) {
+  const name = basename(assetPath);
+  const size = statSync(assetPath).size;
+  const path = `/repos/${UPDATE_FEED_OWNER}/${UPDATE_FEED_REPO}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`;
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest({
+      hostname: "uploads.github.com",
+      path,
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "sistema-operacoes-cafe-release-script",
+        "Content-Type": "application/octet-stream",
+        "Content-Length": size
+      }
+    }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { body += chunk; });
+      response.on("end", () => {
+        if (response.statusCode === 201) resolve();
+        else reject(new Error(`Falha ao publicar ${name} (${response.statusCode}): ${body.slice(0, 300)}`));
+      });
+    });
+    request.on("error", reject);
+    createReadStream(assetPath).on("error", reject).pipe(request);
+  });
+}
+
 function latestDatabaseMigrationVersion() {
   const source = readFileSync(join(root, "electron", "main", "database", "migrations.ts"), "utf8");
   const names = Array.from(source.matchAll(/^\s*name:\s*"([^"]+)",?\s*$/gm), (match) => match[1]);
@@ -243,14 +324,68 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
+  const highlights = releaseVersion === "1.1.48"
+    ? `- O card Valor total dos servicos soma todos os servicos do periodo selecionado.
+- O total inclui operacoes ja cobradas e ainda nao cobradas.
+- Villa Coffee e Grao & Grao, com todos os seus CNPJs, entram no mesmo valor corporativo.`
+    : releaseVersion === "1.1.47"
+    ? `- Cada regra por saca pode ter um valor normal e outro valor quando o servico inclui financeiro.
+- A condicao com financeiro e marcada manualmente durante a revisao do XML e pode ser corrigida depois na nota.
+- Ao alterar a marcacao, o sistema recalcula automaticamente o servico antes da cobranca.
+- O dashboard passa a mostrar o valor bruto de todos os servicos do periodo, sem descontar valores recebidos.`
+    : releaseVersion === "1.1.46"
+    ? `- Acrescimos e emprestimos vinculados a cobranca agora podem ser selecionados diretamente para baixa.
+- O pagamento pode incluir somente o acrescimo ou combinar notas e acrescimos na mesma operacao.
+- Recibos identificam o acrescimo separadamente e nao atribuem seu valor novamente as notas fiscais.`
+    : releaseVersion === "1.1.43"
+    ? `- Dashboard avisa quando existem notas do mes anterior que ainda nao entraram em uma cobranca.
+- Pendencias sao agrupadas por cliente e mostram notas, DAE de frete e valor total.
+- O botao Gerar cobranca abre o cliente e o periodo corretos diretamente na tela de cobrancas.
+- A opcao Ignorar cobranca oculta as pendencias escolhidas e mantem a decisao sincronizada entre os computadores.`
+    : releaseVersion === "1.1.42"
+    ? `- O controle interno passa a incluir somente cobrancas com saldo realmente em aberto.
+- Cobrancas quitadas sao descartadas e cobrancas fora do periodo so entram quando a opcao correspondente for marcada.
+- A planilha mostra o saldo restante e a impressao foi compactada para papel A4 vertical.`
+    : releaseVersion === "1.1.41"
+    ? `- Adiciona a opcao Estornar baixa no historico de pagamentos da cobranca.
+- Ao estornar, o valor volta para o saldo em aberto e a cobranca e reaberta automaticamente.
+- O pagamento original e o motivo do estorno permanecem registrados para auditoria.`
+    : releaseVersion === "1.1.40"
+    ? `- Adiciona um controle interno de pagamentos pronto para impressao na tela de cobrancas.
+- Permite escolher o periodo das cobrancas e incluir, opcionalmente, todas as cobrancas ainda em aberto.
+- Cada cobranca mostra cliente, periodo, valor e duas linhas para registrar pagamentos parciais e suas datas.
+- O controle pode ser enviado diretamente para a impressora ou exportado para Excel.`
+    : releaseVersion === "1.1.39"
+    ? `- Cobrancas de operacoes terceirizadas passam a mostrar a razao social do destinatario registrada no XML.
+- A lista de notas, a previa em PDF, a imagem e a cobranca definitiva identificam corretamente a empresa que recebeu a NF-e.
+- O cliente/corretor continua sendo o responsavel financeiro pela cobranca, sem substituir o destinatario fiscal no documento.`
+    : releaseVersion === "1.1.38"
+    ? `- Detecta quando o processo do coletor continua aberto, mas parou de varrer e de se comunicar.
+- Reinicia automaticamente o coletor depois de dez minutos sem atividade.
+- Limita o tempo das conexoes para impedir que uma falha de rede deixe a coleta travada.`
+    : releaseVersion === "1.1.37"
+    ? `- Corrige o coletor que podia ser encerrado pelo Agendador do Windows poucos minutos depois de iniciar.
+- O coletor passa a manter uma vigilancia interna e tenta se reabrir quando o processo encerra inesperadamente.
+- Instalacoes antigas tem o limite de execucao das tarefas reparado automaticamente quando houver permissao.`
+    : releaseVersion === "1.1.36"
+    ? `- PDFs de cobranca passam a listar tambem as notas ja pagas no periodo, em uma secao informativa separada.
+- Monitor do coletor permite buscar notas, procurar atualizacoes e reiniciar o agente remotamente.
+- Diagnostico remoto mostra inicio, tempo ativo, inicializacao automatica, ultimo comando e registros recentes.
+- Instalacao do coletor usa uma pasta local do Windows e vigilancia a cada dois minutos para iniciar mesmo sem login.`
+    : releaseVersion === "1.1.35"
+    ? `- Confirmacoes de negocio agora permitem fechamentos de compra com ou sem nota fiscal.\n- DAE de frete pode ser informado durante a importacao da NF-e e entra na cobranca do cliente.\n- Dashboard soma somente as sacas vendidas, sem misturar compras no indicador comercial.\n- Sincronizacao central suporta lotes maiores de alteracoes com retomada segura.`
+    : releaseVersion === "1.1.34"
+    ? `- Monitor remoto mostra se o coletor da Grao & Grao esta online e quando funcionou pela ultima vez.\n- Coletor passa a atualizar automaticamente pelas proximas versoes.\n- Inicializacao do coletor no Windows ganhou mecanismos redundantes e verificacao apos a instalacao.`
+    : releaseVersion === "1.1.32"
+    ? `- Login continua disponivel com a ultima copia sincronizada durante oscilacoes temporarias do servidor.\n- Dashboard destaca contas a pagar e resume as cobrancas vencidas.\n- Financeiro reorganizado, com textos em portugues, valores legiveis, baixa e edicao de contas mais acessiveis.\n- Historico de cobrancas ganhou pesquisa, filtros e carregamento por etapas.\n- Importacao de NF-e diferencia avisos e duplicidades e destaca a busca em todas as empresas.`
+    : `- Build Windows x64 unico para o Sistema de Operacoes de Cafe.\n- Villa Coffee e Grao & Grao permanecem como empresas/branding dentro do mesmo app.`;
   return `# ${currentVariant.displayName} ${releaseVersion}
 
 Canal: ${mode}
 
 ## Destaques
 
-- Build Windows x64 unico para o Sistema de Operacoes de Cafe.
-- Villa Coffee e Grao & Grao permanecem como empresas/branding dentro do mesmo app.
+${highlights}
 - UserData preservado em ${currentVariant.userDataDirectoryName}.
 - Backup local recomendado antes de atualizar.
 - Artefato sem assinatura de codigo nesta etapa.

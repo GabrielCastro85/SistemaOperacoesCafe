@@ -20,6 +20,7 @@ import { ChargesPage } from "../pages/charges/ChargesPage";
 import { TransferReconciliationsPage } from "../pages/transferReconciliations/TransferReconciliationsPage";
 import { ClientLedgerPage } from "../pages/clientLedger/ClientLedgerPage";
 import { Dashboard, NotFoundPage, SetupWizard, Splash } from "../pages/appStates/AppStatePages";
+import { AssistantPage } from "../pages/assistant/AssistantPage";
 import { CostCentersPage } from "../pages/finance/CostCentersPage";
 import { ExpenseCategoriesPage } from "../pages/finance/ExpenseCategoriesPage";
 import { FinanceOverviewPage } from "../pages/finance/FinanceOverviewPage";
@@ -216,6 +217,7 @@ function renderRoute(
   setSession: (session: AuthSession) => void
 ): JSX.Element {
   if (path.startsWith("/settings/change-password")) return <ChangePasswordPage session={session} onSession={setSession} />;
+  if (path.startsWith("/assistant")) return <AssistantPage organizationId={data.profile?.defaultOrganizationId ?? ""} ownLegalEntityId={data.profile?.defaultLegalEntityId ?? null} />;
   if (path.startsWith("/operations")) return <OperationsPage data={data} />;
   if (path.startsWith("/imports/spreadsheets/history")) return <SpreadsheetImportHistoryPage />;
   if (path.startsWith("/imports/spreadsheets/templates")) return <SpreadsheetMappingTemplatesPage />;
