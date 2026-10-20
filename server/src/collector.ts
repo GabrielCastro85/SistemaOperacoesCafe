@@ -211,7 +211,7 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
       SELECT id, source_code AS "sourceCode", source_label AS "sourceLabel", original_file_name AS "originalFileName",
         file_hash AS "fileHash", file_size AS "fileSize", access_key AS "accessKey", xml_type AS "xmlType", received_at AS "receivedAt"
       FROM collector_inbox_files WHERE source_code = $1 AND status = 'PENDING'
-      ORDER BY received_at, id LIMIT $2
+      ORDER BY received_at DESC, id DESC LIMIT $2
     `, [query.source, query.limit]);
     return { files: rows.rows };
   });
