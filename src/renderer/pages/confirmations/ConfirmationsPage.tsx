@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DealClauseTemplate, DealConfirmation, DealConfirmationDetail, DealConfirmationSummary, DealConfirmationTemplate, FiscalDocument, Product } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
 import { inferConfirmationDealDirection, type ConfirmationDealDirection, type ConfirmationDealDirectionChoice } from "../../../shared/utils/dealDirection";
-import { DateInput, EmptyState, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
+import { DateInput, EmptyState, FilterBar, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { LegalEntityQuickSearch } from "../../components/forms/LegalEntityQuickSearch";
@@ -42,6 +42,25 @@ function normalizeSearchText(value: string | null | undefined): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
+}
+
+type ConfirmationListOrder = "number-desc" | "number-asc" | "date-desc" | "date-asc";
+
+const confirmationNumberCollator = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" });
+
+function confirmationDisplayNumber(confirmation: DealConfirmation): string {
+  return confirmation.confirmationNumber ?? confirmation.temporaryReference;
+}
+
+function compareConfirmations(left: DealConfirmation, right: DealConfirmation, order: ConfirmationListOrder): number {
+  if (order === "date-desc" || order === "date-asc") {
+    const dateComparison = left.confirmationDate.localeCompare(right.confirmationDate);
+    if (dateComparison !== 0) return order === "date-asc" ? dateComparison : -dateComparison;
+  }
+
+  const numberComparison = confirmationNumberCollator.compare(confirmationDisplayNumber(left), confirmationDisplayNumber(right));
+  if (numberComparison !== 0) return order === "number-asc" || order === "date-asc" ? numberComparison : -numberComparison;
+  return right.createdAt.localeCompare(left.createdAt);
 }
 
 interface DealPartyTarget {
@@ -126,6 +145,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   const [clauseTemplateId, setClauseTemplateId] = useState("");
   const [view, setView] = useState<"list" | "new" | "detail">("list");
   const [creationMode, setCreationMode] = useState<"notes" | "manual">("notes");
+  const [listLegalEntityId, setListLegalEntityId] = useState(() => ownLegalEntityId || "all");
+  const [listDateStart, setListDateStart] = useState("");
+  const [listDateEnd, setListDateEnd] = useState("");
+  const [listOrder, setListOrder] = useState<ConfirmationListOrder>("number-desc");
   const scrollTo = useAutoScroll();
   const detailRef = useRef<HTMLDivElement | null>(null);
 
@@ -139,7 +162,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       window.operationsCafe.listDealClauseTemplates(organizationId),
       window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId || null, dateStart: null, dateEnd: null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null })
     ]);
-    setConfirmations(dealList.filter((confirmation) => !ownLegalEntityId || confirmation.ownLegalEntityId === ownLegalEntityId));
+    setConfirmations(dealList);
     setPartners(partnerList);
     // Empresas vinculadas a um corretor + empresas ainda soltas (sem dono) --
     // a busca por empresa/CNPJ precisa achar as duas, ja que uma nota pode
@@ -164,6 +187,36 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setListLegalEntityId(ownLegalEntityId || "all");
+  }, [ownLegalEntityId]);
+
+  const confirmationLegalEntities = useMemo(
+    () => data.legalEntities.filter((entity) => entity.organizationId === organizationId && entity.isActive),
+    [data.legalEntities, organizationId]
+  );
+
+  const confirmationLegalEntityNames = useMemo(
+    () => new Map(confirmationLegalEntities.map((entity) => [entity.id, entity.tradeName || entity.legalName])),
+    [confirmationLegalEntities]
+  );
+
+  const visibleConfirmations = useMemo(() => confirmations
+    .filter((confirmation) => listLegalEntityId === "all" || confirmation.ownLegalEntityId === listLegalEntityId)
+    .filter((confirmation) => !listDateStart || confirmation.confirmationDate >= listDateStart)
+    .filter((confirmation) => !listDateEnd || confirmation.confirmationDate <= listDateEnd)
+    .sort((left, right) => compareConfirmations(left, right, listOrder)), [confirmations, listDateEnd, listDateStart, listLegalEntityId, listOrder]);
+
+  const confirmationListFilterCount = [
+    listLegalEntityId !== "all",
+    Boolean(listDateStart),
+    Boolean(listDateEnd)
+  ].filter(Boolean).length;
+
+  const detailIsPurchaseForOwnCompany = Boolean(detail?.parties.some((party) => (
+    party.partyRole === "BUYER" && party.ownLegalEntityId === detail.confirmation.ownLegalEntityId
+  )));
 
   const loadSourceDocuments = useCallback(async () => {
     // Busca por corretor: mesmo comportamento de sempre (nota atribuida a
@@ -717,18 +770,51 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       {tab === "Confirmacoes" && view === "list" && (
         <>
           <div className="page-title-row">
-            <p className="muted">Confirmações já criadas nesta empresa/CNPJ.</p>
+            <p className="muted">Confirmações já criadas. Use os filtros para consultar por empresa ou período.</p>
             <div className="actions">
               <button className="primary" onClick={() => { setCreationMode("notes"); setView("new"); }}>+ Criar com notas fiscais</button>
               <button onClick={() => { setCreationMode("manual"); setView("new"); }}>+ Criar sem nota fiscal</button>
             </div>
           </div>
+          <FilterBar
+            activeCount={confirmationListFilterCount}
+            onClear={() => {
+              setListLegalEntityId("all");
+              setListDateStart("");
+              setListDateEnd("");
+              setListOrder("number-desc");
+            }}
+          >
+            <SelectField
+              label="Empresa/CNPJ"
+              value={listLegalEntityId}
+              onChange={setListLegalEntityId}
+              options={[
+                ["all", "Todas as empresas"],
+                ...confirmationLegalEntities.map((entity) => [entity.id, `${entity.tradeName || entity.legalName}${entity.cnpj ? ` - ${entity.cnpj}` : ""}`] as [string, string])
+              ]}
+            />
+            <DateInput label="Data inicial" value={listDateStart} onChange={(event) => setListDateStart(event.target.value)} />
+            <DateInput label="Data final" value={listDateEnd} onChange={(event) => setListDateEnd(event.target.value)} />
+            <SelectField
+              label="Ordenar por"
+              value={listOrder}
+              onChange={(value) => setListOrder(value as ConfirmationListOrder)}
+              options={[
+                ["number-desc", "Número: maior para menor"],
+                ["number-asc", "Número: menor para maior"],
+                ["date-desc", "Data: mais recente"],
+                ["date-asc", "Data: mais antiga"]
+              ]}
+            />
+          </FilterBar>
           <div className="table">
-            <div className="table-head confirmation-grid"><span>Numero</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
-            {confirmations.map((item) => {
+            <div className="table-head confirmation-grid"><span>Numero</span><span>Empresa</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
+            {visibleConfirmations.map((item) => {
               const canDelete = item.status === "DRAFT" && !item.confirmationNumber;
-              return <div key={item.id} className="table-row confirmation-grid"><span>{item.confirmationNumber ?? item.temporaryReference}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
+              return <div key={item.id} className="table-row confirmation-grid"><span>{confirmationDisplayNumber(item)}</span><span>{confirmationLegalEntityNames.get(item.ownLegalEntityId) ?? "Empresa não encontrada"}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
             })}
+            {visibleConfirmations.length === 0 ? <EmptyState title="Nenhum fechamento encontrado" description="Ajuste os filtros de empresa ou período para consultar outros fechamentos." /> : null}
           </div>
         </>
       )}
@@ -967,18 +1053,22 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                 <ConfirmationItemsTable items={detail.items} />
 
                 <h3>Corretagem e dados bancarios</h3>
-                <p className="muted">Preenchidos automaticamente pelo CNPJ proprio. Altere aqui quando este fechamento precisar de dados diferentes.</p>
+                <p className="muted">{detailIsPurchaseForOwnCompany
+                  ? "Neste fechamento de compra, os dados para deposito pertencem ao vendedor e serao exibidos como A combinar."
+                  : "Preenchidos automaticamente pelo CNPJ proprio. Altere aqui quando este fechamento precisar de dados diferentes."}</p>
                 <FormGrid>
                   <TextField label="Corretagem (%)" value={brokerageInput} onChange={setBrokerageInput} />
-                  <TextField label="Banco" value={bankName} onChange={setBankName} />
-                  <TextField label="Codigo do banco" value={bankCode} onChange={setBankCode} />
-                  <TextField label="Agencia" value={bankAgency} onChange={setBankAgency} />
-                  <TextField label="Conta" value={bankAccount} onChange={setBankAccount} />
-                  <TextField label="Tipo da conta" value={bankAccountType} onChange={setBankAccountType} />
-                  <TextField label="Titular da conta" value={bankHolderName} onChange={setBankHolderName} />
-                  <TextField label="CPF/CNPJ do titular" value={bankHolderDocument} onChange={setBankHolderDocument} />
-                  <TextField label="Chave PIX" value={pixKey} onChange={setPixKey} />
-                  <TextField label="Tipo da chave PIX" value={pixKeyType} onChange={setPixKeyType} />
+                  {!detailIsPurchaseForOwnCompany ? <>
+                    <TextField label="Banco" value={bankName} onChange={setBankName} />
+                    <TextField label="Codigo do banco" value={bankCode} onChange={setBankCode} />
+                    <TextField label="Agencia" value={bankAgency} onChange={setBankAgency} />
+                    <TextField label="Conta" value={bankAccount} onChange={setBankAccount} />
+                    <TextField label="Tipo da conta" value={bankAccountType} onChange={setBankAccountType} />
+                    <TextField label="Titular da conta" value={bankHolderName} onChange={setBankHolderName} />
+                    <TextField label="CPF/CNPJ do titular" value={bankHolderDocument} onChange={setBankHolderDocument} />
+                    <TextField label="Chave PIX" value={pixKey} onChange={setPixKey} />
+                    <TextField label="Tipo da chave PIX" value={pixKeyType} onChange={setPixKeyType} />
+                  </> : null}
                   <button onClick={() => void saveBankDetails()}>Salvar dados</button>
                 </FormGrid>
 
@@ -1012,7 +1102,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
                     <article><span>Local de descarga</span><strong>{deliveryText || dealPartyName("DELIVERY_RECIPIENT")}</strong></article>
                     <article><span>Notas selecionadas</span><strong>{detail.fiscalDocuments.map((doc) => `NF ${doc.documentNumber}`).join(", ") || "-"}</strong></article>
                     <article><span>Observacoes</span><strong>{publicNotes || "Sem observacoes"}</strong></article>
-                    <article><span>Dados bancarios</span><strong>{[bankName, bankAgency ? `Ag. ${bankAgency}` : "", bankAccount ? `Conta ${bankAccount}` : "", bankHolderName ? `Titular ${bankHolderName}` : "", pixKey ? `PIX ${pixKey}` : ""].filter(Boolean).join(" · ") || "Nao informado"}</strong></article>
+                    <article><span>Dados bancarios</span><strong>{detailIsPurchaseForOwnCompany ? "A combinar" : ([bankName, bankAgency ? `Ag. ${bankAgency}` : "", bankAccount ? `Conta ${bankAccount}` : "", bankHolderName ? `Titular ${bankHolderName}` : "", pixKey ? `PIX ${pixKey}` : ""].filter(Boolean).join(" · ") || "Nao informado")}</strong></article>
                   </div>
                   {detail.pendingIssues.length ? <p className="charge-blocked-note">Existem pendencias nesta confirmacao. Revise antes de emitir definitivamente.</p> : null}
                 </div>

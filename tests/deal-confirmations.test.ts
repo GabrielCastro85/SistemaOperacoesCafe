@@ -555,7 +555,7 @@ describe("deal confirmations", () => {
     repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, "Cafe", "15", "1000", 0));
     const issued = await repo.issueDealConfirmation(draft.confirmation.id);
     const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
-    expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE \d+\.pdf$/);
+    expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE VCMG 0001\.pdf$/);
     expect(document?.storedFilePath ? basename(document.storedFilePath) : "").toBe(document?.originalFileName);
     db.close();
   });
@@ -607,7 +607,7 @@ describe("deal confirmations", () => {
       ["BUYER", "VILLA COFFEE COMERCIO E EXP. LTDA"]
     ]);
     expect(issued.confirmation.confirmationNumber).toBe("VCMG 0091");
-    expect(issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL")?.originalFileName).toMatch(/^FORNECEDORA X VILLA 91\.pdf$/);
+    expect(issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL")?.originalFileName).toMatch(/^FORNECEDORA X VILLA VCMG 0091\.pdf$/);
     db.close();
   });
 

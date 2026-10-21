@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.48"
+  const highlights = releaseVersion === "1.1.49"
+    ? `- A lista de fechamentos pode ser filtrada por empresa e periodo e ordenada pela numeracao ou pela data.
+- Fechamentos de compra deixam de mostrar os dados bancarios da empresa compradora e passam a indicar que o deposito sera combinado com o vendedor.
+- Os arquivos de previa e confirmacao passam a incluir a numeracao completa do fechamento e a contraparte no nome sugerido.`
+    : releaseVersion === "1.1.48"
     ? `- O card Valor total dos servicos soma todos os servicos do periodo selecionado.
 - O total inclui operacoes ja cobradas e ainda nao cobradas.
 - Villa Coffee e Grao & Grao, com todos os seus CNPJs, entram no mesmo valor corporativo.`

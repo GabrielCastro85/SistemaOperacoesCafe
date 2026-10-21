@@ -1787,38 +1787,14 @@ function buildDealExportFileName(
   detail: ReturnType<AppRepository["getDealConfirmation"]>,
   draft: boolean
 ): string {
-  const own = repository.getLegalEntity(detail.confirmation.ownLegalEntityId);
-  const prefix = resolveDealFilePrefix(own);
   const buyer = detail.parties.find((party) => party.partyRole === "BUYER");
-  const buyerName = resolveDealPartyFileName(buyer);
-  const baseName = buyerName ? `${prefix} x ${buyerName}` : prefix;
+  const seller = detail.parties.find((party) => party.partyRole === "SELLER");
+  const ownIsBuyer = buyer?.ownLegalEntityId === detail.confirmation.ownLegalEntityId;
+  const counterpartyName = resolveDealPartyFileName(ownIsBuyer ? seller : buyer);
+  const documentNumber = detail.confirmation.confirmationNumber?.trim()
+    || repository.previewDealConfirmationNumber(detail.confirmation.organizationId, detail.confirmation.ownLegalEntityId);
+  const baseName = counterpartyName ? `${documentNumber} - ${counterpartyName}` : documentNumber;
   return `${draft ? "PREVIA - " : ""}${sanitizeExportFileName(baseName)}.pdf`;
-}
-
-function resolveDealFilePrefix(own: ReturnType<AppRepository["getLegalEntity"]>): string {
-  const explicit = own.documentPrefix?.trim();
-  if (explicit) return explicit.replace(/\s+/g, "");
-
-  const text = `${own.tradeName} ${own.legalName}`
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const state = own.state?.trim().toUpperCase();
-
-  if (text.includes("grao")) {
-    if (state === "MG") return "GGMG";
-    if (state === "SP") return "GGSP";
-    if (state === "DF") return "GGDF";
-    return "GG";
-  }
-
-  if (text.includes("villa") || text.includes("coffee")) {
-    if (state === "MG") return "VCMG";
-    if (state === "ES") return "VCES";
-    return "VC";
-  }
-
-  return "CONFIRMACAO";
 }
 
 function resolveDealPartyFileName(

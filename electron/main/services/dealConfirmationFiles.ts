@@ -347,7 +347,8 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
     confirmation.deliveryLocationSnapshot ? `Entrega: ${confirmation.deliveryLocationSnapshot}` : null,
     `Corretagem: ${confirmation.brokeragePercentageBasisPoints != null ? `${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "Nao informada"}`
   ].filter((item): item is string => Boolean(item));
-  const bankLines = [
+  const purchaseForOwnCompany = buyer?.ownLegalEntityId === confirmation.ownLegalEntityId;
+  const bankLines = purchaseForOwnCompany ? [] : [
     confirmation.bankName ? `Banco: ${confirmation.bankName}` : null,
     confirmation.bankCode ? `Numero do banco: ${confirmation.bankCode}` : null,
     confirmation.bankAgency ? `Agencia: ${confirmation.bankAgency}` : null,
@@ -361,7 +362,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   page.drawText("Condicoes comerciais", { x: margin + 7, y: currentY - 10, size: 6.4, font: bold, color: gold });
   page.drawText("Dados para deposito", { x: margin + colWidth + 17, y: currentY - 10, size: 6.4, font: bold, color: gold });
   drawTextBox(page, commercialLines.join("\n") || "Nao informado", margin + 7, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 7, minSize: 5.6, lineHeight: 1.14, maxLines: 6, color: ink, important: true });
-  drawTextBox(page, bankLines.join("\n") || "Nao informado", margin + colWidth + 17, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 6.7, minSize: 5.2, lineHeight: 1.1, maxLines: 8, color: ink, important: true });
+  drawTextBox(page, bankLines.join("\n") || (purchaseForOwnCompany ? "A combinar" : "Nao informado"), margin + colWidth + 17, currentY - 18, colWidth - 14, commercialHeight - 22, { font, bold, size: 6.7, minSize: 5.2, lineHeight: 1.1, maxLines: 8, color: ink, important: true });
   currentY -= commercialHeight + 8;
 
   page.drawRectangle({ x: margin, y: currentY - 26, width: contentWidth, height: 26, color: rgb(0.94, 0.91, 0.84), borderColor: green, borderWidth: 0.7 });
@@ -619,13 +620,16 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   // Payment + bank block
   drawSectionTitle("Condicoes comerciais");
   const paymentColWidth = (contentWidth - 20) / 2;
+  const purchaseForOwnCompany = buyer?.ownLegalEntityId === confirmation.ownLegalEntityId;
   const bankLines: string[] = [];
-  if (confirmation.bankName) bankLines.push(`Banco: ${confirmation.bankName}${confirmation.bankCode ? ` (${confirmation.bankCode})` : ""}`);
-  if (confirmation.bankAgency) bankLines.push(`Agencia: ${confirmation.bankAgency}`);
-  if (confirmation.bankAccount) bankLines.push(`Conta: ${confirmation.bankAccount}${confirmation.bankAccountType ? ` (${confirmation.bankAccountType})` : ""}`);
-  if (confirmation.bankHolderName) bankLines.push(`Titular: ${confirmation.bankHolderName}`);
-  if (confirmation.bankHolderDocument) bankLines.push(`Documento titular: ${formatTaxId(confirmation.bankHolderDocument)}`);
-  if (confirmation.pixKey) bankLines.push(`PIX${confirmation.pixKeyType ? ` (${confirmation.pixKeyType})` : ""}: ${confirmation.pixKey}`);
+  if (!purchaseForOwnCompany) {
+    if (confirmation.bankName) bankLines.push(`Banco: ${confirmation.bankName}${confirmation.bankCode ? ` (${confirmation.bankCode})` : ""}`);
+    if (confirmation.bankAgency) bankLines.push(`Agencia: ${confirmation.bankAgency}`);
+    if (confirmation.bankAccount) bankLines.push(`Conta: ${confirmation.bankAccount}${confirmation.bankAccountType ? ` (${confirmation.bankAccountType})` : ""}`);
+    if (confirmation.bankHolderName) bankLines.push(`Titular: ${confirmation.bankHolderName}`);
+    if (confirmation.bankHolderDocument) bankLines.push(`Documento titular: ${formatTaxId(confirmation.bankHolderDocument)}`);
+    if (confirmation.pixKey) bankLines.push(`PIX${confirmation.pixKeyType ? ` (${confirmation.pixKeyType})` : ""}: ${confirmation.pixKey}`);
+  }
 
   // A altura acompanha a quantidade de dados bancarios para impedir que
   // titular, documento ou PIX escapem do quadro.
@@ -642,7 +646,7 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   page.drawRectangle({ x: bankX, y: blockTop - commercialBlockHeight, width: paymentColWidth, height: commercialBlockHeight, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
   page.drawText("Dados para deposito", { x: bankX + 8, y: blockTop - 12, size: 6.8, font: bold, color: gold });
   let bankY = blockTop - 25;
-  (bankLines.length ? bankLines : ["Nao informado"]).forEach((item) => {
+  (bankLines.length ? bankLines : [purchaseForOwnCompany ? "A combinar" : "Nao informado"]).forEach((item) => {
     bankY = drawWrappedAt(item, bankX + 8, bankY, paymentColWidth - 16, { size: 6.2, lineGap: 0.35 });
   });
   y = blockTop - commercialBlockHeight - 9;
@@ -1089,7 +1093,7 @@ function buildDealConfirmationFileName(input: Parameters<typeof generateDealConf
     : findPartyFileLabel(input.detail, "SELLER") ?? compactCompanyName(input.ownLegalEntity.tradeName);
   const buyer = findPartyFileLabel(input.detail, "BUYER") ?? "Comprador";
   const sequence = input.detail.confirmation.confirmationNumber
-    ? extractConfirmationSequence(input.detail.confirmation.confirmationNumber)
+    ? input.detail.confirmation.confirmationNumber
     : `PREVIA ${input.detail.confirmation.temporaryReference}`;
 
   return `${safeFileNamePart(seller)} X ${safeFileNamePart(buyer)} ${safeFileNamePart(sequence)}.pdf`;
@@ -1117,12 +1121,6 @@ function compactCompanyName(value: string): string {
   if (lower.includes("villa")) return `VILLA${stateSuffix ? ` ${stateSuffix}` : ""}`;
   if (lower.includes("grao")) return `GRAO E GRAO${stateSuffix ? ` ${stateSuffix}` : ""}`;
   return simplifyCounterpartyName(clean).slice(0, 40) || "EMPRESA";
-}
-
-function extractConfirmationSequence(value: string): string {
-  const match = value.match(/(\d+)(?!.*\d)/);
-  if (!match) return value;
-  return String(Number(match[1]));
 }
 
 function safeFileNamePart(value: string): string {
