@@ -169,8 +169,8 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
     .paid-col { width: 17%; }
     .date-col { width: 13%; }
     .check-col { width: 6%; }
-    .graonex-footer { position: fixed; left: 0; right: 0; bottom: -6mm; display: flex; align-items: center; justify-content: center; gap: 4px; color: #43554a; font-size: 6.5pt; opacity: .72; }
-    .graonex-footer img { width: 12px; height: 12px; object-fit: contain; }
+    .graonex-footer { position: fixed; left: 0; right: 0; bottom: -6mm; display: flex; align-items: center; justify-content: center; gap: 5px; color: #43554a; font-size: 7.5pt; opacity: .72; }
+    .graonex-footer img { width: 15px; height: 15px; object-fit: contain; }
   </style>
 </head>
 <body>

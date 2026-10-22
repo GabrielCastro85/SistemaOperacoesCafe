@@ -30,9 +30,9 @@ export async function addGraonexPdfFooter(doc: PDFDocument, preferredFont?: PDFF
   const font = preferredFont ?? await doc.embedFont(StandardFonts.Helvetica);
   const iconPath = resolveGraonexIconPath();
   const icon = iconPath ? await doc.embedPng(readFileSync(iconPath)).catch(() => null) : null;
-  const textSize = 5.5;
-  const iconSize = 9;
-  const gap = 4;
+  const textSize = 6.5;
+  const iconSize = 12;
+  const gap = 5;
   const textWidth = font.widthOfTextAtSize(GRAONEX_FOOTER_TEXT, textSize);
   const groupWidth = textWidth + (icon ? iconSize + gap : 0);
   const color = rgb(0.32, 0.38, 0.34);
@@ -41,7 +41,7 @@ export async function addGraonexPdfFooter(doc: PDFDocument, preferredFont?: PDFF
     const pageWidth = page.getWidth();
     const startX = Math.max(18, (pageWidth - groupWidth) / 2);
     if (icon) {
-      page.drawImage(icon, { x: startX, y: 5.5, width: iconSize, height: iconSize, opacity: 0.82 });
+      page.drawImage(icon, { x: startX, y: 4.5, width: iconSize, height: iconSize, opacity: 0.82 });
     }
     page.drawText(GRAONEX_FOOTER_TEXT, {
       x: startX + (icon ? iconSize + gap : 0),
@@ -57,10 +57,10 @@ export async function addGraonexPdfFooter(doc: PDFDocument, preferredFont?: PDFF
 export function graonexSvgFooter(width: number, baselineY: number): string {
   const iconDataUrl = graonexIconDataUrl();
   const text = `${GRAONEX_GENERATED_BY}  •  ${GRAONEX_WEBSITE}`;
-  const estimatedTextWidth = 178;
-  const iconSize = 18;
-  const gap = 8;
+  const estimatedTextWidth = 208;
+  const iconSize = 22;
+  const gap = 9;
   const groupWidth = estimatedTextWidth + (iconDataUrl ? iconSize + gap : 0);
   const startX = Math.max(20, (width - groupWidth) / 2);
-  return `<g opacity="0.72">${iconDataUrl ? `<image href="${iconDataUrl}" x="${startX}" y="${baselineY - 14}" width="${iconSize}" height="${iconSize}"/>` : ""}<text x="${startX + (iconDataUrl ? iconSize + gap : 0)}" y="${baselineY}" style="font:12px Arial,sans-serif;fill:#43554a">${text}</text></g>`;
+  return `<g opacity="0.72">${iconDataUrl ? `<image href="${iconDataUrl}" x="${startX}" y="${baselineY - 17}" width="${iconSize}" height="${iconSize}"/>` : ""}<text x="${startX + (iconDataUrl ? iconSize + gap : 0)}" y="${baselineY}" style="font:14px Arial,sans-serif;fill:#43554a">${text}</text></g>`;
 }
