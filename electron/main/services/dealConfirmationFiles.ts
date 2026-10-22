@@ -16,6 +16,7 @@ import type {
   LegalEntity,
   Organization
 } from "../../../src/shared/types/domain.js";
+import { addGraonexPdfFooter, GRAONEX_FOOTER_TEXT } from "./generatedDocumentBranding.js";
 
 export const SIGNED_CONFIRMATION_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -418,6 +419,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   if (doc.getPageCount() !== 1) {
     throw new Error("Modelo de uma pagina excedido: o PDF gerado teria mais de uma pagina.");
   }
+  await addGraonexPdfFooter(doc, font);
   return doc.save();
 }
 
@@ -705,6 +707,7 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   line(margin, pageWidth - margin, y + 6, rgb(0.86, 0.8, 0.7));
   text("A assinatura externa deve ser conferida fora do sistema. Esta etapa nao valida certificado digital.", margin, { size: 7.2, color: muted, maxWidth: contentWidth });
 
+  await addGraonexPdfFooter(doc, font);
   return doc.save();
 }
 
@@ -873,6 +876,7 @@ async function buildStyledConfirmationReportPdf(input: Parameters<typeof generat
   doc.getPages().forEach((reportPage) => {
     reportPage.drawText("Relatorio gerencial local gerado pelo Sistema de Operacoes de Cafe.", { x: margin, y: 22, size: 6.5, font, color: colors.muted });
   });
+  await addGraonexPdfFooter(doc, font);
   return doc.save();
 }
 
@@ -981,7 +985,7 @@ function confirmationReportLabel(type: ConfirmationReportType): string {
 async function writeReportWorkbook(filePath: string, input: Parameters<typeof generateDealConfirmationReportFile>[0]): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Sistema de Operacoes de Cafe";
+  workbook.creator = "Grãonex";
   const summary = workbook.addWorksheet("Resumo");
   const totalCents = input.confirmations.reduce((sum, detail) => sum + detail.confirmation.totalCommercialAmountCents, 0);
   summary.addRows([
@@ -1009,6 +1013,8 @@ async function writeReportWorkbook(filePath: string, input: Parameters<typeof ge
     worksheet.getRow(1).font = { bold: true };
     worksheet.views = [{ state: "frozen", ySplit: 1 }];
     worksheet.columns.forEach((column) => { column.width = 22; });
+    worksheet.headerFooter.oddFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
+    worksheet.headerFooter.evenFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
   });
   await workbook.xlsx.writeFile(filePath);
 }

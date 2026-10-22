@@ -19,6 +19,7 @@ import type {
   Organization,
   PayablePayment
 } from "../../../src/shared/types/domain.js";
+import { addGraonexPdfFooter, GRAONEX_FOOTER_TEXT } from "./generatedDocumentBranding.js";
 
 export const PAYABLE_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
 const allowedExtensions = new Set([".pdf", ".png", ".jpg", ".jpeg", ".webp"]);
@@ -186,13 +187,14 @@ async function buildFinancialReportPdf(input: Parameters<typeof generateFinancia
   doc.getPages().forEach((reportPage) => {
     reportPage.drawText("Relatorio gerencial local gerado pelo Sistema de Operacoes de Cafe.", { x: margin, y: 22, size: 6.5, font, color: colors.muted });
   });
+  await addGraonexPdfFooter(doc, font);
   return doc.save();
 }
 
 async function writeReportWorkbook(filePath: string, input: Parameters<typeof generateFinancialReportFile>[0]): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Sistema de Operacoes de Cafe";
+  workbook.creator = "Grãonex";
   const summary = workbook.addWorksheet("Resumo");
   summary.addRows([
     ["Relatorio", reportTitle(input.reportType)],
@@ -239,6 +241,8 @@ async function writeReportWorkbook(filePath: string, input: Parameters<typeof ge
     sheet.views = [{ state: "frozen", ySplit: 1 }];
     sheet.autoFilter = sheet.rowCount > 1 ? { from: "A1", to: `${String.fromCharCode(64 + Math.min(sheet.columnCount, 26))}1` } : undefined;
     sheet.columns.forEach((column) => { column.width = 18; });
+    sheet.headerFooter.oddFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
+    sheet.headerFooter.evenFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
   });
   await workbook.xlsx.writeFile(filePath);
 }

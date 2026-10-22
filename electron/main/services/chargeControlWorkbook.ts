@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { ClientCharge, ClientPayment } from "../../../src/shared/types/domain.js";
+import { GRAONEX_FOOTER_TEXT, graonexIconDataUrl } from "./generatedDocumentBranding.js";
 
 export interface ChargeControlPaymentAllocation {
   payment: ClientPayment;
@@ -31,7 +32,7 @@ export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInp
   const workbook = new ExcelJS.Workbook();
   const generatedAt = input.generatedAt ?? new Date();
   const rows = openChargeRows(input.rows);
-  workbook.creator = "Sistema de Operacoes de Cafe";
+  workbook.creator = "Grãonex";
   workbook.created = generatedAt;
   workbook.modified = generatedAt;
 
@@ -107,8 +108,8 @@ export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInp
   sheet.autoFilter = { from: "A4", to: "F4" };
   sheet.pageSetup.printArea = `A1:F${lastRow}`;
   sheet.pageSetup.printTitlesRow = "1:4";
-  sheet.headerFooter.oddFooter = "Página &P de &N";
-  sheet.headerFooter.evenFooter = "Página &P de &N";
+  sheet.headerFooter.oddFooter = `&L${GRAONEX_FOOTER_TEXT}&RPágina &P de &N`;
+  sheet.headerFooter.evenFooter = `&L${GRAONEX_FOOTER_TEXT}&RPágina &P de &N`;
   sheet.properties.defaultRowHeight = 20;
 
   return Buffer.from(await workbook.xlsx.writeBuffer());
@@ -116,6 +117,7 @@ export async function buildChargeControlWorkbook(input: ChargeControlWorkbookInp
 
 export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): string {
   const generatedAt = input.generatedAt ?? new Date();
+  const graonexIcon = graonexIconDataUrl();
   const rows = openChargeRows(input.rows).map((item, index) => {
     const client = escapeHtml(item.clientName);
     const period = escapeHtml(`${formatDateOnlyBr(item.charge.periodStart)} a ${formatDateOnlyBr(item.charge.periodEnd)}`);
@@ -145,7 +147,7 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
   <meta charset="utf-8">
   <title>Controle interno de pagamentos</title>
   <style>
-    @page { size: A4 portrait; margin: 6mm; }
+    @page { size: A4 portrait; margin: 6mm 6mm 10mm; }
     * { box-sizing: border-box; }
     body { margin: 0; color: #261d16; font-family: Arial, sans-serif; font-size: 7.5pt; }
     h1 { margin: 0; padding: 5px 8px; background: #063f2e; color: white; font-size: 13pt; text-align: center; }
@@ -167,6 +169,8 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
     .paid-col { width: 17%; }
     .date-col { width: 13%; }
     .check-col { width: 6%; }
+    .graonex-footer { position: fixed; left: 0; right: 0; bottom: -6mm; display: flex; align-items: center; justify-content: center; gap: 4px; color: #43554a; font-size: 6.5pt; opacity: .72; }
+    .graonex-footer img { width: 12px; height: 12px; object-fit: contain; }
   </style>
 </head>
 <body>
@@ -185,6 +189,7 @@ export function buildChargeControlPrintHtml(input: ChargeControlWorkbookInput): 
     </thead>
     ${rows}
   </table>
+  <footer class="graonex-footer">${graonexIcon ? `<img src="${graonexIcon}" alt="">` : ""}<span>Gerado por Grãonex · graonex.com.br</span></footer>
 </body>
 </html>`;
 }

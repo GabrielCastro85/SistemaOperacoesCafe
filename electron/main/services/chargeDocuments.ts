@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDirectories, ClientChargeDetail, LegalEntity, Organization, BusinessPartner, BusinessPartnerLegalEntity } from "../../../src/shared/types/domain.js";
+import { addGraonexPdfFooter, GRAONEX_FOOTER_TEXT, graonexSvgFooter } from "./generatedDocumentBranding.js";
 
 export interface ChargeDocumentResult {
   pdfFilePath: string;
@@ -194,12 +195,14 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
 
   page.drawText(`Gerado pelo Sistema de Operacoes de Cafe em ${formatDateTime(new Date().toISOString())}`, { x: margin, y: 22, size: 6.5, font, color: muted });
   page.drawText(isInternalPreview ? `${organization.appDisplayName} | PREVIA INTERNA - NAO ENVIAR COMO COBRANCA` : `${organization.appDisplayName} | Documento local`, { x: pageWidth - margin - 250, y: 22, size: 6.5, font: bold, color: gold });
+  await addGraonexPdfFooter(doc, font);
   return doc.save();
 }
 
 async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
   const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Grãonex";
   const charge = input.detail.charge;
   const summary = workbook.addWorksheet("Resumo");
   summary.addRows([
@@ -235,6 +238,8 @@ async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput
   });
   workbook.eachSheet((sheet) => {
     sheet.columns.forEach((column) => { column.width = 18; });
+    sheet.headerFooter.oddFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
+    sheet.headerFooter.evenFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
   });
   await workbook.xlsx.writeFile(filePath);
 }
@@ -704,6 +709,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
   <text x="52" y="${totalBoxY + 21}" class="label">${chargeCount > 1 ? "Valor total em aberto" : charge.paidAmountCents > 0 ? "Valor em aberto" : "Valor final a cobrar"}</text>
   ${chargeCount > 1 ? `<text x="52" y="${totalBoxY + 42}" class="muted">Inclui a cobranca atual e outras cobrancas abertas do mesmo cliente no periodo.</text>` : charge.paidAmountCents > 0 ? `<text x="52" y="${totalBoxY + 42}" class="muted">Pago: R$ ${escapeXml(formatCents(charge.paidAmountCents))} de R$ ${escapeXml(formatCents(charge.finalAmountCents))}</text>` : ""}
   <text x="${rightX}" y="${totalBoxY + 35}" class="value right">R$ ${escapeXml(formatCents(totalOpenCents))}</text>
+  ${graonexSvgFooter(width, height - 15)}
 </svg>`;
   return svg;
 }
