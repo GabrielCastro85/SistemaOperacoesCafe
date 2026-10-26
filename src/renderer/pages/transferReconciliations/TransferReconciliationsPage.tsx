@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, TransferReconciliation, TransferReconciliationAvailableInvoice, TransferReconciliationClientBalance } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { PageHeader } from "../../design-system";
@@ -7,6 +7,16 @@ type PaymentDraft = { id?: string; beneficiaryName: string; beneficiaryDocument:
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const emptyPayment = (): PaymentDraft => ({ beneficiaryName: "", beneficiaryDocument: "", description: "", paymentDate: today(), amount: "", notes: "" });
+
+export function paymentHasUserInput(payment: PaymentDraft): boolean {
+  return Boolean(
+    payment.beneficiaryName.trim()
+    || payment.beneficiaryDocument.trim()
+    || payment.description.trim()
+    || payment.amount.trim()
+    || payment.notes.trim()
+  );
+}
 
 export function TransferReconciliationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
@@ -32,6 +42,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const [payments, setPayments] = useState<PaymentDraft[]>([emptyPayment()]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const paymentListRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     if (!organizationId) return;
@@ -138,6 +149,18 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function appendPaymentFromTab(event: React.KeyboardEvent<HTMLInputElement>, index: number): void {
+    if (event.key !== "Tab" || event.shiftKey || index !== payments.length - 1 || !paymentHasUserInput(payments[index])) return;
+    event.preventDefault();
+    const nextIndex = payments.length;
+    setPayments((rows) => [...rows, emptyPayment()]);
+    window.requestAnimationFrame(() => {
+      paymentListRef.current
+        ?.querySelector<HTMLInputElement>(`[data-payment-index="${nextIndex}"] input`)
+        ?.focus();
+    });
+  }
+
   async function cancel(rowId: string): Promise<void> {
     if (!window.confirm("Cancelar esta conferência? Ela deixará de compor o saldo do cliente.")) return;
     await window.operationsCafe.cancelTransferReconciliation(rowId); await refresh();
@@ -200,13 +223,13 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
           {sourceMode === "MANUAL" ? <div className="transfer-manual-value"><span>Valor definido para esta conferência</span><strong>{formatCurrencyFromCents(totalSource)}</strong></div> : <div className="transfer-selected-list">{selectedInvoices.map((invoice) => <article key={invoice.fiscalDocumentId}><div><strong>Nota {invoice.documentNumber}</strong><small>{formatDateOnlyBr(invoice.issueDate)} · {(counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? (counterpartyRole === "SUPPLIER" ? "Emitente não informado" : "Destinatário não informado")}</small></div><strong>{formatCurrencyFromCents(parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"))}</strong></article>)}</div>}
         </div>
         <div className="transfer-section-title"><h2>{sourceMode === "MANUAL" ? "Pagamentos para abatimento" : "Pagamentos da lista"}</h2><button onClick={() => setPayments((rows) => [...rows, emptyPayment()])}>Adicionar pagamento</button></div>
-        <div className="transfer-payments">{payments.map((payment, index) => <div className="transfer-payment" key={payment.id ?? index}>
+        <div className="transfer-payments" ref={paymentListRef}>{payments.map((payment, index) => <div className="transfer-payment" data-payment-index={index} key={payment.id ?? index}>
           <label>Favorecido<input value={payment.beneficiaryName} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, beneficiaryName: event.target.value } : row))} /></label>
           <label>CPF/CNPJ<input value={payment.beneficiaryDocument} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, beneficiaryDocument: event.target.value } : row))} /></label>
           <label>Descrição<input value={payment.description} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, description: event.target.value } : row))} /></label>
           <label>Data<input type="date" value={payment.paymentDate} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, paymentDate: event.target.value } : row))} /></label>
           <label>Valor<input value={payment.amount} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, amount: event.target.value } : row))} /></label>
-          <label>Observação<input value={payment.notes} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, notes: event.target.value } : row))} /></label>
+          <label>Observação<input value={payment.notes} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, notes: event.target.value } : row))} onKeyDown={(event) => appendPaymentFromTab(event, index)} /></label>
           <button className="danger-action" onClick={() => setPayments((rows) => rows.length === 1 ? [emptyPayment()] : rows.filter((_, i) => i !== index))}>Remover</button>
         </div>)}</div>
         <label className="transfer-notes">Observações gerais (opcional)<textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Inclua alguma observação se desejar." /></label>
