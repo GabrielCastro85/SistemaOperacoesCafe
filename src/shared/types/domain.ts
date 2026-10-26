@@ -1530,6 +1530,9 @@ export interface DealConfirmation {
   cancelledAt: string | null;
   cancellationReason: string | null;
   replacedByConfirmationId: string | null;
+  /** Derived for list views: the seller or buyer that is not the operated company. */
+  counterpartyName: string | null;
+  counterpartyRole: "SELLER" | "BUYER" | null;
 }
 
 export interface DealConfirmationParty {

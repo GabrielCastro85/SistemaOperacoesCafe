@@ -108,6 +108,12 @@ describe("deal confirmations", () => {
       const result = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
       expect(result.items).toHaveLength(1);
       expect(result.items[0]).toMatchObject({ productId: null, productNameSnapshot: "Cafe arabica da NF", quantitySacksDecimal: "550", totalAmountCents: 109780000 });
+      repo.addDealConfirmationParty({ dealConfirmationId: result.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+      repo.addDealConfirmationParty({ dealConfirmationId: result.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+      expect(repo.listDealConfirmations({ organizationId: villaId }).find((item) => item.id === result.confirmation.id)).toMatchObject({
+        counterpartyName: "Empresa IF Compradora",
+        counterpartyRole: "BUYER"
+      });
       expect(repo.getFiscalDocument(doc.document.id).items[0].productId).toBe(otherProduct.id);
       const another = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
       expect(another.confirmation.id).not.toBe(result.confirmation.id);
@@ -607,6 +613,10 @@ describe("deal confirmations", () => {
       ["BUYER", "VILLA COFFEE COMERCIO E EXP. LTDA"]
     ]);
     expect(issued.confirmation.confirmationNumber).toBe("VCMG 0091");
+    expect(repo.listDealConfirmations({ organizationId: villaId }).find((item) => item.id === draft.confirmation.id)).toMatchObject({
+      counterpartyName: "FAZENDA FORNECEDORA LTDA",
+      counterpartyRole: "SELLER"
+    });
     expect(issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL")?.originalFileName).toMatch(/^FORNECEDORA X VILLA VCMG 0091\.pdf$/);
     db.close();
   });

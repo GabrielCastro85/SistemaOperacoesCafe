@@ -1124,7 +1124,11 @@ export function mapDealConfirmation(row: DbRecord): DealConfirmation {
     signedAt: textOrNull(row.signed_at),
     cancelledAt: textOrNull(row.cancelled_at),
     cancellationReason: textOrNull(row.cancellation_reason),
-    replacedByConfirmationId: textOrNull(row.replaced_by_confirmation_id)
+    replacedByConfirmationId: textOrNull(row.replaced_by_confirmation_id),
+    counterpartyName: textOrNull(row.counterparty_name),
+    counterpartyRole: row.counterparty_role === "SELLER" || row.counterparty_role === "BUYER"
+      ? row.counterparty_role
+      : null
   };
 }
 

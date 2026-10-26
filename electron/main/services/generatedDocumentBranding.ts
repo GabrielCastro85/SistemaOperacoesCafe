@@ -24,16 +24,25 @@ export function graonexIconDataUrl(): string | null {
   return iconPath ? `data:image/png;base64,${readFileSync(iconPath).toString("base64")}` : null;
 }
 
-export async function addGraonexPdfFooter(doc: PDFDocument, preferredFont?: PDFFont): Promise<void> {
+interface GraonexPdfFooterOptions {
+  text?: string;
+  textSize?: number;
+  iconSize?: number;
+  opacity?: number;
+}
+
+export async function addGraonexPdfFooter(doc: PDFDocument, preferredFont?: PDFFont, options: GraonexPdfFooterOptions = {}): Promise<void> {
   doc.setCreator("Grãonex");
   doc.setProducer("Grãonex - graonex.com.br");
   const font = preferredFont ?? await doc.embedFont(StandardFonts.Helvetica);
   const iconPath = resolveGraonexIconPath();
   const icon = iconPath ? await doc.embedPng(readFileSync(iconPath)).catch(() => null) : null;
-  const textSize = 6.5;
-  const iconSize = 12;
+  const footerText = options.text ?? GRAONEX_FOOTER_TEXT;
+  const textSize = options.textSize ?? 6.5;
+  const iconSize = options.iconSize ?? 12;
+  const opacity = options.opacity ?? 0.82;
   const gap = 5;
-  const textWidth = font.widthOfTextAtSize(GRAONEX_FOOTER_TEXT, textSize);
+  const textWidth = font.widthOfTextAtSize(footerText, textSize);
   const groupWidth = textWidth + (icon ? iconSize + gap : 0);
   const color = rgb(0.32, 0.38, 0.34);
 
@@ -41,15 +50,15 @@ export async function addGraonexPdfFooter(doc: PDFDocument, preferredFont?: PDFF
     const pageWidth = page.getWidth();
     const startX = Math.max(18, (pageWidth - groupWidth) / 2);
     if (icon) {
-      page.drawImage(icon, { x: startX, y: 4.5, width: iconSize, height: iconSize, opacity: 0.82 });
+      page.drawImage(icon, { x: startX, y: 4.5, width: iconSize, height: iconSize, opacity });
     }
-    page.drawText(GRAONEX_FOOTER_TEXT, {
+    page.drawText(footerText, {
       x: startX + (icon ? iconSize + gap : 0),
       y: 7.2,
       size: textSize,
       font,
       color,
-      opacity: 0.82
+      opacity
     });
   }
 }

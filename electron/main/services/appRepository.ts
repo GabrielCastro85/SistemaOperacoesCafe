@@ -6151,8 +6151,48 @@ export class AppRepository {
 
   listDealConfirmations(input: unknown = {}): DealConfirmation[] {
     const filters = dealConfirmationListFiltersSchema.optional().parse(input) ?? {};
-    return (this.db.prepare("SELECT * FROM deal_confirmations ORDER BY confirmation_date DESC, updated_at DESC").all() as DbRecord[])
-      .map(mapDealConfirmation)
+    const confirmations = (this.db.prepare("SELECT * FROM deal_confirmations ORDER BY confirmation_date DESC, updated_at DESC").all() as DbRecord[])
+      .map(mapDealConfirmation);
+    const partyRows = this.db.prepare(
+      "SELECT deal_confirmation_id, party_role, own_legal_entity_id, manual_name, snapshot_json FROM deal_confirmation_parties WHERE party_role IN ('SELLER', 'BUYER') ORDER BY sort_order, party_role"
+    ).all() as Array<{ deal_confirmation_id: string; party_role: "SELLER" | "BUYER"; own_legal_entity_id: string | null; manual_name: string | null; snapshot_json: string }>;
+    const partiesByConfirmation = new Map<string, typeof partyRows>();
+    partyRows.forEach((party) => {
+      const current = partiesByConfirmation.get(party.deal_confirmation_id) ?? [];
+      current.push(party);
+      partiesByConfirmation.set(party.deal_confirmation_id, current);
+    });
+    const withCounterparty = confirmations.map((confirmation) => {
+      const parties = partiesByConfirmation.get(confirmation.id) ?? [];
+      const ownParty = parties.find((party) => party.own_legal_entity_id === confirmation.ownLegalEntityId);
+      const expectedRole: "SELLER" | "BUYER" | null = ownParty?.party_role === "SELLER"
+        ? "BUYER"
+        : ownParty?.party_role === "BUYER"
+          ? "SELLER"
+          : null;
+      const counterparty = (expectedRole ? parties.find((party) => party.party_role === expectedRole) : null)
+        ?? parties.find((party) => party.own_legal_entity_id !== confirmation.ownLegalEntityId)
+        ?? null;
+      let snapshotName: string | null = null;
+      if (counterparty?.snapshot_json) {
+        try {
+          const snapshot = JSON.parse(counterparty.snapshot_json) as { name?: unknown; legalName?: unknown };
+          snapshotName = typeof snapshot.name === "string" && snapshot.name.trim()
+            ? snapshot.name.trim()
+            : typeof snapshot.legalName === "string" && snapshot.legalName.trim()
+              ? snapshot.legalName.trim()
+              : null;
+        } catch {
+          snapshotName = null;
+        }
+      }
+      return {
+        ...confirmation,
+        counterpartyName: snapshotName ?? counterparty?.manual_name?.trim() ?? null,
+        counterpartyRole: counterparty?.party_role ?? expectedRole
+      };
+    });
+    return withCounterparty
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
       .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
       .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)

@@ -197,10 +197,6 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     [data.legalEntities, organizationId]
   );
 
-  const confirmationLegalEntityNames = useMemo(
-    () => new Map(confirmationLegalEntities.map((entity) => [entity.id, entity.tradeName || entity.legalName])),
-    [confirmationLegalEntities]
-  );
 
   const visibleConfirmations = useMemo(() => confirmations
     .filter((confirmation) => listLegalEntityId === "all" || confirmation.ownLegalEntityId === listLegalEntityId)
@@ -809,10 +805,10 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
             />
           </FilterBar>
           <div className="table">
-            <div className="table-head confirmation-grid"><span>Numero</span><span>Empresa</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
+            <div className="table-head confirmation-grid"><span>Numero</span><span>Comprador / vendedor</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
             {visibleConfirmations.map((item) => {
               const canDelete = item.status === "DRAFT" && !item.confirmationNumber;
-              return <div key={item.id} className="table-row confirmation-grid"><span>{confirmationDisplayNumber(item)}</span><span>{confirmationLegalEntityNames.get(item.ownLegalEntityId) ?? "Empresa não encontrada"}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
+              return <div key={item.id} className="table-row confirmation-grid"><span>{confirmationDisplayNumber(item)}</span><span title={item.counterpartyRole === "SELLER" ? "Vendedor" : item.counterpartyRole === "BUYER" ? "Comprador" : undefined}>{item.counterpartyName ?? "Contraparte não identificada"}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
             })}
             {visibleConfirmations.length === 0 ? <EmptyState title="Nenhum fechamento encontrado" description="Ajuste os filtros de empresa ou período para consultar outros fechamentos." /> : null}
           </div>

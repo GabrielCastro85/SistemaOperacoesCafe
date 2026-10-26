@@ -11,12 +11,13 @@ import type {
   ConfirmationReportFormat,
   ConfirmationReportType,
   DealConfirmationDetail,
+  DealConfirmationParty,
   DealPartySnapshot,
   FiscalDocument,
   LegalEntity,
   Organization
 } from "../../../src/shared/types/domain.js";
-import { addGraonexPdfFooter, GRAONEX_FOOTER_TEXT } from "./generatedDocumentBranding.js";
+import { addGraonexPdfFooter, GRAONEX_FOOTER_TEXT, GRAONEX_GENERATED_BY } from "./generatedDocumentBranding.js";
 
 export const SIGNED_CONFIRMATION_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -135,12 +136,27 @@ export function formatFiscalDocumentReferences(fiscalDocuments: FiscalDocument[]
 
 const PARTY_ROLE_LABELS: Record<string, string> = {
   ISSUER: "Emitente",
-  BROKER: "Corretora",
+  BROKER: "Corretor",
   SELLER: "Vendedor",
   BUYER: "Comprador",
   DELIVERY_RECIPIENT: "Local de descarga",
   OTHER: "Outro"
 };
+
+function partyNameForSignature(party: DealConfirmationParty | null, fallback = "Nao informado"): string {
+  const snapshot = party ? safeJson<Partial<DealPartySnapshot>>(party.snapshotJson, {}) : {};
+  return snapshot.name ?? party?.manualName ?? fallback;
+}
+
+function confirmationSignatureEntries(detail: DealConfirmationDetail, seller: DealConfirmationParty | null, buyer: DealConfirmationParty | null): Array<{ name: string; role: "SELLER" | "BROKER" | "BUYER" }> {
+  const signerFor = (role: "SELLER" | "BROKER" | "BUYER") => detail.signers.find((signer) => signer.partyRole === role);
+  const brokerParty = detail.parties.find((party) => party.partyRole === "BROKER") ?? null;
+  return [
+    { name: signerFor("SELLER")?.name || partyNameForSignature(seller), role: "SELLER" },
+    { name: signerFor("BROKER")?.name || partyNameForSignature(brokerParty, "Corretor responsável"), role: "BROKER" },
+    { name: signerFor("BUYER")?.name || partyNameForSignature(buyer), role: "BUYER" }
+  ];
+}
 
 type PdfColor = ReturnType<typeof rgb>;
 
@@ -226,11 +242,6 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
       partyAddress(snapshot),
       partyCity(snapshot)
     ].filter((item): item is string => Boolean(item)).slice(0, max);
-  };
-
-  const partyNameForSignature = (party: (typeof detail.parties)[number] | null): string => {
-    const snapshot = party ? safeJson<Partial<DealPartySnapshot>>(party.snapshotJson, {}) : {};
-    return snapshot.name ?? party?.manualName ?? "Nao informado";
   };
 
   const deliveryLines = (party: (typeof detail.parties)[number] | null): string[] => {
@@ -391,13 +402,12 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   }
 
   currentY = sectionTitle("Assinaturas", currentY);
-  const signerData = detail.signers.length > 0
-    ? detail.signers.slice(0, 2).map((signer) => ({ name: signer.name, role: signer.partyRole }))
-    : [{ name: partyNameForSignature(seller), role: "SELLER" }, { name: partyNameForSignature(buyer), role: "BUYER" }];
+  const signerData = confirmationSignatureEntries(detail, seller, buyer);
   const sigHeight = 70;
-  const sigColWidth = (contentWidth - 14) / 2;
+  const sigGap = 8;
+  const sigColWidth = (contentWidth - sigGap * 2) / 3;
   signerData.forEach((signer, index) => {
-    const x = margin + index * (sigColWidth + 14);
+    const x = margin + index * (sigColWidth + sigGap);
     page.drawRectangle({ x, y: currentY - sigHeight, width: sigColWidth, height: sigHeight, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.55 });
     page.drawText("Área para assinatura", { x: x + 10, y: currentY - 12, size: 6.2, font, color: muted });
     line(x + 14, x + sigColWidth - 14, currentY - 38, rgb(0.22, 0.2, 0.17));
@@ -407,19 +417,15 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   });
   currentY -= sigHeight + 5;
 
-  const footerY = margin + 4;
-  if (currentY < footerY + 24) {
+  const footerClearanceY = 24;
+  if (currentY < footerClearanceY + 8) {
     throw new Error("Modelo de uma pagina excedido: reduza textos de participantes, condicoes comerciais ou observacoes para gerar a confirmacao.");
   }
-  line(margin, pageWidth - margin, footerY + 12, rgb(0.86, 0.8, 0.7));
-  const shortHash = input.versionId.slice(0, 8);
-  page.drawText("Assinatura externa deve ser conferida fora do sistema. O sistema nao valida certificado digital.", { x: margin, y: footerY, size: 5.7, font, color: muted });
-  page.drawText(`Confirmacao ${number} | Versao ${input.versionId.slice(0, 8)} | Pagina 1 de 1 | Hash ${shortHash}`, { x: pageWidth - margin - 210, y: footerY, size: 5.7, font, color: muted });
 
   if (doc.getPageCount() !== 1) {
     throw new Error("Modelo de uma pagina excedido: o PDF gerado teria mais de uma pagina.");
   }
-  await addGraonexPdfFooter(doc, font);
+  await addGraonexPdfFooter(doc, font, { text: GRAONEX_GENERATED_BY, textSize: 7.2, iconSize: 15, opacity: 0.78 });
   return doc.save();
 }
 
@@ -683,31 +689,27 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
     });
   }
 
-  // Signatures side by side
-  if (detail.signers.length > 0) {
+  // Seller, broker and buyer remain available on every generated confirmation.
+  {
     ensureSpace(92);
     drawSectionTitle("Assinaturas");
-    const sigColWidth = (contentWidth - 20) / 2;
+    const signerData = confirmationSignatureEntries(detail, seller, buyer);
+    const sigGap = 8;
+    const sigColWidth = (contentWidth - sigGap * 2) / 3;
     const sigTop = y;
-    detail.signers.forEach((signer, index) => {
-      const col = index % 2;
-      const sigX = margin + col * (sigColWidth + 20);
-      const row = Math.floor(index / 2);
-      const boxTop = sigTop - row * 88;
+    signerData.forEach((signer, index) => {
+      const sigX = margin + index * (sigColWidth + sigGap);
+      const boxTop = sigTop;
       page.drawRectangle({ x: sigX, y: boxTop - 70, width: sigColWidth, height: 70, color: rgb(1, 0.995, 0.98), borderColor: border, borderWidth: 0.6 });
-      page.drawText("Area para assinatura digital", { x: sigX + 16, y: boxTop - 13, size: 6.2, font, color: muted });
-      line(sigX + 16, sigX + sigColWidth - 16, boxTop - 46, rgb(0.2, 0.2, 0.2));
-      page.drawText(truncate(signer.name, bold, 7.6, sigColWidth - 32), { x: sigX + 16, y: boxTop - 58, size: 7.6, font: bold, color: ink });
-      page.drawText(`${PARTY_ROLE_LABELS[signer.partyRole] ?? signer.partyRole}${draft ? "" : ` - ${signer.signatureStatus}`}`, { x: sigX + 16, y: boxTop - 67, size: 6.4, font, color: muted });
+      page.drawText("Area para assinatura", { x: sigX + 10, y: boxTop - 13, size: 6.2, font, color: muted });
+      line(sigX + 12, sigX + sigColWidth - 12, boxTop - 43, rgb(0.2, 0.2, 0.2));
+      page.drawText(truncate(signer.name, bold, 7, sigColWidth - 20), { x: sigX + 10, y: boxTop - 56, size: 7, font: bold, color: ink });
+      page.drawText(PARTY_ROLE_LABELS[signer.role] ?? signer.role, { x: sigX + 10, y: boxTop - 67, size: 6.4, font, color: muted });
     });
-    y = sigTop - Math.ceil(detail.signers.length / 2) * 76 - 5;
+    y = sigTop - 76;
   }
 
-  ensureSpace(20);
-  line(margin, pageWidth - margin, y + 6, rgb(0.86, 0.8, 0.7));
-  text("A assinatura externa deve ser conferida fora do sistema. Esta etapa nao valida certificado digital.", margin, { size: 7.2, color: muted, maxWidth: contentWidth });
-
-  await addGraonexPdfFooter(doc, font);
+  await addGraonexPdfFooter(doc, font, { text: GRAONEX_GENERATED_BY, textSize: 7.2, iconSize: 15, opacity: 0.78 });
   return doc.save();
 }
 
