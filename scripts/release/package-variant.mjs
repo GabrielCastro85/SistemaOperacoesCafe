@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.49"
+  const highlights = releaseVersion === "1.1.52"
+    ? `- A conferencia de repasses passa a aceitar notas de saida de clientes e notas de entrada de fornecedores.
+- Adicionada a opcao de criar uma conferencia sem notas fiscais, informando diretamente um valor inicial.
+- Novos pagamentos podem ser incluidos posteriormente e sao abatidos automaticamente do saldo da conferencia manual.
+- O historico identifica se a origem do valor foi uma lista de notas ou um valor informado manualmente.`
+    : releaseVersion === "1.1.49"
     ? `- A lista de fechamentos pode ser filtrada por empresa e periodo e ordenada pela numeracao ou pela data.
 - Fechamentos de compra deixam de mostrar os dados bancarios da empresa compradora e passam a indicar que o deposito sera combinado com o vendedor.
 - Os arquivos de previa e confirmacao passam a incluir a numeracao completa do fechamento e a contraparte no nome sugerido.`

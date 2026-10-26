@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.52
+
+- A conferência de repasses passa a permitir notas de saída de clientes e notas de entrada de fornecedores.
+- Adicionada a opção de criar uma conferência sem notas fiscais, informando diretamente um valor inicial.
+- Pagamentos podem ser acrescentados posteriormente à conferência manual e são abatidos do saldo restante.
+- O histórico identifica a origem do valor e preserva separadamente as conferências por notas e por valor manual.
+
 ## 1.1.37
 
 - Removido o limite de execucao que podia fazer o Agendador do Windows encerrar o coletor poucos minutos depois da inicializacao.
