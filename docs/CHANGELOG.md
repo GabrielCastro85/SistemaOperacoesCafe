@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.53
+
+- A lista de fechamentos passa a mostrar a contraparte real: comprador nas vendas e vendedor nas compras.
+- O PDF de fechamento ganha uma terceira área de assinatura para o corretor, ao lado do vendedor e do comprador.
+- O rodapé do fechamento foi simplificado para exibir somente a marca discreta “Gerado por Grãonex”.
+
 ## 1.1.52
 
 - A conferência de repasses passa a permitir notas de saída de clientes e notas de entrada de fornecedores.

@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.52"
+  const highlights = releaseVersion === "1.1.53"
+    ? `- A lista de fechamentos passa a mostrar o comprador nas vendas e o vendedor nas compras.
+- O PDF de fechamento ganha uma terceira area de assinatura para o corretor.
+- O rodape do fechamento foi simplificado para exibir somente a marca discreta Gerado por Graonex.`
+    : releaseVersion === "1.1.52"
     ? `- A conferencia de repasses passa a aceitar notas de saida de clientes e notas de entrada de fornecedores.
 - Adicionada a opcao de criar uma conferencia sem notas fiscais, informando diretamente um valor inicial.
 - Novos pagamentos podem ser incluidos posteriormente e sao abatidos automaticamente do saldo da conferencia manual.
