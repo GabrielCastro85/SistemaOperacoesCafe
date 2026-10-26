@@ -1824,12 +1824,14 @@ export interface Diagnostics {
 }
 
 export type TransferReconciliationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
+export type TransferReconciliationCounterpartyRole = "CLIENT" | "SUPPLIER";
 
 export interface TransferReconciliation {
   id: string;
   organizationId: string;
   clientPartnerId: string;
   clientName: string;
+  counterpartyRole: TransferReconciliationCounterpartyRole;
   referenceDate: string;
   title: string | null;
   notes: string | null;

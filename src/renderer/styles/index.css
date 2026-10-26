@@ -5009,7 +5009,7 @@ table tbody tr:hover {
 .transfer-steps button.complete { color: var(--color-primary); }
 .transfer-editor { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 22px; align-items: start; }
 .transfer-form { display: grid; gap: 18px; min-width: 0; }
-.transfer-fields { display: grid; grid-template-columns: 2fr 1fr 2fr; gap: 12px; }
+.transfer-fields { display: grid; grid-template-columns: minmax(180px,1fr) minmax(240px,2fr) minmax(150px,1fr) minmax(220px,2fr); gap: 12px; }
 .transfer-fields label, .transfer-payment label, .transfer-notes { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
 .transfer-fields input, .transfer-fields select, .transfer-payment input, .transfer-notes textarea, .transfer-row input:not([type=checkbox]) { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: white; }
 .transfer-table, .transfer-payments, .transfer-history, .transfer-balances { display: grid; gap: 8px; }
@@ -5046,8 +5046,8 @@ table tbody tr:hover {
 .credit { color: #167348; } .debit { color: #b1372f; }
 .transfer-balance-row { display: grid; grid-template-columns: minmax(220px,2fr) repeat(4,minmax(120px,1fr)); gap: 12px; padding: 13px 15px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .transfer-balance-row.head { font-size: 12px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
-@media (max-width: 1100px) { .transfer-editor { grid-template-columns: 1fr; } .transfer-summary { position: sticky; bottom: 8px; top: auto; z-index: 4; grid-template-columns: repeat(3,1fr); } .transfer-payment { grid-template-columns: repeat(2,minmax(0,1fr)); } .transfer-history article { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 760px) { .transfer-invoice-title { align-items: stretch; flex-direction: column; } .transfer-invoice-title-actions { justify-content: space-between; } }
+@media (max-width: 1100px) { .transfer-editor { grid-template-columns: 1fr; } .transfer-fields { grid-template-columns: repeat(2,minmax(0,1fr)); } .transfer-summary { position: sticky; bottom: 8px; top: auto; z-index: 4; grid-template-columns: repeat(3,1fr); } .transfer-payment { grid-template-columns: repeat(2,minmax(0,1fr)); } .transfer-history article { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .transfer-fields { grid-template-columns: 1fr; } .transfer-invoice-title { align-items: stretch; flex-direction: column; } .transfer-invoice-title-actions { justify-content: space-between; } }
 
 /* Financeiro: indicadores legiveis e tabela operacional compacta. */
 .finance-summary-cards {

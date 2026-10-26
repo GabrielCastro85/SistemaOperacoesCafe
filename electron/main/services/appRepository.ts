@@ -3543,8 +3543,10 @@ export class AppRepository {
     return rows.map((row) => this.mapTransferReconciliation(row));
   }
 
-  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
+  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; counterpartyRole?: "CLIENT" | "SUPPLIER"; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
     this.assertOrganizationWritable(input.organizationId);
+    const counterpartyRole = input.counterpartyRole ?? "CLIENT";
+    const operationType = counterpartyRole === "SUPPLIER" ? "PURCHASE" : "SALE";
     const usageRows = this.db.prepare(`
       SELECT ri.reconciliation_id, ri.fiscal_document_id, ri.source_amount_cents,
         rr.status, rr.total_source_cents, rr.total_payments_cents
@@ -3587,10 +3589,10 @@ export class AppRepository {
       JOIN legal_entities own ON own.id = f.own_legal_entity_id
       LEFT JOIN partner_legal_entities partner ON partner.id = f.partner_legal_entity_id
       WHERE f.organization_id = ? AND f.status <> 'CANCELED'
-        AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = 'SALE'
+        AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
           AND o.status <> 'CANCELED' AND o.responsible_partner_id = ?)
       ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
-    `).all(input.organizationId, input.clientPartnerId) as DbRecord[];
+    `).all(input.organizationId, operationType, input.clientPartnerId) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
       try {
@@ -3601,10 +3603,12 @@ export class AppRepository {
       const recipient = snapshot.recipient as Record<string, unknown> | undefined;
       const invoiceTotalCents = Number.isFinite(Number(row.total_amount_cents)) ? Number(row.total_amount_cents) : 0;
       const previouslyUsedCents = usedByDocument.get(String(row.id)) ?? 0;
+      const ownName = String(row.own_legal_name ?? row.own_trade_name ?? "");
+      const partnerName = this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name);
       return {
         fiscalDocumentId: String(row.id), documentNumber: String(row.document_number), issueDate: String(row.issue_date),
-        issuerName: this.stringOrNull(issuer?.legalName) ?? String(row.own_legal_name ?? row.own_trade_name ?? ""),
-        recipientName: this.stringOrNull(recipient?.legalName) ?? this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name),
+        issuerName: this.stringOrNull(issuer?.legalName) ?? (counterpartyRole === "SUPPLIER" ? partnerName : ownName),
+        recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),
         invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents
       };
     });
@@ -3634,6 +3638,7 @@ export class AppRepository {
 
   saveTransferReconciliation(input: {
     id?: string; organizationId: string; clientPartnerId: string; referenceDate: string; title?: string | null; notes?: string | null;
+    counterpartyRole?: "CLIENT" | "SUPPLIER";
     status?: "DRAFT" | "COMPLETED"; invoices: Array<{ fiscalDocumentId: string; sourceAmountCents: number }>;
     payments: Array<{ id?: string; beneficiaryName: string; beneficiaryDocument?: string | null; description?: string | null; paymentDate?: string | null; amountCents: number; notes?: string | null }>;
   }): TransferReconciliationDetail {
@@ -3648,12 +3653,15 @@ export class AppRepository {
     const balance = totalSource - totalPayments;
     const status = input.status ?? "DRAFT";
     const run = this.db.transaction(() => {
-      const existing = this.db.prepare("SELECT id, created_at FROM transfer_reconciliations WHERE id = ?").get(id) as { id: string; created_at: string } | undefined;
-      const row = [id, input.organizationId, input.clientPartnerId, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
-      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      const existing = this.db.prepare("SELECT id, created_at, counterparty_role FROM transfer_reconciliations WHERE id = ?").get(id) as { id: string; created_at: string; counterparty_role: "CLIENT" | "SUPPLIER" } | undefined;
+      const counterpartyRole = input.counterpartyRole ?? existing?.counterparty_role ?? "CLIENT";
+      const hasRequiredRole = this.db.prepare("SELECT 1 FROM business_partner_roles WHERE business_partner_id = ? AND role = ?").get(input.clientPartnerId, counterpartyRole);
+      if (!hasRequiredRole) throw new Error(counterpartyRole === "SUPPLIER" ? "O parceiro selecionado nao e fornecedor." : "O parceiro selecionado nao e cliente.");
+      const row = [id, input.organizationId, input.clientPartnerId, counterpartyRole, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
+      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, counterparty_role, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id, client_partner_id=excluded.client_partner_id, reference_date=excluded.reference_date,
-          title=excluded.title, notes=excluded.notes, status=excluded.status, total_source_cents=excluded.total_source_cents,
+          counterparty_role=excluded.counterparty_role, title=excluded.title, notes=excluded.notes, status=excluded.status, total_source_cents=excluded.total_source_cents,
           total_payments_cents=excluded.total_payments_cents, balance_cents=excluded.balance_cents, completed_at=excluded.completed_at, cancelled_at=NULL, updated_at=excluded.updated_at`).run(...row);
       this.db.prepare("DELETE FROM transfer_reconciliation_invoices WHERE reconciliation_id = ?").run(id);
       this.db.prepare("DELETE FROM transfer_reconciliation_payments WHERE reconciliation_id = ?").run(id);
@@ -3661,7 +3669,7 @@ export class AppRepository {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const selection of input.invoices) {
         const document = this.getFiscalDocument(selection.fiscalDocumentId).document;
-        const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
+        const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, counterpartyRole, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
         if (!available) throw new Error("Nota indisponivel para conferencia.");
         if (selection.sourceAmountCents > available.availableCents) throw new Error("O valor informado supera o saldo disponivel da nota.");
         insertInvoice.run(randomUUID(), id, document.id, document.documentNumber, document.issueDate, available.issuerName, available.recipientName, document.totalAmountCents, selection.sourceAmountCents, now, now);
@@ -3697,7 +3705,7 @@ export class AppRepository {
         COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' AND r.balance_cents < 0 THEN -r.balance_cents ELSE 0 END), 0) AS debit_cents,
         COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' THEN r.balance_cents ELSE 0 END), 0) AS net_balance_cents,
         SUM(CASE WHEN r.status = 'DRAFT' THEN 1 ELSE 0 END) AS open_reconciliations
-      FROM business_partners p LEFT JOIN transfer_reconciliations r ON r.client_partner_id = p.id AND r.organization_id = ?
+      FROM business_partners p LEFT JOIN transfer_reconciliations r ON r.client_partner_id = p.id AND r.organization_id = ? AND r.counterparty_role = 'CLIENT'
       WHERE p.organization_id = ? AND p.is_active = 1
         AND EXISTS (SELECT 1 FROM business_partner_roles role WHERE role.business_partner_id = p.id AND role.role = 'CLIENT')
       GROUP BY p.id, p.display_name HAVING COUNT(r.id) > 0 ORDER BY ABS(net_balance_cents) DESC, p.display_name`).all(organizationId, organizationId) as DbRecord[];
@@ -3707,6 +3715,7 @@ export class AppRepository {
   private mapTransferReconciliation(row: DbRecord): TransferReconciliation {
     return {
       id: String(row.id), organizationId: String(row.organization_id), clientPartnerId: String(row.client_partner_id), clientName: String(row.client_name ?? ""),
+      counterpartyRole: String(row.counterparty_role ?? "CLIENT") as TransferReconciliation["counterpartyRole"],
       referenceDate: String(row.reference_date), title: this.stringOrNull(row.title), notes: this.stringOrNull(row.notes),
       status: String(row.status) as TransferReconciliation["status"], totalSourceCents: Number(row.total_source_cents), totalPaymentsCents: Number(row.total_payments_cents),
       balanceCents: Number(row.balance_cents), completedAt: this.stringOrNull(row.completed_at), cancelledAt: this.stringOrNull(row.cancelled_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at)

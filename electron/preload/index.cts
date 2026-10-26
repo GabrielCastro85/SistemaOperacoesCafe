@@ -763,7 +763,7 @@ export interface OperationsCafeApi {
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
   ignorePreviousPeriodBillingAlert: (input: { organizationId: string; ownLegalEntityId: string; clientPartnerId: string; periodStart: string; periodEnd: string; reason: string }) => Promise<DashboardAlerts>;
   listTransferReconciliations: (filters: { organizationId: string; clientPartnerId?: string; status?: "ALL" | "DRAFT" | "COMPLETED" | "CANCELLED" }) => Promise<TransferReconciliation[]>;
-  listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
+  listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; counterpartyRole?: "CLIENT" | "SUPPLIER"; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
   getTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
   saveTransferReconciliation: (input: unknown) => Promise<TransferReconciliationDetail>;
   cancelTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;

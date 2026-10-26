@@ -10,6 +10,36 @@ const tempDirs: string[] = [];
 afterEach(() => tempDirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
 describe("transfer reconciliations", () => {
+  it("lists inbound purchase notes for suppliers and preserves the selected counterparty role", async () => {
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-supplier-"));
+    tempDirs.push(userData);
+    const dirs = resolveAppDirectories(userData);
+    ensureAppDirectories(dirs);
+    const db = initializeDatabase(dirs);
+    const repo = new AppRepository(db, dirs);
+    try {
+      const organizationId = "11111111-1111-4111-8111-111111111111";
+      const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+      repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: organizationId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+      const supplier = await repo.createBusinessPartner({ organizationId, displayName: "Fornecedor Repasse", notes: null, roles: ["CLIENT", "SUPPLIER"], isActive: true });
+      const product = repo.listProducts({ organizationId })[0];
+      const doc = repo.createFiscalDocument({ organizationId, ownLegalEntityId, responsiblePartnerId: supplier.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "7001", series: "1", issueDate: "2026-10-25", totalAmountCents: 90_000_00, hasPendingIssues: false, pendingNotes: null, notes: null });
+      const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe comprado", quantity: "1", unit: "SACK", unitPriceDecimal: "90000.00", totalAmountCents: 90_000_00, sacksQuantity: "1" });
+      repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: supplier.id, productId: product.id, operationType: "PURCHASE", operationScope: "EXTERNAL", operationDate: "2026-10-25", quantitySacks: "1", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+      repo.confirmFiscalDocument(doc.document.id);
+
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: supplier.id })).toHaveLength(0);
+      const inbound = repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: supplier.id, counterpartyRole: "SUPPLIER" });
+      expect(inbound).toHaveLength(1);
+      expect(inbound[0]).toMatchObject({ fiscalDocumentId: doc.document.id, documentNumber: "7001", availableCents: 90_000_00 });
+
+      const saved = repo.saveTransferReconciliation({ organizationId, clientPartnerId: supplier.id, counterpartyRole: "SUPPLIER", referenceDate: "2026-10-26", status: "COMPLETED", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 50_000_00 }], payments: [{ beneficiaryName: "Fornecedor Repasse", amountCents: 50_000_00 }] });
+      expect(saved.reconciliation.counterpartyRole).toBe("SUPPLIER");
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: supplier.id, counterpartyRole: "SUPPLIER" })[0].availableCents).toBe(40_000_00);
+      expect(repo.listTransferReconciliationClientBalances(organizationId)).toHaveLength(0);
+    } finally { db.close(); }
+  });
+
   it("reuses a note in partial reconciliations and never creates billing movements", async () => {
     const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-"));
     tempDirs.push(userData);

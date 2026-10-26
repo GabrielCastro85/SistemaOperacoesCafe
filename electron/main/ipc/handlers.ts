@@ -1309,12 +1309,13 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     z.object({ organizationId: z.string().uuid(), clientPartnerId: z.string().uuid().optional(), status: z.enum(["ALL", "DRAFT", "COMPLETED", "CANCELLED"]).optional() }).parse(payload)
   ));
   handle(IPC_CHANNELS.listTransferReconciliationInvoices, (_event, payload: unknown) => repository.listTransferReconciliationInvoices(
-    z.object({ organizationId: z.string().uuid(), clientPartnerId: z.string().uuid(), reconciliationId: z.string().uuid().optional() }).parse(payload)
+    z.object({ organizationId: z.string().uuid(), clientPartnerId: z.string().uuid(), counterpartyRole: z.enum(["CLIENT", "SUPPLIER"]).optional(), reconciliationId: z.string().uuid().optional() }).parse(payload)
   ));
   handle(IPC_CHANNELS.getTransferReconciliation, (_event, payload: unknown) => repository.getTransferReconciliation(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.saveTransferReconciliation, (_event, payload: unknown) => repository.saveTransferReconciliation(
     z.object({
       id: z.string().uuid().optional(), organizationId: z.string().uuid(), clientPartnerId: z.string().uuid(),
+      counterpartyRole: z.enum(["CLIENT", "SUPPLIER"]).optional(),
       referenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), title: z.string().nullable().optional(), notes: z.string().nullable().optional(),
       status: z.enum(["DRAFT", "COMPLETED"]).optional(),
       invoices: z.array(z.object({ fiscalDocumentId: z.string().uuid(), sourceAmountCents: z.number().int().positive() })).min(1),

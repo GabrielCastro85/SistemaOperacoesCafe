@@ -3532,4 +3532,13 @@ export const migrations: Migration[] = [
       ALTER TABLE fiscal_documents ADD COLUMN has_financial_service INTEGER NOT NULL DEFAULT 0 CHECK (has_financial_service IN (0, 1));
     `)
   }
+  ,{
+    name: "057_transfer_reconciliation_counterparty_role",
+    up: (db) => db.exec(`
+      ALTER TABLE transfer_reconciliations ADD COLUMN counterparty_role TEXT NOT NULL DEFAULT 'CLIENT'
+        CHECK (counterparty_role IN ('CLIENT', 'SUPPLIER'));
+      CREATE INDEX idx_transfer_reconciliations_counterparty_role
+        ON transfer_reconciliations(organization_id, counterparty_role, client_partner_id);
+    `)
+  }
 ];
