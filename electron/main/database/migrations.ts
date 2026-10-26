@@ -3541,4 +3541,13 @@ export const migrations: Migration[] = [
         ON transfer_reconciliations(organization_id, counterparty_role, client_partner_id);
     `)
   }
+  ,{
+    name: "058_transfer_reconciliation_manual_source",
+    up: (db) => db.exec(`
+      ALTER TABLE transfer_reconciliations ADD COLUMN source_mode TEXT NOT NULL DEFAULT 'INVOICES'
+        CHECK (source_mode IN ('INVOICES', 'MANUAL'));
+      ALTER TABLE transfer_reconciliations ADD COLUMN manual_source_cents INTEGER
+        CHECK (manual_source_cents IS NULL OR manual_source_cents > 0);
+    `)
+  }
 ];

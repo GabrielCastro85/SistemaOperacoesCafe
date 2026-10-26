@@ -10,6 +10,53 @@ const tempDirs: string[] = [];
 afterEach(() => tempDirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
 describe("transfer reconciliations", () => {
+  it("creates a reconciliation from a manual amount and reduces its balance with later payments", async () => {
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-manual-"));
+    tempDirs.push(userData);
+    const dirs = resolveAppDirectories(userData);
+    ensureAppDirectories(dirs);
+    const db = initializeDatabase(dirs);
+    const repo = new AppRepository(db, dirs);
+    try {
+      const organizationId = "11111111-1111-4111-8111-111111111111";
+      const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+      repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: organizationId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+      const partner = await repo.createBusinessPartner({ organizationId, displayName: "Cliente Valor Manual", notes: null, roles: ["CLIENT"], isActive: true });
+
+      const first = repo.saveTransferReconciliation({
+        organizationId,
+        clientPartnerId: partner.id,
+        sourceMode: "MANUAL",
+        manualSourceCents: 100_000_00,
+        referenceDate: "2026-10-26",
+        status: "COMPLETED",
+        invoices: [],
+        payments: [{ beneficiaryName: "Primeiro pagamento", amountCents: 30_000_00 }]
+      });
+      expect(first.reconciliation).toMatchObject({ sourceMode: "MANUAL", manualSourceCents: 100_000_00, totalSourceCents: 100_000_00, totalPaymentsCents: 30_000_00, balanceCents: 70_000_00 });
+      expect(first.invoices).toHaveLength(0);
+
+      const updated = repo.saveTransferReconciliation({
+        id: first.reconciliation.id,
+        organizationId,
+        clientPartnerId: partner.id,
+        counterpartyRole: "CLIENT",
+        sourceMode: "MANUAL",
+        manualSourceCents: 100_000_00,
+        referenceDate: "2026-10-26",
+        status: "COMPLETED",
+        invoices: [],
+        payments: [
+          { id: first.payments[0].id, beneficiaryName: "Primeiro pagamento", amountCents: 30_000_00 },
+          { beneficiaryName: "Segundo pagamento", amountCents: 25_000_00 }
+        ]
+      });
+      expect(updated.reconciliation).toMatchObject({ totalSourceCents: 100_000_00, totalPaymentsCents: 55_000_00, balanceCents: 45_000_00 });
+      expect(updated.payments).toHaveLength(2);
+      expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ creditCents: 45_000_00, netBalanceCents: 45_000_00 });
+    } finally { db.close(); }
+  });
+
   it("lists inbound purchase notes for suppliers and preserves the selected counterparty role", async () => {
     const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-supplier-"));
     tempDirs.push(userData);

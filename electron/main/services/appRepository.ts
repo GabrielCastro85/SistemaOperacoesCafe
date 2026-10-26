@@ -3639,16 +3639,22 @@ export class AppRepository {
   saveTransferReconciliation(input: {
     id?: string; organizationId: string; clientPartnerId: string; referenceDate: string; title?: string | null; notes?: string | null;
     counterpartyRole?: "CLIENT" | "SUPPLIER";
+    sourceMode?: "INVOICES" | "MANUAL"; manualSourceCents?: number | null;
     status?: "DRAFT" | "COMPLETED"; invoices: Array<{ fiscalDocumentId: string; sourceAmountCents: number }>;
     payments: Array<{ id?: string; beneficiaryName: string; beneficiaryDocument?: string | null; description?: string | null; paymentDate?: string | null; amountCents: number; notes?: string | null }>;
   }): TransferReconciliationDetail {
     this.assertOrganizationWritable(input.organizationId);
-    if (!input.invoices.length) throw new Error("Selecione pelo menos uma nota fiscal.");
+    const storedSource = input.id ? this.db.prepare("SELECT source_mode, manual_source_cents FROM transfer_reconciliations WHERE id = ?").get(input.id) as { source_mode: "INVOICES" | "MANUAL"; manual_source_cents: number | null } | undefined : undefined;
+    const sourceMode = input.sourceMode ?? storedSource?.source_mode ?? "INVOICES";
+    const manualSourceCents = sourceMode === "MANUAL" ? input.manualSourceCents ?? storedSource?.manual_source_cents ?? null : null;
+    if (sourceMode === "INVOICES" && !input.invoices.length) throw new Error("Selecione pelo menos uma nota fiscal.");
+    if (sourceMode === "MANUAL" && (!Number.isInteger(manualSourceCents) || Number(manualSourceCents) <= 0)) throw new Error("Informe um valor inicial valido para a conferencia.");
+    if (sourceMode === "MANUAL" && input.invoices.length) throw new Error("Uma conferencia com valor manual nao pode ter notas vinculadas.");
     if (input.invoices.some((item) => !Number.isInteger(item.sourceAmountCents) || item.sourceAmountCents <= 0)) throw new Error("Informe um valor valido para cada nota.");
     if (input.payments.some((item) => !item.beneficiaryName.trim() || !Number.isInteger(item.amountCents) || item.amountCents <= 0)) throw new Error("Preencha favorecido e valor em todos os pagamentos.");
     const id = input.id ?? randomUUID();
     const now = new Date().toISOString();
-    const totalSource = input.invoices.reduce((sum, item) => sum + item.sourceAmountCents, 0);
+    const totalSource = sourceMode === "MANUAL" ? Number(manualSourceCents) : input.invoices.reduce((sum, item) => sum + item.sourceAmountCents, 0);
     const totalPayments = input.payments.reduce((sum, item) => sum + item.amountCents, 0);
     const balance = totalSource - totalPayments;
     const status = input.status ?? "DRAFT";
@@ -3657,11 +3663,12 @@ export class AppRepository {
       const counterpartyRole = input.counterpartyRole ?? existing?.counterparty_role ?? "CLIENT";
       const hasRequiredRole = this.db.prepare("SELECT 1 FROM business_partner_roles WHERE business_partner_id = ? AND role = ?").get(input.clientPartnerId, counterpartyRole);
       if (!hasRequiredRole) throw new Error(counterpartyRole === "SUPPLIER" ? "O parceiro selecionado nao e fornecedor." : "O parceiro selecionado nao e cliente.");
-      const row = [id, input.organizationId, input.clientPartnerId, counterpartyRole, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
-      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, counterparty_role, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      const row = [id, input.organizationId, input.clientPartnerId, counterpartyRole, sourceMode, manualSourceCents, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
+      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, counterparty_role, source_mode, manual_source_cents, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id, client_partner_id=excluded.client_partner_id, reference_date=excluded.reference_date,
-          counterparty_role=excluded.counterparty_role, title=excluded.title, notes=excluded.notes, status=excluded.status, total_source_cents=excluded.total_source_cents,
+          counterparty_role=excluded.counterparty_role, source_mode=excluded.source_mode, manual_source_cents=excluded.manual_source_cents,
+          title=excluded.title, notes=excluded.notes, status=excluded.status, total_source_cents=excluded.total_source_cents,
           total_payments_cents=excluded.total_payments_cents, balance_cents=excluded.balance_cents, completed_at=excluded.completed_at, cancelled_at=NULL, updated_at=excluded.updated_at`).run(...row);
       this.db.prepare("DELETE FROM transfer_reconciliation_invoices WHERE reconciliation_id = ?").run(id);
       this.db.prepare("DELETE FROM transfer_reconciliation_payments WHERE reconciliation_id = ?").run(id);
@@ -3716,6 +3723,7 @@ export class AppRepository {
     return {
       id: String(row.id), organizationId: String(row.organization_id), clientPartnerId: String(row.client_partner_id), clientName: String(row.client_name ?? ""),
       counterpartyRole: String(row.counterparty_role ?? "CLIENT") as TransferReconciliation["counterpartyRole"],
+      sourceMode: String(row.source_mode ?? "INVOICES") as TransferReconciliation["sourceMode"], manualSourceCents: row.manual_source_cents == null ? null : Number(row.manual_source_cents),
       referenceDate: String(row.reference_date), title: this.stringOrNull(row.title), notes: this.stringOrNull(row.notes),
       status: String(row.status) as TransferReconciliation["status"], totalSourceCents: Number(row.total_source_cents), totalPaymentsCents: Number(row.total_payments_cents),
       balanceCents: Number(row.balance_cents), completedAt: this.stringOrNull(row.completed_at), cancelledAt: this.stringOrNull(row.cancelled_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at)

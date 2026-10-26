@@ -1825,6 +1825,7 @@ export interface Diagnostics {
 
 export type TransferReconciliationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
 export type TransferReconciliationCounterpartyRole = "CLIENT" | "SUPPLIER";
+export type TransferReconciliationSourceMode = "INVOICES" | "MANUAL";
 
 export interface TransferReconciliation {
   id: string;
@@ -1832,6 +1833,8 @@ export interface TransferReconciliation {
   clientPartnerId: string;
   clientName: string;
   counterpartyRole: TransferReconciliationCounterpartyRole;
+  sourceMode: TransferReconciliationSourceMode;
+  manualSourceCents: number | null;
   referenceDate: string;
   title: string | null;
   notes: string | null;

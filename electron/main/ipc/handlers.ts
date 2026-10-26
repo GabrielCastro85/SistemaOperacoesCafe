@@ -1316,9 +1316,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     z.object({
       id: z.string().uuid().optional(), organizationId: z.string().uuid(), clientPartnerId: z.string().uuid(),
       counterpartyRole: z.enum(["CLIENT", "SUPPLIER"]).optional(),
+      sourceMode: z.enum(["INVOICES", "MANUAL"]).optional(), manualSourceCents: z.number().int().positive().nullable().optional(),
       referenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), title: z.string().nullable().optional(), notes: z.string().nullable().optional(),
       status: z.enum(["DRAFT", "COMPLETED"]).optional(),
-      invoices: z.array(z.object({ fiscalDocumentId: z.string().uuid(), sourceAmountCents: z.number().int().positive() })).min(1),
+      invoices: z.array(z.object({ fiscalDocumentId: z.string().uuid(), sourceAmountCents: z.number().int().positive() })),
       payments: z.array(z.object({ id: z.string().uuid().optional(), beneficiaryName: z.string().trim().min(1), beneficiaryDocument: z.string().nullable().optional(), description: z.string().nullable().optional(), paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), amountCents: z.number().int().positive(), notes: z.string().nullable().optional() }))
     }).parse(payload)
   ));
