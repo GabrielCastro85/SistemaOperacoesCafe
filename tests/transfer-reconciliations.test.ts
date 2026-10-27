@@ -10,6 +10,56 @@ const tempDirs: string[] = [];
 afterEach(() => tempDirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
 describe("transfer reconciliations", () => {
+  it("lists notes from Villa and Grao for the same partner and identifies their origin", async () => {
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-multi-org-"));
+    tempDirs.push(userData);
+    const dirs = resolveAppDirectories(userData);
+    ensureAppDirectories(dirs);
+    const db = initializeDatabase(dirs);
+    const repo = new AppRepository(db, dirs);
+    try {
+      const villaOrganizationId = "11111111-1111-4111-8111-111111111111";
+      const villaLegalEntityId = "33333333-3333-4333-8333-333333333331";
+      const graoOrganizationId = "22222222-2222-4222-8222-222222222222";
+      const graoLegalEntityId = "44444444-4444-4444-8444-444444444441";
+      repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: villaOrganizationId, defaultLegalEntityId: villaLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+      const villaPartner = await repo.createBusinessPartner({ organizationId: villaOrganizationId, displayName: "Cliente das Duas Empresas", documentNumber: "12.345.678/0001-90", notes: null, roles: ["CLIENT"], isActive: true });
+      const graoPartner = await repo.createBusinessPartner({ organizationId: graoOrganizationId, displayName: "Cliente das Duas Empresas", documentNumber: "12345678000190", notes: null, roles: ["CLIENT"], isActive: true });
+
+      const createSale = (organizationId: string, ownLegalEntityId: string, partnerId: string, documentNumber: string): void => {
+        const product = repo.listProducts({ organizationId })[0];
+        const created = repo.createFiscalDocument({ organizationId, ownLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-10-26", totalAmountCents: 100_000_00, hasPendingIssues: false, pendingNotes: null, notes: null });
+        const item = repo.addFiscalDocumentItem({ fiscalDocumentId: created.document.id, productId: product.id, description: "Cafe", quantity: "1", unit: "SACK", unitPriceDecimal: "100000.00", totalAmountCents: 100_000_00, sacksQuantity: "1" });
+        repo.addOperation({ fiscalDocumentId: created.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: partnerId, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-10-26", quantitySacks: "1", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+        repo.confirmFiscalDocument(created.document.id);
+      };
+      createSale(villaOrganizationId, villaLegalEntityId, villaPartner.id, "1001");
+      createSale(graoOrganizationId, graoLegalEntityId, graoPartner.id, "2001");
+
+      const invoices = repo.listTransferReconciliationInvoices({ organizationId: villaOrganizationId, clientPartnerId: villaPartner.id });
+      expect(invoices).toHaveLength(2);
+      expect(new Set(invoices.map((invoice) => invoice.organizationId))).toEqual(new Set([villaOrganizationId, graoOrganizationId]));
+      expect(invoices.every((invoice) => invoice.organizationName.length > 0)).toBe(true);
+    } finally { db.close(); }
+  });
+
+  it("accepts a payment with only its amount filled", async () => {
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-optional-payment-"));
+    tempDirs.push(userData);
+    const dirs = resolveAppDirectories(userData);
+    ensureAppDirectories(dirs);
+    const db = initializeDatabase(dirs);
+    const repo = new AppRepository(db, dirs);
+    try {
+      const organizationId = "11111111-1111-4111-8111-111111111111";
+      const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+      repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: organizationId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+      const partner = await repo.createBusinessPartner({ organizationId, displayName: "Cliente Pagamento Simplificado", notes: null, roles: ["CLIENT"], isActive: true });
+      const saved = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, sourceMode: "MANUAL", manualSourceCents: 10_000, referenceDate: "2026-10-26", status: "COMPLETED", invoices: [], payments: [{ beneficiaryName: "", amountCents: 2_500 }] });
+      expect(saved.payments[0]).toMatchObject({ beneficiaryName: "", amountCents: 2_500 });
+    } finally { db.close(); }
+  });
+
   it("creates a reconciliation from a manual amount and reduces its balance with later payments", async () => {
     const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-manual-"));
     tempDirs.push(userData);

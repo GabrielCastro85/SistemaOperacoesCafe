@@ -1883,6 +1883,8 @@ export interface TransferReconciliationDetail {
 
 export interface TransferReconciliationAvailableInvoice {
   fiscalDocumentId: string;
+  organizationId: string;
+  organizationName: string;
   documentNumber: string;
   issueDate: string;
   issuerName: string | null;

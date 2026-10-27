@@ -76,6 +76,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
         if (!active) return;
         setInvoices((Array.isArray(rows) ? rows : []).filter((row) => row && typeof row.fiscalDocumentId === "string").map((row) => ({
           ...row,
+          organizationId: String(row.organizationId ?? ""), organizationName: String(row.organizationName ?? "Empresa não informada"),
           documentNumber: String(row.documentNumber ?? ""), issueDate: String(row.issueDate ?? ""),
           invoiceTotalCents: Number.isFinite(Number(row.invoiceTotalCents)) ? Number(row.invoiceTotalCents) : 0,
           previouslyUsedCents: Number.isFinite(Number(row.previouslyUsedCents)) ? Number(row.previouslyUsedCents) : 0,
@@ -94,7 +95,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const balance = totalSource - totalPayments;
   const filteredInvoices = useMemo(() => {
     const term = invoiceSearch.trim().toLocaleLowerCase("pt-BR");
-    const rows = term ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
+    const rows = term ? invoices.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
     return rows.slice(0, invoiceLimit);
   }, [invoiceLimit, invoiceSearch, invoices]);
   const selectedInvoices = useMemo(() => invoices.filter((invoice) => invoice.fiscalDocumentId in selected), [invoices, selected]);
@@ -117,11 +118,10 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   async function save(status: "DRAFT" | "COMPLETED"): Promise<void> {
     setMessage(null);
     const invoiceRows = sourceMode === "MANUAL" ? [] : Object.entries(selected).filter(([, value]) => parseCurrencyToCents(value || "0") > 0).map(([fiscalDocumentId, value]) => ({ fiscalDocumentId, sourceAmountCents: parseCurrencyToCents(value) }));
-    const paymentRows = payments.filter((item) => item.beneficiaryName.trim() || parseCurrencyToCents(item.amount || "0") > 0).map((item) => ({ ...item, amountCents: parseCurrencyToCents(item.amount), beneficiaryDocument: item.beneficiaryDocument || null, description: item.description || null, paymentDate: item.paymentDate || null, notes: item.notes || null }));
+    const paymentRows = payments.filter((item) => parseCurrencyToCents(item.amount || "0") > 0).map((item) => ({ ...item, amountCents: parseCurrencyToCents(item.amount), beneficiaryDocument: item.beneficiaryDocument || null, description: item.description || null, paymentDate: item.paymentDate || null, notes: item.notes || null }));
     if (!clientId) { setMessage(`Selecione ${counterpartyRole === "SUPPLIER" ? "o fornecedor" : "o cliente"}.`); return; }
     if (sourceMode === "INVOICES" && !invoiceRows.length) { setMessage("Selecione pelo menos uma nota e informe o valor usado."); return; }
     if (sourceMode === "MANUAL" && totalSource <= 0) { setMessage("Informe um valor inicial maior que zero."); return; }
-    if (paymentRows.some((item) => !item.beneficiaryName.trim() || item.amountCents <= 0)) { setMessage("Preencha o favorecido e o valor de cada pagamento."); return; }
     setBusy(true);
     try {
       await window.operationsCafe.saveTransferReconciliation({ id, organizationId, clientPartnerId: clientId, counterpartyRole, sourceMode, manualSourceCents: sourceMode === "MANUAL" ? totalSource : null, referenceDate, title: title || null, notes: notes || null, status, invoices: invoiceRows, payments: paymentRows });
@@ -207,20 +207,20 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
         {!clientId ? <p className="muted">Selecione {counterpartyRole === "SUPPLIER" ? "um fornecedor" : "um cliente"} para listar as notas.</p> : loadingInvoices ? <div className="transfer-inline-loading">Carregando notas {counterpartyRole === "SUPPLIER" ? "do fornecedor" : "do cliente"}…</div> : invoices.length === 0 ? <div className="transfer-empty">Nenhuma nota de {counterpartyRole === "SUPPLIER" ? "entrada" : "saída"} foi encontrada para este {counterpartyRole === "SUPPLIER" ? "fornecedor" : "cliente"}.</div> : <>
           <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(10); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
           <div className="transfer-table">
-          <div className="transfer-row transfer-head"><span></span><span>Nota</span><span>Emissão</span><span>{counterpartyRole === "SUPPLIER" ? "Emitente" : "Destinatário"}</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
+          <div className="transfer-row transfer-head"><span></span><span>Origem</span><span>Nota</span><span>Emissão</span><span>{counterpartyRole === "SUPPLIER" ? "Emitente" : "Destinatário"}</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
           {filteredInvoices.map((invoice) => { const checked = invoice.fiscalDocumentId in selected; const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"); return <div className={`transfer-row ${used > invoice.availableCents ? "transfer-warning" : ""}`} key={invoice.fiscalDocumentId}>
             <span><input type="checkbox" checked={checked} onChange={(event) => setSelected((current) => { const next = { ...current }; if (event.target.checked) next[invoice.fiscalDocumentId] = (Math.max(0, invoice.availableCents) / 100).toFixed(2).replace(".", ","); else delete next[invoice.fiscalDocumentId]; return next; })} /></span>
-            <span>{invoice.documentNumber}</span><span>{formatDateOnlyBr(invoice.issueDate)}</span><span>{(counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? "—"}</span><span>{formatCurrencyFromCents(invoice.invoiceTotalCents)}</span><span>{formatCurrencyFromCents(invoice.availableCents)}</span>
+            <span><span className="transfer-origin-badge">{invoice.organizationName}</span></span><span>{invoice.documentNumber}</span><span>{formatDateOnlyBr(invoice.issueDate)}</span><span>{(counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? "—"}</span><span>{formatCurrencyFromCents(invoice.invoiceTotalCents)}</span><span>{formatCurrencyFromCents(invoice.availableCents)}</span>
             <span>{checked ? <input value={selected[invoice.fiscalDocumentId]} onChange={(event) => setSelected((current) => ({ ...current, [invoice.fiscalDocumentId]: event.target.value }))} /> : "—"}{used > invoice.availableCents && <small> Acima do saldo disponível</small>}</span>
           </div>; })}
           </div>
-          {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 10)}>Mostrar mais notas</button>}
+          {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 10)}>Mostrar mais notas</button>}
         </>}
         </>}
         </> : <>
         <div className="transfer-selected-summary">
           <div className="transfer-section-title"><div><h2>{sourceMode === "MANUAL" ? "Valor inicial" : "Notas selecionadas"}</h2><p className="muted">{sourceMode === "MANUAL" ? "Os pagamentos informados abaixo serão abatidos deste valor." : "A lista completa ficou recolhida para facilitar o lançamento dos pagamentos."}</p></div><button onClick={() => setEditorStep("INVOICES")}>{sourceMode === "MANUAL" ? "Alterar valor" : "Alterar notas"}</button></div>
-          {sourceMode === "MANUAL" ? <div className="transfer-manual-value"><span>Valor definido para esta conferência</span><strong>{formatCurrencyFromCents(totalSource)}</strong></div> : <div className="transfer-selected-list">{selectedInvoices.map((invoice) => <article key={invoice.fiscalDocumentId}><div><strong>Nota {invoice.documentNumber}</strong><small>{formatDateOnlyBr(invoice.issueDate)} · {(counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? (counterpartyRole === "SUPPLIER" ? "Emitente não informado" : "Destinatário não informado")}</small></div><strong>{formatCurrencyFromCents(parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"))}</strong></article>)}</div>}
+          {sourceMode === "MANUAL" ? <div className="transfer-manual-value"><span>Valor definido para esta conferência</span><strong>{formatCurrencyFromCents(totalSource)}</strong></div> : <div className="transfer-selected-list">{selectedInvoices.map((invoice) => <article key={invoice.fiscalDocumentId}><div><strong>Nota {invoice.documentNumber} <span className="transfer-origin-badge">{invoice.organizationName}</span></strong><small>{formatDateOnlyBr(invoice.issueDate)} · {(counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? (counterpartyRole === "SUPPLIER" ? "Emitente não informado" : "Destinatário não informado")}</small></div><strong>{formatCurrencyFromCents(parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"))}</strong></article>)}</div>}
         </div>
         <div className="transfer-section-title"><h2>{sourceMode === "MANUAL" ? "Pagamentos para abatimento" : "Pagamentos da lista"}</h2><button onClick={() => setPayments((rows) => [...rows, emptyPayment()])}>Adicionar pagamento</button></div>
         <div className="transfer-payments" ref={paymentListRef}>{payments.map((payment, index) => <div className="transfer-payment" data-payment-index={index} key={payment.id ?? index}>
@@ -228,7 +228,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
           <label>CPF/CNPJ<input value={payment.beneficiaryDocument} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, beneficiaryDocument: event.target.value } : row))} /></label>
           <label>Descrição<input value={payment.description} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, description: event.target.value } : row))} /></label>
           <label>Data<input type="date" value={payment.paymentDate} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, paymentDate: event.target.value } : row))} /></label>
-          <label>Valor<input value={payment.amount} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, amount: event.target.value } : row))} /></label>
+          <label className={`transfer-payment-amount ${parseCurrencyToCents(payment.amount || "0") <= 0 ? "is-empty" : ""}`}>Valor<input inputMode="decimal" value={payment.amount} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, amount: event.target.value } : row))} /></label>
           <label>Observação<input value={payment.notes} onChange={(event) => setPayments((rows) => rows.map((row, i) => i === index ? { ...row, notes: event.target.value } : row))} onKeyDown={(event) => appendPaymentFromTab(event, index)} /></label>
           <button className="danger-action" onClick={() => setPayments((rows) => rows.length === 1 ? [emptyPayment()] : rows.filter((_, i) => i !== index))}>Remover</button>
         </div>)}</div>

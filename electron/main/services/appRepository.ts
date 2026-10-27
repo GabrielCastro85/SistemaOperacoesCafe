@@ -3547,15 +3547,27 @@ export class AppRepository {
     this.assertOrganizationWritable(input.organizationId);
     const counterpartyRole = input.counterpartyRole ?? "CLIENT";
     const operationType = counterpartyRole === "SUPPLIER" ? "PURCHASE" : "SALE";
+    const selectedPartner = this.getBusinessPartner(input.clientPartnerId);
+    const selectedDocument = selectedPartner.documentNumber?.replace(/\D/g, "") ?? "";
+    const selectedName = this.normalizeName(selectedPartner.displayName);
+    const matchingPartnerIds = this.listBusinessPartners({ role: counterpartyRole, status: "all" })
+      .filter((partner) => {
+        const candidateDocument = partner.documentNumber?.replace(/\D/g, "") ?? "";
+        const sameName = this.normalizeName(partner.displayName) === selectedName;
+        return selectedDocument ? candidateDocument === selectedDocument || (!candidateDocument && sameName) : sameName;
+      })
+      .map((partner) => partner.id);
+    if (!matchingPartnerIds.includes(input.clientPartnerId)) matchingPartnerIds.push(input.clientPartnerId);
+    const partnerPlaceholders = matchingPartnerIds.map(() => "?").join(", ");
     const usageRows = this.db.prepare(`
       SELECT ri.reconciliation_id, ri.fiscal_document_id, ri.source_amount_cents,
         rr.status, rr.total_source_cents, rr.total_payments_cents
       FROM transfer_reconciliation_invoices ri
       JOIN transfer_reconciliations rr ON rr.id = ri.reconciliation_id
-      WHERE rr.organization_id = ? AND rr.status <> 'CANCELLED'
+      WHERE rr.status <> 'CANCELLED'
         ${input.reconciliationId ? "AND rr.id <> ?" : ""}
       ORDER BY ri.reconciliation_id, ri.created_at, ri.id
-    `).all(...(input.reconciliationId ? [input.organizationId, input.reconciliationId] : [input.organizationId])) as DbRecord[];
+    `).all(...(input.reconciliationId ? [input.reconciliationId] : [])) as DbRecord[];
     const rowsByReconciliation = new Map<string, DbRecord[]>();
     for (const row of usageRows) {
       const reconciliationId = String(row.reconciliation_id);
@@ -3582,17 +3594,19 @@ export class AppRepository {
       });
     }
     const rows = this.db.prepare(`
-      SELECT f.id, f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
+      SELECT f.id, f.organization_id, org.display_name AS organization_name,
+        f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
         own.legal_name AS own_legal_name, own.trade_name AS own_trade_name,
         partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name
       FROM fiscal_documents f
+      JOIN organizations org ON org.id = f.organization_id
       JOIN legal_entities own ON own.id = f.own_legal_entity_id
       LEFT JOIN partner_legal_entities partner ON partner.id = f.partner_legal_entity_id
-      WHERE f.organization_id = ? AND f.status <> 'CANCELED'
+      WHERE f.status <> 'CANCELED'
         AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
-          AND o.status <> 'CANCELED' AND o.responsible_partner_id = ?)
+          AND o.status <> 'CANCELED' AND o.responsible_partner_id IN (${partnerPlaceholders}))
       ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
-    `).all(input.organizationId, operationType, input.clientPartnerId) as DbRecord[];
+    `).all(operationType, ...matchingPartnerIds) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
       try {
@@ -3606,7 +3620,8 @@ export class AppRepository {
       const ownName = String(row.own_legal_name ?? row.own_trade_name ?? "");
       const partnerName = this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name);
       return {
-        fiscalDocumentId: String(row.id), documentNumber: String(row.document_number), issueDate: String(row.issue_date),
+        fiscalDocumentId: String(row.id), organizationId: String(row.organization_id), organizationName: String(row.organization_name),
+        documentNumber: String(row.document_number), issueDate: String(row.issue_date),
         issuerName: this.stringOrNull(issuer?.legalName) ?? (counterpartyRole === "SUPPLIER" ? partnerName : ownName),
         recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),
         invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents
@@ -3651,7 +3666,7 @@ export class AppRepository {
     if (sourceMode === "MANUAL" && (!Number.isInteger(manualSourceCents) || Number(manualSourceCents) <= 0)) throw new Error("Informe um valor inicial valido para a conferencia.");
     if (sourceMode === "MANUAL" && input.invoices.length) throw new Error("Uma conferencia com valor manual nao pode ter notas vinculadas.");
     if (input.invoices.some((item) => !Number.isInteger(item.sourceAmountCents) || item.sourceAmountCents <= 0)) throw new Error("Informe um valor valido para cada nota.");
-    if (input.payments.some((item) => !item.beneficiaryName.trim() || !Number.isInteger(item.amountCents) || item.amountCents <= 0)) throw new Error("Preencha favorecido e valor em todos os pagamentos.");
+    if (input.payments.some((item) => !Number.isInteger(item.amountCents) || item.amountCents <= 0)) throw new Error("Informe um valor valido para cada pagamento.");
     const id = input.id ?? randomUUID();
     const now = new Date().toISOString();
     const totalSource = sourceMode === "MANUAL" ? Number(manualSourceCents) : input.invoices.reduce((sum, item) => sum + item.sourceAmountCents, 0);

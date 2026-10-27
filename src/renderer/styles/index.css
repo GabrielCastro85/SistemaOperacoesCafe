@@ -5025,8 +5025,9 @@ table tbody tr:hover {
 .transfer-invoice-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .transfer-invoice-toolbar input { flex: 1; min-height: 40px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: white; }
 .transfer-inline-loading, .transfer-empty { padding: 18px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text-muted); }
-.transfer-row { display: grid; grid-template-columns: 34px 70px 90px minmax(180px,1fr) 120px 120px 170px; gap: 10px; align-items: center; min-width: 940px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+.transfer-row { display: grid; grid-template-columns: 34px 150px 70px 90px minmax(180px,1fr) 120px 120px 170px; gap: 10px; align-items: center; min-width: 1100px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
 .transfer-head { font-size: 11px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
+.transfer-origin-badge { display: inline-flex; align-items: center; max-width: 100%; padding: 4px 8px; border: 1px solid #78a98d; border-radius: 999px; background: #edf8f1; color: #175d3c; font-size: 11px; font-weight: 800; line-height: 1.2; }
 .transfer-warning { border-color: #c47d17; background: #fff4dc; }
 .transfer-warning small { display: block; color: #9b3e16; }
 .transfer-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -5041,6 +5042,8 @@ table tbody tr:hover {
 .transfer-selected-list article > div { display: grid; gap: 3px; }
 .transfer-selected-list small { color: var(--color-text-muted); }
 .transfer-payment { display: grid; grid-template-columns: 1.3fr 1fr 1.4fr 140px 130px 1.3fr auto; gap: 10px; align-items: end; padding: 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); }
+.transfer-payment-amount.is-empty { color: #a62e27; }
+.transfer-payment-amount.is-empty input { border-color: #c83d35; background: #fff2f1; box-shadow: 0 0 0 2px rgb(200 61 53 / 10%); }
 .transfer-summary { position: sticky; top: 18px; display: grid; gap: 7px; padding: 20px; border: 2px solid var(--color-border); border-radius: 14px; background: white; box-shadow: 0 16px 38px rgb(43 31 18 / 10%); }
 .transfer-summary strong { font-size: 24px; margin-bottom: 10px; }
 .transfer-summary.is-credit { border-color: #2f9c65; background: #effbf4; }
