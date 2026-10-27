@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.54
+
+- A conferência de repasses passa a reunir notas da Villa Coffee e da Grão & Grão para o mesmo cliente ou fornecedor, identificando visualmente a origem de cada nota.
+- Os campos complementares dos pagamentos passam a ser opcionais; somente linhas com valor informado são registradas.
+- O campo de valor vazio recebe um alerta visual vermelho, e a tecla Tab cria automaticamente a próxima linha de pagamento.
+
 ## 1.1.53
 
 - A lista de fechamentos passa a mostrar a contraparte real: comprador nas vendas e vendedor nas compras.

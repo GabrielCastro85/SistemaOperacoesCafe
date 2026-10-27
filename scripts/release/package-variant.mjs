@@ -324,7 +324,11 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.53"
+  const highlights = releaseVersion === "1.1.54"
+    ? `- A conferencia de repasses reune notas da Villa Coffee e da Grao & Grao para o mesmo cliente ou fornecedor e identifica a origem de cada nota.
+- Nos pagamentos, somente o valor precisa ser informado; os demais campos passam a ser opcionais.
+- O campo de valor vazio recebe um alerta visual, e a tecla Tab cria automaticamente a proxima linha de pagamento.`
+    : releaseVersion === "1.1.53"
     ? `- A lista de fechamentos passa a mostrar o comprador nas vendas e o vendedor nas compras.
 - O PDF de fechamento ganha uma terceira area de assinatura para o corretor.
 - O rodape do fechamento foi simplificado para exibir somente a marca discreta Gerado por Graonex.`
