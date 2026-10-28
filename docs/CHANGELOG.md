@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.55
+
+- Adiciona o controle de cafés armazenados em terceiros, com saldo por armazém, empresa e produto em quilos e sacas.
+- Reconhece automaticamente remessas, retornos físicos, remessas simbólicas e retornos simbólicos pelos CFOPs 5905/6905, 5934/6934, 5906/6906 e 5907/6907.
+- Passa a coletar NF-e em que a empresa é emitente ou destinatária e estorna automaticamente movimentos de documentos cancelados.
+- Movimentos simbólicos sem referência identificável ficam destacados para conferência manual antes de alterar o saldo.
+- Reduz a frequência de sincronizações e atualizações automáticas e aplica espera progressiva durante falhas de rede para melhorar o desempenho.
+
 ## 1.1.54
 
 - A conferência de repasses passa a reunir notas da Villa Coffee e da Grão & Grão para o mesmo cliente ou fornecedor, identificando visualmente a origem de cada nota.

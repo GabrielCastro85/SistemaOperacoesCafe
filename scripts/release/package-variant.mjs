@@ -324,7 +324,13 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.54"
+  const highlights = releaseVersion === "1.1.55"
+    ? `- Novo controle de cafes armazenados em terceiros, com saldo por armazem, empresa e produto em quilos e sacas.
+- Reconhecimento automatico das NF-e de remessa, retorno fisico, remessa simbolica e retorno simbolico.
+- O coletor passa a reconhecer notas em que a empresa e emitente ou destinataria e aplica cancelamentos ao estoque.
+- Movimentos simbolicos sem referencia clara ficam separados para conferencia manual.
+- Sincronizacao e consultas automaticas foram ajustadas para reduzir travamentos e uso de memoria.`
+    : releaseVersion === "1.1.54"
     ? `- A conferencia de repasses reune notas da Villa Coffee e da Grao & Grao para o mesmo cliente ou fornecedor e identifica a origem de cada nota.
 - Nos pagamentos, somente o valor precisa ser informado; os demais campos passam a ser opcionais.
 - O campo de valor vazio recebe um alerta visual, e a tecla Tab cria automaticamente a proxima linha de pagamento.`
