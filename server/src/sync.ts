@@ -10,7 +10,7 @@ const SYNCED_TABLES = [
   "partner_company_links", "partner_contacts", "partner_aliases", "client_billing_profiles",
   "products", "product_aliases", "service_rate_rules", "purchase_rate_rules", "operation_rate_history",
   "operation_classification_rules", "fiscal_documents", "fiscal_document_items", "fiscal_document_events",
-  "fiscal_document_returns", "fiscal_document_merge_history", "operations", "third_party_operations",
+  "fiscal_document_returns", "fiscal_document_merge_history", "warehouse_movements", "operations", "third_party_operations",
   "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history",
   "billing_alert_ignores",
   "client_ledger_entries", "client_credit_allocations", "client_payments", "client_payment_allocations",

@@ -8,7 +8,7 @@ import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { buildPartnerPeriodReportPdf, getPartnerPeriodReport } from "../services/partnerPeriodReport.js";
 import { buildChargeControlPrintHtml, buildChargeControlWorkbook } from "../services/chargeControlWorkbook.js";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
 import type { AppRepository } from "../services/appRepository.js";
@@ -578,6 +578,24 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(), partnerLegalEntityId: z.string().uuid(), periodStart: z.string().nullable().optional(), periodEnd: z.string().nullable().optional() }).parse(payload);
     return repository.getCompanyPeriodSackSummary(data);
   });
+  handle(IPC_CHANNELS.listWarehouseMovements, (_event, payload: unknown) => repository.listWarehouseMovements(
+    z.object({
+      organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional(),
+      warehouseCnpj: z.string().nullable().optional(), periodStart: z.string().nullable().optional(),
+      periodEnd: z.string().nullable().optional(), status: z.enum(["ALL", "ACTIVE", "CANCELED", "PENDING_REVIEW"]).optional()
+    }).parse(payload)
+  ));
+  handle(IPC_CHANNELS.getWarehouseSummary, (_event, payload: unknown) => repository.getWarehouseSummary(
+    z.object({ organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid().nullable().optional() }).parse(payload)
+  ));
+  handle(IPC_CHANNELS.reviewWarehouseMovement, (_event, payload: unknown) => {
+    const data = z.object({
+      id: z.string().uuid(),
+      referencedDocumentNumber: z.string().trim().min(1).max(30),
+      notes: z.string().trim().max(500).nullable().optional()
+    }).parse(payload);
+    return repository.reviewWarehouseMovement(data.id, data.referencedDocumentNumber, data.notes ?? null);
+  });
   handle(IPC_CHANNELS.selectSpreadsheetFile, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Planilhas Excel", extensions: ["xlsx"] }] });
     if (result.canceled || !result.filePaths[0]) return null;
@@ -827,7 +845,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         ? vulpeDevSources[source as keyof typeof vulpeDevSources].label
         : graoCollectorSources[source as keyof typeof graoCollectorSources].label;
 
-    const hasAccessKey = context.db.prepare("SELECT 1 FROM fiscal_documents WHERE access_key = ? LIMIT 1");
+    const hasAccessKey = context.db.prepare(`
+      SELECT 1 FROM fiscal_documents WHERE access_key = ?
+      UNION ALL
+      SELECT 1 FROM warehouse_movements WHERE access_key = ?
+      LIMIT 1
+    `);
     const hasAcceptedCancellation = context.db.prepare(`
       SELECT 1 FROM fiscal_document_events
       WHERE access_key = ? AND event_type = 'CANCELLATION' AND status_code IN ('135', '155')
@@ -854,13 +877,19 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       const inspection = inspectXmlFile(filePath, randomUUID());
       const extracted = inspection.extractedData as Record<string, unknown> | null;
       const issuer = extracted?.issuer as Record<string, unknown> | undefined;
+      const recipient = extracted?.recipient as Record<string, unknown> | undefined;
       const issuerCnpj = inspection.xmlType === "EVENT_CANCELLATION"
         ? inspection.accessKey?.slice(6, 20) ?? ""
         : String(issuer?.cnpjCpf ?? "").replace(/\D/g, "");
+      const recipientCnpj = inspection.xmlType === "EVENT_CANCELLATION"
+        ? ""
+        : String(recipient?.cnpjCpf ?? "").replace(/\D/g, "");
       const documentDate = String(
         inspection.xmlType === "EVENT_CANCELLATION" ? extracted?.eventDate ?? "" : extracted?.issuedAt ?? ""
       ).slice(0, 10);
-      if (!allowedCnpjs.has(issuerCnpj) || documentDate < data.periodStart || documentDate > data.periodEnd) return;
+      const knownDocument = inspection.accessKey ? Boolean(hasAccessKey.get(inspection.accessKey, inspection.accessKey)) : false;
+      const acceptedForeignCancellation = inspection.xmlType === "EVENT_CANCELLATION" && knownDocument;
+      if ((!allowedCnpjs.has(issuerCnpj) && !allowedCnpjs.has(recipientCnpj) && !acceptedForeignCancellation) || documentDate < data.periodStart || documentDate > data.periodEnd) return;
 
       if (inspection.xmlType === "EVENT_CANCELLATION") {
         const statusCode = String(extracted?.statusCode ?? "");
@@ -894,7 +923,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       authorized += 1;
       if (hasAcceptedCancellation.get(inspection.accessKey)) canceledInvoicesHidden += 1;
       else if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
-      else if (hasAccessKey.get(inspection.accessKey)) alreadyImported += 1;
+      else if (hasAccessKey.get(inspection.accessKey, inspection.accessKey)) alreadyImported += 1;
       else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "NFE" });
     };
 
@@ -905,13 +934,16 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         continue;
       }
       for (const period of brazilYearMonthsBetween(data.periodStart, data.periodEnd)) {
-        const periodFolder = join(config.root, period);
-        if (!existsSync(periodFolder)) continue;
-        const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
-          const name = basename(filePath);
-          return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
-        });
-        candidates.forEach((filePath) => inspectCandidate(filePath, null));
+        // A Vulpe pode separar XMLs emitidos e recebidos em pastas irmas. Procurar
+        // apenas EMITIDO impediria o reconhecimento dos retornos feitos pelo armazem.
+        const periodFolders = findNamedDirectories(dirname(config.root), period, 3);
+        for (const periodFolder of periodFolders) {
+          const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
+            const name = basename(filePath);
+            return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
+          });
+          candidates.forEach((filePath) => inspectCandidate(filePath, null));
+        }
       }
     }
 
@@ -922,9 +954,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       const allowedYearMonths = new Set(brazilYearMonthsBetween(data.periodStart, data.periodEnd).map((period) => period.slice(2)));
       const matchingRemoteFiles = remoteFiles.filter((remoteFile) => {
         const accessKey = remoteFile.accessKey ?? "";
-        return accessKey.length === 44
-          && allowedYearMonths.has(accessKey.slice(2, 6))
-          && allowedCnpjs.has(accessKey.slice(6, 20));
+        return accessKey.length === 44 && allowedYearMonths.has(accessKey.slice(2, 6));
       });
       for (let offset = 0; offset < matchingRemoteFiles.length; offset += 12) {
         const batch = matchingRemoteFiles.slice(offset, offset + 12);
@@ -1753,6 +1783,24 @@ function findXmlFiles(folder: string, includeSubfolders: boolean): string[] {
     if (entry.isFile() && entry.name.toLowerCase().endsWith(".xml")) result.push(full);
   });
   return result;
+}
+
+function findNamedDirectories(root: string, targetName: string, maxDepth: number): string[] {
+  if (!existsSync(root)) return [];
+  const found: string[] = [];
+  const visit = (folder: string, depth: number): void => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = join(folder, entry.name);
+      if (entry.name.toLowerCase() === targetName.toLowerCase()) {
+        found.push(full);
+        continue;
+      }
+      if (depth < maxDepth) visit(full, depth + 1);
+    }
+  };
+  visit(root, 0);
+  return [...new Set(found)];
 }
 
 function brazilYearMonthsBetween(periodStart: string, periodEnd: string): string[] {

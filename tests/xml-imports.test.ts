@@ -881,6 +881,60 @@ describe("commercial import safeguards", () => {
   });
 });
 
+describe("warehouse coffee movements", () => {
+  it("recognizes deposits and returns without creating commercial operations, and reverses a canceled return", async () => {
+    const ctx = await setup();
+    try {
+      const depositKey = makeAccessKey(9101);
+      const depositXml = nfeXml(depositKey)
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Remessa para deposito fechado</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5905</CFOP>");
+      const deposited = await importAuditXml(ctx, depositXml);
+      expect(deposited.files[0].status).toBe("IMPORTED");
+      expect(deposited.files[0].fiscalDocumentId).toBeNull();
+      expect(deposited.job.createdOperations).toBe(0);
+      expect(ctx.repo.listFiscalDocuments({ organizationId: villaId })).toHaveLength(0);
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "630", totalSacks: "10.5", warehouseCount: 1, activeMovementCount: 1 });
+
+      const returnKey = makeAccessKey(9102);
+      const returnXml = nfeXml(returnKey)
+        .replace(`<CNPJ>${ownCnpj}</CNPJ>`, "<CNPJ>__WAREHOUSE__</CNPJ>")
+        .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${ownCnpj}</CNPJ>`)
+        .replace("<CNPJ>__WAREHOUSE__</CNPJ>", `<CNPJ>${partnerCnpj}</CNPJ>`)
+        .replace("<xNome>Villa Coffee MG</xNome>", "<xNome>__WAREHOUSE_NAME__</xNome>")
+        .replace("<xNome>Cliente XML Ltda</xNome>", "<xNome>Villa Coffee MG</xNome>")
+        .replace("<xNome>__WAREHOUSE_NAME__</xNome>", "<xNome>Cliente XML Ltda</xNome>")
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Retorno de mercadoria depositada</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5906</CFOP>")
+        .replaceAll("10.5", "2");
+      const returned = await importAuditXml(ctx, returnXml);
+      expect(returned.files[0].status).toBe("IMPORTED");
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "510", totalSacks: "8.5", activeMovementCount: 2 });
+
+      await importAuditXml(ctx, cancelXml(returnKey));
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "630", totalSacks: "10.5", activeMovementCount: 1 });
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId, status: "CANCELED" })).toHaveLength(1);
+    } finally { ctx.db.close(); }
+  });
+
+  it("holds a symbolic movement for review when the original note reference cannot be identified", async () => {
+    const ctx = await setup();
+    try {
+      await importAuditXml(ctx, nfeXml(makeAccessKey(9103)).replace("<CFOP>5102</CFOP>", "<CFOP>5934</CFOP>"));
+      const summary = ctx.repo.getWarehouseSummary({ organizationId: villaId });
+      expect(summary.pendingReviewCount).toBe(1);
+      expect(summary.activeMovementCount).toBe(0);
+      const pending = ctx.repo.listWarehouseMovements({ organizationId: villaId, status: "PENDING_REVIEW" })[0];
+      expect(pending?.notes).toMatch(/Referencia/);
+      const reviewed = ctx.repo.reviewWarehouseMovement(pending!.id, "1208", "Conferido com o DANFE.");
+      expect(reviewed).toMatchObject({ status: "ACTIVE", referencedDocumentNumber: "1208", notes: "Conferido com o DANFE." });
+      const afterReview = ctx.repo.getWarehouseSummary({ organizationId: villaId });
+      expect(afterReview.pendingReviewCount).toBe(0);
+      expect(afterReview.activeMovementCount).toBe(1);
+    } finally { ctx.db.close(); }
+  });
+});
+
 function makeAccessKey(sequence = 9001): string {
   const number = String(sequence).padStart(9, "0");
   const control = String(sequence).padStart(8, "0");

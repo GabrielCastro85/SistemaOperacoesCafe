@@ -914,6 +914,56 @@ export interface FiscalDocumentEvent {
   createdAt: string;
 }
 
+export type WarehouseMovementType = "DEPOSIT" | "RETURN";
+export type WarehouseMovementKind = "PHYSICAL" | "SYMBOLIC";
+export type WarehouseMovementStatus = "ACTIVE" | "CANCELED" | "PENDING_REVIEW";
+
+export interface WarehouseMovement {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  accessKey: string;
+  itemNumber: string;
+  documentNumber: string;
+  series: string | null;
+  issueDate: string;
+  warehouseName: string;
+  warehouseCnpj: string | null;
+  productDescription: string;
+  cfop: string;
+  movementType: WarehouseMovementType;
+  movementKind: WarehouseMovementKind;
+  quantityKg: string;
+  sourceUnit: string;
+  sourceQuantity: string;
+  referencedDocumentNumber: string | null;
+  referenceText: string | null;
+  status: WarehouseMovementStatus;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WarehouseBalanceRow {
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  warehouseName: string;
+  warehouseCnpj: string | null;
+  productDescription: string;
+  quantityKg: string;
+  quantitySacks: string;
+}
+
+export interface WarehouseSummary {
+  totalKg: string;
+  totalSacks: string;
+  warehouseCount: number;
+  activeMovementCount: number;
+  pendingReviewCount: number;
+  balances: WarehouseBalanceRow[];
+}
+
 export interface ProductAlias {
   id: string;
   organizationId: string;

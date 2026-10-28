@@ -1013,6 +1013,196 @@ input[type="checkbox"] {
   overflow: auto;
 }
 
+.warehouse-stock-page {
+  display: grid;
+  gap: 20px;
+}
+
+.warehouse-feedback {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 38%, var(--color-border));
+  border-radius: var(--radius-md);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--color-surface));
+}
+
+.warehouse-filters {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.2fr) minmax(190px, 1.2fr) repeat(2, minmax(145px, .75fr)) minmax(135px, .7fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.warehouse-filters label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.warehouse-filters label > span {
+  font-size: 13px;
+}
+
+.warehouse-filters select,
+.warehouse-filters button {
+  width: 100%;
+  min-height: var(--control-height);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 8px 11px;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.warehouse-filters button {
+  width: auto;
+  min-width: 110px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.warehouse-kpis {
+  margin-top: 0;
+}
+
+.warehouse-panel {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.warehouse-panel__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.warehouse-panel__heading div {
+  display: grid;
+  gap: 2px;
+}
+
+.warehouse-panel__heading span,
+.warehouse-panel__heading small {
+  color: var(--color-text-muted);
+}
+
+.warehouse-panel__heading span {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.warehouse-panel__heading h2 {
+  margin: 0;
+  font-size: 21px;
+}
+
+.warehouse-table-wrap {
+  overflow: auto;
+}
+
+.warehouse-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+}
+
+.warehouse-table th,
+.warehouse-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.warehouse-table th {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-surface-muted) 72%, var(--color-surface));
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.warehouse-table td strong,
+.warehouse-table td small {
+  display: block;
+}
+
+.warehouse-table td small {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+}
+
+.warehouse-table .number {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.warehouse-table .empty {
+  padding: 30px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.warehouse-table tr.needs-review td {
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-surface));
+}
+
+.warehouse-table tr.is-canceled td {
+  opacity: .62;
+  text-decoration-color: var(--color-text-muted);
+}
+
+.warehouse-movement,
+.warehouse-status {
+  display: inline-flex;
+  width: max-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.warehouse-movement--deposit,
+.warehouse-status--active {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.warehouse-movement--return,
+.warehouse-status--canceled {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 11%, transparent);
+}
+
+.warehouse-status--pending_review {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 13%, transparent);
+}
+
+.warehouse-review-button {
+  display: block;
+  margin-top: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.55rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .warehouse-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .warehouse-filters button { width: 100%; }
+}
+
 .page-title-row {
   display: flex;
   justify-content: space-between;

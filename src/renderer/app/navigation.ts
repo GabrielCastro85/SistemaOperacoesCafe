@@ -22,6 +22,7 @@ export const navigationGroups: NavigationGroup[] = [
     title: "Operações",
     items: [
       { id: "invoices", label: "Notas e operações", legacyMenu: "Notas e operacoes", path: "/operations", icon: "▦" },
+      { id: "warehouseStock", label: "Cafés armazenados", legacyMenu: "Cafes armazenados", path: "/warehouse-stock", icon: "▣" },
       { id: "productAliases", label: "Reconhecimento de produtos", legacyMenu: "Aliases de produto", path: "/imports/xml/product-aliases", icon: "≈" }
     ]
   },
@@ -80,6 +81,7 @@ export function pathFromLegacyMenu(menu: string): string {
 export function legacyMenuFromPath(path: string): string {
   const normalized = path.replace(/^#/, "").split("?")[0] || "/dashboard";
   if (normalized.startsWith("/operations")) return "Notas e operacoes";
+  if (normalized.startsWith("/warehouse-stock")) return "Cafes armazenados";
   if (normalized.startsWith("/assistant")) return "Assistente";
   if (normalized.startsWith("/products")) return "Produtos";
   if (normalized.startsWith("/billing/rates")) return "Regras por saca";

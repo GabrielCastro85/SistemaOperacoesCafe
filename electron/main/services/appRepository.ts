@@ -103,6 +103,8 @@ import type {
   XmlImportJob,
   XmlImportFile,
   FiscalDocumentEvent,
+  WarehouseMovement,
+  WarehouseSummary,
   ProductAlias,
   OperationClassificationRule,
   FiscalDocumentMergeHistory,
@@ -2382,12 +2384,13 @@ export class AppRepository {
     const sameHash = this.db.prepare(`
       SELECT xml_import_files.id
       FROM xml_import_files
-      INNER JOIN fiscal_documents
+      LEFT JOIN fiscal_documents
         ON fiscal_documents.id = xml_import_files.fiscal_document_id
       LEFT JOIN xml_import_jobs
         ON xml_import_jobs.id = xml_import_files.import_job_id
       WHERE xml_import_files.file_hash = ?
         AND xml_import_files.status = 'IMPORTED'
+        AND (xml_import_files.fiscal_document_id IS NULL OR fiscal_documents.id IS NOT NULL)
         AND COALESCE(xml_import_jobs.status, '') <> 'REVERTED'
       LIMIT 1
     `).get(data.fileHash);
@@ -2396,7 +2399,10 @@ export class AppRepository {
       errorCode = "DUPLICATE_HASH";
       errorMessage = "Arquivo XML identico ja processado.";
     }
-    if (data.accessKey && this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ? LIMIT 1").get(data.accessKey)) {
+    if (data.accessKey && (
+      this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ? LIMIT 1").get(data.accessKey)
+      || (this.tableExists("warehouse_movements") && this.db.prepare("SELECT id FROM warehouse_movements WHERE access_key = ? LIMIT 1").get(data.accessKey))
+    )) {
       status = "DUPLICATE";
       errorCode = "DUPLICATE_ACCESS_KEY";
       errorMessage = "Nota com a mesma chave ja cadastrada.";
@@ -4108,6 +4114,227 @@ export class AppRepository {
     };
   }
 
+  listWarehouseMovements(filters: {
+    organizationId: string;
+    ownLegalEntityId?: string | null;
+    warehouseCnpj?: string | null;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    status?: "ALL" | "ACTIVE" | "CANCELED" | "PENDING_REVIEW";
+  }): WarehouseMovement[] {
+    if (!this.isOrganizationAllowed(filters.organizationId)) throw new Error("Organizacao nao autorizada.");
+    if (!this.tableExists("warehouse_movements")) return [];
+    const clauses = ["wm.organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) { clauses.push("wm.own_legal_entity_id = ?"); params.push(filters.ownLegalEntityId); }
+    if (filters.warehouseCnpj) { clauses.push("wm.warehouse_cnpj = ?"); params.push(this.onlyDigits(filters.warehouseCnpj)); }
+    if (filters.periodStart) { clauses.push("wm.issue_date >= ?"); params.push(filters.periodStart); }
+    if (filters.periodEnd) { clauses.push("wm.issue_date <= ?"); params.push(filters.periodEnd); }
+    if (filters.status && filters.status !== "ALL") { clauses.push("wm.status = ?"); params.push(filters.status); }
+    const rows = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY wm.issue_date DESC, CAST(wm.document_number AS INTEGER) DESC, CAST(wm.item_number AS INTEGER)
+    `).all(...params) as DbRecord[];
+    return rows.map((row) => this.mapWarehouseMovement(row));
+  }
+
+  getWarehouseSummary(filters: { organizationId: string; ownLegalEntityId?: string | null }): WarehouseSummary {
+    if (!this.isOrganizationAllowed(filters.organizationId)) throw new Error("Organizacao nao autorizada.");
+    if (!this.tableExists("warehouse_movements")) {
+      return { totalKg: "0", totalSacks: "0", warehouseCount: 0, activeMovementCount: 0, pendingReviewCount: 0, balances: [] };
+    }
+    const entityClause = filters.ownLegalEntityId ? "AND wm.own_legal_entity_id = ?" : "";
+    const params: unknown[] = filters.ownLegalEntityId ? [filters.organizationId, filters.ownLegalEntityId] : [filters.organizationId];
+    const balanceRows = this.db.prepare(`
+      SELECT
+        wm.own_legal_entity_id,
+        le.trade_name AS own_legal_entity_name,
+        wm.warehouse_name,
+        wm.warehouse_cnpj,
+        wm.product_description,
+        SUM(CASE WHEN wm.movement_type = 'DEPOSIT' THEN CAST(wm.quantity_kg_decimal AS REAL) ELSE -CAST(wm.quantity_kg_decimal AS REAL) END) AS quantity_kg
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE wm.organization_id = ? ${entityClause} AND wm.status = 'ACTIVE'
+      GROUP BY wm.own_legal_entity_id, le.trade_name, wm.warehouse_name, wm.warehouse_cnpj, wm.product_description
+      HAVING ABS(quantity_kg) > 0.0001
+      ORDER BY wm.warehouse_name, wm.product_description, le.trade_name
+    `).all(...params) as Array<DbRecord & { quantity_kg: number }>;
+    const balances = balanceRows.map((row) => {
+      const kg = Number(row.quantity_kg ?? 0);
+      return {
+        ownLegalEntityId: String(row.own_legal_entity_id),
+        ownLegalEntityName: String(row.own_legal_entity_name),
+        warehouseName: String(row.warehouse_name),
+        warehouseCnpj: row.warehouse_cnpj ? String(row.warehouse_cnpj) : null,
+        productDescription: String(row.product_description),
+        quantityKg: compactDecimal(kg),
+        quantitySacks: compactDecimal(kg / 60)
+      };
+    });
+    const totals = this.db.prepare(`
+      SELECT
+        COUNT(*) AS active_movement_count,
+        COUNT(DISTINCT COALESCE(NULLIF(warehouse_cnpj, ''), warehouse_name)) AS warehouse_count,
+        SUM(CASE WHEN movement_type = 'DEPOSIT' THEN CAST(quantity_kg_decimal AS REAL) ELSE -CAST(quantity_kg_decimal AS REAL) END) AS total_kg
+      FROM warehouse_movements wm
+      WHERE organization_id = ? ${entityClause} AND status = 'ACTIVE'
+    `).get(...params) as DbRecord;
+    const pending = this.db.prepare(`SELECT COUNT(*) AS total FROM warehouse_movements wm WHERE organization_id = ? ${entityClause} AND status = 'PENDING_REVIEW'`).get(...params) as DbRecord;
+    const totalKg = Number(totals.total_kg ?? 0);
+    return {
+      totalKg: compactDecimal(totalKg),
+      totalSacks: compactDecimal(totalKg / 60),
+      warehouseCount: Number(totals.warehouse_count ?? 0),
+      activeMovementCount: Number(totals.active_movement_count ?? 0),
+      pendingReviewCount: Number(pending.total ?? 0),
+      balances
+    };
+  }
+
+  reviewWarehouseMovement(id: string, referencedDocumentNumber: string, notes: string | null): WarehouseMovement {
+    if (!this.tableExists("warehouse_movements")) throw new Error("Controle de armazens ainda nao esta disponivel.");
+    const before = this.db.prepare("SELECT organization_id, status FROM warehouse_movements WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!before || !this.isOrganizationAllowed(String(before.organization_id))) throw new Error("Movimento de armazem nao encontrado.");
+    if (String(before.status) === "CANCELED") throw new Error("Movimento cancelado nao pode ser aprovado.");
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE warehouse_movements
+      SET referenced_document_number = ?, notes = ?, status = 'ACTIVE', updated_at = ?
+      WHERE id = ?
+    `).run(referencedDocumentNumber.trim(), notes?.trim() || "Conferido manualmente.", now, id);
+    const row = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE wm.id = ?
+    `).get(id) as DbRecord;
+    return this.mapWarehouseMovement(row);
+  }
+
+  private mapWarehouseMovement(row: DbRecord): WarehouseMovement {
+    return {
+      id: String(row.id), organizationId: String(row.organization_id), ownLegalEntityId: String(row.own_legal_entity_id),
+      ownLegalEntityName: String(row.own_legal_entity_name ?? ""), accessKey: String(row.access_key), itemNumber: String(row.item_number),
+      documentNumber: String(row.document_number), series: this.stringOrNull(row.series), issueDate: String(row.issue_date),
+      warehouseName: String(row.warehouse_name), warehouseCnpj: this.stringOrNull(row.warehouse_cnpj), productDescription: String(row.product_description),
+      cfop: String(row.cfop), movementType: row.movement_type as WarehouseMovement["movementType"], movementKind: row.movement_kind as WarehouseMovement["movementKind"],
+      quantityKg: String(row.quantity_kg_decimal), sourceUnit: String(row.source_unit), sourceQuantity: String(row.source_quantity_decimal),
+      referencedDocumentNumber: this.stringOrNull(row.referenced_document_number), referenceText: this.stringOrNull(row.reference_text),
+      status: row.status as WarehouseMovement["status"], notes: this.stringOrNull(row.notes), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+    };
+  }
+
+  private importWarehouseDocumentIfRecognized(job: XmlImportJob, file: XmlImportFile, extracted: Record<string, unknown>): boolean {
+    if (!this.tableExists("warehouse_movements") || !file.accessKey) return false;
+    const warehouseCfops: Record<string, { type: "DEPOSIT" | "RETURN"; kind: "PHYSICAL" | "SYMBOLIC" }> = {
+      "5905": { type: "DEPOSIT", kind: "PHYSICAL" }, "6905": { type: "DEPOSIT", kind: "PHYSICAL" },
+      "5934": { type: "DEPOSIT", kind: "SYMBOLIC" }, "6934": { type: "DEPOSIT", kind: "SYMBOLIC" },
+      "5906": { type: "RETURN", kind: "PHYSICAL" }, "6906": { type: "RETURN", kind: "PHYSICAL" },
+      "5907": { type: "RETURN", kind: "SYMBOLIC" }, "6907": { type: "RETURN", kind: "SYMBOLIC" }
+    };
+    const items = (Array.isArray(extracted.items) ? extracted.items : []) as Array<Record<string, unknown>>;
+    const classifiedItems = items.flatMap((item) => {
+      const cfop = String(item.cfop ?? "").replace(/\D/g, "");
+      const classification = warehouseCfops[cfop];
+      return classification ? [{ item, cfop, classification }] : [];
+    });
+    if (!classifiedItems.length) return false;
+
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerCnpj = this.onlyDigits(String(issuer?.cnpjCpf ?? "")) || this.issuerCnpjFromAccessKey(file.accessKey) || "";
+    const recipientCnpj = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    const ownEntities = this.listLegalEntities({ status: "all" }).filter((entity) => !this.isThirdPartyLegalEntity(entity));
+    const issuerOwn = ownEntities.find((entity) => entity.cnpj === issuerCnpj && entity.isActive);
+    const recipientOwn = ownEntities.find((entity) => entity.cnpj === recipientCnpj && entity.isActive);
+    const firstType = classifiedItems[0]?.classification.type;
+    const ownEntity = firstType === "DEPOSIT" ? issuerOwn : recipientOwn;
+    if (!ownEntity) return false;
+    if (classifiedItems.some(({ classification }) => classification.type !== firstType)) {
+      throw new Error("NF-e de armazem contem remessa e retorno no mesmo documento. Revise o XML manualmente.");
+    }
+    const warehouseParty = firstType === "DEPOSIT" ? recipient : issuer;
+    const warehouseName = this.stringOrNull(warehouseParty?.legalName) ?? this.stringOrNull(warehouseParty?.tradeName) ?? "Armazem nao identificado";
+    const warehouseCnpj = this.onlyDigits(String(warehouseParty?.cnpjCpf ?? "")) || null;
+    const additionalInfo = extracted.additionalInfo as Record<string, unknown> | undefined;
+    const referenceText = [this.stringOrNull(additionalInfo?.complementary), ...classifiedItems.map(({ item }) => this.stringOrNull(item.additionalInfo))]
+      .filter((value): value is string => Boolean(value)).join(" | ") || null;
+    const referencedKeys = (Array.isArray(extracted.referencedAccessKeys) ? extracted.referencedAccessKeys : []).map(String).filter((key) => /^\d{44}$/.test(key));
+    const referencedByKey = referencedKeys[0]?.slice(25, 34).replace(/^0+/, "") || null;
+    const referencedByText = referenceText?.match(/\b(?:NF-?E|NF)(?:\s+DE\s+(?:REMESSA|ORIGEM))?\s*(?:N[º°.]?\s*)?[:#º°.\-\s]*(\d{1,12})\b/i)?.[1] ?? null;
+    const referencedDocumentNumber = referencedByKey ?? referencedByText;
+    const now = new Date().toISOString();
+    const canceled = Boolean(this.db.prepare(`
+      SELECT 1 FROM fiscal_document_events
+      WHERE access_key = ? AND event_type = 'CANCELLATION' AND status_code IN ('135','155') AND COALESCE(protocol_number, '') <> ''
+      LIMIT 1
+    `).get(file.accessKey));
+    const upsert = this.db.prepare(`
+      INSERT INTO warehouse_movements (
+        id, organization_id, own_legal_entity_id, access_key, item_number, document_number, series, issue_date,
+        warehouse_name, warehouse_cnpj, product_description, cfop, movement_type, movement_kind,
+        quantity_kg_decimal, source_unit, source_quantity_decimal, referenced_document_number, reference_text,
+        status, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(access_key, item_number) DO UPDATE SET
+        organization_id = excluded.organization_id,
+        own_legal_entity_id = excluded.own_legal_entity_id,
+        document_number = excluded.document_number,
+        series = excluded.series,
+        issue_date = excluded.issue_date,
+        warehouse_name = excluded.warehouse_name,
+        warehouse_cnpj = excluded.warehouse_cnpj,
+        product_description = excluded.product_description,
+        cfop = excluded.cfop,
+        movement_type = excluded.movement_type,
+        movement_kind = excluded.movement_kind,
+        quantity_kg_decimal = excluded.quantity_kg_decimal,
+        source_unit = excluded.source_unit,
+        source_quantity_decimal = excluded.source_quantity_decimal,
+        referenced_document_number = excluded.referenced_document_number,
+        reference_text = excluded.reference_text,
+        status = excluded.status,
+        notes = excluded.notes,
+        updated_at = excluded.updated_at
+    `);
+    for (const { item, cfop, classification } of classifiedItems) {
+      const commercialUnit = String(item.commercialUnit ?? "");
+      const taxableUnit = String(item.taxableUnit ?? "");
+      const commercialQuantity = String(item.commercialQuantity ?? "0");
+      const taxableQuantity = String(item.taxableQuantity ?? "0");
+      let sourceUnit = taxableUnit || commercialUnit;
+      let sourceQuantity = taxableQuantity || commercialQuantity;
+      let quantityKg = 0;
+      if (isXmlKgUnit(taxableUnit) && decimalNumber(taxableQuantity) > 0) {
+        quantityKg = decimalNumber(taxableQuantity);
+      } else if (isXmlKgUnit(commercialUnit)) {
+        sourceUnit = commercialUnit; sourceQuantity = commercialQuantity; quantityKg = decimalNumber(commercialQuantity);
+      } else if (isXmlSackUnit(commercialUnit)) {
+        sourceUnit = commercialUnit; sourceQuantity = commercialQuantity; quantityKg = decimalNumber(commercialQuantity) * 60;
+      } else if (isXmlTonUnit(commercialUnit)) {
+        sourceUnit = commercialUnit; sourceQuantity = commercialQuantity; quantityKg = decimalNumber(commercialQuantity) * 1000;
+      }
+      if (!(quantityKg > 0)) throw new Error(`Quantidade da nota ${String(extracted.number ?? "")} item ${String(item.itemNumber ?? "")} nao pode ser convertida para kg.`);
+      const needsReference = classification.kind === "SYMBOLIC" && !referencedDocumentNumber;
+      const status = canceled ? "CANCELED" : needsReference ? "PENDING_REVIEW" : "ACTIVE";
+      upsert.run(
+        deterministicUuid("warehouseMovement", file.accessKey, String(item.itemNumber ?? "1")),
+        ownEntity.organizationId, ownEntity.id, file.accessKey, String(item.itemNumber ?? "1"), String(extracted.number ?? ""),
+        this.stringOrNull(extracted.series), String(extracted.issuedAt ?? new Date().toISOString().slice(0, 10)), warehouseName, warehouseCnpj,
+        String(item.description ?? "Cafe"), cfop, classification.type, classification.kind, compactDecimal(quantityKg),
+        sourceUnit || "NAO_INFORMADA", sourceQuantity, referencedDocumentNumber, referenceText, status,
+        needsReference ? "Referencia da remessa original nao identificada automaticamente; conferir manualmente." : null, now, now
+      );
+    }
+    this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?").run(now, file.id);
+    this.db.prepare("UPDATE xml_import_jobs SET imported_notes = imported_notes + 1 WHERE id = ?").run(job.id);
+    return true;
+  }
+
   private processXmlImportFile(job: XmlImportJob, file: XmlImportFile, resolution: Record<string, unknown>, fileResolution: Record<string, unknown> = {}): void {
     if (!file.extractedDataJson) throw new Error("Arquivo XML sem dados extraidos.");
     const extracted = JSON.parse(file.extractedDataJson) as Record<string, unknown>;
@@ -4116,6 +4343,7 @@ export class AppRepository {
       return;
     }
     if (file.xmlType === "UNKNOWN") throw new Error("XML nao reconhecido como NF-e.");
+    if (this.importWarehouseDocumentIfRecognized(job, file, extracted)) return;
     if (file.accessKey) {
       const existing = this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ?").get(file.accessKey) as { id: string } | undefined;
       if (existing) {
@@ -4308,6 +4536,10 @@ export class AppRepository {
       .run(id, job.organizationId, document?.id ?? null, file.accessKey, eventType, String(extracted.sequenceNumber ?? "1"), extracted.eventDate ?? null, extracted.protocolNumber ?? null, extracted.statusCode ?? null, extracted.statusMessage ?? null, extracted.correctionText ?? null, file.storedFilePath, file.fileHash, now);
     if (eventType === "CANCELLATION" && document?.id && ["135", "155"].includes(String(extracted.statusCode ?? "")) && extracted.protocolNumber) {
       this.cancelFiscalDocument(document.id, `Cancelamento XML protocolo ${String(extracted.protocolNumber ?? "")}`.trim());
+    }
+    if (eventType === "CANCELLATION" && ["135", "155"].includes(String(extracted.statusCode ?? "")) && extracted.protocolNumber && this.tableExists("warehouse_movements")) {
+      this.db.prepare("UPDATE warehouse_movements SET status = 'CANCELED', notes = COALESCE(notes || ' ', '') || ?, updated_at = ? WHERE access_key = ?")
+        .run(`Cancelamento XML protocolo ${String(extracted.protocolNumber)}`.trim(), now, file.accessKey);
     }
     this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_event_id = ?, fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(id, document?.id ?? null, now, file.id);
     this.db.prepare("UPDATE xml_import_jobs SET imported_events = imported_events + 1 WHERE id = ?").run(job.id);
@@ -7842,6 +8074,17 @@ function parseLocalDate(value: string): Date {
 
 function normalizeXmlUnit(value: string): string {
   return value.trim().toUpperCase().replace(/[\s_-]+/g, "");
+}
+
+function decimalNumber(value: unknown): number {
+  const normalized = String(value ?? "0").trim().replace(/\s/g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compactDecimal(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return value.toFixed(6).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
 function isXmlSackUnit(value: string): boolean {

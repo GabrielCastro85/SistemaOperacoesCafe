@@ -365,6 +365,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   useEffect(() => {
     if (!organizationId) return;
     const refreshBilling = (): void => {
+      if (document.visibilityState !== "visible") return;
       void window.operationsCafe.getBillingSummary({
         organizationId,
         includeAllCompanies: true,
@@ -372,8 +373,9 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
         periodEnd: periodEnd || null
       }).then(setBillingSummary).catch(() => undefined);
     };
-    const timer = window.setInterval(refreshBilling, 15_000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(refreshBilling, 60_000);
+    document.addEventListener("visibilitychange", refreshBilling);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refreshBilling); };
   }, [organizationId, periodStart, periodEnd]);
 
   useEffect(() => {

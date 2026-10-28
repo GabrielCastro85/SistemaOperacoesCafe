@@ -54,6 +54,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
       return <ReportIcon />;
     case "invoices":
       return <InvoiceIcon />;
+    case "warehouseStock":
+      return <PackageIcon />;
     case "partners":
       return <HandshakeIcon />;
     case "products":
@@ -137,12 +139,16 @@ export function AppLayout({
 
   useEffect(() => {
     let active = true;
-    const refresh = () => void window.operationsCafe.getDiagnostics()
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void window.operationsCafe.getDiagnostics()
       .then((result) => { if (active) setDiagnostics(result); })
       .catch(() => { if (active) setDiagnostics(null); });
+    };
     refresh();
-    const timer = window.setInterval(refresh, 8_000);
-    return () => { active = false; window.clearInterval(timer); };
+    const timer = window.setInterval(refresh, 30_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
 
   const syncLabel = diagnostics?.centralSyncStatus === "ONLINE"

@@ -42,6 +42,8 @@ import type {
   XmlImportJob,
   XmlImportFile,
   FiscalDocumentEvent,
+  WarehouseMovement,
+  WarehouseSummary,
   ProductAlias,
   OperationClassificationRule,
   FiscalDocumentMergeHistory,
@@ -239,6 +241,9 @@ const IPC_CHANNELS = {
   getMonthlyOperationTotals: "operations:monthlyTotals",
   getPartnerPeriodSackSummary: "operations:partnerPeriodSackSummary",
   getCompanyPeriodSackSummary: "operations:companyPeriodSackSummary",
+  listWarehouseMovements: "warehouseStock:listMovements",
+  getWarehouseSummary: "warehouseStock:summary",
+  reviewWarehouseMovement: "warehouseStock:updateMovementReview",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",
@@ -655,6 +660,9 @@ export interface OperationsCafeApi {
   getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   getPartnerPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; businessPartnerId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
   getCompanyPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; partnerLegalEntityId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
+  listWarehouseMovements: (filters: { organizationId: string; ownLegalEntityId?: string | null; warehouseCnpj?: string | null; periodStart?: string | null; periodEnd?: string | null; status?: "ALL" | "ACTIVE" | "CANCELED" | "PENDING_REVIEW" }) => Promise<WarehouseMovement[]>;
+  getWarehouseSummary: (filters: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<WarehouseSummary>;
+  reviewWarehouseMovement: (input: { id: string; referencedDocumentNumber: string; notes?: string | null }) => Promise<WarehouseMovement>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -1070,6 +1078,9 @@ const api: OperationsCafeApi = {
   getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
   getPartnerPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
   getCompanyPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getCompanyPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
+  listWarehouseMovements: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listWarehouseMovements, filters) as Promise<WarehouseMovement[]>,
+  getWarehouseSummary: (filters) => ipcRenderer.invoke(IPC_CHANNELS.getWarehouseSummary, filters) as Promise<WarehouseSummary>,
+  reviewWarehouseMovement: (input) => ipcRenderer.invoke(IPC_CHANNELS.reviewWarehouseMovement, input) as Promise<WarehouseMovement>,
   selectSpreadsheetFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectSpreadsheetFile) as Promise<WorkbookInspection | null>,
   inspectSpreadsheetWorkbook: (token) => ipcRenderer.invoke(IPC_CHANNELS.inspectSpreadsheetWorkbook, token) as Promise<WorkbookInspection>,
   previewSpreadsheetSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.previewSpreadsheetSheet, input) as Promise<SheetPreview>,

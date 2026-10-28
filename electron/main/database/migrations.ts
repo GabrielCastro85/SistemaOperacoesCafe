@@ -3550,4 +3550,41 @@ export const migrations: Migration[] = [
         CHECK (manual_source_cents IS NULL OR manual_source_cents > 0);
     `)
   }
+  ,{
+    name: "059_warehouse_coffee_movements",
+    up: (db) => db.exec(`
+      CREATE TABLE warehouse_movements (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id),
+        own_legal_entity_id TEXT NOT NULL REFERENCES legal_entities(id),
+        access_key TEXT NOT NULL,
+        item_number TEXT NOT NULL,
+        document_number TEXT NOT NULL,
+        series TEXT,
+        issue_date TEXT NOT NULL,
+        warehouse_name TEXT NOT NULL,
+        warehouse_cnpj TEXT,
+        product_description TEXT NOT NULL,
+        cfop TEXT NOT NULL,
+        movement_type TEXT NOT NULL CHECK (movement_type IN ('DEPOSIT','RETURN')),
+        movement_kind TEXT NOT NULL CHECK (movement_kind IN ('PHYSICAL','SYMBOLIC')),
+        quantity_kg_decimal TEXT NOT NULL,
+        source_unit TEXT NOT NULL,
+        source_quantity_decimal TEXT NOT NULL,
+        referenced_document_number TEXT,
+        reference_text TEXT,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CANCELED','PENDING_REVIEW')),
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(access_key, item_number)
+      );
+      CREATE INDEX idx_warehouse_movements_scope
+        ON warehouse_movements(organization_id, own_legal_entity_id, issue_date);
+      CREATE INDEX idx_warehouse_movements_warehouse
+        ON warehouse_movements(organization_id, warehouse_cnpj, warehouse_name);
+      CREATE INDEX idx_warehouse_movements_access_key
+        ON warehouse_movements(access_key, status);
+    `)
+  }
 ];
