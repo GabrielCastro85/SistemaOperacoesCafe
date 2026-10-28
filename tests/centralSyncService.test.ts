@@ -302,6 +302,41 @@ describe("CentralSyncService", () => {
     db.close();
   });
 
+  it("nao varre todas as tabelas locais em ciclos automaticos sem alteracoes", async () => {
+    const db = createDatabase();
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.pathname === "/v1/session/login") return jsonResponse({ token: "token" });
+      if (url.pathname === "/v1/sync/status") {
+        return jsonResponse({ revision: 1, sourceInstallationId: "install-source", recordCount: 1 });
+      }
+      if (url.pathname === "/v1/sync/bootstrap") {
+        return jsonResponse({
+          revision: 1,
+          records: [{ table: "organizations", key: "org-1", data: { display_name: "Grao & Grao", id: "org-1" }, sha256: "32f79fb1e77c40a2f14cfd4114f48587ce66be99194a393489860014ee4e6b5c", revision: 1 }],
+          nextCursor: null
+        });
+      }
+      if (url.pathname === "/v1/sync/changes") return jsonResponse({ currentRevision: 1, changes: [], next: null });
+      throw new Error(`Rota inesperada: ${url.pathname}`);
+    }));
+
+    const prepare = vi.spyOn(db, "prepare");
+    const service = new CentralSyncService(db, "test");
+    try {
+      await service.login("Gabriel", "senha-teste");
+      prepare.mockClear();
+
+      await service.synchronize();
+
+      const fullTableScans = prepare.mock.calls.filter(([sql]) => String(sql).startsWith("SELECT * FROM \""));
+      expect(fullTableScans).toEqual([]);
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("preserva uma edicao local pendente quando o pull traz a versao anterior da mesma linha", async () => {
     const db = createDatabase();
     db.exec(`

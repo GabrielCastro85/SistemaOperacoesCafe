@@ -5,6 +5,12 @@ import log from "electron-log/main.js";
 const API_URL = "https://mindful-peace-production.up.railway.app";
 const SYNC_INTERVAL_MS = 30_000;
 const MUTATION_SYNC_DELAY_MS = 750;
+// A sincronizacao incremental consulta o servidor a cada 30 segundos, mas
+// varrer todas as tabelas locais e recalcular seus hashes e' caro e bloqueia
+// o processo principal do Electron. As mutacoes IPC solicitam a varredura
+// imediatamente; este intervalo maior fica apenas como rede de seguranca para
+// alteracoes feitas por caminhos que nao passam pelos handlers.
+const LOCAL_SAFETY_SCAN_INTERVAL_MS = 10 * 60_000;
 const MAX_SYNC_BACKOFF_MS = 5 * 60_000;
 // Cada nota fiscal carrega muitos campos. Migracoes que acrescentam colunas
 // podem tornar milhares de notas "alteradas" de uma vez; lotes menores evitam
@@ -161,6 +167,8 @@ export class CentralSyncService {
   private initialized = false;
   private consecutiveFailures = 0;
   private nextAllowedSyncAt = 0;
+  private localScanPending = true;
+  private lastLocalScanAt = 0;
   private readonly tableColumns = new Map<string, Set<string>>();
   private readonly primaryKeys = new Map<string, string[]>();
 
@@ -289,6 +297,8 @@ export class CentralSyncService {
     this.initialized = false;
     this.consecutiveFailures = 0;
     this.nextAllowedSyncAt = 0;
+    this.localScanPending = true;
+    this.lastLocalScanAt = 0;
   }
 
   start(): void {
@@ -301,6 +311,8 @@ export class CentralSyncService {
 
   scheduleSynchronization(): void {
     if (!this.token) return;
+    this.localScanPending = true;
+    if (this.running) this.rerunRequested = true;
     if (this.mutationTimer) clearTimeout(this.mutationTimer);
     this.mutationTimer = setTimeout(() => {
       this.mutationTimer = null;
@@ -331,7 +343,19 @@ export class CentralSyncService {
     try {
       if (!this.initialized) await this.initializeFromServer();
       await this.pullRemoteChanges();
-      await this.pushLocalChanges();
+      const shouldScanLocal = this.localScanPending || Date.now() - this.lastLocalScanAt >= LOCAL_SAFETY_SCAN_INTERVAL_MS;
+      if (shouldScanLocal) {
+        // Limpa antes do envio: se outra mutacao acontecer enquanto a rede esta
+        // ocupada, scheduleSynchronization marca novamente e pede outro ciclo.
+        this.localScanPending = false;
+        try {
+          await this.pushLocalChanges();
+          this.lastLocalScanAt = Date.now();
+        } catch (error) {
+          this.localScanPending = true;
+          throw error;
+        }
+      }
       await this.pullRemoteChanges();
       this.db.prepare("UPDATE central_sync_state SET last_success_at = ?, last_error = NULL WHERE singleton = 1").run(new Date().toISOString());
       this.consecutiveFailures = 0;
