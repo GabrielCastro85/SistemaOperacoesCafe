@@ -152,6 +152,7 @@ export const IPC_CHANNELS = {
   listWarehouseMovements: "warehouseStock:listMovements",
   getWarehouseSummary: "warehouseStock:summary",
   reviewWarehouseMovement: "warehouseStock:updateMovementReview",
+  createWarehouseAdjustment: "warehouseStock:createAdjustment",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",

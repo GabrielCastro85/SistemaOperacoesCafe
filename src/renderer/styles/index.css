@@ -1026,6 +1026,44 @@ input[type="checkbox"] {
   background: color-mix(in srgb, var(--color-danger) 7%, var(--color-surface));
 }
 
+.warehouse-feedback--success {
+  border-color: color-mix(in srgb, var(--color-success) 38%, var(--color-border));
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 7%, var(--color-surface));
+}
+
+.warehouse-adjustment__form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px 20px 20px;
+  align-items: end;
+}
+
+.warehouse-adjustment__form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.warehouse-adjustment__form label > span { font-size: 13px; }
+.warehouse-adjustment__form input,
+.warehouse-adjustment__form select,
+.warehouse-adjustment__form button {
+  width: 100%;
+  min-height: var(--control-height);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 8px 11px;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.warehouse-adjustment__form button { cursor: pointer; font-weight: 800; }
+.warehouse-adjustment__form button:disabled { cursor: not-allowed; opacity: .55; }
+.warehouse-adjustment__reason { grid-column: span 3; }
+
 .warehouse-filters {
   display: grid;
   grid-template-columns: minmax(190px, 1.2fr) minmax(190px, 1.2fr) repeat(2, minmax(145px, .75fr)) minmax(135px, .7fr) auto;
@@ -1201,6 +1239,8 @@ input[type="checkbox"] {
 @media (max-width: 1180px) {
   .warehouse-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .warehouse-filters button { width: 100%; }
+  .warehouse-adjustment__form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .warehouse-adjustment__reason { grid-column: span 2; }
 }
 
 .page-title-row {

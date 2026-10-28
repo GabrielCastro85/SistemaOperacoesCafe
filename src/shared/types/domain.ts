@@ -941,8 +941,23 @@ export interface WarehouseMovement {
   referenceText: string | null;
   status: WarehouseMovementStatus;
   notes: string | null;
+  origin: "XML" | "MANUAL";
+  createdByUserId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CreateWarehouseAdjustmentInput {
+  organizationId: string;
+  ownLegalEntityId: string;
+  warehouseName: string;
+  warehouseCnpj?: string | null;
+  productDescription: string;
+  adjustmentMode: "SET_BALANCE" | "ADD" | "REMOVE";
+  unit: "SACK" | "KG";
+  quantity: string;
+  issueDate: string;
+  reason: string;
 }
 
 export interface WarehouseBalanceRow {

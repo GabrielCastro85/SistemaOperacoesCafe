@@ -6,6 +6,7 @@
 - Reconhece automaticamente remessas, retornos físicos, remessas simbólicas e retornos simbólicos pelos CFOPs 5905/6905, 5934/6934, 5906/6906 e 5907/6907.
 - Passa a coletar NF-e em que a empresa é emitente ou destinatária e estorna automaticamente movimentos de documentos cancelados.
 - Movimentos simbólicos sem referência identificável ficam destacados para conferência manual antes de alterar o saldo.
+- Permite corrigir manualmente o estoque por armazém, empresa e produto, definindo o saldo correto ou lançando acréscimos e retiradas com motivo obrigatório e histórico auditável.
 - Reduz a frequência de sincronizações e atualizações automáticas e aplica espera progressiva durante falhas de rede para melhorar o desempenho.
 
 ## 1.1.54

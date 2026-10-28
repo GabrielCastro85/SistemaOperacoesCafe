@@ -3587,4 +3587,16 @@ export const migrations: Migration[] = [
         ON warehouse_movements(access_key, status);
     `)
   }
+  ,{
+    name: "060_warehouse_manual_adjustments",
+    up: (db) => db.exec(`
+      ALTER TABLE warehouse_movements ADD COLUMN origin TEXT NOT NULL DEFAULT 'XML'
+        CHECK (origin IN ('XML','MANUAL'));
+      -- Identificador informativo, sem FK: usuarios sao provisionados por computador
+      -- e um ajuste precisa sincronizar mesmo antes do autor entrar em outro PC.
+      ALTER TABLE warehouse_movements ADD COLUMN created_by_user_id TEXT;
+      CREATE INDEX idx_warehouse_movements_origin
+        ON warehouse_movements(organization_id, origin, issue_date);
+    `)
+  }
 ];

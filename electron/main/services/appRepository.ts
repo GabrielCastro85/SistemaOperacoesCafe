@@ -4215,6 +4215,75 @@ export class AppRepository {
     return this.mapWarehouseMovement(row);
   }
 
+  createWarehouseAdjustment(input: {
+    organizationId: string;
+    ownLegalEntityId: string;
+    warehouseName: string;
+    warehouseCnpj?: string | null;
+    productDescription: string;
+    adjustmentMode: "SET_BALANCE" | "ADD" | "REMOVE";
+    unit: "SACK" | "KG";
+    quantity: string;
+    issueDate: string;
+    reason: string;
+  }, actorUserId: string | null): WarehouseMovement {
+    if (!this.tableExists("warehouse_movements")) throw new Error("Controle de armazens ainda nao esta disponivel.");
+    if (!this.isOrganizationAllowed(input.organizationId)) throw new Error("Organizacao nao autorizada.");
+    const entity = this.getLegalEntity(input.ownLegalEntityId);
+    if (entity.organizationId !== input.organizationId) throw new Error("Empresa nao pertence a organizacao selecionada.");
+    const warehouseName = input.warehouseName.trim();
+    const warehouseCnpj = this.onlyDigits(input.warehouseCnpj ?? "") || null;
+    const productDescription = input.productDescription.trim();
+    const reason = input.reason.trim();
+    const rawQuantity = input.quantity.trim().replace(/\s/g, "");
+    const enteredQuantity = Number(rawQuantity.includes(",") ? rawQuantity.replace(/\./g, "").replace(",", ".") : rawQuantity);
+    if (!warehouseName || !productDescription || !reason) throw new Error("Informe armazem, produto e motivo do ajuste.");
+    if (!Number.isFinite(enteredQuantity) || enteredQuantity < 0 || (input.adjustmentMode !== "SET_BALANCE" && enteredQuantity === 0)) throw new Error("Informe uma quantidade valida.");
+    const requestedKg = input.unit === "SACK" ? enteredQuantity * 60 : enteredQuantity;
+    const identityClause = warehouseCnpj
+      ? "warehouse_cnpj = ?"
+      : "LOWER(TRIM(warehouse_name)) = LOWER(TRIM(?))";
+    const identityValue = warehouseCnpj ?? warehouseName;
+    const balance = this.db.prepare(`
+      SELECT COALESCE(SUM(CASE WHEN movement_type = 'DEPOSIT' THEN CAST(quantity_kg_decimal AS REAL) ELSE -CAST(quantity_kg_decimal AS REAL) END), 0) AS quantity_kg,
+        MAX(warehouse_name) AS canonical_warehouse_name, MAX(warehouse_cnpj) AS canonical_warehouse_cnpj,
+        MAX(product_description) AS canonical_product_description
+      FROM warehouse_movements
+      WHERE organization_id = ? AND own_legal_entity_id = ? AND ${identityClause}
+        AND LOWER(TRIM(product_description)) = LOWER(TRIM(?)) AND status = 'ACTIVE'
+    `).get(input.organizationId, input.ownLegalEntityId, identityValue, productDescription) as DbRecord;
+    const currentKg = Number(balance.quantity_kg ?? 0);
+    const canonicalWarehouseName = this.stringOrNull(balance.canonical_warehouse_name) ?? warehouseName;
+    const canonicalWarehouseCnpj = this.stringOrNull(balance.canonical_warehouse_cnpj) ?? warehouseCnpj;
+    const canonicalProductDescription = this.stringOrNull(balance.canonical_product_description) ?? productDescription;
+    const deltaKg = input.adjustmentMode === "SET_BALANCE"
+      ? requestedKg - currentKg
+      : input.adjustmentMode === "ADD" ? requestedKg : -requestedKg;
+    if (Math.abs(deltaKg) < 0.0001) throw new Error("O saldo informado ja e o saldo atual; nenhum ajuste foi necessario.");
+    if (input.adjustmentMode === "REMOVE" && currentKg + deltaKg < -0.0001) throw new Error("A retirada deixaria o estoque armazenado negativo.");
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const movementType = deltaKg > 0 ? "DEPOSIT" : "RETURN";
+    const sourceQuantity = input.unit === "SACK" ? Math.abs(deltaKg) / 60 : Math.abs(deltaKg);
+    this.db.prepare(`
+      INSERT INTO warehouse_movements (
+        id, organization_id, own_legal_entity_id, access_key, item_number, document_number, series, issue_date,
+        warehouse_name, warehouse_cnpj, product_description, cfop, movement_type, movement_kind,
+        quantity_kg_decimal, source_unit, source_quantity_decimal, referenced_document_number, reference_text,
+        status, notes, origin, created_by_user_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, '1', 'AJUSTE', NULL, ?, ?, ?, ?, 'AJUSTE', ?, 'PHYSICAL', ?, ?, ?, NULL, NULL, 'ACTIVE', ?, 'MANUAL', ?, ?, ?)
+    `).run(
+      id, input.organizationId, input.ownLegalEntityId, `MANUAL-${id}`, input.issueDate,
+      canonicalWarehouseName, canonicalWarehouseCnpj, canonicalProductDescription, movementType, compactDecimal(Math.abs(deltaKg)),
+      input.unit === "SACK" ? "SC" : "KG", compactDecimal(sourceQuantity), reason, actorUserId, now, now
+    );
+    const row = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm JOIN legal_entities le ON le.id = wm.own_legal_entity_id WHERE wm.id = ?
+    `).get(id) as DbRecord;
+    return this.mapWarehouseMovement(row);
+  }
+
   private mapWarehouseMovement(row: DbRecord): WarehouseMovement {
     return {
       id: String(row.id), organizationId: String(row.organization_id), ownLegalEntityId: String(row.own_legal_entity_id),
@@ -4224,7 +4293,9 @@ export class AppRepository {
       cfop: String(row.cfop), movementType: row.movement_type as WarehouseMovement["movementType"], movementKind: row.movement_kind as WarehouseMovement["movementKind"],
       quantityKg: String(row.quantity_kg_decimal), sourceUnit: String(row.source_unit), sourceQuantity: String(row.source_quantity_decimal),
       referencedDocumentNumber: this.stringOrNull(row.referenced_document_number), referenceText: this.stringOrNull(row.reference_text),
-      status: row.status as WarehouseMovement["status"], notes: this.stringOrNull(row.notes), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+      status: row.status as WarehouseMovement["status"], notes: this.stringOrNull(row.notes),
+      origin: (row.origin ?? "XML") as WarehouseMovement["origin"], createdByUserId: this.stringOrNull(row.created_by_user_id),
+      createdAt: String(row.created_at), updatedAt: String(row.updated_at)
     };
   }
 

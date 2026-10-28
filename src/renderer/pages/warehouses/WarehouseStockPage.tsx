@@ -28,6 +28,12 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
   const [movements, setMovements] = useState<WarehouseMovement[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageKind, setMessageKind] = useState<"error" | "success">("error");
+  const [adjustment, setAdjustment] = useState({
+    ownLegalEntityId: legalEntities[0]?.id ?? "", warehouseName: "", warehouseCnpj: "", productDescription: "",
+    adjustmentMode: "SET_BALANCE" as "SET_BALANCE" | "ADD" | "REMOVE", unit: "SACK" as "SACK" | "KG",
+    quantity: "", issueDate: today(), reason: ""
+  });
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -44,6 +50,7 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
       setSummary(nextSummary);
       setMovements(nextMovements);
     } catch (error) {
+      setMessageKind("error");
       setMessage(error instanceof Error ? error.message : "Não foi possível carregar os cafés armazenados.");
     } finally {
       setLoading(false);
@@ -61,7 +68,26 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
       await window.operationsCafe.reviewWarehouseMovement({ id: row.id, referencedDocumentNumber: reference.trim() });
       await load();
     } catch (error) {
+      setMessageKind("error");
       setMessage(error instanceof Error ? error.message : "Não foi possível confirmar o movimento.");
+      setLoading(false);
+    }
+  };
+
+  const createAdjustment = async (): Promise<void> => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      await window.operationsCafe.createWarehouseAdjustment({ organizationId, ...adjustment, warehouseCnpj: adjustment.warehouseCnpj || null });
+      setMessageKind("success");
+      setMessage("Ajuste manual registrado. O saldo e o histórico foram atualizados.");
+      setAdjustment((current) => ({ ...current, quantity: "", reason: "" }));
+      await load();
+      setMessageKind("success");
+      setMessage("Ajuste manual registrado. O saldo e o histórico foram atualizados.");
+    } catch (error) {
+      setMessageKind("error");
+      setMessage(error instanceof Error ? error.message : "Não foi possível registrar o ajuste manual.");
       setLoading(false);
     }
   };
@@ -76,7 +102,7 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
   return (
     <section className="content-section warehouse-stock-page">
       <PageHeader eyebrow="Estoque em terceiros" title="Cafés armazenados" description="Controle automático pelas NF-e de remessa, retorno e baixa simbólica. Estas notas não geram cobrança nem operação comercial." />
-      {message ? <div className="warehouse-feedback">{message}</div> : null}
+      {message ? <div className={`warehouse-feedback warehouse-feedback--${messageKind}`}>{message}</div> : null}
 
       <div className="warehouse-filters">
         <label><span>Empresa proprietária</span><select value={ownLegalEntityId} onChange={(event) => setOwnLegalEntityId(event.target.value)}><option value="">Todas as empresas</option>{legalEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select></label>
@@ -94,11 +120,27 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
         <Card><span>Precisam de conferência</span><strong>{summary.pendingReviewCount}</strong><small>Referência da remessa não identificada</small></Card>
       </div>
 
+      <section className="warehouse-panel warehouse-adjustment">
+        <div className="warehouse-panel__heading"><div><span>Correção auditável</span><h2>Ajustar estoque manualmente</h2></div><small>Não altera nem apaga as NF-e originais</small></div>
+        <div className="warehouse-adjustment__form">
+          <label><span>Empresa proprietária</span><select value={adjustment.ownLegalEntityId} onChange={(event) => setAdjustment({ ...adjustment, ownLegalEntityId: event.target.value })}>{legalEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}</select></label>
+          <label><span>Armazém</span><input list="warehouse-adjustment-names" value={adjustment.warehouseName} onChange={(event) => setAdjustment({ ...adjustment, warehouseName: event.target.value })} placeholder="Nome do armazém" /><datalist id="warehouse-adjustment-names">{[...new Set([...summary.balances.map((row) => row.warehouseName), ...movements.map((row) => row.warehouseName)])].map((name) => <option key={name} value={name} />)}</datalist></label>
+          <label><span>CNPJ do armazém (opcional)</span><input value={adjustment.warehouseCnpj} onChange={(event) => setAdjustment({ ...adjustment, warehouseCnpj: event.target.value })} placeholder="Somente números" /></label>
+          <label><span>Produto</span><input list="warehouse-adjustment-products" value={adjustment.productDescription} onChange={(event) => setAdjustment({ ...adjustment, productDescription: event.target.value })} placeholder="Ex.: Café Arábica" /><datalist id="warehouse-adjustment-products">{[...new Set(summary.balances.map((row) => row.productDescription))].map((name) => <option key={name} value={name} />)}</datalist></label>
+          <label><span>Tipo de ajuste</span><select value={adjustment.adjustmentMode} onChange={(event) => setAdjustment({ ...adjustment, adjustmentMode: event.target.value as typeof adjustment.adjustmentMode })}><option value="SET_BALANCE">Definir saldo correto</option><option value="ADD">Acrescentar ao saldo</option><option value="REMOVE">Retirar do saldo</option></select></label>
+          <label><span>Quantidade</span><input inputMode="decimal" value={adjustment.quantity} onChange={(event) => setAdjustment({ ...adjustment, quantity: event.target.value })} placeholder="0,000" /></label>
+          <label><span>Unidade</span><select value={adjustment.unit} onChange={(event) => setAdjustment({ ...adjustment, unit: event.target.value as typeof adjustment.unit })}><option value="SACK">Sacas (60 kg)</option><option value="KG">Quilogramas</option></select></label>
+          <DateInput label="Data do ajuste" value={adjustment.issueDate} onChange={(event) => setAdjustment({ ...adjustment, issueDate: event.target.value })} />
+          <label className="warehouse-adjustment__reason"><span>Motivo obrigatório</span><input value={adjustment.reason} onChange={(event) => setAdjustment({ ...adjustment, reason: event.target.value })} placeholder="Ex.: conferência física do armazém" /></label>
+          <button type="button" onClick={() => void createAdjustment()} disabled={loading || !adjustment.ownLegalEntityId || !adjustment.warehouseName.trim() || !adjustment.productDescription.trim() || !adjustment.quantity.trim() || adjustment.reason.trim().length < 3}>{loading ? "Registrando..." : "Registrar ajuste"}</button>
+        </div>
+      </section>
+
       <section className="warehouse-panel">
         <div className="warehouse-panel__heading"><div><span>Posição atual</span><h2>Saldo por armazém</h2></div><small>1 saca = 60 kg</small></div>
         <div className="warehouse-table-wrap">
-          <table className="warehouse-table"><thead><tr><th>Armazém</th><th>Empresa</th><th>Produto</th><th className="number">Kg</th><th className="number">Sacas</th></tr></thead>
-            <tbody>{summary.balances.length ? summary.balances.map((row) => <tr key={`${row.ownLegalEntityId}:${row.warehouseCnpj}:${row.productDescription}`}><td><strong>{row.warehouseName}</strong><small>{row.warehouseCnpj ? formatCnpj(row.warehouseCnpj) : "CNPJ não informado"}</small></td><td>{row.ownLegalEntityName}</td><td>{row.productDescription}</td><td className="number">{quantity(row.quantityKg)}</td><td className="number"><strong>{quantity(row.quantitySacks)}</strong></td></tr>) : <tr><td colSpan={5} className="empty">Nenhum saldo armazenado reconhecido.</td></tr>}</tbody>
+          <table className="warehouse-table"><thead><tr><th>Armazém</th><th>Empresa</th><th>Produto</th><th className="number">Kg</th><th className="number">Sacas</th><th>Ação</th></tr></thead>
+            <tbody>{summary.balances.length ? summary.balances.map((row) => <tr key={`${row.ownLegalEntityId}:${row.warehouseCnpj}:${row.productDescription}`}><td><strong>{row.warehouseName}</strong><small>{row.warehouseCnpj ? formatCnpj(row.warehouseCnpj) : "CNPJ não informado"}</small></td><td>{row.ownLegalEntityName}</td><td>{row.productDescription}</td><td className="number">{quantity(row.quantityKg)}</td><td className="number"><strong>{quantity(row.quantitySacks)}</strong></td><td><button type="button" className="warehouse-review-button" onClick={() => { setAdjustment({ ...adjustment, ownLegalEntityId: row.ownLegalEntityId, warehouseName: row.warehouseName, warehouseCnpj: row.warehouseCnpj ?? "", productDescription: row.productDescription, adjustmentMode: "SET_BALANCE", unit: "SACK", quantity: row.quantitySacks }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Ajustar saldo</button></td></tr>) : <tr><td colSpan={6} className="empty">Nenhum saldo armazenado reconhecido.</td></tr>}</tbody>
           </table>
         </div>
       </section>
@@ -109,10 +151,10 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
           <table className="warehouse-table"><thead><tr><th>NF-e</th><th>Data</th><th>Armazém</th><th>Movimento</th><th>Produto / referência</th><th className="number">Quantidade</th><th>Status</th></tr></thead>
             <tbody>{movements.length ? movements.map((row) => (
               <tr key={row.id} className={row.status === "PENDING_REVIEW" ? "needs-review" : row.status === "CANCELED" ? "is-canceled" : ""}>
-                <td><strong>NF {row.documentNumber}</strong><small>CFOP {row.cfop}</small></td>
+                <td><strong>{row.origin === "MANUAL" ? "Ajuste manual" : `NF ${row.documentNumber}`}</strong><small>{row.origin === "MANUAL" ? "Correção registrada no sistema" : `CFOP ${row.cfop}`}</small></td>
                 <td>{formatDateOnlyBr(row.issueDate)}</td>
                 <td><strong>{row.warehouseName}</strong><small>{row.ownLegalEntityName}</small></td>
-                <td><span className={`warehouse-movement warehouse-movement--${row.movementType.toLowerCase()}`}>{movementLabel(row)}</span></td>
+                <td><span className={`warehouse-movement warehouse-movement--${row.movementType.toLowerCase()}`}>{row.origin === "MANUAL" ? (row.movementType === "DEPOSIT" ? "Ajuste manual (+)" : "Ajuste manual (−)") : movementLabel(row)}</span></td>
                 <td>{row.productDescription}<small>{row.referencedDocumentNumber ? `Referência: NF ${row.referencedDocumentNumber}` : row.notes ?? "Sem referência informada"}</small></td>
                 <td className="number"><strong>{row.movementType === "RETURN" ? "− " : "+ "}{quantity(String(Number(row.quantityKg) / 60))} sc</strong><small>{quantity(row.quantityKg)} kg</small></td>
                 <td><span className={`warehouse-status warehouse-status--${row.status.toLowerCase()}`}>{row.status === "ACTIVE" ? "Ativa" : row.status === "CANCELED" ? "Cancelada" : "Conferir"}</span>{row.status === "PENDING_REVIEW" ? <button type="button" className="warehouse-review-button" onClick={() => void reviewMovement(row)} disabled={loading}>Informar referência</button> : null}</td>

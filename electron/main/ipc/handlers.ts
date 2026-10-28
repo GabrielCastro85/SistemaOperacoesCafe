@@ -596,6 +596,23 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     }).parse(payload);
     return repository.reviewWarehouseMovement(data.id, data.referencedDocumentNumber, data.notes ?? null);
   });
+  handle(IPC_CHANNELS.createWarehouseAdjustment, (_event, payload: unknown) => {
+    const data = z.object({
+      organizationId: z.string().uuid(), ownLegalEntityId: z.string().uuid(), warehouseName: z.string().trim().min(2).max(160),
+      warehouseCnpj: z.string().trim().max(20).nullable().optional(), productDescription: z.string().trim().min(2).max(200),
+      adjustmentMode: z.enum(["SET_BALANCE", "ADD", "REMOVE"]), unit: z.enum(["SACK", "KG"]),
+      quantity: z.string().trim().min(1).max(30), issueDate: z.string().date(), reason: z.string().trim().min(3).max(500)
+    }).parse(payload);
+    const session = auth.getCurrentSession();
+    const result = repository.createWarehouseAdjustment(data, session?.user.id ?? null);
+    auth.writeAudit({
+      actorUserId: session?.user.id ?? null, sessionId: session?.id ?? null,
+      action: "warehouse_stock.manual_adjustment", entityType: "warehouse_movement", entityId: result.id,
+      result: "SUCCESS", severity: "WARNING",
+      metadata: { adjustmentMode: data.adjustmentMode, quantity: data.quantity, unit: data.unit, reason: data.reason }
+    });
+    return result;
+  });
   handle(IPC_CHANNELS.selectSpreadsheetFile, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Planilhas Excel", extensions: ["xlsx"] }] });
     if (result.canceled || !result.filePaths[0]) return null;

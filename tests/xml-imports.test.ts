@@ -933,6 +933,27 @@ describe("warehouse coffee movements", () => {
       expect(afterReview.activeMovementCount).toBe(1);
     } finally { ctx.db.close(); }
   });
+
+  it("records auditable manual adjustments without changing the original warehouse note", async () => {
+    const ctx = await setup();
+    try {
+      const depositKey = makeAccessKey(9104);
+      await importAuditXml(ctx, nfeXml(depositKey).replace("<CFOP>5102</CFOP>", "<CFOP>5905</CFOP>"));
+      const base = {
+        organizationId: villaId, ownLegalEntityId, warehouseName: "Cliente XML Ltda", warehouseCnpj: null,
+        productDescription: "CAFE ARABICA", unit: "SACK" as const, issueDate: "2026-07-17", reason: "Conferencia fisica do armazem"
+      };
+      const setBalance = ctx.repo.createWarehouseAdjustment({ ...base, adjustmentMode: "SET_BALANCE", quantity: "8" }, null);
+      expect(setBalance).toMatchObject({ origin: "MANUAL", movementType: "RETURN", quantityKg: "150", warehouseCnpj: partnerCnpj, notes: base.reason });
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalSacks: "8" });
+
+      ctx.repo.createWarehouseAdjustment({ ...base, adjustmentMode: "ADD", quantity: "2" }, null);
+      ctx.repo.createWarehouseAdjustment({ ...base, adjustmentMode: "REMOVE", quantity: "1" }, null);
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "540", totalSacks: "9" });
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId }).filter((row) => row.origin === "MANUAL")).toHaveLength(3);
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId }).find((row) => row.accessKey === depositKey)).toMatchObject({ origin: "XML", quantityKg: "630" });
+    } finally { ctx.db.close(); }
+  });
 });
 
 function makeAccessKey(sequence = 9001): string {

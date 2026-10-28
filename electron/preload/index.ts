@@ -44,6 +44,7 @@ import type {
   FiscalDocumentEvent,
   WarehouseMovement,
   WarehouseSummary,
+  CreateWarehouseAdjustmentInput,
   ProductAlias,
   OperationClassificationRule,
   FiscalDocumentMergeHistory,
@@ -244,6 +245,7 @@ const IPC_CHANNELS = {
   listWarehouseMovements: "warehouseStock:listMovements",
   getWarehouseSummary: "warehouseStock:summary",
   reviewWarehouseMovement: "warehouseStock:updateMovementReview",
+  createWarehouseAdjustment: "warehouseStock:createAdjustment",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",
@@ -663,6 +665,7 @@ export interface OperationsCafeApi {
   listWarehouseMovements: (filters: { organizationId: string; ownLegalEntityId?: string | null; warehouseCnpj?: string | null; periodStart?: string | null; periodEnd?: string | null; status?: "ALL" | "ACTIVE" | "CANCELED" | "PENDING_REVIEW" }) => Promise<WarehouseMovement[]>;
   getWarehouseSummary: (filters: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<WarehouseSummary>;
   reviewWarehouseMovement: (input: { id: string; referencedDocumentNumber: string; notes?: string | null }) => Promise<WarehouseMovement>;
+  createWarehouseAdjustment: (input: CreateWarehouseAdjustmentInput) => Promise<WarehouseMovement>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -1081,6 +1084,7 @@ const api: OperationsCafeApi = {
   listWarehouseMovements: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listWarehouseMovements, filters) as Promise<WarehouseMovement[]>,
   getWarehouseSummary: (filters) => ipcRenderer.invoke(IPC_CHANNELS.getWarehouseSummary, filters) as Promise<WarehouseSummary>,
   reviewWarehouseMovement: (input) => ipcRenderer.invoke(IPC_CHANNELS.reviewWarehouseMovement, input) as Promise<WarehouseMovement>,
+  createWarehouseAdjustment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createWarehouseAdjustment, input) as Promise<WarehouseMovement>,
   selectSpreadsheetFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectSpreadsheetFile) as Promise<WorkbookInspection | null>,
   inspectSpreadsheetWorkbook: (token) => ipcRenderer.invoke(IPC_CHANNELS.inspectSpreadsheetWorkbook, token) as Promise<WorkbookInspection>,
   previewSpreadsheetSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.previewSpreadsheetSheet, input) as Promise<SheetPreview>,
