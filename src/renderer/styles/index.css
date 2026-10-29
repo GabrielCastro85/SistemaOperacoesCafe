@@ -1015,7 +1015,13 @@ input[type="checkbox"] {
 
 .warehouse-stock-page {
   display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 20px;
+}
+
+.warehouse-stock-page > * {
+  min-width: 0;
 }
 
 .warehouse-feedback {

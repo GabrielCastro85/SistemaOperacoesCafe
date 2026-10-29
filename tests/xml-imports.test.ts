@@ -934,6 +934,36 @@ describe("warehouse coffee movements", () => {
     } finally { ctx.db.close(); }
   });
 
+  it("recognizes a symbolic return whose remittance reference uses thousand separators", async () => {
+    const ctx = await setup();
+    try {
+      const returnKey = makeAccessKey(9105);
+      const returnXml = nfeXml(returnKey)
+        .replace(`<CNPJ>${ownCnpj}</CNPJ>`, "<CNPJ>__WAREHOUSE__</CNPJ>")
+        .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${ownCnpj}</CNPJ>`)
+        .replace("<CNPJ>__WAREHOUSE__</CNPJ>", `<CNPJ>${partnerCnpj}</CNPJ>`)
+        .replace("<xNome>Villa Coffee MG</xNome>", "<xNome>__WAREHOUSE_NAME__</xNome>")
+        .replace("<xNome>Cliente XML Ltda</xNome>", "<xNome>Villa Coffee MG</xNome>")
+        .replace("<xNome>__WAREHOUSE_NAME__</xNome>", "<xNome>Santa Fe Armazens Gerais</xNome>")
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Retorno de mercadoria depositada em armazem geral</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5907</CFOP>")
+        .replace("<infCpl>Informacao complementar</infCpl>", "<infCpl>REF. NF-e REMESSA 1.344 (PARTE)</infCpl>")
+        .replaceAll("10.5", "500");
+
+      const result = await importAuditXml(ctx, returnXml);
+      expect(result.files[0].status).toBe("IMPORTED");
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId })[0]).toMatchObject({
+        accessKey: returnKey,
+        warehouseName: "Santa Fe Armazens Gerais",
+        movementType: "RETURN",
+        movementKind: "SYMBOLIC",
+        quantityKg: "30000",
+        referencedDocumentNumber: "1344",
+        status: "ACTIVE"
+      });
+    } finally { ctx.db.close(); }
+  });
+
   it("records auditable manual adjustments without changing the original warehouse note", async () => {
     const ctx = await setup();
     try {

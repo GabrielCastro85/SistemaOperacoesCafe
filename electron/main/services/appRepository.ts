@@ -4336,7 +4336,13 @@ export class AppRepository {
       .filter((value): value is string => Boolean(value)).join(" | ") || null;
     const referencedKeys = (Array.isArray(extracted.referencedAccessKeys) ? extracted.referencedAccessKeys : []).map(String).filter((key) => /^\d{44}$/.test(key));
     const referencedByKey = referencedKeys[0]?.slice(25, 34).replace(/^0+/, "") || null;
-    const referencedByText = referenceText?.match(/\b(?:NF-?E|NF)(?:\s+DE\s+(?:REMESSA|ORIGEM))?\s*(?:N[º°.]?\s*)?[:#º°.\-\s]*(\d{1,12})\b/i)?.[1] ?? null;
+    const referencedByTextMatch = referenceText?.match(
+      /\b(?:REF(?:ERENTE)?\.?\s*)?(?:NF-?E|NF)(?:\s+(?:DE\s+)?(?:REMESSA|ORIGEM))?\s*(?:N[º°.]?\s*)?[:#º°.\-\s]*(\d(?:[\d.]*\d)?)/i
+    )?.[1] ?? null;
+    // DANFEs frequentemente imprimem o numero com separador de milhar (ex.:
+    // "REF. NF-e REMESSA 1.344 (PARTE)"). O numero fiscal armazenado nao
+    // possui pontuacao, portanto normalizamos antes de vincular o retorno.
+    const referencedByText = referencedByTextMatch ? referencedByTextMatch.replace(/\D/g, "") || null : null;
     const referencedDocumentNumber = referencedByKey ?? referencedByText;
     const now = new Date().toISOString();
     const canceled = Boolean(this.db.prepare(`
