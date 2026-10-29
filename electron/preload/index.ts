@@ -38,6 +38,8 @@ import type {
   SpreadsheetImportJob,
   SpreadsheetImportRow,
   PartnerAlias,
+  SefazCertificateInfo,
+  SefazNfeQueryResult,
   XmlFileInspection,
   XmlImportJob,
   XmlImportFile,
@@ -273,6 +275,9 @@ const IPC_CHANNELS = {
   sendCollectorCommand: "xmlFiles:collectorCommand",
   askAssistant: "assistant:ask",
   scanVulpeDevXml: "xmlFiles:vulpeDevScan",
+  listSefazCertificates: "sefaz:listCertificates",
+  querySefazNfe: "sefaz:queryNfe",
+  acknowledgeAndDownloadSefazNfe: "sefaz:acknowledgeAndDownloadNfe",
   registerDroppedXmlFiles: "xmlFiles:registerDropped",
   inspectXmlFiles: "xmlFiles:inspect",
   createXmlImportDraft: "xmlImports:createDraft",
@@ -708,6 +713,12 @@ export interface OperationsCafeApi {
     canceledInvoicesHidden: number;
     files: Array<{ token: string; fileName: string; sizeBytes: number }>;
   }>;
+  listSefazCertificates: () => Promise<SefazCertificateInfo[]>;
+  querySefazNfe: (input: { cnpj: string; state: string; periodStart: string; periodEnd: string; accessKey?: string }) => Promise<SefazNfeQueryResult>;
+  acknowledgeAndDownloadSefazNfe: (input: { cnpj: string; state: string; accessKey: string }) => Promise<{
+    acknowledgement: { statusCode: string; reason: string; protocol: string | null; registeredAt: string | null };
+    files: Array<{ token: string; fileName: string; sizeBytes: number }>;
+  }>;
   registerDroppedXmlFiles: (paths: string[]) => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   getDroppedFilePaths: (files: File[]) => string[];
   inspectXmlFiles: (tokens: string[]) => Promise<XmlFileInspection[]>;
@@ -1127,6 +1138,12 @@ const api: OperationsCafeApi = {
     cancellationEvents: number;
     cancellationsAlreadyApplied: number;
     canceledInvoicesHidden: number;
+    files: Array<{ token: string; fileName: string; sizeBytes: number }>;
+  }>,
+  listSefazCertificates: () => ipcRenderer.invoke(IPC_CHANNELS.listSefazCertificates) as Promise<SefazCertificateInfo[]>,
+  querySefazNfe: (input) => ipcRenderer.invoke(IPC_CHANNELS.querySefazNfe, input) as Promise<SefazNfeQueryResult>,
+  acknowledgeAndDownloadSefazNfe: (input) => ipcRenderer.invoke(IPC_CHANNELS.acknowledgeAndDownloadSefazNfe, input) as Promise<{
+    acknowledgement: { statusCode: string; reason: string; protocol: string | null; registeredAt: string | null };
     files: Array<{ token: string; fileName: string; sizeBytes: number }>;
   }>,
   registerDroppedXmlFiles: (paths) => ipcRenderer.invoke(IPC_CHANNELS.registerDroppedXmlFiles, { paths }) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,

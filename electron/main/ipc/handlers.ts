@@ -17,6 +17,7 @@ import type { AppContext } from "../services/context.js";
 import { inspectWorkbook, previewSheet, readSheetRows, validateSpreadsheetPath } from "../services/spreadsheetService.js";
 import { multiplyDecimalByCents } from "../../../src/shared/utils/decimal.js";
 import { inspectXmlFile, safeXmlTargetName } from "../services/xmlNfeService.js";
+import { acknowledgeSefazNfe, listInstalledSefazCertificates, querySefazDistribution, type SefazDistributionDocument, type SefazNfeSummary } from "../services/sefazNfeService.js";
 import { lookupCnpj } from "../services/cnpjLookupService.js";
 import { AuthError, AuthService, getIpcPolicy } from "../services/security.js";
 import { BackupService } from "../services/backupService.js";
@@ -39,6 +40,63 @@ const remoteCollectorSources = {
   VILLA_SP: { label: "Villa SP", cnpj: "44963370000108", sourceCode: "VILLA_SP" }
 } as const;
 type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof remoteCollectorSources | "ALL";
+
+interface StoredSefazState {
+  lastNsu: string;
+  maxNsu: string;
+  lastQueryAt: string | null;
+  nextAllowedAt: string | null;
+  statusCode: string;
+  reason: string;
+  certificateSubject: string;
+  certificateNotAfter: string;
+  summaries: SefazNfeSummary[];
+}
+
+function loadStoredSefazState(context: AppContext, cnpj: string): StoredSefazState {
+  const row = context.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(`sefaz_nfe_distribution_${cnpj}`) as { value: string } | undefined;
+  if (row) {
+    try {
+      const parsed = JSON.parse(row.value) as Partial<StoredSefazState>;
+      return {
+        lastNsu: String(parsed.lastNsu ?? "0").padStart(15, "0"),
+        maxNsu: String(parsed.maxNsu ?? "0").padStart(15, "0"),
+        lastQueryAt: parsed.lastQueryAt ?? null,
+        nextAllowedAt: parsed.nextAllowedAt ?? null,
+        statusCode: parsed.statusCode ?? "",
+        reason: parsed.reason ?? "",
+        certificateSubject: parsed.certificateSubject ?? "",
+        certificateNotAfter: parsed.certificateNotAfter ?? "",
+        summaries: Array.isArray(parsed.summaries) ? parsed.summaries : []
+      };
+    } catch {
+      // Configuracao antiga ou corrompida: reinicia somente o cursor desta integracao.
+    }
+  }
+  return { lastNsu: "000000000000000", maxNsu: "000000000000000", lastQueryAt: null, nextAllowedAt: null, statusCode: "", reason: "", certificateSubject: "", certificateNotAfter: "", summaries: [] };
+}
+
+function saveStoredSefazState(context: AppContext, cnpj: string, state: StoredSefazState): void {
+  const key = `sefaz_nfe_distribution_${cnpj}`;
+  const now = new Date().toISOString();
+  context.db.prepare(`
+    INSERT INTO app_settings (id, key, value, value_type, created_at, updated_at)
+    VALUES (?, ?, ?, 'json', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, value_type = 'json', updated_at = excluded.updated_at
+  `).run(randomUUID(), key, JSON.stringify(state), now, now);
+}
+
+function mergeSefazSummaries(existing: SefazNfeSummary[], incoming: SefazNfeSummary[]): SefazNfeSummary[] {
+  const byKey = new Map(existing.map((summary) => [summary.accessKey, summary]));
+  incoming.forEach((summary) => byKey.set(summary.accessKey, { ...byKey.get(summary.accessKey), ...summary }));
+  return [...byKey.values()]
+    .sort((left, right) => String(right.issuedAt ?? "").localeCompare(String(left.issuedAt ?? "")))
+    .slice(0, 500);
+}
+
+function sefazSummaryDate(summary: SefazNfeSummary): string {
+  return String(summary.issuedAt ?? "").slice(0, 10);
+}
 
 function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
   return [...new Set(chargeIds)].map((chargeId) => {
@@ -142,6 +200,26 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         throw error;
       }
     });
+  };
+
+  const storeSefazDocuments = (cnpj: string, documents: SefazDistributionDocument[]): Array<{ token: string; fileName: string; sizeBytes: number }> => {
+    const targetDir = join(context.directories.xmlImportsDir, "sefaz", cnpj);
+    mkdirSync(targetDir, { recursive: true });
+    const hasAccessKey = context.db.prepare(`
+      SELECT 1 FROM fiscal_documents WHERE access_key = ?
+      UNION ALL
+      SELECT 1 FROM warehouse_movements WHERE access_key = ?
+      LIMIT 1
+    `);
+    const paths: string[] = [];
+    for (const document of documents) {
+      if (!document.isNfeXml || !document.summary?.accessKey) continue;
+      if (hasAccessKey.get(document.summary.accessKey, document.summary.accessKey)) continue;
+      const targetPath = join(targetDir, `${document.summary.accessKey}-nfe.xml`);
+      writeFileSync(targetPath, document.xml, "utf8");
+      paths.push(targetPath);
+    }
+    return registerXmlPaths(paths);
   };
 
   handle(IPC_CHANNELS.authNeedsBootstrap, () => auth.needsBootstrap());
@@ -837,6 +915,103 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         }))
       }
     });
+  });
+  handle(IPC_CHANNELS.listSefazCertificates, () => listInstalledSefazCertificates());
+  handle(IPC_CHANNELS.querySefazNfe, async (_event, payload: unknown) => {
+    const data = z.object({
+      cnpj: z.string().transform((value) => value.replace(/\D/g, "")).pipe(z.string().length(14)),
+      state: z.string().trim().length(2),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      accessKey: z.string().transform((value) => value.replace(/\D/g, "")).pipe(z.string().length(44)).optional()
+    }).parse(payload);
+    if (data.periodStart > data.periodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
+    let state = loadStoredSefazState(context, data.cnpj);
+    const now = new Date();
+    if (!data.accessKey && state.nextAllowedAt && new Date(state.nextAllowedAt) > now) {
+      return {
+        cnpj: data.cnpj,
+        statusCode: state.statusCode,
+        reason: `A SEFAZ exige intervalo de uma hora sem novos documentos. Tente novamente depois de ${new Date(state.nextAllowedAt).toLocaleString("pt-BR")}.`,
+        lastNsu: state.lastNsu,
+        maxNsu: state.maxNsu,
+        queriedAt: state.lastQueryAt ?? now.toISOString(),
+        nextAllowedAt: state.nextAllowedAt,
+        certificateSubject: state.certificateSubject,
+        certificateNotAfter: state.certificateNotAfter,
+        summaries: state.summaries.filter((summary) => {
+          const date = sefazSummaryDate(summary);
+          return date >= data.periodStart && date <= data.periodEnd;
+        }),
+        files: []
+      };
+    }
+
+    const collectedDocuments: SefazDistributionDocument[] = [];
+    let response = await querySefazDistribution({ cnpj: data.cnpj, state: data.state, lastNsu: state.lastNsu, accessKey: data.accessKey });
+    collectedDocuments.push(...response.documents);
+    if (!data.accessKey) {
+      for (let page = 1; page < 20 && response.statusCode === "138" && response.lastNsu !== response.maxNsu; page += 1) {
+        response = await querySefazDistribution({ cnpj: data.cnpj, state: data.state, lastNsu: response.lastNsu });
+        collectedDocuments.push(...response.documents);
+      }
+    }
+    const queriedAt = new Date().toISOString();
+    const incomingSummaries = collectedDocuments.flatMap((document) => document.summary ? [document.summary] : []);
+    const summaries = mergeSefazSummaries(state.summaries, incomingSummaries);
+    const requiresOneHourWait = ["137", "656"].includes(response.statusCode);
+    state = {
+      lastNsu: data.accessKey ? state.lastNsu : response.lastNsu,
+      maxNsu: data.accessKey ? state.maxNsu : response.maxNsu,
+      lastQueryAt: queriedAt,
+      nextAllowedAt: data.accessKey ? state.nextAllowedAt : requiresOneHourWait ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null,
+      statusCode: response.statusCode,
+      reason: response.reason,
+      certificateSubject: response.certificateSubject,
+      certificateNotAfter: response.certificateNotAfter,
+      summaries
+    };
+    saveStoredSefazState(context, data.cnpj, state);
+    const files = storeSefazDocuments(data.cnpj, collectedDocuments);
+    return {
+      cnpj: data.cnpj,
+      statusCode: state.statusCode,
+      reason: state.reason,
+      lastNsu: state.lastNsu,
+      maxNsu: state.maxNsu,
+      queriedAt,
+      nextAllowedAt: state.nextAllowedAt,
+      certificateSubject: state.certificateSubject,
+      certificateNotAfter: state.certificateNotAfter,
+      summaries: state.summaries.filter((summary) => {
+        const date = sefazSummaryDate(summary);
+        return date >= data.periodStart && date <= data.periodEnd;
+      }),
+      files
+    };
+  });
+  handle(IPC_CHANNELS.acknowledgeAndDownloadSefazNfe, async (_event, payload: unknown) => {
+    const data = z.object({
+      cnpj: z.string().transform((value) => value.replace(/\D/g, "")).pipe(z.string().length(14)),
+      state: z.string().trim().length(2),
+      accessKey: z.string().transform((value) => value.replace(/\D/g, "")).pipe(z.string().length(44))
+    }).parse(payload);
+    const acknowledgement = await acknowledgeSefazNfe(data);
+    if (!["135", "136", "573"].includes(acknowledgement.statusCode)) {
+      throw new Error(`A SEFAZ nao aceitou a Ciencia da Operacao: ${acknowledgement.statusCode} - ${acknowledgement.reason}`);
+    }
+    const response = await querySefazDistribution({ cnpj: data.cnpj, state: data.state, accessKey: data.accessKey });
+    const fullDocuments = response.documents.filter((document) => document.isNfeXml && document.summary?.accessKey === data.accessKey);
+    if (fullDocuments.length === 0) {
+      throw new Error("A Ciencia da Operacao foi registrada, mas a SEFAZ ainda nao liberou o XML completo. Aguarde alguns minutos e use Buscar pela chave novamente.");
+    }
+    const state = loadStoredSefazState(context, data.cnpj);
+    state.summaries = mergeSefazSummaries(state.summaries, fullDocuments.flatMap((document) => document.summary ? [document.summary] : []));
+    state.lastQueryAt = new Date().toISOString();
+    state.certificateSubject = response.certificateSubject;
+    state.certificateNotAfter = response.certificateNotAfter;
+    saveStoredSefazState(context, data.cnpj, state);
+    return { acknowledgement, files: storeSefazDocuments(data.cnpj, fullDocuments) };
   });
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
     const data = z.object({

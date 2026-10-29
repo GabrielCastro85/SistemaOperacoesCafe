@@ -2696,6 +2696,164 @@ table tbody tr:hover {
   white-space: normal;
 }
 
+.sefaz-received-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  border-radius: var(--radius-lg);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)), var(--color-surface));
+}
+
+.sefaz-received-panel__heading,
+.sefaz-summary-card,
+.sefaz-access-key-search {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sefaz-received-panel__heading > div,
+.sefaz-summary-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.sefaz-received-panel__heading span,
+.sefaz-received-panel__heading small,
+.sefaz-summary-card small,
+.sefaz-query-result small,
+.sefaz-legal-note {
+  color: var(--color-text-muted);
+}
+
+.sefaz-received-panel__heading > div > span {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.sefaz-received-panel__heading strong {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+}
+
+.sefaz-certificate-badge {
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sefaz-certificate-badge--ok {
+  color: #075a36;
+  background: #dff6e9;
+}
+
+.sefaz-certificate-badge--missing {
+  color: #8b1d1d;
+  background: #fde7e7;
+}
+
+.sefaz-query-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(190px, 0.45fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.sefaz-query-grid__action {
+  display: grid;
+  gap: 6px;
+}
+
+.sefaz-query-grid__action > span,
+.sefaz-access-key-search label > span {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sefaz-access-key-search label {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+}
+
+.sefaz-access-key-search button {
+  align-self: end;
+}
+
+.sefaz-query-result {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.sefaz-query-result p,
+.sefaz-legal-note {
+  margin: 0;
+}
+
+.sefaz-summary-list {
+  display: grid;
+  gap: 8px;
+}
+
+.sefaz-summary-card {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.sefaz-summary-card > div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.sefaz-summary-card > div:first-child strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sefaz-summary-card__amount {
+  min-width: 170px;
+  text-align: right;
+}
+
+.sefaz-legal-note {
+  padding: 10px 12px;
+  border-left: 3px solid #d19a2b;
+  background: #fff8e8;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 820px) {
+  .sefaz-received-panel__heading,
+  .sefaz-summary-card,
+  .sefaz-access-key-search {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sefaz-query-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sefaz-certificate-badge,
+  .sefaz-summary-card__amount {
+    width: fit-content;
+    min-width: 0;
+    text-align: left;
+    white-space: normal;
+  }
+}
+
 @media (max-width: 720px) {
   .notes-flow-intro,
   .notes-direction-hero {
