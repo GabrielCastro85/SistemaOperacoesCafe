@@ -4,8 +4,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Button, ConfirmationDialog, DataTable, DocumentPreviewCard, EmptyState, FileDropzone, Input, Pagination, ProgressBar, StatusBadge, Stepper, Tabs, buildUiTheme, getReadableTextColor } from "../src/renderer/design-system/index.js";
 import { legacyMenuFromPath, navigationGroups, pathFromLegacyMenu, routeIdFromLegacyMenu } from "../src/renderer/app/navigation.js";
+import { isOwnLegalEntity } from "../src/renderer/pages/settings/settingsModels.js";
 
 describe("renderer design system", () => {
+  it("keeps technical third-party XML companies out of own-company settings", () => {
+    expect(isOwnLegalEntity({ documentPrefix: "VCMG" })).toBe(true);
+    expect(isOwnLegalEntity({ documentPrefix: null })).toBe(true);
+    expect(isOwnLegalEntity({ documentPrefix: "TERC-XML" })).toBe(false);
+  });
+
   it("renders accessible basic controls without browser APIs", () => {
     const html = renderToStaticMarkup(
       React.createElement(

@@ -10,6 +10,14 @@ export const locationLabels: Record<Location["type"], string> = {
   OTHER: "Outro"
 };
 
+/**
+ * CNPJs com prefixo TERC-XML sao registros tecnicos usados para preservar a
+ * empresa emitente/destinataria de notas terceirizadas. Eles nao representam
+ * empresas operadas pelo usuario e, por isso, nao devem aparecer nos
+ * cadastros administrativos de CNPJs proprios.
+ */
+export const isOwnLegalEntity = (entity: Pick<LegalEntity, "documentPrefix">): boolean => entity.documentPrefix !== "TERC-XML";
+
 export const blankOrg = (variant: AppVariant): Omit<Organization, "id" | "createdAt" | "updatedAt"> => {
   const branding = getBrandingConfig(variant);
   return { name: "", slug: "", displayName: "", appDisplayName: "", description: null, logoPath: null, compactLogoPath: null, iconPath: null, primaryColor: branding.colors.primary, secondaryColor: branding.colors.secondary, accentColor: branding.colors.accent, themeMode: "light", isActive: true };

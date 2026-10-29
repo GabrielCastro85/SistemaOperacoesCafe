@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { BootstrapData, Diagnostics, LegalEntity, Location, OrganizationListItem } from "../../../../shared/types/domain";
 import type { StatusFilter } from "../types";
+import { isOwnLegalEntity } from "../settingsModels";
 
 export function useOrganizations(search = "", status: StatusFilter = "all"): { items: OrganizationListItem[]; reload: () => Promise<void> } {
   const [items, setItems] = useState<OrganizationListItem[]>([]);
@@ -14,7 +15,7 @@ export function useLegalEntities(refresh: () => Promise<BootstrapData>, search =
   const [items, setItems] = useState<LegalEntity[]>([]);
   const reload = useCallback(async () => {
     setBootstrap(await refresh());
-    setItems(await window.operationsCafe.listLegalEntities({ search, status }));
+    setItems((await window.operationsCafe.listLegalEntities({ search, status })).filter(isOwnLegalEntity));
   }, [refresh, search, status]);
   useEffect(() => { void reload(); }, [reload]);
   return { bootstrap, items, reload };
