@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SefazCertificateInfo, SefazNfeQueryResult, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
+import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatDateBr, formatDateOnlyBr, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
 import { DateInput, EmptyState, FileDropzone, ListStepsIcon, PageHeader, StatusBadge, Stepper, Tabs } from "../../design-system";
 import type { StepperStep } from "../../design-system";
@@ -47,17 +47,6 @@ function formatCnpjCompact(value: string | null | undefined): string {
   const digits = String(value ?? "").replace(/\D/g, "");
   if (digits.length !== 14) return value || "CNPJ nao informado";
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
-}
-
-function nfeNumberFromAccessKey(accessKey: string): string {
-  const digits = accessKey.replace(/\D/g, "");
-  if (digits.length !== 44) return "-";
-  return String(Number(digits.slice(25, 34)));
-}
-
-function certificateMatchesCnpj(certificate: SefazCertificateInfo, cnpj: string): boolean {
-  const digits = cnpj.replace(/\D/g, "");
-  return certificate.matchingCnpj === digits || certificate.matchingCnpj?.slice(0, 8) === digits.slice(0, 8);
 }
 
 function xmlPartySummary(file: XmlFileInspection, direction: "INBOUND" | "OUTBOUND"): { title: string; subtitle: string } {
@@ -244,11 +233,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [collectorMonitorError, setCollectorMonitorError] = useState<string | null>(null);
   const [collectorCommandBusy, setCollectorCommandBusy] = useState<string | null>(null);
   const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
-  const [sefazCertificates, setSefazCertificates] = useState<SefazCertificateInfo[]>([]);
-  const [sefazLegalEntityId, setSefazLegalEntityId] = useState(ownLegalEntityId);
-  const [sefazResult, setSefazResult] = useState<SefazNfeQueryResult | null>(null);
-  const [sefazAccessKey, setSefazAccessKey] = useState("");
-  const [sefazBusy, setSefazBusy] = useState(false);
   const [vulpePeriodStart, setVulpePeriodStart] = useState(() => currentBrazilMonthRange().start);
   const [vulpePeriodEnd, setVulpePeriodEnd] = useState(() => currentBrazilMonthRange().end);
   const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
@@ -329,13 +313,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => window.clearInterval(timer);
-  }, []);
-  useEffect(() => {
-    setSefazLegalEntityId((current) => current || ownLegalEntityId);
-  }, [ownLegalEntityId]);
-  useEffect(() => {
-    if (typeof window.operationsCafe.listSefazCertificates !== "function") return;
-    void window.operationsCafe.listSefazCertificates().then(setSefazCertificates).catch(() => setSefazCertificates([]));
   }, []);
 
   const load = useCallback(async () => {
@@ -771,67 +748,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
-  async function querySefaz(accessKey?: string): Promise<void> {
-    const legalEntity = data.legalEntities.find((entity) => entity.id === sefazLegalEntityId) ?? null;
-    if (!legalEntity?.cnpj) {
-      setMessage("Selecione uma empresa propria com CNPJ cadastrado.");
-      return;
-    }
-    setSefazBusy(true);
-    try {
-      const result = await window.operationsCafe.querySefazNfe({
-        cnpj: legalEntity.cnpj,
-        state: legalEntity.state,
-        periodStart: vulpePeriodStart,
-        periodEnd: vulpePeriodEnd,
-        accessKey
-      });
-      setSefazResult(result);
-      if (result.files.length > 0) {
-        await inspectSelectedXmlFiles(result.files, "FOLDER");
-        setMessage(`SEFAZ: ${result.files.length} XML(s) completo(s) carregado(s) para revisao.`);
-      } else if (result.summaries.length > 0) {
-        setMessage(`SEFAZ: ${result.summaries.length} nota(s) localizada(s). As que ainda mostram apenas resumo precisam da sua autorizacao para baixar o XML completo.`);
-      } else {
-        setMessage(`SEFAZ: ${result.reason || "nenhuma nota localizada no periodo."}`);
-      }
-    } catch (errorValue) {
-      setMessage(`Erro SEFAZ: ${errorValue instanceof Error ? errorValue.message : "falha ao consultar notas recebidas."}`);
-    } finally {
-      setSefazBusy(false);
-    }
-  }
-
-  async function acknowledgeAndDownloadSefaz(accessKey: string): Promise<void> {
-    const legalEntity = data.legalEntities.find((entity) => entity.id === sefazLegalEntityId) ?? null;
-    if (!legalEntity?.cnpj) return;
-    const confirmed = await requestDecision({
-      title: "Registrar Ciencia da Operacao",
-      message: `A SEFAZ exige a Ciencia da Operacao para liberar o XML completo da NF-e ${nfeNumberFromAccessKey(accessKey)}. Este evento nao confirma definitivamente a compra, mas devera ser seguido posteriormente por uma manifestacao conclusiva. Deseja registrar a ciencia e baixar o XML?`
-    });
-    if (!confirmed) return;
-    setSefazBusy(true);
-    try {
-      const result = await window.operationsCafe.acknowledgeAndDownloadSefazNfe({ cnpj: legalEntity.cnpj, state: legalEntity.state, accessKey });
-      if (result.files.length > 0) {
-        await inspectSelectedXmlFiles(result.files, "FILE");
-        setMessage(`Ciencia registrada e XML da NF-e ${nfeNumberFromAccessKey(accessKey)} carregado para revisao.`);
-      }
-      setSefazResult((current) => current
-        ? {
-            ...current,
-            summaries: current.summaries.map((summary) => summary.accessKey === accessKey
-              ? { ...summary, hasFullXml: true }
-              : summary)
-          }
-        : current);
-    } catch (errorValue) {
-      setMessage(`Erro SEFAZ: ${errorValue instanceof Error ? errorValue.message : "falha ao autorizar o download."}`);
-    } finally {
-      setSefazBusy(false);
-    }
-  }
-
   async function prepareDroppedXmlImport(files: File[]): Promise<void> {
     try {
       const paths = window.operationsCafe.getDroppedFilePaths(files);
@@ -1166,12 +1082,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     if (documentSort.key !== key) return "↕";
     return documentSort.direction === "asc" ? "↑" : "↓";
   }
-
-  const sefazLegalEntities = data.legalEntities.filter((entity) => entity.organizationId === organizationId && entity.cnpj);
-  const selectedSefazLegalEntity = sefazLegalEntities.find((entity) => entity.id === sefazLegalEntityId) ?? null;
-  const selectedSefazCertificate = selectedSefazLegalEntity?.cnpj
-    ? sefazCertificates.find((certificate) => certificateMatchesCnpj(certificate, selectedSefazLegalEntity.cnpj ?? "")) ?? null
-    : null;
 
   const normalizeDocumentSearch = (value: string | null | undefined): string =>
     (value ?? "")
@@ -1674,72 +1584,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <small>{pageTab === "received" ? "O nome e o CNPJ exato do fornecedor ficam visiveis antes do lancamento." : "O cliente e o CNPJ destinatario ficam visiveis antes do lancamento."}</small>
           </div>
         </div>
-        {pageTab === "received" ? (
-          <section className="sefaz-received-panel" aria-label="Consulta direta de notas recebidas na SEFAZ">
-            <div className="sefaz-received-panel__heading">
-              <div>
-                <span>CONSULTA DIRETA</span>
-                <strong>Buscar NF-e recebidas na SEFAZ</strong>
-                <small>Usa o certificado A1 instalado no Windows. Nenhuma nota e lancada sem passar pela sua revisao.</small>
-              </div>
-              <span className={`sefaz-certificate-badge ${selectedSefazCertificate ? "sefaz-certificate-badge--ok" : "sefaz-certificate-badge--missing"}`}>
-                {selectedSefazCertificate ? `Certificado valido ate ${formatDateBr(selectedSefazCertificate.notAfter)}` : "Certificado nao localizado"}
-              </span>
-            </div>
-            <div className="sefaz-query-grid">
-              <SelectField
-                label="Empresa destinataria"
-                value={sefazLegalEntityId}
-                onChange={(value) => {
-                  setSefazLegalEntityId(value);
-                  setSefazResult(null);
-                }}
-                options={sefazLegalEntities.map((entity) => [entity.id, `${entity.tradeName} - ${formatCnpjCompact(entity.cnpj)}`])}
-              />
-              <div className="sefaz-query-grid__action">
-                <span>Consulta por NSU</span>
-                <button className="primary" type="button" disabled={sefazBusy || !selectedSefazCertificate} onClick={() => void querySefaz()}>
-                  {sefazBusy ? "Consultando..." : "Consultar novas notas"}
-                </button>
-              </div>
-            </div>
-            <div className="sefaz-access-key-search">
-              <label><span>Buscar uma NF-e especifica pela chave de acesso</span><input value={sefazAccessKey} onChange={(event) => setSefazAccessKey(event.target.value)} placeholder="44 digitos da chave" /></label>
-              <button type="button" disabled={sefazBusy || sefazAccessKey.replace(/\D/g, "").length !== 44 || !selectedSefazCertificate} onClick={() => void querySefaz(sefazAccessKey)}>
-                Buscar pela chave
-              </button>
-            </div>
-            {sefazResult ? (
-              <div className="sefaz-query-result">
-                <p><strong>SEFAZ:</strong> {sefazResult.reason} · NSU {sefazResult.lastNsu} de {sefazResult.maxNsu}</p>
-                {sefazResult.nextAllowedAt ? <small>Proxima consulta geral permitida depois de {formatDateBr(sefazResult.nextAllowedAt)}.</small> : null}
-                {sefazResult.summaries.length > 0 ? (
-                  <div className="sefaz-summary-list">
-                    {sefazResult.summaries.map((summary) => (
-                      <article key={summary.accessKey} className="sefaz-summary-card">
-                        <div>
-                          <span>NF-e {nfeNumberFromAccessKey(summary.accessKey)}</span>
-                          <strong>{summary.issuerName ?? "Emitente nao informado"}</strong>
-                          <small>{formatCnpjCompact(summary.issuerCnpj)} · {summary.issuedAt ? formatDateBr(summary.issuedAt) : "data nao informada"}</small>
-                        </div>
-                        <div className="sefaz-summary-card__amount">
-                          <span>{summary.totalAmount ? `R$ ${Number(summary.totalAmount).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Valor nao informado"}</span>
-                          <small>{summary.hasFullXml ? "XML completo disponivel" : "Resumo localizado"}</small>
-                        </div>
-                        {!summary.hasFullXml ? (
-                          <button type="button" disabled={sefazBusy} onClick={() => void acknowledgeAndDownloadSefaz(summary.accessKey)}>
-                            Autorizar e baixar XML
-                          </button>
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <p className="sefaz-legal-note">A “Ciencia da Operacao” so sera enviada quando voce confirmar individualmente. Ela nao e uma confirmacao definitiva da compra.</p>
-          </section>
-        ) : null}
         {vulpeDevAvailable ? (
           <div className="operation-warning-card operation-warning-card--neutral">
             <strong>{pageTab === "received" ? "Buscar notas recebidas" : "Buscar notas emitidas"}</strong>

@@ -852,40 +852,6 @@ export interface XmlFileInspection {
   extractedData: Record<string, unknown> | null;
 }
 
-export interface SefazCertificateInfo {
-  subject: string;
-  thumbprint: string;
-  notAfter: string;
-  matchingCnpj: string | null;
-}
-
-export interface SefazNfeSummary {
-  accessKey: string;
-  issuerCnpj: string | null;
-  issuerName: string | null;
-  issuedAt: string | null;
-  receivedAt: string | null;
-  totalAmount: string | null;
-  situationCode: string | null;
-  nsu: string;
-  schema: string;
-  hasFullXml: boolean;
-}
-
-export interface SefazNfeQueryResult {
-  cnpj: string;
-  statusCode: string;
-  reason: string;
-  lastNsu: string;
-  maxNsu: string;
-  queriedAt: string;
-  nextAllowedAt: string | null;
-  certificateSubject: string;
-  certificateNotAfter: string;
-  summaries: SefazNfeSummary[];
-  files: Array<{ token: string; fileName: string; sizeBytes: number }>;
-}
-
 export interface XmlImportJob {
   id: string;
   organizationId: string;
