@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.57"
+  const highlights = releaseVersion === "1.1.58"
+    ? `- Consulta diretamente na SEFAZ as NF-e recebidas por cada CNPJ proprio usando o certificado digital instalado no Windows.
+- Permite buscar novas notas pela distribuicao de documentos fiscais ou localizar uma NF-e pela chave de acesso.
+- XMLs completos entram na fila normal de revisao e importacao, sem exigir selecao manual do arquivo.
+- Quando a SEFAZ exigir Ciencia da Operacao, o programa pede confirmacao explicita antes de registrar o evento.`
+    : releaseVersion === "1.1.57"
     ? `- Reorganiza a tela de notas em areas separadas para notas recebidas, notas emitidas, lancamento manual e planilhas.
 - A busca automatica filtra entradas e saidas por empresa e identifica razao social e CNPJ exatos do fornecedor ou cliente.
 - O lancamento manual exige a escolha do CNPJ correto, evitando misturar filiais de um mesmo fornecedor ou cliente.

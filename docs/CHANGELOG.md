@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.58
+
+- Adiciona consulta direta de NF-e recebidas na SEFAZ usando o certificado digital instalado no Windows.
+- Permite consultar novas notas de cada CNPJ proprio ou localizar uma NF-e diretamente pela chave de acesso.
+- XMLs completos encontrados entram na fila normal de revisao e importacao, sem exigir selecao manual do arquivo.
+- Quando a SEFAZ exigir Ciencia da Operacao, o programa pede confirmacao explicita antes de registrar o evento e baixar o XML.
+
 ## 1.1.57
 
 - Reorganiza a tela de notas em fluxos separados para notas recebidas, notas emitidas, lançamento manual e planilhas.
