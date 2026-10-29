@@ -109,6 +109,7 @@ function collectorCompanyLabels(cnpjs: string[]): string {
   const labels = cnpjs.map((cnpj) => {
     if (cnpj === "16594876000224") return "Grao & Grao MG";
     if (cnpj === "16594876000496") return "Grao & Grao SP";
+    if (cnpj === "44963370000108") return "Villa SP";
     return cnpj;
   });
   return labels.join(" e ");
@@ -206,7 +207,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled] = useState<Record<string, boolean>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
-  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
+  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
   const [collectorStatuses, setCollectorStatuses] = useState<CollectorMonitorStatus[]>([]);
   const [collectorMonitorError, setCollectorMonitorError] = useState<string | null>(null);
   const [collectorCommandBusy, setCollectorCommandBusy] = useState<string | null>(null);
@@ -681,7 +682,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
-  async function prepareVulpeDevImport(source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"): Promise<void> {
+  async function prepareVulpeDevImport(source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"): Promise<void> {
     try {
       if (!vulpePeriodStart || !vulpePeriodEnd) throw new Error("Informe as datas inicial e final.");
       if (vulpePeriodStart > vulpePeriodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");

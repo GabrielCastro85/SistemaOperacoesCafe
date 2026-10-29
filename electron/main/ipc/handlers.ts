@@ -33,11 +33,12 @@ const vulpeDevSources = {
   VILLA_MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO", cnpj: "44963370000523" },
   VILLA_ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO", cnpj: "44963370000280" }
 } as const;
-const graoCollectorSources = {
-  GRAO_MG: { label: "Grao & Grao MG", cnpj: "16594876000224" },
-  GRAO_SP: { label: "Grao & Grao SP", cnpj: "16594876000496" }
+const remoteCollectorSources = {
+  GRAO_MG: { label: "Grao & Grao MG", cnpj: "16594876000224", sourceCode: "GRAO_GRAO" },
+  GRAO_SP: { label: "Grao & Grao SP", cnpj: "16594876000496", sourceCode: "GRAO_GRAO" },
+  VILLA_SP: { label: "Villa SP", cnpj: "44963370000108", sourceCode: "VILLA_SP" }
 } as const;
-type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof graoCollectorSources | "ALL";
+type VulpeDevSource = keyof typeof vulpeDevSources | keyof typeof remoteCollectorSources | "ALL";
 
 function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
   return [...new Set(chargeIds)].map((chargeId) => {
@@ -736,8 +737,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       label: config.label,
       available: existsSync(config.root)
     }));
-    const collectorSources = Object.entries(graoCollectorSources).map(([source, config]) => ({
-      source: source as keyof typeof graoCollectorSources,
+    const collectorSources = Object.entries(remoteCollectorSources).map(([source, config]) => ({
+      source: source as keyof typeof remoteCollectorSources,
       label: config.label,
       available: collectorAvailable
     }));
@@ -839,7 +840,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   });
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
     const data = z.object({
-      source: z.enum(["VILLA_MG", "VILLA_ES", "GRAO_MG", "GRAO_SP", "ALL"]),
+      source: z.enum(["VILLA_MG", "VILLA_ES", "VILLA_SP", "GRAO_MG", "GRAO_SP", "ALL"]),
       periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
     }).parse(payload);
@@ -850,17 +851,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       ? (Object.keys(vulpeDevSources) as Array<keyof typeof vulpeDevSources>)
       : source in vulpeDevSources ? [source as keyof typeof vulpeDevSources] : [];
     const selectedCollectorSources = source === "ALL"
-      ? (Object.keys(graoCollectorSources) as Array<keyof typeof graoCollectorSources>)
-      : source in graoCollectorSources ? [source as keyof typeof graoCollectorSources] : [];
+      ? (Object.keys(remoteCollectorSources) as Array<keyof typeof remoteCollectorSources>)
+      : source in remoteCollectorSources ? [source as keyof typeof remoteCollectorSources] : [];
     const allowedCnpjs = new Set<string>([
       ...selectedLocalSources.map((key) => vulpeDevSources[key].cnpj),
-      ...selectedCollectorSources.map((key) => graoCollectorSources[key].cnpj)
+      ...selectedCollectorSources.map((key) => remoteCollectorSources[key].cnpj)
     ]);
     const label = source === "ALL"
       ? "Todas as empresas"
       : source in vulpeDevSources
         ? vulpeDevSources[source as keyof typeof vulpeDevSources].label
-        : graoCollectorSources[source as keyof typeof graoCollectorSources].label;
+        : remoteCollectorSources[source as keyof typeof remoteCollectorSources].label;
 
     const hasAccessKey = context.db.prepare(`
       SELECT 1 FROM fiscal_documents WHERE access_key = ?
@@ -965,7 +966,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     }
 
     if (selectedCollectorSources.length > 0) {
-      const remoteFiles = await centralSync.listCollectorInbox("GRAO_GRAO");
+      const sourceCodes = [...new Set(selectedCollectorSources.map((key) => remoteCollectorSources[key].sourceCode))];
+      const remoteFiles = (await Promise.all(sourceCodes.map((sourceCode) => centralSync.listCollectorInbox(sourceCode)))).flat();
       const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
       mkdirSync(downloadDir, { recursive: true });
       const allowedYearMonths = new Set(brazilYearMonthsBetween(data.periodStart, data.periodEnd).map((period) => period.slice(2)));
