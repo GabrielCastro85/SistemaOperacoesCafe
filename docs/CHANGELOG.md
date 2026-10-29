@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.57
+
+- Reorganiza a tela de notas em fluxos separados para notas recebidas, notas emitidas, lançamento manual e planilhas.
+- A busca automática passa a filtrar corretamente entradas e saídas para cada empresa própria.
+- A fila de revisão identifica visualmente a razão social e o CNPJ exato do fornecedor ou cliente, além da empresa própria relacionada.
+- O lançamento manual exige a escolha do CNPJ correto da contraparte, evitando misturar filiais de um mesmo fornecedor ou cliente.
+- Prepara o coletor para reconhecer também as notas da Villa Coffee SP quando a pasta da Vulpe estiver disponível.
+- Oculta cadastros técnicos usados internamente por XML da lista de CNPJs próprios.
+
 ## 1.1.56
 
 - Corrige os painéis do controle de cafés armazenados que ficavam comprimidos e visualmente sobrepostos em janelas com menor altura.

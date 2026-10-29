@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.56"
+  const highlights = releaseVersion === "1.1.57"
+    ? `- Reorganiza a tela de notas em areas separadas para notas recebidas, notas emitidas, lancamento manual e planilhas.
+- A busca automatica filtra entradas e saidas por empresa e identifica razao social e CNPJ exatos do fornecedor ou cliente.
+- O lancamento manual exige a escolha do CNPJ correto, evitando misturar filiais de um mesmo fornecedor ou cliente.
+- Prepara o coletor para as notas da Villa Coffee SP e oculta cadastros tecnicos de XML da lista de CNPJs proprios.`
+    : releaseVersion === "1.1.56"
     ? `- Corrige os paineis do controle de cafes armazenados que ficavam comprimidos em janelas com menor altura.
 - Reconhece referencias de remessa com separador de milhar, como NF-e REMESSA 1.344.
 - Retornos simbolicos vinculam corretamente a remessa original e atualizam o estoque armazenado.
