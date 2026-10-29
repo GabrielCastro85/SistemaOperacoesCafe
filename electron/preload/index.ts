@@ -691,9 +691,10 @@ export interface OperationsCafeApi {
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
   getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
   sendCollectorCommand: (input: { sourceCode: string; machineId: string; command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" }) => Promise<{ id: string; status: "PENDING"; command: string }>;
-  scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
+  scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; direction: "INBOUND" | "OUTBOUND"; periodStart: string; periodEnd: string }) => Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
+    direction: "INBOUND" | "OUTBOUND";
     period: string;
     periodStart: string;
     periodEnd: string;
@@ -1114,6 +1115,7 @@ const api: OperationsCafeApi = {
   scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
+    direction: "INBOUND" | "OUTBOUND";
     period: string;
     periodStart: string;
     periodEnd: string;

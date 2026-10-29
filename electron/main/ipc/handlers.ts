@@ -841,6 +841,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.scanVulpeDevXml, async (_event, payload: unknown) => {
     const data = z.object({
       source: z.enum(["VILLA_MG", "VILLA_ES", "VILLA_SP", "GRAO_MG", "GRAO_SP", "ALL"]),
+      direction: z.enum(["INBOUND", "OUTBOUND"]),
       periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
     }).parse(payload);
@@ -907,7 +908,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       ).slice(0, 10);
       const knownDocument = inspection.accessKey ? Boolean(hasAccessKey.get(inspection.accessKey, inspection.accessKey)) : false;
       const acceptedForeignCancellation = inspection.xmlType === "EVENT_CANCELLATION" && knownDocument;
-      if ((!allowedCnpjs.has(issuerCnpj) && !allowedCnpjs.has(recipientCnpj) && !acceptedForeignCancellation) || documentDate < data.periodStart || documentDate > data.periodEnd) return;
+      const belongsToSelectedDirection = data.direction === "INBOUND"
+        ? allowedCnpjs.has(recipientCnpj)
+        : allowedCnpjs.has(issuerCnpj);
+      if ((!belongsToSelectedDirection && !acceptedForeignCancellation) || documentDate < data.periodStart || documentDate > data.periodEnd) return;
 
       if (inspection.xmlType === "EVENT_CANCELLATION") {
         const statusCode = String(extracted?.statusCode ?? "");
@@ -1001,6 +1005,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return {
       source,
       label,
+      direction: data.direction,
       period: data.periodStart.slice(0, 7).replace("-", ""),
       periodStart: data.periodStart,
       periodEnd: data.periodEnd,

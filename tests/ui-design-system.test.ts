@@ -131,4 +131,18 @@ describe("renderer design system", () => {
     expect(handlerSource).toContain("repository.generateDealConfirmationPreview(id, data.draftInput)");
     expect(handlerSource).toContain("repository.issueDealConfirmation(id, data.draftInput)");
   });
+
+  it("separates received and issued invoices and requires the exact counterparty CNPJ in manual entry", () => {
+    const pageSource = readFileSync("src/renderer/pages/operations/OperationsPage.tsx", "utf8");
+    const handlerSource = readFileSync("electron/main/ipc/handlers.ts", "utf8");
+
+    expect(pageSource).toContain('{ id: "received", label: "Notas recebidas" }');
+    expect(pageSource).toContain('{ id: "issued", label: "Notas emitidas" }');
+    expect(pageSource).toContain('label={operationType === "PURCHASE" ? "CNPJ emissor da nota" : "CNPJ destinatario da nota"}');
+    expect(pageSource).toContain("manualCounterpartyLegalEntityId");
+    expect(handlerSource).toContain('direction: z.enum(["INBOUND", "OUTBOUND"])');
+    expect(handlerSource).toContain('data.direction === "INBOUND"');
+    expect(handlerSource).toContain("allowedCnpjs.has(recipientCnpj)");
+    expect(handlerSource).toContain("allowedCnpjs.has(issuerCnpj)");
+  });
 });

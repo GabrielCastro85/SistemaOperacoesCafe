@@ -43,6 +43,26 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
 }
 
+function formatCnpjCompact(value: string | null | undefined): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.length !== 14) return value || "CNPJ nao informado";
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
+function xmlPartySummary(file: XmlFileInspection, direction: "INBOUND" | "OUTBOUND"): { title: string; subtitle: string } {
+  const extracted = file.extractedData as Record<string, unknown> | null;
+  const counterparty = extracted?.[direction === "INBOUND" ? "issuer" : "recipient"] as Record<string, unknown> | undefined;
+  const ownParty = extracted?.[direction === "INBOUND" ? "recipient" : "issuer"] as Record<string, unknown> | undefined;
+  const name = String(counterparty?.legalName ?? counterparty?.tradeName ?? (direction === "INBOUND" ? "Fornecedor nao identificado" : "Cliente nao identificado"));
+  const counterpartyCnpj = formatCnpjCompact(counterparty?.cnpjCpf == null ? null : String(counterparty.cnpjCpf));
+  const ownName = String(ownParty?.tradeName ?? ownParty?.legalName ?? "empresa propria");
+  const ownCnpj = formatCnpjCompact(ownParty?.cnpjCpf == null ? null : String(ownParty.cnpjCpf));
+  return {
+    title: name,
+    subtitle: `${direction === "INBOUND" ? "Fornecedor" : "Cliente"}: ${counterpartyCnpj} · ${direction === "INBOUND" ? "Recebida por" : "Emitida por"}: ${ownName} (${ownCnpj})`
+  };
+}
+
 function inferXmlOperationScope(preview: NfeExtractedPreview | null): OperationScope | null {
   const issuerState = preview?.issuer?.state?.trim().toUpperCase() ?? "";
   const recipientState = preview?.recipient?.state?.trim().toUpperCase() ?? "";
@@ -60,6 +80,7 @@ function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
 
 type DocumentSortKey = "number" | "client";
 type SortDirection = "asc" | "desc";
+type OperationsPageTab = "received" | "issued" | "documents" | "spreadsheets";
 type VulpeDevScanResult = Awaited<ReturnType<Window["operationsCafe"]["scanVulpeDevXml"]>>;
 type VulpeDevStatusResult = Awaited<ReturnType<Window["operationsCafe"]["getVulpeDevStatus"]>>;
 type CollectorMonitorStatus = VulpeDevStatusResult["collectors"][number];
@@ -181,7 +202,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [sacks, setSacks] = useState("1");
   const [scope, setScope] = useState<OperationScope>("EXTERNAL");
   const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
-  const [pageTab, setPageTab] = useState<"documents" | "spreadsheets" | "xml">("xml");
+  const [pageTab, setPageTab] = useState<OperationsPageTab>("received");
   const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
   const [importJob, setImportJob] = useState<{ job: SpreadsheetImportJob; rows: SpreadsheetImportRow[] } | null>(null);
@@ -225,6 +246,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   // Vazio = comportamento de sempre (emissora = CNPJ proprio ativo).
   const [manualIssuerSearchTerm, setManualIssuerSearchTerm] = useState("");
   const [manualIssuerPartnerLegalEntityId, setManualIssuerPartnerLegalEntityId] = useState<string | null>(null);
+  const [manualCounterpartyLegalEntityId, setManualCounterpartyLegalEntityId] = useState("");
   // Cliente da revenda numa nota triangulada lancada manualmente -- so' usado
   // quando manualIssuerPartnerLegalEntityId esta preenchido (ver createDocument).
   const [manualSecondaryPartnerId, setManualSecondaryPartnerId] = useState("");
@@ -316,6 +338,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     ]);
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setPartnerId((current) => (rolePartners.some((partner) => partner.id === current) ? current : ""));
+    setManualCounterpartyLegalEntityId((current) => {
+      if (!current) return "";
+      const selected = [...linkedLegalEntities.flat(), ...unlinkedLegalEntities].find((entity) => entity.id === current);
+      return selected && rolePartners.some((partner) => partner.id === selected.businessPartnerId) ? current : "";
+    });
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
@@ -339,10 +366,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (manualIssuerPartnerLegalEntityId || !partnerId) {
+      setManualCounterpartyLegalEntityId("");
+      return;
+    }
+    const options = partnerLegalEntities.filter((entity) => entity.businessPartnerId === partnerId && entity.isActive);
+    setManualCounterpartyLegalEntityId((current) => {
+      if (options.some((entity) => entity.id === current)) return current;
+      return options.length === 1 ? options[0].id : "";
+    });
+  }, [manualIssuerPartnerLegalEntityId, partnerId, partnerLegalEntities]);
+
   const parseCurrency = (value: string): number => parseCurrencyToCents(value);
 
   async function createDocument(): Promise<void> {
     try {
+      const selectedCounterpartyEntity = partnerLegalEntities.find((entity) => entity.id === manualCounterpartyLegalEntityId) ?? null;
+      if (!manualIssuerPartnerLegalEntityId && partnerId && !selectedCounterpartyEntity) {
+        throw new Error(`Selecione o CNPJ exato ${operationType === "PURCHASE" ? "do fornecedor" : "do cliente"}.`);
+      }
       // Nota terceirizada: usuario escolheu uma empresa emissora diferente do
       // CNPJ proprio ativo -- resolve (ou cria) o "CNPJ emissor" terceirizado
       // ANTES de criar a nota, e usa ele no lugar do ownLegalEntityId normal.
@@ -365,7 +408,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         organizationId,
         ownLegalEntityId: issuerLegalEntityId,
         responsiblePartnerId: partnerId,
-        partnerLegalEntityId: null,
+        partnerLegalEntityId: manualIssuerPartnerLegalEntityId ? null : selectedCounterpartyEntity?.id ?? null,
         operationType,
         secondaryResponsiblePartnerId: isTriangulated ? manualSecondaryPartnerId : null,
         secondaryOperationType: isTriangulated ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null,
@@ -385,6 +428,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage(created.document.duplicateWarning ?? (isTriangulated ? "Nota triangulada criada -- cada item lancado abaixo ja gera compra e venda automaticamente." : "Nota criada."));
       setManualIssuerSearchTerm("");
       setManualIssuerPartnerLegalEntityId(null);
+      setManualCounterpartyLegalEntityId("");
       setManualSecondaryPartnerId("");
       await load();
       scrollTo(manualDetailRef);
@@ -686,7 +730,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     try {
       if (!vulpePeriodStart || !vulpePeriodEnd) throw new Error("Informe as datas inicial e final.");
       if (vulpePeriodStart > vulpePeriodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
-      const result = await window.operationsCafe.scanVulpeDevXml({ source, periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd });
+      const direction = pageTab === "issued" ? "OUTBOUND" : "INBOUND";
+      const result = await window.operationsCafe.scanVulpeDevXml({ source, direction, periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd });
       setVulpeScan(result);
       if (result.files.length === 0) {
         setXmlSelections([]);
@@ -1123,14 +1168,38 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       <Tabs
         active={pageTab}
         items={[
-          { id: "xml", label: "XML NF-e" },
-          { id: "documents", label: "Notas fiscais" },
+          { id: "received", label: "Notas recebidas" },
+          { id: "issued", label: "Notas emitidas" },
+          { id: "documents", label: "Lancamento manual" },
           { id: "spreadsheets", label: "Planilhas" }
         ]}
-        onChange={setPageTab}
+        onChange={(nextTab) => {
+          const next = nextTab as OperationsPageTab;
+          if (next === "documents" && (pageTab === "received" || pageTab === "issued")) {
+            setOperationType(pageTab === "received" ? "PURCHASE" : "SALE");
+            setPartnerId("");
+            setManualCounterpartyLegalEntityId("");
+          }
+          const changedDirection = (pageTab === "received" || pageTab === "issued") && (next === "received" || next === "issued") && pageTab !== next;
+          if (changedDirection) {
+            setVulpeScan(null);
+            setXmlSelections([]);
+            setXmlQueue([]);
+            setXmlJob(null);
+            setSelectedXmlToken(null);
+          }
+          setPageTab(next);
+        }}
       />
       {pageTab === "documents" && <>
-      <AdminBlock title="Notas e operacoes manuais">
+      <AdminBlock title="Lancamento manual de nota">
+        <div className="notes-flow-intro">
+          <div>
+            <span className="notes-flow-intro__eyebrow">Alternativa ao XML</span>
+            <strong>Use este formulario somente quando a nota nao estiver disponivel na busca automatica.</strong>
+            <small>Primeiro escolha se e compra ou venda, depois o responsavel e o CNPJ exato que aparece na NF-e.</small>
+          </div>
+        </div>
         <div className="operation-context-note">
           <span>CNPJ ativo para notas</span>
           <strong>{ownLegalEntity ? (ownLegalEntity.legalName || ownLegalEntity.tradeName) : "Nao selecionado"}</strong>
@@ -1181,8 +1250,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </>
           ) : (
             <>
-              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel" : "Cliente/corretor responsavel"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+              <SelectField label="Tipo da nota" value={operationType} onChange={(value) => { setOperationType(value as "PURCHASE" | "SALE"); setPartnerId(""); setManualCounterpartyLegalEntityId(""); }} options={[["PURCHASE", "Nota recebida (compra/entrada)"], ["SALE", "Nota emitida (venda/saida)"]]} />
+              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor" : "Cliente/corretor"} value={partnerId} onChange={(value) => { setPartnerId(value); setManualCounterpartyLegalEntityId(""); }} partners={partners} legalEntities={partnerLegalEntities} />
+              <SelectField
+                label={operationType === "PURCHASE" ? "CNPJ emissor da nota" : "CNPJ destinatario da nota"}
+                value={manualCounterpartyLegalEntityId}
+                onChange={setManualCounterpartyLegalEntityId}
+                options={[
+                  ["", partnerId ? "Selecione o CNPJ exato" : "Escolha primeiro o responsavel"],
+                  ...partnerLegalEntities
+                    .filter((entity) => entity.businessPartnerId === partnerId && entity.isActive)
+                    .map((entity) => [entity.id, `${entity.legalName || entity.tradeName} — ${formatCnpjCompact(entity.cnpj)}`] as [string, string])
+                ]}
+              />
             </>
           )}
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
@@ -1193,7 +1273,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button
             className="primary"
-            disabled={Boolean(manualIssuerPartnerLegalEntityId) && (!partnerId || !manualSecondaryPartnerId || partnerId === manualSecondaryPartnerId)}
+            disabled={manualIssuerPartnerLegalEntityId
+              ? (!partnerId || !manualSecondaryPartnerId || partnerId === manualSecondaryPartnerId)
+              : (!partnerId || !manualCounterpartyLegalEntityId)}
             onClick={() => void createDocument()}
           >
             Criar nota
@@ -1492,13 +1574,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span><StatusBadge status={job.status} /></span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter importação", label: "Motivo da reversão" }).then((reason) => { if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock></div>
       </>}
-      {pageTab === "xml" && <>
-      <AdminBlock title="Importacao automatica de NF-e">
-        <p className="muted">Leitura de XML e captura automatica dos dados.</p>
+      {(pageTab === "received" || pageTab === "issued") && <>
+      <AdminBlock title={pageTab === "received" ? "Notas recebidas de fornecedores" : "Notas emitidas para clientes"}>
+        <div className={`notes-direction-hero notes-direction-hero--${pageTab}`}>
+          <div className="notes-direction-hero__icon" aria-hidden="true">{pageTab === "received" ? "↓" : "↑"}</div>
+          <div>
+            <span>{pageTab === "received" ? "ENTRADAS / COMPRAS" : "SAIDAS / VENDAS"}</span>
+            <strong>{pageTab === "received" ? "Localize as notas que fornecedores emitiram para cada uma das suas empresas." : "Localize as notas emitidas por cada uma das suas empresas."}</strong>
+            <small>{pageTab === "received" ? "O nome e o CNPJ exato do fornecedor ficam visiveis antes do lancamento." : "O cliente e o CNPJ destinatario ficam visiveis antes do lancamento."}</small>
+          </div>
+        </div>
         {vulpeDevAvailable ? (
           <div className="operation-warning-card operation-warning-card--neutral">
-            <strong>Caixa de entrada de NF-e</strong>
-            <span>Busca as NF-e autorizadas no periodo escolhido, remove as chaves ja cadastradas e envia as restantes para revisao. O mes atual ja vem selecionado e nenhuma nota e lancada antes da sua confirmacao.</span>
+            <strong>{pageTab === "received" ? "Buscar notas recebidas" : "Buscar notas emitidas"}</strong>
+            <span>Escolha abaixo qual empresa propria deve ser consultada. O sistema separa as notas pelo sentido correto, remove as chaves ja cadastradas e nao lanca nada antes da sua confirmacao.</span>
             <section className="collector-monitor" aria-label="Monitor do coletor remoto">
               <div className="collector-monitor__heading">
                 <div>
@@ -1591,7 +1680,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="toolbar vulpe-search-actions">
               {[...vulpeDevSources].sort((left, right) => Number(right.source === "ALL") - Number(left.source === "ALL")).map((source) => (
                 <button key={source.source} className={source.source === "ALL" ? "vulpe-search-all" : undefined} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
-                  Buscar {source.label}
+                  {pageTab === "received" ? "Recebidas por" : "Emitidas por"} {source.label}
                 </button>
               ))}
             </div>
@@ -1604,7 +1693,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         <div className="import-columns">
           <div className="import-column" ref={xmlDataRef}>
-            <h3>Importar NF-e</h3>
+            <h3>{pageTab === "received" ? "Adicionar nota recebida por XML" : "Adicionar nota emitida por XML"}</h3>
             <FileDropzone
               title="Arraste XMLs aqui ou selecione os arquivos"
               description="Solte um ou mais XMLs da NF-e nesta area para inspecionar automaticamente."
@@ -1621,15 +1710,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
             {xmlQueue.length ? (
               <ul className="xml-queue-list">
-                {xmlQueue.map((file) => (
+                  {xmlQueue.map((file) => {
+                    const party = xmlPartySummary(file, pageTab === "received" ? "INBOUND" : "OUTBOUND");
+                    return (
                   <li key={file.token}>
                     <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
-                      <span>{file.originalFileName}</span>
+                      <span className="xml-queue-party"><strong>{party.title}</strong><small>{party.subtitle}</small></span>
                       <StatusBadge status={file.status} />
-                      <small>{formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
+                      <small>{file.originalFileName} · {formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
                     </button>
                   </li>
-                ))}
+                    );
+                  })}
               </ul>
             ) : (
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
