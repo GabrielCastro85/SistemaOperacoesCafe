@@ -10,6 +10,7 @@ interface NfePartySnapshot {
 
 interface NfeItemPreview {
   description: string | null;
+  cfop: string | null;
   commercialQuantity: string | null;
   commercialUnit: string | null;
   commercialUnitValue: string | null;
@@ -66,6 +67,7 @@ export function parseNfeExtractedPreview(
         const item = asRecord(raw) ?? {};
         return {
           description: str(item.description),
+          cfop: str(item.cfop),
           commercialQuantity: str(item.commercialQuantity),
           commercialUnit: str(item.commercialUnit),
           commercialUnitValue: str(item.commercialUnitValue),
@@ -86,6 +88,40 @@ export function parseNfeExtractedPreview(
     transportCarrierName: transport ? str(transport.carrierName) : null,
     items,
     productsAmountCents: totals ? num(totals.productsAmountCents) : null
+  };
+}
+
+export interface WarehouseXmlClassification {
+  movementType: "DEPOSIT" | "RETURN";
+  movementKind: "PHYSICAL" | "SYMBOLIC";
+  cfops: string[];
+}
+
+/** Mirrors the backend warehouse-CFOP recognition so the UI can bypass commercial fields safely. */
+export function classifyWarehouseXml(preview: NfeExtractedPreview | null): WarehouseXmlClassification | null {
+  if (!preview) return null;
+  const warehouseCfops: Record<string, Omit<WarehouseXmlClassification, "cfops">> = {
+    "5905": { movementType: "DEPOSIT", movementKind: "PHYSICAL" },
+    "6905": { movementType: "DEPOSIT", movementKind: "PHYSICAL" },
+    "5934": { movementType: "DEPOSIT", movementKind: "SYMBOLIC" },
+    "6934": { movementType: "DEPOSIT", movementKind: "SYMBOLIC" },
+    "5906": { movementType: "RETURN", movementKind: "PHYSICAL" },
+    "6906": { movementType: "RETURN", movementKind: "PHYSICAL" },
+    "5907": { movementType: "RETURN", movementKind: "SYMBOLIC" },
+    "6907": { movementType: "RETURN", movementKind: "SYMBOLIC" }
+  };
+  const matches = preview.items.flatMap((item) => {
+    const cfop = String(item.cfop ?? "").replace(/\D/g, "");
+    const classification = warehouseCfops[cfop];
+    return classification ? [{ cfop, ...classification }] : [];
+  });
+  if (!matches.length) return null;
+  const first = matches[0];
+  if (matches.some((match) => match.movementType !== first.movementType)) return null;
+  return {
+    movementType: first.movementType,
+    movementKind: first.movementKind,
+    cfops: [...new Set(matches.map((match) => match.cfop))]
   };
 }
 

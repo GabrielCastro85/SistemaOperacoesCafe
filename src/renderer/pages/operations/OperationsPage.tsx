@@ -9,7 +9,7 @@ import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
-import { parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
+import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
@@ -68,6 +68,10 @@ function inferXmlOperationScope(preview: NfeExtractedPreview | null): OperationS
   const recipientState = preview?.recipient?.state?.trim().toUpperCase() ?? "";
   if (!issuerState || !recipientState) return null;
   return issuerState === recipientState ? "INTERNAL" : "EXTERNAL";
+}
+
+function xmlInspectionIsWarehouse(file: XmlFileInspection): boolean {
+  return classifyWarehouseXml(parseNfeExtractedPreview(file.extractedData ?? null)) !== null;
 }
 
 function xmlImportIsVisuallyDeleted(job: XmlImportJob): boolean {
@@ -798,6 +802,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       const missingPartner = xmlQueue.find((file) =>
         file.status !== "ERROR"
         && !file.xmlType.startsWith("EVENT_")
+        && !xmlInspectionIsWarehouse(file)
         && !xmlIgnoredSelections[file.token]
         && !xmlPartnerOverrides[file.token]
       );
@@ -808,7 +813,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         return;
       }
     }
-    if (!partnerId && !vulpeScan) {
+    const requiresCommercialPartner = xmlQueue.some((file) =>
+      file.status !== "ERROR"
+      && !file.xmlType.startsWith("EVENT_")
+      && !xmlInspectionIsWarehouse(file)
+    );
+    if (!partnerId && !vulpeScan && requiresCommercialPartner) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
       scrollTo(xmlDataRef);
       return;
@@ -864,7 +874,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
-    if (!partnerId && !vulpeScan) {
+    const requiresCommercialPartner = xmlQueue.some((file) =>
+      file.status !== "ERROR"
+      && !file.xmlType.startsWith("EVENT_")
+      && !xmlInspectionIsWarehouse(file)
+    );
+    if (!partnerId && !vulpeScan && requiresCommercialPartner) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
       scrollTo(xmlDataRef);
       return;
@@ -993,6 +1008,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     ? xmlPartnerOverrides[selectedXmlFile.token] ?? ""
     : partnerId;
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
+  const selectedWarehouseMovement = classifyWarehouseXml(selectedXmlPreview);
   const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
     ? selectedXmlFile.extractedData.contractNumber
     : "";
@@ -1010,12 +1026,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     selectedXmlParties.ownEntityLabel !== (ownLegalEntity.legalName || ownLegalEntity.tradeName)
   );
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
+  const xmlQueueRequiresCommercialPartner = xmlQueue.some((file) =>
+    file.status !== "ERROR"
+    && !file.xmlType.startsWith("EVENT_")
+    && !xmlInspectionIsWarehouse(file)
+  );
+  const xmlQueueHasWarehouseMovement = xmlQueue.some((file) => file.status !== "ERROR" && xmlInspectionIsWarehouse(file));
   const xmlBatchRows = xmlQueue.map((file) => {
     const preview = parseNfeExtractedPreview(file.extractedData ?? null);
     const parties = resolveOwnAndCounterparty(preview, data.legalEntities);
     const firstItem = preview?.items[0] ?? null;
     const inferredScope = inferXmlOperationScope(preview);
     const assignedPartner = partners.find((partner) => partner.id === xmlPartnerOverrides[file.token]);
+    const warehouseMovement = classifyWarehouseXml(preview);
     return {
       file,
       preview,
@@ -1024,6 +1047,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope,
       classificationLabel: file.xmlType.startsWith("EVENT_")
         ? "Cancelamento"
+        : warehouseMovement
+          ? `${warehouseMovement.movementType === "RETURN" ? "Retorno" : "Remessa"} ${warehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}`
         : xmlIgnoredSelections[file.token]
           ? "Nao cadastrar"
           : assignedPartner?.displayName ?? "Escolher cliente"
@@ -1040,7 +1065,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlImportSteps: StepperStep[] = [
     { id: "import", label: "Importar arquivo", status: xmlQueue.length > 0 ? "complete" : "current" },
     { id: "read", label: "Leitura automatica", status: xmlQueue.length > 0 ? "complete" : "pending" },
-    { id: "rule", label: "Aplicar regra", status: xmlJob ? "complete" : xmlQueue.length > 0 ? "current" : "pending" },
+    { id: "rule", label: xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Reconhecer armazem" : "Aplicar regra", status: xmlJob ? "complete" : xmlQueue.length > 0 ? "current" : "pending" },
     {
       id: "save",
       label: "Salvar nota",
@@ -1727,7 +1752,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
             )}
             <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan)}>Validar fila</button>
+              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
+                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentacao" : "Validar fila"}
+              </button>
             </div>
           </div>
 
@@ -1786,7 +1813,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
                   <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
                 </dl>
-                {selectedXmlFile ? (
+                {selectedXmlFile && !selectedWarehouseMovement ? (
                   <FormGrid>
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
                     <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
@@ -1825,13 +1852,29 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
           <div className="import-column">
             <h3><ListStepsIcon /> Fluxo de importacao</h3>
-            <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
-            <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
+            {selectedWarehouseMovement ? (
+              <p className="muted">Movimentacoes de armazem sao registradas somente no controle de cafes armazenados e nao passam pelas regras comerciais.</p>
+            ) : (
+              <>
+                <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
+                <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
+              </>
+            )}
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             {selectedXmlIsEvent ? (
               <div className="operation-warning-card operation-warning-card--neutral">
                 <strong>Evento de cancelamento</strong>
                 <span>Ao concluir a fila, o sistema registra o evento e cancela automaticamente a nota e suas operacoes, quando a chave ja estiver cadastrada.</span>
+              </div>
+            ) : selectedWarehouseMovement ? (
+              <div className="operation-warning-card operation-warning-card--neutral">
+                <strong>{selectedWarehouseMovement.movementType === "RETURN" ? "Retorno de armazem reconhecido" : "Remessa para armazem reconhecida"}</strong>
+                <span>
+                  {selectedWarehouseMovement.movementType === "RETURN"
+                    ? `Ao importar, o sistema descontara ${decimalTextBr(selectedXmlSacks)} sacas do estoque mantido em ${selectedXmlParties.issuerLabel ?? "armazem identificado no XML"}.`
+                    : `Ao importar, o sistema acrescentara ${decimalTextBr(selectedXmlSacks)} sacas ao estoque mantido em ${selectedXmlParties.recipientLabel ?? "armazem identificado no XML"}.`}
+                </span>
+                <span>CFOP {selectedWarehouseMovement.cfops.join(", ")} · movimentacao {selectedWarehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}. Nao sera criada compra, venda ou cobranca.</span>
               </div>
             ) : (
               <>
@@ -1882,7 +1925,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             )}
             <div className="toolbar">
               <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
-              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan)}>Importar XMLs</button>
+              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
+                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentacao" : "Importar XMLs"}
+              </button>
             </div>
           </div>
         </div>
