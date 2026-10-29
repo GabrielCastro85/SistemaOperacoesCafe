@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.55"
+  const highlights = releaseVersion === "1.1.56"
+    ? `- Corrige os paineis do controle de cafes armazenados que ficavam comprimidos em janelas com menor altura.
+- Reconhece referencias de remessa com separador de milhar, como NF-e REMESSA 1.344.
+- Retornos simbolicos vinculam corretamente a remessa original e atualizam o estoque armazenado.
+- Reduz varreduras completas do banco durante a sincronizacao para diminuir pequenas travadas.`
+    : releaseVersion === "1.1.55"
     ? `- Novo controle de cafes armazenados em terceiros, com saldo por armazem, empresa e produto em quilos e sacas.
 - Reconhecimento automatico das NF-e de remessa, retorno fisico, remessa simbolica e retorno simbolico.
 - O coletor passa a reconhecer notas em que a empresa e emitente ou destinataria e aplica cancelamentos ao estoque.

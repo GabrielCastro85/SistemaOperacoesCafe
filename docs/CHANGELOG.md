@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.56
+
+- Corrige os painéis do controle de cafés armazenados que ficavam comprimidos e visualmente sobrepostos em janelas com menor altura.
+- Reconhece automaticamente referências de remessa formatadas com separador de milhar, como “NF-e REMESSA 1.344”.
+- Retornos simbólicos com CFOP 5907/6907 passam a vincular corretamente a remessa original e atualizar o estoque sem exigir conferência manual quando a referência está no XML.
+- Reduz as varreduras completas do banco local durante a sincronização para diminuir pequenas travadas quando há vários programas abertos.
+
 ## 1.1.55
 
 - Adiciona o controle de cafés armazenados em terceiros, com saldo por armazém, empresa e produto em quilos e sacas.
