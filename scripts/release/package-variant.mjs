@@ -324,7 +324,13 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.59"
+  const highlights = releaseVersion === "1.1.60"
+    ? `- A tela Notas e operacoes passa a abrir diretamente em Notas emitidas.
+- Saldos manuais e movimentos de NF-e de armazem passam a ser vinculados pelo CNPJ, mesmo quando os nomes sao diferentes.
+- Retornos com descricao generica reaproveitam a classificacao manual quando ha um unico produto identificado no armazem.
+- Evita criar uma segunda linha negativa quando uma nota de retorno deve abater o saldo informado manualmente.
+- Novos ajustes manuais exigem o CNPJ completo do armazem para garantir o vinculo com futuras NF-e.`
+    : releaseVersion === "1.1.59"
     ? `- Remove a consulta direta de NF-e na SEFAZ para evitar disputa de NSU com a Vulpe, que permanece como fonte prioritaria dos XMLs.
 - Reconhece automaticamente notas de remessa e retorno de armazem pelo CFOP durante a importacao do XML.
 - Movimentacoes de armazem deixam de exigir fornecedor e campos comerciais.

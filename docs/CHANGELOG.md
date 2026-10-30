@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.60
+
+- A tela Notas e operações passa a abrir diretamente em Notas emitidas.
+- Saldos manuais e movimentos de NF-e de armazém passam a ser vinculados pelo CNPJ do armazém, mesmo quando os nomes são diferentes.
+- Retornos com descrição genérica de café reaproveitam a classificação manual existente quando há um único produto identificado no armazém.
+- Evita criar uma segunda linha negativa quando uma nota de retorno deve abater um saldo informado manualmente.
+- Novos ajustes manuais exigem o CNPJ completo do armazém para garantir o vínculo com futuras NF-e.
+
 ## 1.1.59
 
 - Remove a consulta direta de NF-e na SEFAZ para evitar disputa de NSU com a Vulpe, que permanece como fonte prioritaria dos XMLs.
