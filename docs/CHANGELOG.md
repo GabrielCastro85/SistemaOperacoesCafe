@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.59
+
+- Remove a consulta direta de NF-e na SEFAZ para evitar disputa de NSU com a Vulpe, que permanece como fonte prioritaria dos XMLs.
+- Notas de remessa e retorno de armazem passam a ser reconhecidas automaticamente pelo CFOP durante a importacao manual do XML.
+- Movimentacoes de armazem nao exigem cadastro de fornecedor nem os campos de compra, venda, contrato ou financeiro.
+- A tela informa antecipadamente o armazem, o tipo de movimento e se as sacas serao acrescentadas ou descontadas, sem gerar operacao comercial ou cobranca.
+
 ## 1.1.58
 
 - Adiciona consulta direta de NF-e recebidas na SEFAZ usando o certificado digital instalado no Windows.

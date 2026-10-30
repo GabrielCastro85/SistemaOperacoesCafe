@@ -324,7 +324,12 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.58"
+  const highlights = releaseVersion === "1.1.59"
+    ? `- Remove a consulta direta de NF-e na SEFAZ para evitar disputa de NSU com a Vulpe, que permanece como fonte prioritaria dos XMLs.
+- Reconhece automaticamente notas de remessa e retorno de armazem pelo CFOP durante a importacao do XML.
+- Movimentacoes de armazem deixam de exigir fornecedor e campos comerciais.
+- A tela mostra se as sacas serao acrescentadas ou descontadas sem gerar compra, venda ou cobranca.`
+    : releaseVersion === "1.1.58"
     ? `- Consulta diretamente na SEFAZ as NF-e recebidas por cada CNPJ proprio usando o certificado digital instalado no Windows.
 - Permite buscar novas notas pela distribuicao de documentos fiscais ou localizar uma NF-e pela chave de acesso.
 - XMLs completos entram na fila normal de revisao e importacao, sem exigir selecao manual do arquivo.
