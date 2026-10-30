@@ -1770,7 +1770,7 @@ export class AppRepository {
     if (previous.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")) throw new Error("Nota vinculada a cobranca/acerto. Libere o vinculo antes de editar.");
     const reassigning = data.responsiblePartnerId !== previous.document.responsiblePartnerId;
     if (data.organizationId !== previous.document.organizationId) throw new Error("A organizacao da nota nao pode ser alterada.");
-    if (reassigning && this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ? UNION SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id, id)) throw new Error("Nota vinculada a confirmacao de negocio. Remova o vinculo antes de trocar o responsavel.");
+    if (reassigning && this.fiscalDocumentHasActiveDeal(id)) throw new Error("Nota vinculada a confirmacao de negocio ativa. Cancele a confirmacao ou remova o vinculo antes de trocar o responsavel.");
     if (previous.document.status === "CANCELED") throw new Error("Nota cancelada nao pode ser editada.");
     if (reassigning && (data.secondaryResponsiblePartnerId !== previous.document.secondaryResponsiblePartnerId || data.ownLegalEntityId !== previous.document.ownLegalEntityId || data.issueDate !== previous.document.issueDate || data.partnerLegalEntityId !== previous.document.partnerLegalEntityId)) throw new Error("Corrija o responsavel separadamente dos demais dados comerciais.");
     const transaction = this.db.transaction(() => {
@@ -1815,13 +1815,7 @@ export class AppRepository {
     const detail = this.getFiscalDocument(id);
     const linkedCharge = detail.operations.find((operation) => operation.clientChargeId || operation.billingStatus !== "UNBILLED");
     if (linkedCharge) throw new Error("Nota ja vinculada a cobranca. Cancele/libere a cobranca antes de excluir.");
-    const linkedDeal = this.tableExists("deal_confirmation_fiscal_documents")
-      ? this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ? LIMIT 1").get(id)
-      : null;
-    const linkedDealOperation = this.tableExists("deal_confirmation_operations")
-      ? this.db.prepare("SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id)
-      : null;
-    if (linkedDeal || linkedDealOperation) throw new Error("Nota ja vinculada a confirmacao de negocio. Remova o vinculo antes de excluir.");
+    if (this.fiscalDocumentHasActiveDeal(id)) throw new Error("Nota ja vinculada a confirmacao de negocio ativa. Cancele a confirmacao ou remova o vinculo antes de excluir.");
     const xmlImportJobIds = this.tableExists("xml_import_files")
       ? (this.db.prepare("SELECT DISTINCT import_job_id FROM xml_import_files WHERE fiscal_document_id = ?").all(id) as Array<{ import_job_id: string }>).map((row) => row.import_job_id)
       : [];
@@ -1830,6 +1824,10 @@ export class AppRepository {
       if (this.tableExists("xml_import_files")) this.db.prepare("UPDATE xml_import_files SET fiscal_document_id = NULL, status = 'REVERTED', updated_at = ? WHERE fiscal_document_id = ?").run(new Date().toISOString(), id);
       if (this.tableExists("fiscal_document_merge_history")) this.db.prepare("DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").run(id);
       if (this.tableExists("fiscal_document_events")) this.db.prepare("DELETE FROM fiscal_document_events WHERE fiscal_document_id = ?").run(id);
+      // Aqui so' restam vinculos de confirmacoes canceladas (ver guarda acima):
+      // a confirmacao cancelada continua existindo, apenas sem a nota excluida.
+      if (this.tableExists("deal_confirmation_fiscal_documents")) this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ?").run(id);
+      if (this.tableExists("deal_confirmation_operations")) this.db.prepare("DELETE FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
       this.db.prepare("DELETE FROM operations WHERE fiscal_document_id = ?").run(id);
       this.db.prepare("DELETE FROM fiscal_document_items WHERE fiscal_document_id = ?").run(id);
       this.db.prepare("DELETE FROM fiscal_documents WHERE id = ?").run(id);
@@ -7869,6 +7867,21 @@ export class AppRepository {
 
   private dealHasProduct(id: string, productId: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM deal_confirmation_items WHERE deal_confirmation_id = ? AND product_id = ? LIMIT 1").get(id, productId));
+  }
+
+  // Confirmacao cancelada nao aceita mais edicao (nem remover o vinculo), entao
+  // nao pode continuar travando a nota: so' confirmacoes vigentes contam aqui.
+  private fiscalDocumentHasActiveDeal(fiscalDocumentId: string): boolean {
+    if (!this.tableExists("deal_confirmation_fiscal_documents") || !this.tableExists("deal_confirmation_operations")) return false;
+    return Boolean(this.db.prepare(`SELECT 1 FROM deal_confirmation_fiscal_documents link
+        JOIN deal_confirmations deal ON deal.id = link.deal_confirmation_id
+        WHERE link.fiscal_document_id = ? AND deal.status <> 'CANCELLED'
+      UNION ALL
+      SELECT 1 FROM deal_confirmation_operations link
+        JOIN deal_confirmations deal ON deal.id = link.deal_confirmation_id
+        JOIN operations operation ON operation.id = link.operation_id
+        WHERE operation.fiscal_document_id = ? AND deal.status <> 'CANCELLED'
+      LIMIT 1`).get(fiscalDocumentId, fiscalDocumentId));
   }
 
   private dealHasFiscalDocument(id: string): boolean {

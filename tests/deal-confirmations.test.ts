@@ -315,6 +315,45 @@ describe("deal confirmations", () => {
     db.close();
   });
 
+  it("releases a fiscal document from edit and delete locks only after every linked confirmation is cancelled", async () => {
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Original", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const newBuyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Novo", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const createDocument = (documentNumber: string) => {
+      const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
+      const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 500000, sacksQuantity: "5" });
+      const operation = repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: buyer.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-17", quantitySacks: "5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+      repo.confirmFiscalDocument(doc.document.id);
+      return { doc, operation };
+    };
+    const reassign = (id: string, responsiblePartnerId: string) => repo.updateFiscalDocument(id, { ...repo.getFiscalDocument(id).document, responsiblePartnerId, operationType: "SALE" });
+
+    const edited = createDocument("NF-960");
+    const first = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [edited.operation.id], fiscalDocumentIds: [edited.doc.document.id] });
+    const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [edited.operation.id], fiscalDocumentIds: [edited.doc.document.id] });
+    expect(() => reassign(edited.doc.document.id, newBuyer.id)).toThrow(/confirmacao de negocio ativa/);
+    expect(() => repo.deleteFiscalDocument(edited.doc.document.id)).toThrow(/confirmacao de negocio ativa/);
+    repo.cancelDealConfirmation(first.confirmation.id, "Desistencia");
+    expect(() => reassign(edited.doc.document.id, newBuyer.id)).toThrow(/confirmacao de negocio ativa/);
+    repo.cancelDealConfirmation(second.confirmation.id, "Desistencia");
+
+    const reassigned = reassign(edited.doc.document.id, newBuyer.id);
+    expect(reassigned.document.responsiblePartnerId).toBe(newBuyer.id);
+    expect(reassigned.operations.map((operation) => operation.responsiblePartnerId)).toEqual([newBuyer.id]);
+    expect(repo.getDealConfirmation(first.confirmation.id).fiscalDocuments.map((document) => document.id)).toEqual([edited.doc.document.id]);
+
+    const removed = createDocument("NF-961");
+    const cancelled = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [removed.operation.id], fiscalDocumentIds: [removed.doc.document.id] });
+    repo.cancelDealConfirmation(cancelled.confirmation.id, "Desistencia");
+    repo.deleteFiscalDocument(removed.doc.document.id);
+    const afterDelete = repo.getDealConfirmation(cancelled.confirmation.id);
+    expect(afterDelete.confirmation.status).toBe("CANCELLED");
+    expect(afterDelete.fiscalDocuments).toEqual([]);
+    expect(afterDelete.operations).toEqual([]);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    db.close();
+  });
+
   it("recomputes the aggregate signature status after a signer is removed", async () => {
     const { repo, db, seller, buyer, product } = await setup();
     const draft = repo.createDealConfirmationDraft({ organizationId: villaId, ownLegalEntityId, confirmationDate: "2026-07-17", paymentTermsSnapshot: "A vista", deliveryLocationSnapshot: "Armazem", qualityTermsSnapshot: "Padrao", generalTermsSnapshot: "Revisado" });
