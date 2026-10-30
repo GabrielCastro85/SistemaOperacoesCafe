@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.62
+
+- Confirmação de negócio cancelada deixa de travar a nota: agora é possível trocar o responsável ou excluir a nota depois do cancelamento.
+- Notas ligadas a uma confirmação ainda ativa continuam protegidas, com mensagem indicando cancelar a confirmação ou remover o vínculo.
+
 ## 1.1.60
 
 - A tela Notas e operações passa a abrir diretamente em Notas emitidas.
