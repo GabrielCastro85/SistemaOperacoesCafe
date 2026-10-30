@@ -984,6 +984,53 @@ describe("warehouse coffee movements", () => {
       expect(ctx.repo.listWarehouseMovements({ organizationId: villaId }).find((row) => row.accessKey === depositKey)).toMatchObject({ origin: "XML", quantityKg: "630" });
     } finally { ctx.db.close(); }
   });
+
+  it("links a generic return to a manual warehouse balance by CNPJ instead of name", async () => {
+    const ctx = await setup();
+    try {
+      ctx.repo.createWarehouseAdjustment({
+        organizationId: villaId,
+        ownLegalEntityId,
+        warehouseName: "SANTA FE",
+        warehouseCnpj: partnerCnpj,
+        productDescription: "ARABICA",
+        adjustmentMode: "SET_BALANCE",
+        unit: "SACK",
+        quantity: "500",
+        issueDate: "2026-10-29",
+        reason: "Saldo inicial informado pelo armazem"
+      }, null);
+
+      const returnKey = makeAccessKey(9106);
+      const returnXml = nfeXml(returnKey)
+        .replace(`<CNPJ>${ownCnpj}</CNPJ>`, "<CNPJ>__WAREHOUSE__</CNPJ>")
+        .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${ownCnpj}</CNPJ>`)
+        .replace("<CNPJ>__WAREHOUSE__</CNPJ>", `<CNPJ>${partnerCnpj}</CNPJ>`)
+        .replace("<xNome>Villa Coffee MG</xNome>", "<xNome>__WAREHOUSE_NAME__</xNome>")
+        .replace("<xNome>Cliente XML Ltda</xNome>", "<xNome>Villa Coffee MG</xNome>")
+        .replace("<xNome>__WAREHOUSE_NAME__</xNome>", "<xNome>SANTA FE ARMAZENS GERAIS EIRELI</xNome>")
+        .replace("<xProd>CAFE ARABICA</xProd>", "<xProd>CAFE BENEFICIADO CRU EM GRAO</xProd>")
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Retorno de mercadoria depositada em armazem geral</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5906</CFOP>")
+        .replaceAll("10.5", "500");
+
+      const result = await importAuditXml(ctx, returnXml);
+      expect(result.files[0].status).toBe("IMPORTED");
+      const movements = ctx.repo.listWarehouseMovements({ organizationId: villaId });
+      expect(movements.find((row) => row.accessKey === returnKey)).toMatchObject({
+        warehouseCnpj: partnerCnpj,
+        warehouseName: "SANTA FE",
+        productDescription: "ARABICA",
+        movementType: "RETURN"
+      });
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({
+        totalKg: "0",
+        totalSacks: "0",
+        warehouseCount: 0,
+        balances: []
+      });
+    } finally { ctx.db.close(); }
+  });
 });
 
 function makeAccessKey(sequence = 9001): string {

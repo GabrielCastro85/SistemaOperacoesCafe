@@ -4141,6 +4141,88 @@ export class AppRepository {
     return rows.map((row) => this.mapWarehouseMovement(row));
   }
 
+  private warehouseIdentityKey(row: DbRecord): string {
+    const cnpj = this.onlyDigits(String(row.warehouse_cnpj ?? ""));
+    const name = String(row.warehouse_name ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+    return `${String(row.own_legal_entity_id)}:${cnpj || `NAME:${name}`}`;
+  }
+
+  private warehouseProductFamily(description: string): "ARABICA" | "CONILON" | null {
+    const normalized = description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+    if (/\bARABICA\b/.test(normalized)) return "ARABICA";
+    if (/\b(?:CONILON|ROBUSTA)\b/.test(normalized)) return "CONILON";
+    return null;
+  }
+
+  private warehouseBalanceRows(organizationId: string, ownLegalEntityId?: string | null): Array<{
+    ownLegalEntityId: string;
+    ownLegalEntityName: string;
+    warehouseName: string;
+    warehouseCnpj: string | null;
+    productDescription: string;
+    quantityKg: number;
+  }> {
+    const entityClause = ownLegalEntityId ? "AND wm.own_legal_entity_id = ?" : "";
+    const params: unknown[] = ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
+    const rows = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE wm.organization_id = ? ${entityClause} AND wm.status = 'ACTIVE'
+      ORDER BY wm.created_at, wm.id
+    `).all(...params) as DbRecord[];
+
+    const manualProducts = new Map<string, Map<string, string>>();
+    const manualWarehouseNames = new Map<string, string>();
+    for (const row of rows) {
+      if (String(row.origin ?? "XML") !== "MANUAL") continue;
+      const identity = this.warehouseIdentityKey(row);
+      manualWarehouseNames.set(identity, String(row.warehouse_name));
+      const description = String(row.product_description);
+      const family = this.warehouseProductFamily(description);
+      const key = family ?? `TEXT:${description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase()}`;
+      const products = manualProducts.get(identity) ?? new Map<string, string>();
+      products.set(key, description);
+      manualProducts.set(identity, products);
+    }
+
+    const balances = new Map<string, {
+      ownLegalEntityId: string;
+      ownLegalEntityName: string;
+      warehouseName: string;
+      warehouseCnpj: string | null;
+      productDescription: string;
+      quantityKg: number;
+    }>();
+    for (const row of rows) {
+      const identity = this.warehouseIdentityKey(row);
+      const description = String(row.product_description);
+      const family = this.warehouseProductFamily(description);
+      const knownProducts = manualProducts.get(identity);
+      let productKey: string = family ?? `TEXT:${description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase()}`;
+      let productDescription = family ? knownProducts?.get(family) ?? family : description;
+      if (!family && knownProducts?.size === 1) {
+        const onlyProduct = [...knownProducts.entries()][0];
+        productKey = onlyProduct[0];
+        productDescription = onlyProduct[1];
+      }
+      const balanceKey = `${identity}:${productKey}`;
+      const current = balances.get(balanceKey) ?? {
+        ownLegalEntityId: String(row.own_legal_entity_id),
+        ownLegalEntityName: String(row.own_legal_entity_name),
+        warehouseName: manualWarehouseNames.get(identity) ?? String(row.warehouse_name),
+        warehouseCnpj: this.onlyDigits(String(row.warehouse_cnpj ?? "")) || null,
+        productDescription,
+        quantityKg: 0
+      };
+      current.quantityKg += (String(row.movement_type) === "DEPOSIT" ? 1 : -1) * Number(row.quantity_kg_decimal ?? 0);
+      balances.set(balanceKey, current);
+    }
+    return [...balances.values()]
+      .filter((row) => Math.abs(row.quantityKg) > 0.0001)
+      .sort((a, b) => a.warehouseName.localeCompare(b.warehouseName, "pt-BR") || a.productDescription.localeCompare(b.productDescription, "pt-BR") || a.ownLegalEntityName.localeCompare(b.ownLegalEntityName, "pt-BR"));
+  }
+
   getWarehouseSummary(filters: { organizationId: string; ownLegalEntityId?: string | null }): WarehouseSummary {
     if (!this.isOrganizationAllowed(filters.organizationId)) throw new Error("Organizacao nao autorizada.");
     if (!this.tableExists("warehouse_movements")) {
@@ -4148,29 +4230,15 @@ export class AppRepository {
     }
     const entityClause = filters.ownLegalEntityId ? "AND wm.own_legal_entity_id = ?" : "";
     const params: unknown[] = filters.ownLegalEntityId ? [filters.organizationId, filters.ownLegalEntityId] : [filters.organizationId];
-    const balanceRows = this.db.prepare(`
-      SELECT
-        wm.own_legal_entity_id,
-        le.trade_name AS own_legal_entity_name,
-        wm.warehouse_name,
-        wm.warehouse_cnpj,
-        wm.product_description,
-        SUM(CASE WHEN wm.movement_type = 'DEPOSIT' THEN CAST(wm.quantity_kg_decimal AS REAL) ELSE -CAST(wm.quantity_kg_decimal AS REAL) END) AS quantity_kg
-      FROM warehouse_movements wm
-      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
-      WHERE wm.organization_id = ? ${entityClause} AND wm.status = 'ACTIVE'
-      GROUP BY wm.own_legal_entity_id, le.trade_name, wm.warehouse_name, wm.warehouse_cnpj, wm.product_description
-      HAVING ABS(quantity_kg) > 0.0001
-      ORDER BY wm.warehouse_name, wm.product_description, le.trade_name
-    `).all(...params) as Array<DbRecord & { quantity_kg: number }>;
+    const balanceRows = this.warehouseBalanceRows(filters.organizationId, filters.ownLegalEntityId);
     const balances = balanceRows.map((row) => {
-      const kg = Number(row.quantity_kg ?? 0);
+      const kg = row.quantityKg;
       return {
-        ownLegalEntityId: String(row.own_legal_entity_id),
-        ownLegalEntityName: String(row.own_legal_entity_name),
-        warehouseName: String(row.warehouse_name),
-        warehouseCnpj: row.warehouse_cnpj ? String(row.warehouse_cnpj) : null,
-        productDescription: String(row.product_description),
+        ownLegalEntityId: row.ownLegalEntityId,
+        ownLegalEntityName: row.ownLegalEntityName,
+        warehouseName: row.warehouseName,
+        warehouseCnpj: row.warehouseCnpj,
+        productDescription: row.productDescription,
         quantityKg: compactDecimal(kg),
         quantitySacks: compactDecimal(kg / 60)
       };
@@ -4178,7 +4246,6 @@ export class AppRepository {
     const totals = this.db.prepare(`
       SELECT
         COUNT(*) AS active_movement_count,
-        COUNT(DISTINCT COALESCE(NULLIF(warehouse_cnpj, ''), warehouse_name)) AS warehouse_count,
         SUM(CASE WHEN movement_type = 'DEPOSIT' THEN CAST(quantity_kg_decimal AS REAL) ELSE -CAST(quantity_kg_decimal AS REAL) END) AS total_kg
       FROM warehouse_movements wm
       WHERE organization_id = ? ${entityClause} AND status = 'ACTIVE'
@@ -4188,7 +4255,7 @@ export class AppRepository {
     return {
       totalKg: compactDecimal(totalKg),
       totalSacks: compactDecimal(totalKg / 60),
-      warehouseCount: Number(totals.warehouse_count ?? 0),
+      warehouseCount: new Set(balances.map((row) => `${row.ownLegalEntityId}:${row.warehouseCnpj ?? row.warehouseName.trim().toUpperCase()}`)).size,
       activeMovementCount: Number(totals.active_movement_count ?? 0),
       pendingReviewCount: Number(pending.total ?? 0),
       balances
@@ -4232,30 +4299,35 @@ export class AppRepository {
     const entity = this.getLegalEntity(input.ownLegalEntityId);
     if (entity.organizationId !== input.organizationId) throw new Error("Empresa nao pertence a organizacao selecionada.");
     const warehouseName = input.warehouseName.trim();
-    const warehouseCnpj = this.onlyDigits(input.warehouseCnpj ?? "") || null;
+    let warehouseCnpj = this.onlyDigits(input.warehouseCnpj ?? "") || null;
     const productDescription = input.productDescription.trim();
     const reason = input.reason.trim();
     const rawQuantity = input.quantity.trim().replace(/\s/g, "");
     const enteredQuantity = Number(rawQuantity.includes(",") ? rawQuantity.replace(/\./g, "").replace(",", ".") : rawQuantity);
     if (!warehouseName || !productDescription || !reason) throw new Error("Informe armazem, produto e motivo do ajuste.");
+    if (!warehouseCnpj) {
+      const knownCnpjs = this.db.prepare(`
+        SELECT DISTINCT warehouse_cnpj
+        FROM warehouse_movements
+        WHERE organization_id = ? AND own_legal_entity_id = ?
+          AND LOWER(TRIM(warehouse_name)) = LOWER(TRIM(?))
+          AND COALESCE(warehouse_cnpj, '') <> ''
+      `).all(input.organizationId, input.ownLegalEntityId, warehouseName) as Array<{ warehouse_cnpj: string }>;
+      if (knownCnpjs.length === 1) warehouseCnpj = this.onlyDigits(knownCnpjs[0].warehouse_cnpj) || null;
+    }
+    if (!warehouseCnpj || warehouseCnpj.length !== 14) throw new Error("Informe o CNPJ completo do armazem. Ele e a chave usada para vincular ajustes e futuras NF-e.");
     if (!Number.isFinite(enteredQuantity) || enteredQuantity < 0 || (input.adjustmentMode !== "SET_BALANCE" && enteredQuantity === 0)) throw new Error("Informe uma quantidade valida.");
     const requestedKg = input.unit === "SACK" ? enteredQuantity * 60 : enteredQuantity;
-    const identityClause = warehouseCnpj
-      ? "warehouse_cnpj = ?"
-      : "LOWER(TRIM(warehouse_name)) = LOWER(TRIM(?))";
-    const identityValue = warehouseCnpj ?? warehouseName;
-    const balance = this.db.prepare(`
-      SELECT COALESCE(SUM(CASE WHEN movement_type = 'DEPOSIT' THEN CAST(quantity_kg_decimal AS REAL) ELSE -CAST(quantity_kg_decimal AS REAL) END), 0) AS quantity_kg,
-        MAX(warehouse_name) AS canonical_warehouse_name, MAX(warehouse_cnpj) AS canonical_warehouse_cnpj,
-        MAX(product_description) AS canonical_product_description
-      FROM warehouse_movements
-      WHERE organization_id = ? AND own_legal_entity_id = ? AND ${identityClause}
-        AND LOWER(TRIM(product_description)) = LOWER(TRIM(?)) AND status = 'ACTIVE'
-    `).get(input.organizationId, input.ownLegalEntityId, identityValue, productDescription) as DbRecord;
-    const currentKg = Number(balance.quantity_kg ?? 0);
-    const canonicalWarehouseName = this.stringOrNull(balance.canonical_warehouse_name) ?? warehouseName;
-    const canonicalWarehouseCnpj = this.stringOrNull(balance.canonical_warehouse_cnpj) ?? warehouseCnpj;
-    const canonicalProductDescription = this.stringOrNull(balance.canonical_product_description) ?? productDescription;
+    const productFamily = this.warehouseProductFamily(productDescription);
+    const existingBalance = this.warehouseBalanceRows(input.organizationId, input.ownLegalEntityId).find((row) =>
+      row.warehouseCnpj === warehouseCnpj && (productFamily
+        ? this.warehouseProductFamily(row.productDescription) === productFamily
+        : row.productDescription.trim().localeCompare(productDescription, undefined, { sensitivity: "base" }) === 0)
+    );
+    const currentKg = existingBalance?.quantityKg ?? 0;
+    const canonicalWarehouseName = existingBalance?.warehouseName ?? warehouseName;
+    const canonicalWarehouseCnpj = existingBalance?.warehouseCnpj ?? warehouseCnpj;
+    const canonicalProductDescription = existingBalance?.productDescription ?? productDescription;
     const deltaKg = input.adjustmentMode === "SET_BALANCE"
       ? requestedKg - currentKg
       : input.adjustmentMode === "ADD" ? requestedKg : -requestedKg;
@@ -4331,6 +4403,20 @@ export class AppRepository {
     const warehouseParty = firstType === "DEPOSIT" ? recipient : issuer;
     const warehouseName = this.stringOrNull(warehouseParty?.legalName) ?? this.stringOrNull(warehouseParty?.tradeName) ?? "Armazem nao identificado";
     const warehouseCnpj = this.onlyDigits(String(warehouseParty?.cnpjCpf ?? "")) || null;
+    const manualReferences = warehouseCnpj ? this.db.prepare(`
+      SELECT warehouse_name, product_description
+      FROM warehouse_movements
+      WHERE organization_id = ? AND own_legal_entity_id = ? AND warehouse_cnpj = ?
+        AND origin = 'MANUAL' AND status = 'ACTIVE'
+      ORDER BY created_at DESC
+    `).all(ownEntity.organizationId, ownEntity.id, warehouseCnpj) as Array<{ warehouse_name: string; product_description: string }> : [];
+    const canonicalWarehouseName = manualReferences[0]?.warehouse_name ?? warehouseName;
+    const manualProducts = new Map<string, string>();
+    for (const reference of manualReferences) {
+      const family = this.warehouseProductFamily(reference.product_description);
+      const key = family ?? `TEXT:${reference.product_description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase()}`;
+      manualProducts.set(key, reference.product_description);
+    }
     const additionalInfo = extracted.additionalInfo as Record<string, unknown> | undefined;
     const referenceText = [this.stringOrNull(additionalInfo?.complementary), ...classifiedItems.map(({ item }) => this.stringOrNull(item.additionalInfo))]
       .filter((value): value is string => Boolean(value)).join(" | ") || null;
@@ -4379,6 +4465,11 @@ export class AppRepository {
         updated_at = excluded.updated_at
     `);
     for (const { item, cfop, classification } of classifiedItems) {
+      const rawProductDescription = String(item.description ?? "Cafe");
+      const productFamily = this.warehouseProductFamily(rawProductDescription);
+      const canonicalProductDescription = productFamily
+        ? manualProducts.get(productFamily) ?? rawProductDescription
+        : manualProducts.size === 1 ? [...manualProducts.values()][0] : rawProductDescription;
       const commercialUnit = String(item.commercialUnit ?? "");
       const taxableUnit = String(item.taxableUnit ?? "");
       const commercialQuantity = String(item.commercialQuantity ?? "0");
@@ -4401,8 +4492,8 @@ export class AppRepository {
       upsert.run(
         deterministicUuid("warehouseMovement", file.accessKey, String(item.itemNumber ?? "1")),
         ownEntity.organizationId, ownEntity.id, file.accessKey, String(item.itemNumber ?? "1"), String(extracted.number ?? ""),
-        this.stringOrNull(extracted.series), String(extracted.issuedAt ?? new Date().toISOString().slice(0, 10)), warehouseName, warehouseCnpj,
-        String(item.description ?? "Cafe"), cfop, classification.type, classification.kind, compactDecimal(quantityKg),
+        this.stringOrNull(extracted.series), String(extracted.issuedAt ?? new Date().toISOString().slice(0, 10)), canonicalWarehouseName, warehouseCnpj,
+        canonicalProductDescription, cfop, classification.type, classification.kind, compactDecimal(quantityKg),
         sourceUnit || "NAO_INFORMADA", sourceQuantity, referencedDocumentNumber, referenceText, status,
         needsReference ? "Referencia da remessa original nao identificada automaticamente; conferir manualmente." : null, now, now
       );

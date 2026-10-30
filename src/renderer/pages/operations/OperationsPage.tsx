@@ -206,7 +206,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [sacks, setSacks] = useState("1");
   const [scope, setScope] = useState<OperationScope>("EXTERNAL");
   const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
-  const [pageTab, setPageTab] = useState<OperationsPageTab>("received");
+  const [pageTab, setPageTab] = useState<OperationsPageTab>("issued");
   const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
   const [importJob, setImportJob] = useState<{ job: SpreadsheetImportJob; rows: SpreadsheetImportRow[] } | null>(null);
