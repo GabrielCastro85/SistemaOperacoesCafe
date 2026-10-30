@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppVariant, AuthSession, Diagnostics, LegalEntity, Organization } from "../../shared/types/domain";
 import { navigationGroups, routeIdFromLegacyMenu } from "../app/navigation";
 import { buildUiTheme, themeToCssVariables } from "../design-system";
@@ -26,6 +26,7 @@ import type { NavigationItem } from "../app/navigation";
 import flagEspiritoSanto from "../assets/flags/bandeira-espirito-santo.svg";
 import flagMinasGerais from "../assets/flags/bandeira-minas-gerais.svg";
 import flagSaoPaulo from "../assets/flags/bandeira-sao-paulo.svg";
+import { CENTRAL_DATA_UPDATED_EVENT } from "../hooks/useCentralDataRefresh";
 
 export interface AppLayoutProps {
   variant: AppVariant;
@@ -130,6 +131,7 @@ export function AppLayout({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const lastCentralRevisionRef = useRef<number | null>(null);
   const activeRoute = routeIdFromLegacyMenu(activeMenu);
   const theme = useMemo(() => buildUiTheme(variant, organization), [variant, organization]);
   const logoSrc = resolveOrganizationLogoSrc(organization, variant);
@@ -142,11 +144,24 @@ export function AppLayout({
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
       void window.operationsCafe.getDiagnostics()
-      .then((result) => { if (active) setDiagnostics(result); })
+      .then((result) => {
+        if (!active) return;
+        const nextRevision = result.centralSyncRevision ?? 0;
+        const previousRevision = lastCentralRevisionRef.current;
+        lastCentralRevisionRef.current = nextRevision;
+        setDiagnostics(result);
+        if (previousRevision !== null && nextRevision > previousRevision) {
+          window.dispatchEvent(new CustomEvent(CENTRAL_DATA_UPDATED_EVENT, {
+            detail: { previousRevision, revision: nextRevision }
+          }));
+        }
+      })
       .catch(() => { if (active) setDiagnostics(null); });
     };
     refresh();
-    const timer = window.setInterval(refresh, 30_000);
+    // A consulta e' apenas ao estado SQLite local e e' barata. O intervalo
+    // curto faz a interface reagir logo depois do ciclo central de 30 s.
+    const timer = window.setInterval(refresh, 5_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);

@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { getBrandingConfig, resolveOrganizationLogoSrc } from "../../../shared/branding/branding";
 import type { BillingSummary, BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DashboardAlerts, DealConfirmationSummary, InstallationProfile, LegalEntity, Location, Organization } from "../../../shared/types/domain";
 import type { UpdateStatus } from "../../../shared/types/updater";
@@ -6,6 +6,7 @@ import { formatCnpj, formatCurrencyFromCents, formatDateOnlyBr, isValidCnpj, onl
 import { Alert, Badge, Button, Card, CheckCircleIcon, CoinsIcon, DateInput, EmptyState, FilterBar, Input, PageHeader, SackIcon, Select, WalletIcon } from "../../design-system";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { requestTextInput } from "../../utils/dialogs";
+import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 
 const NEW_COMPANY_DEFAULT_COLORS = { primaryColor: "#1F6F4A", secondaryColor: "#0B3D26", accentColor: "#E0A94A" };
 
@@ -333,6 +334,20 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const [ignoringBillingAlert, setIgnoringBillingAlert] = useState<string | null>(null);
   const [billingAlertFeedback, setBillingAlertFeedback] = useState<string | null>(null);
 
+  const loadDashboardSummary = useCallback(async (): Promise<void> => {
+    if (!organizationId) return;
+    const [billing, operations, confirmations, dashboardAlerts] = await Promise.all([
+      window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies: true, periodStart: periodStart || null, periodEnd: periodEnd || null }),
+      window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId, periodStart: periodStart || null, periodEnd: periodEnd || null }),
+      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: periodStart || null, dateEnd: periodEnd || null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
+      window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
+    ]);
+    setBillingSummary(billing);
+    setOperationalIndicators(operations);
+    setConfirmationSummary(confirmations);
+    setAlerts(dashboardAlerts);
+  }, [organizationId, ownLegalEntityId, periodEnd, periodStart]);
+
   useEffect(() => {
     void window.operationsCafe.getUpdateStatus().then(setUpdateStatus);
     return window.operationsCafe.onUpdateStatusChanged(setUpdateStatus);
@@ -347,20 +362,13 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     if (!organizationId) return;
     let canceled = false;
     setBillingSummary(null);
-    void Promise.all([
-      window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies: true, periodStart: periodStart || null, periodEnd: periodEnd || null }),
-      window.operationsCafe.getOperationalIndicators({ organizationId, ownLegalEntityId, periodStart: periodStart || null, periodEnd: periodEnd || null }),
-      window.operationsCafe.getDealConfirmationSummary({ organizationId, ownLegalEntityId: ownLegalEntityId ?? null, dateStart: periodStart || null, dateEnd: periodEnd || null, sellerPartnerId: null, buyerPartnerId: null, productId: null, status: null, signatureStatus: null }),
-      window.operationsCafe.getDashboardAlerts({ organizationId, ownLegalEntityId })
-    ]).then(([billing, operations, confirmations, dashboardAlerts]) => {
-      if (canceled) return;
-      setBillingSummary(billing);
-      setOperationalIndicators(operations);
-      setConfirmationSummary(confirmations);
-      setAlerts(dashboardAlerts);
+    void loadDashboardSummary().catch(() => {
+      if (!canceled) setBillingSummary(null);
     });
     return () => { canceled = true; };
-  }, [organizationId, ownLegalEntityId, periodStart, periodEnd]);
+  }, [loadDashboardSummary, organizationId]);
+
+  useCentralDataRefresh(loadDashboardSummary, Boolean(organizationId));
 
   useEffect(() => {
     if (!organizationId) return;

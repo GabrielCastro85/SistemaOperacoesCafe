@@ -8,6 +8,7 @@ import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
+import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
@@ -369,6 +370,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   }, [organizationId, ownLegalEntityId, operationType]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Recebe notas e alteracoes feitas em outro computador sem desmontar a
+  // tela nem limpar a aba, a pesquisa ou um formulario em andamento.
+  useCentralDataRefresh(load);
 
   useEffect(() => {
     if (manualIssuerPartnerLegalEntityId || !partnerId) {

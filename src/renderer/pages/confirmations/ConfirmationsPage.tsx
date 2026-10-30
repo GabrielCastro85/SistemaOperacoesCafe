@@ -14,6 +14,7 @@ import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { ConfirmationPartyCard } from "./components/ConfirmationPartyCard";
 import { ConfirmationItemsTable } from "./components/ConfirmationItemsTable";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
+import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 
 interface SourceDocumentRow {
   document: FiscalDocument;
@@ -187,6 +188,8 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
   useEffect(() => {
     void load();
   }, [load]);
+
+  useCentralDataRefresh(load, view === "list");
 
   useEffect(() => {
     setListLegalEntityId(ownLegalEntityId || "all");
