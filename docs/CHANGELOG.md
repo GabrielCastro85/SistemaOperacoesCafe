@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.65
+
+- Nova tela Comparativo: compara de 2 a 4 períodos, como meses inteiros ou o mesmo intervalo de dias, e gera uma imagem para salvar ou copiar.
+- A imagem mostra volumes, notas, valores, empresas, principais clientes, movimento dos clientes, observações e pontos de atenção.
+- A nota pode trocar de cliente mesmo ligada a uma confirmação ativa: a confirmação não muda, a tarifa é recalculada e a nota continua confirmada.
+
+## 1.1.64
+
+- PDF de cobrança com CT-e em quadro próprio, referências agrupadas por empresa, letras maiores na tabela de notas e páginas numeradas.
+
+## 1.1.63
+
+- Ajuste de CT-e calculado pela soma das sacas das notas selecionadas, com valor por saca editável e padrão de R$ 1,50.
+- Notas da Vassuler vêm pré-selecionadas nas novas cobranças e podem ser desmarcadas.
+
 ## 1.1.62
 
 - Confirmação de negócio cancelada deixa de travar a nota: agora é possível trocar o responsável ou excluir a nota depois do cancelamento.
