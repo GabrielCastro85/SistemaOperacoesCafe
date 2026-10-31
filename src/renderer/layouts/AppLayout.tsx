@@ -76,6 +76,7 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
     case "finance":
       return <WalletIcon />;
     case "reports":
+    case "periodComparison":
       return <ReportIcon />;
     case "users":
       return <UserAdminIcon />;

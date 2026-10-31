@@ -315,10 +315,11 @@ describe("deal confirmations", () => {
     db.close();
   });
 
-  it("releases a fiscal document from edit and delete locks only after every linked confirmation is cancelled", async () => {
+  it("allows changing the billing client without altering linked confirmations, while keeping the delete lock", async () => {
     const { repo, db, product } = await setup();
     const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Original", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
     const newBuyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Novo", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: newBuyer.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
     const createDocument = (documentNumber: string) => {
       const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
       const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 500000, sacksQuantity: "5" });
@@ -331,15 +332,19 @@ describe("deal confirmations", () => {
     const edited = createDocument("NF-960");
     const first = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [edited.operation.id], fiscalDocumentIds: [edited.doc.document.id] });
     const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [edited.operation.id], fiscalDocumentIds: [edited.doc.document.id] });
-    expect(() => reassign(edited.doc.document.id, newBuyer.id)).toThrow(/confirmacao de negocio ativa/);
-    expect(() => repo.deleteFiscalDocument(edited.doc.document.id)).toThrow(/confirmacao de negocio ativa/);
-    repo.cancelDealConfirmation(first.confirmation.id, "Desistencia");
-    expect(() => reassign(edited.doc.document.id, newBuyer.id)).toThrow(/confirmacao de negocio ativa/);
-    repo.cancelDealConfirmation(second.confirmation.id, "Desistencia");
-
     const reassigned = reassign(edited.doc.document.id, newBuyer.id);
     expect(reassigned.document.responsiblePartnerId).toBe(newBuyer.id);
+    expect(reassigned.document.status).toBe("CONFIRMED");
+    expect(repo.getDealConfirmation(first.confirmation.id).parties).toEqual(first.parties);
+    expect(repo.getDealConfirmation(second.confirmation.id).parties).toEqual(second.parties);
     expect(reassigned.operations.map((operation) => operation.responsiblePartnerId)).toEqual([newBuyer.id]);
+    expect(reassigned.operations.map((operation) => operation.status)).toEqual(["CONFIRMED"]);
+    expect(repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: buyer.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(0);
+    expect(repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: newBuyer.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" }).map((operation) => operation.id)).toEqual([edited.operation.id]);
+    expect(() => repo.deleteFiscalDocument(edited.doc.document.id)).toThrow(/confirmacao de negocio ativa/);
+    repo.cancelDealConfirmation(first.confirmation.id, "Desistencia");
+    expect(() => repo.deleteFiscalDocument(edited.doc.document.id)).toThrow(/confirmacao de negocio ativa/);
+    repo.cancelDealConfirmation(second.confirmation.id, "Desistencia");
     expect(repo.getDealConfirmation(first.confirmation.id).fiscalDocuments.map((document) => document.id)).toEqual([edited.doc.document.id]);
 
     const removed = createDocument("NF-961");

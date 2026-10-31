@@ -774,7 +774,7 @@ describe("commercial import safeguards", () => {
       await ctx.repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: other.id, ownLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 700, effectiveFrom: "1900-01-01", effectiveTo: null, priority: 0, notes: null, isActive: true });
       ctx.repo.updateOperationManualRate(detail.operations[0].id, 300, "Acordo anterior");
       const updated = ctx.repo.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: other.id });
-      expect(updated.document.status).toBe("DRAFT");
+      expect(updated.document.status).toBe(detail.document.status);
       expect(updated.operations[0].id).toBe(detail.operations[0].id);
       expect(updated.operations[0].responsiblePartnerId).toBe(other.id);
       expect(updated.operations[0].appliedRateValueCents).toBe(700);

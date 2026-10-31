@@ -8,6 +8,7 @@ import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { buildPartnerPeriodReportPdf, getPartnerPeriodReport } from "../services/partnerPeriodReport.js";
 import { buildChargeControlPrintHtml, buildChargeControlWorkbook } from "../services/chargeControlWorkbook.js";
+import { buildPeriodComparisonSvg, renderPeriodComparisonImage } from "../services/periodComparison.js";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
@@ -1196,6 +1197,34 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.getClientCharge, (_event, payload: unknown) => repository.getClientCharge(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.regenerateChargeDocuments, async (_event, payload: unknown) => {
     return repository.regenerateChargeDocuments(z.string().uuid().parse(payload));
+  });
+  handle(IPC_CHANNELS.getPeriodComparison, async (_event, payload: unknown) => {
+    // Mesmo criterio do Resumo: tenta trazer a revisao central mais recente,
+    // mas continua com os dados locais se o computador estiver offline.
+    await centralSync.synchronize().catch(() => undefined);
+    const report = repository.getPeriodComparison(payload);
+    return { report, svg: buildPeriodComparisonSvg(report) };
+  });
+  handle(IPC_CHANNELS.exportPeriodComparisonImage, async (_event, payload: unknown) => {
+    const report = repository.getPeriodComparison(payload);
+    const image = await renderPeriodComparisonImage(buildPeriodComparisonSvg(report));
+    if (image.isEmpty()) throw new Error("Nao foi possivel gerar a imagem do comparativo.");
+    const labels = report.periods.map((period) => period.label.replace(/\//g, "-")).join(" x ");
+    const destination = await dialog.showSaveDialog({
+      title: "Salvar comparativo em imagem",
+      defaultPath: `Comparativo ${labels}.png`,
+      filters: [{ name: "Imagem PNG", extensions: ["png"] }]
+    });
+    if (destination.canceled || !destination.filePath) return false;
+    writeFileSync(destination.filePath, image.toPNG());
+    const error = await shell.openPath(destination.filePath);
+    if (error) throw new Error(error);
+    return true;
+  });
+  handle(IPC_CHANNELS.copyPeriodComparisonImage, async (_event, payload: unknown) => {
+    const image = await renderPeriodComparisonImage(buildPeriodComparisonSvg(repository.getPeriodComparison(payload)));
+    if (image.isEmpty()) throw new Error("Nao foi possivel gerar a imagem do comparativo.");
+    clipboard.writeImage(image);
   });
   handle(IPC_CHANNELS.exportPartnerPeriodReport, async (_event, payload: unknown) => {
     const report = getPartnerPeriodReport(repository, payload);

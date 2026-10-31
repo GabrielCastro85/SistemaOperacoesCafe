@@ -16,6 +16,7 @@ export interface NavigationGroup {
 export const navigationGroups: NavigationGroup[] = [
   { title: "Visão geral", items: [
     { id: "dashboard", label: "Resumo", legacyMenu: "Dashboard", path: "/dashboard", icon: "⌂" },
+    { id: "periodComparison", label: "Comparativo", legacyMenu: "Comparativo", path: "/comparison", icon: "⇄" },
     { id: "assistant", label: "Assistente", legacyMenu: "Assistente", path: "/assistant", icon: "✦" }
   ] },
   {

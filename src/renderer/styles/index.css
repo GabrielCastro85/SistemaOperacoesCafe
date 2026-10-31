@@ -5956,3 +5956,16 @@ table tbody tr:hover {
   .assistant-message { max-width: 96%; }
   .assistant-error { align-items: stretch; flex-direction: column; }
 }
+
+.period-comparison { display: grid; gap: 16px; }
+.period-comparison__panel { display: grid; gap: 16px; padding: 18px; border: 1px solid var(--line, #ddd6c8); border-radius: 14px; background: var(--surface, #fff); }
+.period-comparison__group { display: grid; gap: 8px; }
+.period-comparison__label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.72; }
+.period-comparison__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.period-comparison__row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.period-comparison__row > strong { align-self: center; min-width: 16px; }
+.period-comparison__row label { display: grid; gap: 4px; font-size: 13px; }
+.period-comparison__row input[type="number"] { width: 90px; }
+.period-comparison select { max-width: 420px; }
+.period-comparison__message { margin: 0; font-weight: 600; }
+.period-comparison__preview { display: block; width: 100%; height: auto; border-radius: 10px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16); }

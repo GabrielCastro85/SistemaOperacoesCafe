@@ -4,6 +4,8 @@ import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { deterministicUuid } from "./deterministicId.js";
+import { buildPeriodComparisonReport, periodComparisonInputSchema, type ComparisonSaleRow } from "./periodComparison.js";
+import type { PeriodComparisonReport } from "../../../src/shared/utils/periodComparison.js";
 import {
   legalEntityInputSchema,
   locationInputSchema,
@@ -1770,7 +1772,6 @@ export class AppRepository {
     if (previous.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")) throw new Error("Nota vinculada a cobranca/acerto. Libere o vinculo antes de editar.");
     const reassigning = data.responsiblePartnerId !== previous.document.responsiblePartnerId;
     if (data.organizationId !== previous.document.organizationId) throw new Error("A organizacao da nota nao pode ser alterada.");
-    if (reassigning && this.fiscalDocumentHasActiveDeal(id)) throw new Error("Nota vinculada a confirmacao de negocio ativa. Cancele a confirmacao ou remova o vinculo antes de trocar o responsavel.");
     if (previous.document.status === "CANCELED") throw new Error("Nota cancelada nao pode ser editada.");
     if (reassigning && (data.secondaryResponsiblePartnerId !== previous.document.secondaryResponsiblePartnerId || data.ownLegalEntityId !== previous.document.ownLegalEntityId || data.issueDate !== previous.document.issueDate || data.partnerLegalEntityId !== previous.document.partnerLegalEntityId)) throw new Error("Corrija o responsavel separadamente dos demais dados comerciais.");
     const transaction = this.db.transaction(() => {
@@ -1803,8 +1804,15 @@ export class AppRepository {
         this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(randomUUID(), op.id, op.serviceRateRuleId, op.appliedRateValueCents, op.serviceAmountCents, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, rate, amount, reason, now);
       }
-      this.db.prepare("UPDATE fiscal_documents SET status = 'DRAFT', confirmed_at = NULL WHERE id = ?").run(id);
-      this.db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(id);
+      // A confirmacao de negocio registra a negociacao entre as empresas e
+      // guarda seus proprios snapshots. Trocar o cliente/corretor responsavel
+      // pela cobranca nao altera essa confirmacao e, por isso, nao deve
+      // reabrir uma nota que ja estava confirmada. Alterar a condicao de
+      // financeiro continua exigindo nova confirmacao comercial.
+      if (financialServiceChanged) {
+        this.db.prepare("UPDATE fiscal_documents SET status = 'DRAFT', confirmed_at = NULL WHERE id = ?").run(id);
+        this.db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(id);
+      }
     }
     });
     transaction();
@@ -3533,6 +3541,29 @@ export class AppRepository {
       unbilledSacks: unbilledRows.length ? sumDecimalTexts(unbilledRows.map((item) => item.quantitySacks)) : "0",
       billedSacks: "0"
     };
+  }
+
+  // Mesmo recorte do card "Sacas vendidas" do Resumo: vendas nao canceladas pela
+  // data da operacao, inclusive as ainda em rascunho (o relatorio avisa quantas).
+  getPeriodComparison(input: unknown, today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())): PeriodComparisonReport {
+    const data = periodComparisonInputSchema.parse(input);
+    if (data.organizationId) this.assertOrganizationWritable(data.organizationId);
+    const clauses = ["o.operation_type = 'SALE'", "o.status <> 'CANCELED'", "o.operation_date BETWEEN ? AND ?"];
+    const scopeParams: string[] = [];
+    if (data.organizationId) { clauses.push("o.organization_id = ?"); scopeParams.push(data.organizationId); }
+    if (data.ownLegalEntityId) { clauses.push("o.own_legal_entity_id = ?"); scopeParams.push(data.ownLegalEntityId); }
+    const salesQuery = this.db.prepare(`SELECT o.fiscal_document_id AS fiscalDocumentId, o.operation_scope AS scope, o.status,
+        o.quantity_sacks_decimal AS quantitySacks, o.service_amount_cents AS amountCents, o.responsible_partner_id AS clientId,
+        COALESCE(partner.display_name, 'Sem cliente') AS clientName,
+        COALESCE(NULLIF(company.trade_name, ''), company.legal_name, 'Sem empresa') AS companyName
+      FROM operations o
+      LEFT JOIN business_partners partner ON partner.id = o.responsible_partner_id
+      LEFT JOIN legal_entities company ON company.id = o.own_legal_entity_id
+      WHERE ${clauses.join(" AND ")}`);
+    const rowsByPeriod = data.periods.map((period) => salesQuery.all(period.start, period.end, ...scopeParams) as ComparisonSaleRow[]);
+    const company = data.ownLegalEntityId ? this.db.prepare("SELECT COALESCE(NULLIF(trade_name, ''), legal_name) AS name FROM legal_entities WHERE id = ?").get(data.ownLegalEntityId) as { name: string } | undefined : undefined;
+    const organization = data.organizationId ? this.db.prepare("SELECT display_name AS name FROM organizations WHERE id = ?").get(data.organizationId) as { name: string } | undefined : undefined;
+    return buildPeriodComparisonReport(data.periods, rowsByPeriod, company?.name ?? organization?.name ?? "Todas as empresas", today);
   }
 
   listTransferReconciliations(filters: { organizationId: string; clientPartnerId?: string; status?: string }): TransferReconciliation[] {

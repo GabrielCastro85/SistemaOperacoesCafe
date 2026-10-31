@@ -1,6 +1,7 @@
 export type AppRouteId =
   | "dashboard"
   | "assistant"
+  | "periodComparison"
   | "invoices"
   | "warehouseStock"
   | "productAliases"
@@ -36,6 +37,7 @@ export const routeTitleById: Record<AppRouteId, string> = {
   purchaseSettlements: "Acertos de entrada",
   charges: "Cobranças",
   transferReconciliations: "Conferência de repasses",
+  periodComparison: "Comparativo de períodos",
   ledger: "Conta-corrente",
   confirmations: "Confirmações de negócio",
   finance: "Financeiro",

@@ -18,6 +18,7 @@ import { XmlImportHistoryPage } from "../pages/imports/xml/XmlImportHistoryPage"
 import { XmlImportPage } from "../pages/imports/xml/XmlImportPage";
 import { ChargesPage } from "../pages/charges/ChargesPage";
 import { TransferReconciliationsPage } from "../pages/transferReconciliations/TransferReconciliationsPage";
+import { PeriodComparisonPage } from "../pages/comparison/PeriodComparisonPage";
 import { ClientLedgerPage } from "../pages/clientLedger/ClientLedgerPage";
 import { Dashboard, NotFoundPage, SetupWizard, Splash } from "../pages/appStates/AppStatePages";
 import { AssistantPage } from "../pages/assistant/AssistantPage";
@@ -237,6 +238,7 @@ function renderRoute(
   if (path.startsWith("/billing/rates") || path.startsWith("/rates")) return <ServiceRateRulesPage data={data} />;
   if (path.startsWith("/charges")) return <ChargesPage data={data} />;
   if (path.startsWith("/transfer-reconciliations")) return <TransferReconciliationsPage data={data} />;
+  if (path.startsWith("/comparison")) return <PeriodComparisonPage data={data} />;
   if (path.startsWith("/client-ledger")) return <ClientLedgerPage data={data} />;
   if (path.startsWith("/finance/purchase-settlements")) return <PurchaseSettlementsPage data={data} />;
   if (path.startsWith("/finance/purchase-rates")) return <PurchaseRateRulesPage data={data} />;

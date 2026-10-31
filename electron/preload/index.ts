@@ -88,6 +88,7 @@ import type {
   OrganizationListItem
 } from "../../src/shared/types/domain.js";
 import type { UpdateStatus } from "../../src/shared/types/updater.js";
+import type { PeriodComparisonInput, PeriodComparisonReport } from "../../src/shared/utils/periodComparison.js";
 import type { saveInstallationProfileSchema } from "../../src/shared/schemas/domainSchemas.js";
 import type { z } from "zod";
 
@@ -309,6 +310,9 @@ const IPC_CHANNELS = {
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
   getPartnerRateSummary: "clientCharges:partnerRateSummary",
   exportPartnerPeriodReport: "clientCharges:exportPeriodReport",
+  getPeriodComparison: "periodComparison:get",
+  exportPeriodComparisonImage: "periodComparison:exportImage",
+  copyPeriodComparisonImage: "periodComparison:copyImage",
   exportChargeControlWorkbook: "clientCharges:exportControlWorkbook",
   printChargeControl: "clientCharges:printControl",
   createClientChargeDraft: "clientCharges:createDraft",
@@ -745,6 +749,9 @@ export interface OperationsCafeApi {
   findEligibleChargeOperations: (input: unknown) => Promise<Operation[]>;
   getPartnerRateSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
   exportPartnerPeriodReport: (input: unknown) => Promise<boolean>;
+  getPeriodComparison: (input: PeriodComparisonInput) => Promise<{ report: PeriodComparisonReport; svg: string }>;
+  exportPeriodComparisonImage: (input: PeriodComparisonInput) => Promise<boolean>;
+  copyPeriodComparisonImage: (input: PeriodComparisonInput) => Promise<void>;
   exportChargeControlWorkbook: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
   printChargeControl: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
   createClientChargeDraft: (input: unknown) => Promise<ClientChargeDetail>;
@@ -1166,6 +1173,9 @@ const api: OperationsCafeApi = {
   findEligibleChargeOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligibleChargeOperations, input) as Promise<Operation[]>,
   getPartnerRateSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerRateSummary, input) as Promise<PartnerRateSummaryRow[]>,
   exportPartnerPeriodReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPartnerPeriodReport, input) as Promise<boolean>,
+  getPeriodComparison: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPeriodComparison, input) as Promise<{ report: PeriodComparisonReport; svg: string }>,
+  exportPeriodComparisonImage: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPeriodComparisonImage, input) as Promise<boolean>,
+  copyPeriodComparisonImage: (input) => ipcRenderer.invoke(IPC_CHANNELS.copyPeriodComparisonImage, input) as Promise<void>,
   exportChargeControlWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargeControlWorkbook, input) as Promise<boolean>,
   printChargeControl: (input) => ipcRenderer.invoke(IPC_CHANNELS.printChargeControl, input) as Promise<boolean>,
   createClientChargeDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientChargeDraft, input) as Promise<ClientChargeDetail>,

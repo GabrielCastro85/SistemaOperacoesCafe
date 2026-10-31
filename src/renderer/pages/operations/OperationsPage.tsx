@@ -1372,7 +1372,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <button disabled={!replacementPartnerId || replacementPartnerId === detail.document.responsiblePartnerId || detail.document.status === "CANCELED" || detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
             try {
               const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: replacementPartnerId, operationType: detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE" });
-              setDetail(updated); setReplacementPartnerId(""); await load(); setMessage("Responsavel corrigido e tarifa recalculada. Confira os valores e confirme a nota novamente.");
+              setDetail(updated); setReplacementPartnerId(""); await load(); setMessage("Responsavel corrigido e tarifa recalculada. Confira os valores.");
             } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao corrigir responsavel."}`); }
           }}>Trocar responsavel e recalcular</button>
           <TextField label="Contrato" value={detail.document.contractNumber ?? ""} onChange={(value) => setDetail((current) => current ? ({ ...current, document: { ...current.document, contractNumber: value } }) : current)} />
