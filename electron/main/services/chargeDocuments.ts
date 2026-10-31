@@ -1,3 +1,4 @@
+import { readChargeCte } from "../../../src/shared/utils/chargeCte.js";
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
 import ExcelJS from "exceljs";
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
@@ -116,10 +117,11 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   let y = pageHeight - margin - 110;
   const boxGap = 10;
   const boxWidth = (contentWidth - boxGap) / 2;
-  drawInfoBox(page, "CLIENTE", clientLines(client, clientLegalEntity), margin, y, boxWidth, 88, { font, bold, ink, muted, border, paper, gold });
-  drawInfoBox(page, "PERIODO", [`${formatDate(charge.periodStart)} a ${formatDate(charge.periodEnd)}`, `Periodicidade: ${translatePeriodicity(charge.periodicity)}`], margin + boxWidth + boxGap, y, boxWidth, 88, { font, bold, ink, muted, border, paper, gold });
+  const infoHeight = clientLines(client, clientLegalEntity).length > 3 ? 72 : 54;
+  drawInfoBox(page, "CLIENTE", clientLines(client, clientLegalEntity), margin, y, boxWidth, infoHeight, { font, bold, ink, muted, border, paper, gold });
+  drawInfoBox(page, "PERIODO", [`${formatDate(charge.periodStart)} a ${formatDate(charge.periodEnd)}`, `Periodicidade: ${translatePeriodicity(charge.periodicity)}`], margin + boxWidth + boxGap, y, boxWidth, infoHeight, { font, bold, ink, muted, border, paper, gold });
 
-  y -= 102;
+  y -= infoHeight + 14;
   const chargeCount = 1;
   const totalOpenCents = detail.charge.openAmountCents;
   drawSectionTitle(page, detail.charge.openAmountCents > 0 ? "Notas em aberto desta cobranca" : "Notas desta cobranca (pagas)", margin, y, bold, ink, green);
@@ -175,7 +177,7 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   }
   y -= 20;
 
-  if (y < 238) {
+  if (y < 182) {
     page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
     y = pageHeight - margin - 70;
   }
@@ -196,6 +198,9 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   page.drawText(`Gerado pelo Sistema de Operacoes de Cafe em ${formatDateTime(new Date().toISOString())}`, { x: margin, y: 22, size: 6.5, font, color: muted });
   page.drawText(isInternalPreview ? `${organization.appDisplayName} | PREVIA INTERNA - NAO ENVIAR COMO COBRANCA` : `${organization.appDisplayName} | Documento local`, { x: pageWidth - margin - 250, y: 22, size: 6.5, font: bold, color: gold });
   await addGraonexPdfFooter(doc, font);
+  doc.getPages().forEach((currentPage, index, pages) => {
+    drawRightText(currentPage, `${index + 1} / ${pages.length}`, pageWidth - margin - 60, 7.2, 60, font, 6.5, muted);
+  });
   return doc.save();
 }
 
@@ -221,8 +226,8 @@ async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput
   operations.addRow(["Empresa", "Data de emissao da NF", "NF", "Serie", "Produto", "Tipo", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
   input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatChargeOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
   const adjustments = workbook.addWorksheet("Ajustes");
-  adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor"]);
-  input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100]));
+  adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor", "Observacoes / notas de referencia"]);
+  input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100, item.reason ?? ""]));
   const payments = workbook.addWorksheet("Pagamentos");
   payments.addRow(["Pagamento", "Valor"]);
   input.detail.payments.forEach((item) => payments.addRow([item.clientPaymentId, item.amountCents / 100]));
@@ -293,11 +298,12 @@ function drawChargeOperationSectionsPdf(
     cursorY -= 32;
   };
 
-  const ensureSpace = (height: number) => {
-    if (cursorY - height >= bottomY) return;
+  const ensureSpace = (height: number, tableHeader = true): boolean => {
+    if (cursorY - height >= bottomY) return false;
     currentPage = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, rgb(0.07, 0.055, 0.04), style.gold, style.bold, rgb(1, 0.96, 0.88));
     cursorY = pageHeight - margin - 56;
-    drawHeader();
+    if (tableHeader) drawHeader();
+    return true;
   };
 
   drawHeader();
@@ -316,20 +322,20 @@ function drawChargeOperationSectionsPdf(
     section.rows.forEach((row) => {
       const item = row.operation;
       const contract = contractLines(item.contractNumberSnapshot, item.billingObservationsSnapshot);
-      ensureSpace(15 + Math.min(contract.length, 8) * 11);
+      ensureSpace(18 + Math.min(contract.length, 8) * 11);
       const companyName = chargeOperationCompanyName(item);
       const brandColors = chargeBrandPdfColors(item.issuerNameSnapshot || item.ownLegalEntityNameSnapshot);
       if (brandColors) {
-        currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: brandColors.background });
-        currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: brandColors.stripe });
+        currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 13, color: brandColors.background });
+        currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 13, color: brandColors.stripe });
       }
-      currentPage.drawText(row.issueDate, { x: columns[0].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
-      currentPage.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 5.8, columns[1].width), { x: columns[1].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
-      currentPage.drawText(truncate(companyName, style.font, 5.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
-      currentPage.drawText(formatChargeOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
-      drawRightText(currentPage, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 5.8, style.ink);
-      drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
-      cursorY -= 12;
+      currentPage.drawText(row.issueDate, { x: columns[0].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
+      currentPage.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 6.8, columns[1].width), { x: columns[1].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
+      currentPage.drawText(truncate(companyName, style.font, 6.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
+      currentPage.drawText(formatChargeOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
+      drawRightText(currentPage, decimalTextBr(item.quantitySacksDecimalSnapshot), columns[4].x, cursorY, columns[4].width, style.font, 6.8, style.ink);
+      drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)}`, columns[5].x, cursorY, columns[5].width, style.bold, 6.8, style.ink);
+      cursorY -= 14;
       for (const line of contract) {
         ensureSpace(11);
         currentPage.drawText(line, { x: margin + 10, y: cursorY, size: 6, font: style.font, color: style.ink });
@@ -339,23 +345,77 @@ function drawChargeOperationSectionsPdf(
 
     ensureSpace(18);
     const subtotalY = cursorY - 1;
-    const subtotalLabel = `TOTAL SACAS: ${decimalTextBr(formatDecimal(section.sacks))} - R$ ${formatCents(section.rateCents)}/saca`;
+    const subtotalLabel = `TOTAL SACAS: ${formatDecimal(section.sacks)} - R$ ${formatCents(section.rateCents)}/saca`;
     drawRightText(currentPage, subtotalLabel, columns[3].x, subtotalY, columns[5].x - 6 - columns[3].x, style.bold, 5.8, style.gold);
     drawRightText(currentPage, `R$ ${formatCents(section.amountCents)}`, columns[5].x, subtotalY, columns[5].width, style.bold, 5.8, style.ink);
     cursorY -= 15;
   });
 
-  if (adjustments.length > 0) {
+  if (adjustments.some((adjustment) => !readChargeCte(adjustment))) {
     ensureSpace(35);
     currentPage.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
     currentPage.drawText("AJUSTES", { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
     cursorY -= 13;
+  }
 
+  if (adjustments.length > 0) {
     adjustments.forEach((adjustment) => {
+      const cte = readChargeCte(adjustment);
+      if (cte) {
+        ensureSpace(128, false);
+        cursorY -= 5;
+        const left = margin + 4;
+        const width = contentWidth - 8;
+        currentPage.drawRectangle({ x: left, y: cursorY - 24, width, height: 24, color: style.green });
+        currentPage.drawText("CT-e | TRANSPORTE POR SACA", { x: left + 10, y: cursorY - 16, size: 9, font: style.bold, color: rgb(1, 1, 1) });
+        drawRightText(currentPage, `R$ ${formatCents(adjustment.amountCents)}`, left + width - 135, cursorY - 16, 125, style.bold, 12, rgb(1, 1, 1));
+        cursorY -= 24;
+        currentPage.drawRectangle({ x: left, y: cursorY - 37, width, height: 37, color: rgb(0.93, 0.965, 0.94) });
+        const metrics = [
+          ["NOTAS VINCULADAS", `${cte.notes.length} notas`],
+          ["QUANTIDADE DE SACAS", formatDecimal(decimalNumber(cte.sacks))],
+          ["VALOR POR SACA", `R$ ${formatCents(cte.unitValueCents)}`]
+        ];
+        metrics.forEach(([label, value], index) => {
+          const x = left + 10 + index * width / 3;
+          currentPage.drawText(label, { x, y: cursorY - 12, size: 6, font: style.bold, color: style.muted });
+          currentPage.drawText(value, { x, y: cursorY - 27, size: 10, font: style.bold, color: style.green });
+        });
+        cursorY -= 42;
+        const companies = [...new Set(cte.notes.map((note) => note.company))];
+        for (const company of companies) {
+          const notes = cte.notes.filter((note) => note.company === company);
+          const drawCompany = () => {
+            currentPage.drawText(truncate(company, style.bold, 7.2, width - 20), { x: left + 10, y: cursorY - 10, size: 7.2, font: style.bold, color: style.ink });
+            cursorY -= 19;
+          };
+          ensureSpace(44, false);
+          drawCompany();
+          for (let index = 0; index < notes.length; index += 2) {
+            if (ensureSpace(44, false)) {
+              currentPage.drawText("CT-e | NOTAS DE REFERENCIA - CONTINUACAO", { x: left + 10, y: cursorY - 10, size: 8, font: style.bold, color: style.green });
+              cursorY -= 19;
+              drawCompany();
+            }
+            for (let column = 0; column < 2; column++) {
+              const note = notes[index + column];
+              if (!note) continue;
+              const x = left + column * width / 2;
+              currentPage.drawRectangle({ x, y: cursorY - 16, width: width / 2 - 3, height: 16, color: index % 4 === 0 ? style.paper : style.soft });
+              currentPage.drawText(`NF ${note.number}`, { x: x + 10, y: cursorY - 11, size: 7.4, font: style.bold, color: style.ink });
+              drawRightText(currentPage, `${formatDecimal(decimalNumber(note.sacks))} sacas`, x + width / 2 - 111, cursorY - 11, 98, style.font, 7.4, style.muted);
+            }
+            cursorY -= 16;
+          }
+          cursorY -= 5;
+        }
+        cursorY -= 6;
+        return;
+      }
       const reasonLines = adjustment.reason?.trim()
-        ? wrapText(`Obs.: ${adjustment.reason.trim()}`, style.font, 5.8, contentWidth - 20).slice(0, 3)
+        ? wrapText(`Obs.: ${adjustment.reason.trim()}`, style.font, 5.8, contentWidth - 20)
         : [];
-      ensureSpace(15 + reasonLines.length * 10);
+      ensureSpace(reasonLines.length ? 25 : 15);
       currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 11, color: rgb(0.985, 0.965, 0.89) });
       currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 11, color: style.gold });
       currentPage.drawText(truncate(adjustment.ledgerEntryDate ? formatDate(adjustment.ledgerEntryDate) : periodLabel, style.font, 5.8, columns[0].width), { x: columns[0].x, y: cursorY, size: 5.8, font: style.font, color: style.ink });
@@ -367,6 +427,7 @@ function drawChargeOperationSectionsPdf(
       drawRightText(currentPage, `R$ ${sign} ${formatCents(adjustment.amountCents)}`, columns[5].x, cursorY, columns[5].width, style.bold, 5.8, style.ink);
       cursorY -= 12;
       reasonLines.forEach((line) => {
+        ensureSpace(10);
         currentPage.drawText(line, { x: margin + 10, y: cursorY, size: 5.8, font: style.font, color: style.ink });
         cursorY -= 10;
       });
@@ -387,7 +448,7 @@ function drawInfoBox(
 ): void {
   page.drawRectangle({ x, y: topY - height, width, height, color: style.paper, borderColor: style.border, borderWidth: 0.55 });
   page.drawText(title, { x: x + 8, y: topY - 11, size: 6.6, font: style.bold, color: style.gold });
-  drawTextBox(page, lines.join("\n"), x + 8, topY - 18, width - 16, height - 22, { font: style.font, bold: style.bold, size: 6.3, minSize: 4.8, lineHeight: 1.08, maxLines: 5, color: style.ink });
+  drawTextBox(page, lines.join("\n"), x + 8, topY - 18, width - 16, height - 22, { font: style.font, bold: style.bold, size: 8, minSize: 5.8, lineHeight: 1.08, maxLines: 5, color: style.ink });
 }
 
 function drawPaymentBox(
@@ -654,7 +715,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
       <rect x="${innerX}" y="${sectionY - 17}" width="${innerWidth}" height="22" rx="5" fill="#efe5d2"/>
       <text x="48" y="${sectionY}" class="section">${escapeXml(section.title)}</text>
       ${rowsMarkup}
-      <text x="930" y="${subtotalY}" class="subtotal-label right">TOTAL SACAS: ${escapeXml(decimalTextBr(formatDecimal(section.sacks)))} - R$ ${escapeXml(formatCents(section.rateCents))}/saca</text>
+      <text x="930" y="${subtotalY}" class="subtotal-label right">TOTAL SACAS: ${escapeXml(formatDecimal(section.sacks))} - R$ ${escapeXml(formatCents(section.rateCents))}/saca</text>
       <text x="${rightX}" y="${subtotalY}" class="subtotal right">R$ ${escapeXml(formatCents(section.amountCents))}</text>
     `;
   }).join("");

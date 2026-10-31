@@ -13,6 +13,7 @@ import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentRecipientName
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
+import { calculateChargeCte, defaultsToCte, type ChargeCteNote } from "../../../shared/utils/chargeCte";
 import { chargeCompanyClass } from "../../../shared/utils/chargeCompanyClass";
 
 function decimalTextBr(value: string | null | undefined): string {
@@ -125,7 +126,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [advanceInput, setAdvanceInput] = useState("");
   const [discountInput, setDiscountInput] = useState("");
   const [surchargeInput, setSurchargeInput] = useState("");
-  const [cteQuantityInput, setCteQuantityInput] = useState("");
+  const [cteNoteSelection, setCteNoteSelection] = useState<Record<string, boolean>>({});
   const [cteUnitValueInput, setCteUnitValueInput] = useState("1,50");
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [clientCredits, setClientCredits] = useState<ClientLedgerEntry[]>([]);
@@ -243,7 +244,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setAdvanceInput("");
     setDiscountInput("");
     setSurchargeInput("");
-    setCteQuantityInput("");
+    setCteNoteSelection({});
     setCteUnitValueInput("1,50");
     setAdjustmentReason("");
     ledgerAutofillChargeIdRef.current = null;
@@ -507,9 +508,31 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const advanceCents = parseCurrencyToCents(advanceInput);
   const discountCents = parseCurrencyToCents(discountInput);
   const surchargeCents = parseCurrencyToCents(surchargeInput);
-  const cteQuantity = /^\d+$/.test(cteQuantityInput.trim()) ? Number(cteQuantityInput.trim()) : 0;
+  const cteNoteGroups = new Map<string, ChargeCteNote>();
+  const cteRows = detail ? detail.operations.map((operation) => ({
+    id: JSON.stringify([operation.fiscalDocumentNumberSnapshot, operation.fiscalDocumentSeriesSnapshot, chargeDetailCompanyLabel(operation), operation.operationDateSnapshot]),
+    number: operation.fiscalDocumentNumberSnapshot ?? "sem numero",
+    company: chargeDetailCompanyLabel(operation),
+    sacks: operation.quantitySacksDecimalSnapshot
+  })) : selectedOperations.map((operation) => ({
+    id: operation.fiscalDocumentId,
+    number: operationDocument(operation)?.documentNumber ?? "sem numero",
+    company: counterpartyLabel(operation),
+    sacks: operation.quantitySacks
+  }));
+  for (const row of cteRows) {
+    const previous = cteNoteGroups.get(row.id);
+    cteNoteGroups.set(row.id, previous ? { ...row, sacks: sumDecimalTexts([previous.sacks, row.sacks]) } : row);
+  }
+  const cteNotes = [...cteNoteGroups.values()];
+  const cteAlreadyApplied = Boolean(detail?.adjustments.some((adjustment) => adjustment.description.startsWith("CT-e (")));
+  const canDefaultCte = !cteAlreadyApplied && (!detail || ["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status));
+  const isCteNoteSelected = (note: ChargeCteNote) => cteNoteSelection[note.id] ?? (canDefaultCte && defaultsToCte(note.company));
+  const selectedCteNotes = cteNotes.filter(isCteNoteSelected);
   const cteUnitValueCents = parseCurrencyToCents(cteUnitValueInput);
-  const cteTotalCents = cteQuantity * cteUnitValueCents;
+  const cteCalculation = calculateChargeCte(selectedCteNotes, cteUnitValueCents);
+  const cteQuantity = decimalTextBr(cteCalculation.sacks);
+  const cteTotalCents = cteCalculation.amountCents;
   const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
   const selectedFreightDaes = Array.from(new Set(selectedOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
     const document = operationDocuments[documentId];
@@ -575,6 +598,14 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     if (!selectedOperations.length) { setMessage("Marque pelo menos uma nota."); return; }
     try {
       const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: selectedOperations.map((item) => item.id) });
+      const draftCteSelection: Record<string, boolean> = {};
+      for (const operation of draft.operations) {
+        const source = selectedOperations.find((item) => item.id === operation.operationId);
+        const note = cteNotes.find((item) => item.id === source?.fiscalDocumentId);
+        const key = JSON.stringify([operation.fiscalDocumentNumberSnapshot, operation.fiscalDocumentSeriesSnapshot, chargeDetailCompanyLabel(operation), operation.operationDateSnapshot]);
+        draftCteSelection[key] = note ? isCteNoteSelected(note) : false;
+      }
+      setCteNoteSelection(draftCteSelection);
       setDetail(draft);
       setMessage("Rascunho gerado e operacoes reservadas.");
       await load();
@@ -625,7 +656,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setAdvanceInput("");
         setDiscountInput("");
         setSurchargeInput("");
-        setCteQuantityInput("");
+        setCteNoteSelection({});
         setCteUnitValueInput("1,50");
         setAdjustmentReason("");
       }
@@ -684,16 +715,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       }
     }
     if (hasPendingCte) {
-      const unitValue = formatCurrencyFromCents(cteUnitValueCents);
       current = await window.operationsCafe.addChargeAdjustment({
         clientChargeId: current.charge.id,
         ledgerEntryId: null,
         adjustmentType: "SURCHARGE",
         effect: "INCREASE_RECEIVABLE",
-        description: `CT-e (${cteQuantity} x ${unitValue})`,
+        description: cteCalculation.description,
         amountCents: cteTotalCents,
         sortOrder: 40,
-        reason: `${cteQuantity} transporte(s) cobrados a ${unitValue} cada.`
+        reason: cteCalculation.reason
       });
     }
     return shouldRegenerateDocuments && hasPendingAdjustments ? window.operationsCafe.regenerateChargeDocuments(current.charge.id) : current;
@@ -724,7 +754,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
-      setCteQuantityInput("");
+      setCteNoteSelection({});
       setCteUnitValueInput("1,50");
       setAdjustmentReason("");
       setMessage(shouldRegenerateDocuments ? "Ajustes aplicados. Escolha PDF ou Imagem para salvar uma nova copia." : "Ajustes aplicados.");
@@ -821,6 +851,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setPeriodEnd(opened.charge.periodEnd);
     setDueDate(opened.charge.dueDate ?? opened.charge.periodEnd);
     setPeriodicity(opened.charge.periodicity);
+    setCteNoteSelection({});
     setDetail(opened);
     const paymentIds = Array.from(new Set(opened.payments.filter((item) => !item.cancelledAt).map((item) => item.clientPaymentId)));
     const generated = await Promise.allSettled(paymentIds.map((id) => window.operationsCafe.generateClientPaymentReceipt(id)));
@@ -979,7 +1010,21 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function openDocument(kind: "pdf" | "image"): Promise<void> {
     if (!detail) return;
     try {
-      const exported = await window.operationsCafe.openChargeDocument({ chargeId: detail.charge.id, kind });
+      if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
+        setMessage("Informe o motivo do acrescimo, desconto ou abatimento antes de gerar o documento.");
+        return;
+      }
+      const current = hasPendingAdjustments ? await applyPendingAdjustmentsToCharge(detail, true) : detail;
+      if (hasPendingAdjustments) {
+        setDetail(current);
+        setAdvanceInput("");
+        setDiscountInput("");
+        setSurchargeInput("");
+        setCteNoteSelection({});
+        setAdjustmentReason("");
+        await refreshClientLedgerAvailability(current.charge.clientPartnerId);
+      }
+      const exported = await window.operationsCafe.openChargeDocument({ chargeId: current.charge.id, kind });
       setMessage(exported ? `${kind === "pdf" ? "PDF" : "Imagem"} da cobranca salvo na pasta escolhida.` : "Exportacao cancelada. Nenhuma pasta foi escolhida.");
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao abrir documento."}`);
@@ -1270,7 +1315,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   ) : null}
                   {!detail && hasPendingCte ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>CT-e</strong><small>{cteQuantity} transporte(s) x {formatCurrencyFromCents(cteUnitValueCents)}</small></span>
+                      <span><strong>CT-e</strong><small>{cteQuantity} sacas x {formatCurrencyFromCents(cteUnitValueCents)}</small></span>
                       <span>CT-E</span><span>Transporte</span>
                       <span>+ {formatCurrencyFromCents(cteTotalCents)}</span>
                       <span>Previa</span><span>Aumenta o valor final</span>
@@ -1293,21 +1338,31 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             </div>
             <div className="charge-cte-card">
               <div>
-                <strong>CT-e / transportes</strong>
-                <small>Informe quantos transportes serao cobrados e o valor unitario.</small>
+                <strong>CT-e por saca</strong>
+                <small>Marque as notas com CT-e. As sacas sao somadas automaticamente; Vassuler vem selecionada nas novas cobrancas.</small>
               </div>
               <label>
-                <span>Quantidade</span>
-                <input type="number" min="0" step="1" value={cteQuantityInput} onChange={(event) => setCteQuantityInput(event.target.value)} placeholder="0" />
+                <span>Total de sacas com CT-e</span>
+                <input value={cteQuantity} readOnly aria-label="Total de sacas com CT-e" />
               </label>
               <label>
-                <span>Valor por transporte</span>
+                <span>Valor por saca</span>
                 <input value={cteUnitValueInput} onChange={(event) => setCteUnitValueInput(event.target.value)} onBlur={() => formatMoneyState(cteUnitValueInput, setCteUnitValueInput)} placeholder="R$ 1,50" />
               </label>
               <div className="charge-cte-total">
                 <span>Total de CT-e</span>
                 <strong>{formatCurrencyFromCents(cteTotalCents)}</strong>
               </div>
+            </div>
+            <div style={{ display: "grid", gap: "6px", maxHeight: "240px", overflowY: "auto", marginTop: "8px" }}>
+              {cteNotes.map((note) => (
+                <label key={note.id} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <input type="checkbox" checked={isCteNoteSelected(note)} onChange={(event) => setCteNoteSelection((previous) => ({ ...previous, [note.id]: event.target.checked }))} />
+                  <span>NF {note.number} - {note.company} - {decimalTextBr(note.sacks)} sacas</span>
+                </label>
+              ))}
+              {cteNotes.length === 0 ? <small>Selecione as notas da cobranca para calcular o CT-e.</small> : null}
+              {cteAlreadyApplied ? <small>Esta cobranca ja possui ajuste de CT-e. Marque somente notas para uma cobranca adicional.</small> : null}
             </div>
             <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
               <span>Motivo do ajuste</span>
