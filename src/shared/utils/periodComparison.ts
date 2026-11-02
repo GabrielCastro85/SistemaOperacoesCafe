@@ -49,7 +49,7 @@ export interface PeriodComparisonReport {
   risers: ComparisonClientMover[];
   fallers: ComparisonClientMover[];
   absentClients: ComparisonClientMover[];
-  newClients: ComparisonClientMover[];
+  clientsOnlyInLast: ComparisonClientMover[];
   observations: string[];
   attention: string[];
 }

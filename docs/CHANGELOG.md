@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.67
+
+- Comparativo e Resumo deixam de contar vendas de notas canceladas, mesmo quando a operação ficou ativa depois da sincronização entre computadores.
+- No Comparativo, o quadro "Clientes novos" passa a se chamar "Sem vendas em" seguido do período anterior, que é o que ele mostra.
+
 ## 1.1.66
 
 - Comparativo com novo layout: filtros à esquerda e a imagem inteira à direita, sem precisar salvar para ver, com botão para ampliar.

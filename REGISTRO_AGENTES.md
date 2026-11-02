@@ -25,10 +25,14 @@ Modelo de entrada:
 
 - **Atualizado em:** 2026-11-02, pelo Claude.
 - **Branch:** `codex/central-server-neon`.
-- **Última versão publicada:** 1.1.66, em 2026-11-02.
+- **Última versão publicada:** 1.1.67, em 2026-11-02.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
-- **Próxima versão:** 1.1.67. **Não publique sem o Gabriel pedir.**
+- **Próxima versão:** 1.1.68. **Não publique sem o Gabriel pedir.**
+
+### Problema conhecido, sem correção
+
+Provável sobrescrita na sincronização: `applyRemoteChanges` em `centralSyncService.ts` preserva linha local alterada e o push seguinte a envia sobre a versão central. Um computador atrasado pode assim reativar a operação de uma nota cancelada em outro. NF 1780 continua com a operação ativa no banco; os totais já a ignoram, mas o dado não foi corrigido.
 
 ### Onde fica o Comparativo de períodos
 
@@ -49,6 +53,18 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-02 - Claude
+- Pedido: aplicar os ajustes recomendados na conferência do comparativo.
+- Feito: notas canceladas fora do Comparativo e dos totais do Resumo (`withoutCanceledDocuments` em `appRepository.ts`); "Clientes novos" renomeado. Sem alteração no motor de sincronização nem nos dados.
+- Publicado: versão 1.1.67, em 2026-11-02.
+- Pendente: o Gabriel decidir sobre a correção da sincronização e o cancelamento da operação da NF 1780 no banco.
+
+### 2026-11-02 - Claude
+- Pedido: conferir a imagem do comparativo Agosto x Outubro com o banco.
+- Feito: 42 valores conferidos por SQL independente no banco local (revisão central 2832), todos iguais. Nenhum código alterado.
+- Achados, sem correção: NF 1780 está cancelada, mas a operação segue CONFIRMED (atualizada depois do cancelamento, causa não investigada) e conta 550 sacas e R$ 2.750 em outubro no Comparativo e no Resumo. "Clientes novos" significa só sem venda no período anterior: KATUAI e RIO PARDO já vendiam em setembro.
+- Pendente: o Gabriel decidir se o Comparativo exclui notas canceladas e se renomeia "Clientes novos"; conferir a NF 1780.
 
 ### 2026-10-31 - Claude
 - Pedido: melhorar o layout do Comparativo, mostrar a imagem sem precisar salvar, usar o tema da empresa e somar sempre todas as empresas.

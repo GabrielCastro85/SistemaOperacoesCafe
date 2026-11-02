@@ -2046,15 +2046,15 @@ export class AppRepository {
     if (periodEnd) docs = docs.filter((doc) => doc.issueDate <= periodEnd);
     const operations = this.listOperations({ organizationId, ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined });
     const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
-    const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
+    const activeOperations = this.withoutCanceledDocuments(operations).filter((operation) => operation.status !== "CANCELED");
     const activeSales = activeOperations.filter((operation) => operation.operationType === "SALE");
     // O total bruto do Dashboard e' corporativo: soma Villa e Grao & Grao,
     // todos os CNPJs, cobrados ou nao, respeitando somente o periodo escolhido.
-    const allCompaniesSales = this.listOperations({
+    const allCompaniesSales = this.withoutCanceledDocuments(this.listOperations({
       periodStart: periodStart ?? undefined,
       periodEnd: periodEnd ?? undefined,
       status: "all"
-    }).filter((operation) => operation.status !== "CANCELED" && operation.operationType === "SALE");
+    })).filter((operation) => operation.status !== "CANCELED" && operation.operationType === "SALE");
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
@@ -2079,7 +2079,7 @@ export class AppRepository {
     const periodEnd = input.periodEnd ?? undefined;
     this.assertOrganizationWritable(organizationId);
     this.getBusinessPartner(businessPartnerId);
-    const operations = this.listOperations({ organizationId, ownLegalEntityId, responsiblePartnerId: businessPartnerId, periodStart, periodEnd })
+    const operations = this.withoutCanceledDocuments(this.listOperations({ organizationId, ownLegalEntityId, responsiblePartnerId: businessPartnerId, periodStart, periodEnd }))
       .filter((operation) => operation.status !== "CANCELED");
     return {
       sacksDecimal: operations.length ? sumDecimalTexts(operations.map((operation) => operation.quantitySacks)) : "0",
@@ -2103,7 +2103,7 @@ export class AppRepository {
     const periodEnd = input.periodEnd ?? undefined;
     this.assertOrganizationWritable(organizationId);
     this.getPartnerLegalEntity(partnerLegalEntityId);
-    const clauses = ["operations.organization_id = ?", "fiscal_documents.partner_legal_entity_id = ?", "operations.status != 'CANCELED'"];
+    const clauses = ["operations.organization_id = ?", "fiscal_documents.partner_legal_entity_id = ?", "operations.status != 'CANCELED'", "fiscal_documents.status != 'CANCELED'"];
     const params: unknown[] = [organizationId, partnerLegalEntityId];
     if (ownLegalEntityId) { clauses.push("operations.own_legal_entity_id = ?"); params.push(ownLegalEntityId); }
     if (periodStart) { clauses.push("operations.operation_date >= ?"); params.push(periodStart); }
@@ -2124,7 +2124,7 @@ export class AppRepository {
   getMonthlyOperationTotals(organizationId: string, year: number, ownLegalEntityId?: string | null): Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }> {
     this.assertOrganizationWritable(organizationId);
     this.refreshOperationServiceRates({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` });
-    const rows = this.listOperations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, status: "CONFIRMED", periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` })
+    const rows = this.withoutCanceledDocuments(this.listOperations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, status: "CONFIRMED", periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` }))
       .filter((operation) => operation.operationType !== "PURCHASE")
       .map((operation) => ({ operationDate: operation.operationDate, sacks: operation.quantitySacks, amountCents: operation.serviceAmountCents }));
     const byMonth = new Map<number, { sacks: string[]; amountCents: number; count: number }>();
@@ -3527,7 +3527,7 @@ export class AppRepository {
       JOIN client_charges ON client_charges.id = operations.client_charge_id
       WHERE ${receivedOperationClauses.join(" AND ")}
     `).get(...receivedOperationParams) as { total: number };
-    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined, status: periodStart || periodEnd ? "all" : "CONFIRMED", billingStatus: "UNBILLED" }).filter((item) => item.operationType !== "PURCHASE" && item.status !== "CANCELED");
+    const unbilledRows = this.withoutCanceledDocuments(this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined, status: periodStart || periodEnd ? "all" : "CONFIRMED", billingStatus: "UNBILLED" })).filter((item) => item.operationType !== "PURCHASE" && item.status !== "CANCELED");
     const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
@@ -3544,8 +3544,8 @@ export class AppRepository {
   }
 
   // Sempre soma todas as empresas (Villa e Grao & Grao): a empresa selecionada so'
-  // define o tema da imagem. Conta vendas nao canceladas pela data da operacao,
-  // inclusive as ainda em rascunho (o relatorio avisa quantas).
+  // define o tema da imagem. Conta vendas de notas nao canceladas pela data da
+  // operacao, inclusive as ainda em rascunho (o relatorio avisa quantas).
   getPeriodComparison(input: unknown, today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())): PeriodComparisonReport {
     const data = periodComparisonInputSchema.parse(input);
     const salesQuery = this.db.prepare(`SELECT o.fiscal_document_id AS fiscalDocumentId, o.operation_scope AS scope, o.status,
@@ -3553,9 +3553,10 @@ export class AppRepository {
         COALESCE(partner.display_name, 'Sem cliente') AS clientName,
         COALESCE(NULLIF(company.trade_name, ''), company.legal_name, 'Sem empresa') AS companyName
       FROM operations o
+      JOIN fiscal_documents document ON document.id = o.fiscal_document_id
       LEFT JOIN business_partners partner ON partner.id = o.responsible_partner_id
       LEFT JOIN legal_entities company ON company.id = o.own_legal_entity_id
-      WHERE o.operation_type = 'SALE' AND o.status <> 'CANCELED' AND o.operation_date BETWEEN ? AND ?`);
+      WHERE o.operation_type = 'SALE' AND o.status <> 'CANCELED' AND document.status <> 'CANCELED' AND o.operation_date BETWEEN ? AND ?`);
     const rowsByPeriod = data.periods.map((period) => salesQuery.all(period.start, period.end) as ComparisonSaleRow[]);
     const organizations = (this.db.prepare("SELECT display_name AS name FROM organizations WHERE is_active = 1 ORDER BY display_name").all() as Array<{ name: string }>).map((row) => row.name);
     return buildPeriodComparisonReport(data.periods, rowsByPeriod, `Todas as empresas: ${organizations.join(" e ")}`, today);
@@ -7908,6 +7909,13 @@ export class AppRepository {
         JOIN operations operation ON operation.id = link.operation_id
         WHERE operation.fiscal_document_id = ? AND deal.status <> 'CANCELLED'
       LIMIT 1`).get(fiscalDocumentId, fiscalDocumentId));
+  }
+
+  // A sincronizacao entre computadores pode deixar a operacao ativa numa nota ja
+  // cancelada (cada linha sincroniza sozinha). Vale o status da nota nos totais.
+  private withoutCanceledDocuments(operations: Operation[]): Operation[] {
+    const canceled = new Set((this.db.prepare("SELECT id FROM fiscal_documents WHERE status = 'CANCELED'").all() as Array<{ id: string }>).map((row) => row.id));
+    return operations.filter((operation) => !canceled.has(operation.fiscalDocumentId));
   }
 
   private dealHasFiscalDocument(id: string): boolean {

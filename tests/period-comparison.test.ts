@@ -84,7 +84,7 @@ describe("period comparison report", () => {
     expect(report.topClients[0].map((client) => client.name)).toEqual(["Cliente B", "Cliente A"]);
     expect(report.risers.map((mover) => [mover.name, mover.deltaSacks])).toEqual([["Cliente A", 149.5]]);
     expect(report.absentClients.map((mover) => mover.name)).toEqual(["Cliente B"]);
-    expect(report.newClients.map((mover) => mover.name)).toEqual(["Cliente C"]);
+    expect(report.clientsOnlyInLast.map((mover) => mover.name)).toEqual(["Cliente C"]);
     expect(report.attention.join(" ")).toContain("Cliente B teve 400 sacas");
     expect(report.attention.join(" ")).toContain("tamanhos diferentes");
     expect(report.attention.join(" ")).toContain("rascunho");
@@ -92,6 +92,8 @@ describe("period comparison report", () => {
 
     const svg = buildPeriodComparisonSvg(report, villaTheme);
     expect(svg).toContain("Prime &lt;Coffee&gt;");
+    expect(svg).toContain("Sem vendas em 01 a 20/07");
+    expect(svg).not.toContain("Clientes novos");
     expect(visibleSvg(svg)).not.toMatch(/NaN|undefined|Infinity/);
     expect(svg).toContain("#0F0D0A");
 
@@ -145,6 +147,27 @@ describe("period comparison data", () => {
       const indicators = repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
       expect(Number(indicators.sacksDecimal)).toBe(scoped.periods[0].sacks);
       expect(indicators.serviceAmountCents).toBe(scoped.periods[0].amountCents);
+
+      // Operacao que continuou ativa numa nota cancelada nao entra em nenhum total.
+      const summaryBefore = repo.getBillingSummary({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      const monthlyBefore = repo.getMonthlyOperationTotals(villaId, 2026, ownLegalEntityId)[6];
+      const orphanDocumentId = addSale("5", "2026-07-15", "7");
+      db.prepare("UPDATE operations SET service_amount_cents = 3500, applied_rate_value_cents = 500 WHERE fiscal_document_id = ?").run(orphanDocumentId);
+      repo.cancelFiscalDocument(orphanDocumentId, "Cancelada em outro computador");
+      db.prepare("UPDATE operations SET status = 'CONFIRMED' WHERE fiscal_document_id = ?").run(orphanDocumentId);
+
+      const withOrphan = repo.getPeriodComparison({ periods: [{ start: "2026-07-01", end: "2026-07-31" }, { start: "2026-08-01", end: "2026-08-31" }] }, "2026-10-31");
+      expect(withOrphan.periods[0].sacks).toBe(30);
+      expect(withOrphan.periods[0].notes).toBe(2);
+      const indicatorsWithOrphan = repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      expect(Number(indicatorsWithOrphan.sacksDecimal)).toBe(30);
+      expect(indicatorsWithOrphan.serviceAmountCents).toBe(indicators.serviceAmountCents);
+      expect(indicatorsWithOrphan.allCompaniesServiceAmountCents).toBe(indicators.allCompaniesServiceAmountCents);
+      expect(Number(repo.getPartnerPeriodSackSummary({ organizationId: villaId, ownLegalEntityId, businessPartnerId: client.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" }).sacksDecimal)).toBe(30);
+      expect(repo.getMonthlyOperationTotals(villaId, 2026, ownLegalEntityId)[6]).toEqual(monthlyBefore);
+      const summaryAfter = repo.getBillingSummary({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
+      expect(summaryAfter.openCents).toBe(summaryBefore.openCents);
+      expect(summaryAfter.unbilledOperations).toBe(summaryBefore.unbilledOperations);
     } finally {
       db.close();
     }

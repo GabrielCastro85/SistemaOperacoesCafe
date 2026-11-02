@@ -119,7 +119,7 @@ export function buildPeriodComparisonReport(
     risers: stillActive.filter((mover) => mover.deltaSacks > 0).sort(byDeltaDesc).slice(0, 4),
     fallers: stillActive.filter((mover) => mover.deltaSacks < 0).sort(byDeltaDesc).reverse().slice(0, 4),
     absentClients: movers.filter((mover) => mover.previousSacks > 0 && mover.currentSacks === 0).sort(byDeltaDesc).reverse().slice(0, 4),
-    newClients: movers.filter((mover) => mover.previousSacks === 0 && mover.currentSacks > 0).sort(byDeltaDesc).slice(0, 4),
+    clientsOnlyInLast: movers.filter((mover) => mover.previousSacks === 0 && mover.currentSacks > 0).sort(byDeltaDesc).slice(0, 4),
     observations: [],
     attention: []
   };
@@ -516,7 +516,7 @@ function moverColumn(title: string, color: string, rows: ComparisonClientMover[]
 }
 
 function moversPanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
-  const { periods, risers, fallers, absentClients, newClients } = report;
+  const { periods, risers, fallers, absentClients, clientsOnlyInLast } = report;
   const last = periods[periods.length - 1];
   const previous = periods[periods.length - 2];
   let output = panel(theme, x, y, width, height, "6. MOVIMENTO DOS CLIENTES (SACAS)");
@@ -529,7 +529,7 @@ function moversPanel(report: PeriodComparisonReport, theme: PeriodComparisonThem
   output += moverColumn("Maiores altas", UP, risers, left, y + 72, columnWidth, delta);
   output += moverColumn("Maiores quedas", DOWN, fallers, right, y + 72, columnWidth, delta);
   const bottomY = y + 72 + 146;
-  output += moverColumn("Clientes novos", "#1A6FC4", newClients.slice(0, 3), left, bottomY, columnWidth, delta);
+  output += moverColumn(truncate(`Sem vendas em ${previous.label}`, columnWidth - 14, 13), "#1A6FC4", clientsOnlyInLast.slice(0, 3), left, bottomY, columnWidth, delta);
   output += moverColumn(truncate(`Sem vendas em ${last.label}`, columnWidth - 14, 13), "#B06000", absentClients.slice(0, 3), right, bottomY, columnWidth, delta);
   return output;
 }
