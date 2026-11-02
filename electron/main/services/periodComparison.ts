@@ -8,7 +8,9 @@ import {
   type ComparisonPeriodSummary,
   type PeriodComparisonReport
 } from "../../../src/shared/utils/periodComparison.js";
+import type { Organization } from "../../../src/shared/types/domain.js";
 import { graonexSvgFooter } from "./generatedDocumentBranding.js";
+import { resolveBrandingLogoBytes } from "./chargeDocuments.js";
 
 export const COMPARISON_IMAGE_WIDTH = 1600;
 export const COMPARISON_IMAGE_HEIGHT = 1160;
@@ -21,8 +23,7 @@ export const periodComparisonInputSchema = z.object({
     .refine((period) => period.start <= period.end, "A data inicial precisa ser anterior a final."))
     .min(2, "Informe ao menos dois periodos.")
     .max(4, "Compare no maximo quatro periodos."),
-  organizationId: z.string().uuid().nullable().optional(),
-  ownLegalEntityId: z.string().uuid().nullable().optional()
+  themeOrganizationId: z.string().uuid().nullable().optional()
 });
 
 export interface ComparisonSaleRow {
@@ -188,14 +189,65 @@ function buildAttention(report: PeriodComparisonReport): string[] {
   return attention;
 }
 
-const PERIOD_COLORS = ["#2F7BDF", "#34A853", "#F5921E", "#7C4DD6"];
-const NAVY = "#123F6D";
 const INK = "#1B2B3A";
 const MUTED = "#5C6B7A";
 const LINE = "#DDE4EB";
 const UP = "#1E8E3E";
 const DOWN = "#D93025";
 const FONT = "'Segoe UI', Arial, sans-serif";
+
+export interface PeriodComparisonTheme {
+  header: string;
+  headerEnd: string;
+  onHeader: string;
+  onHeaderMuted: string;
+  background: string;
+  soft: string;
+  accent: string;
+  secondary: string;
+  periods: string[];
+  logoDataUrl: string | null;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  return [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16)) as [number, number, number];
+}
+
+function mix(from: string, to: string, amount: number): string {
+  const target = hexToRgb(to);
+  const channels = hexToRgb(from).map((channel, index) => Math.round(channel + (target[index] - channel) * amount));
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function readableOn(hex: string): string {
+  const [red, green, blue] = hexToRgb(hex);
+  return (red * 299 + green * 587 + blue * 114) / 1000 > 150 ? INK : "#FFFFFF";
+}
+
+export function periodComparisonTheme(organization: Pick<Organization, "primaryColor" | "secondaryColor" | "accentColor">, logoDataUrl: string | null = null): PeriodComparisonTheme {
+  const valid = (value: string, fallback: string) => /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+  const primary = valid(organization.primaryColor, "#123F6D");
+  const secondary = valid(organization.secondaryColor, "#9A7449");
+  const accent = valid(organization.accentColor, "#16B86A");
+  return {
+    header: primary,
+    headerEnd: mix(primary, secondary, 0.35),
+    onHeader: "#FFFFFF",
+    onHeaderMuted: mix("#FFFFFF", secondary, 0.2),
+    background: mix(secondary, "#FFFFFF", 0.85),
+    soft: mix(secondary, "#FFFFFF", 0.92),
+    accent,
+    secondary,
+    periods: [secondary, accent, mix(primary, "#FFFFFF", 0.12), mix(secondary, primary, 0.55)],
+    logoDataUrl
+  };
+}
+
+/** Tema e logo da empresa em que o usuario esta; os dados nao dependem dela. */
+export function periodComparisonThemeForOrganization(organization: Organization): PeriodComparisonTheme {
+  const logo = resolveBrandingLogoBytes(organization);
+  return periodComparisonTheme(organization, logo ? `data:image/${logo.ext};base64,${logo.bytes.toString("base64")}` : null);
+}
 
 const number = (value: number, digits = 0) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
 const formatSacks = (value: number) => number(value);
@@ -249,8 +301,8 @@ function rect(x: number, y: number, width: number, height: number, fill: string,
   return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0, width).toFixed(1)}" height="${Math.max(0, height).toFixed(1)}" rx="${radius}" fill="${fill}"/>`;
 }
 
-function panel(x: number, y: number, width: number, height: number, title: string, headerFill = NAVY): string {
-  return `${rect(x, y, width, height, "#FFFFFF", 10)}<path d="M${x} ${y + 40}V${y + 10}a10 10 0 0 1 10-10H${x + width - 10}a10 10 0 0 1 10 10V${y + 40}Z" fill="${headerFill}"/>${text(title, x + 16, y + 27, { size: 18, weight: 700, fill: "#FFFFFF" })}`;
+function panel(theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number, title: string): string {
+  return `${rect(x, y, width, height, "#FFFFFF", 10)}<path d="M${x} ${y + 40}V${y + 10}a10 10 0 0 1 10-10H${x + width - 10}a10 10 0 0 1 10 10V${y + 40}Z" fill="${theme.header}"/>${text(title, x + 16, y + 27, { size: 18, weight: 700, fill: theme.onHeader })}`;
 }
 
 function arrow(x: number, y: number, up: boolean, fill: string): string {
@@ -278,7 +330,7 @@ function gridLines(x: number, top: number, width: number, height: number, max: n
   return output;
 }
 
-function overviewPanel(report: PeriodComparisonReport, x: number, y: number, width: number, height: number): string {
+function overviewPanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
   const { periods } = report;
   const rows: Array<[string, (period: ComparisonPeriodSummary) => string, boolean]> = [
     ["Total de sacas", (period) => formatSacks(period.sacks), true],
@@ -295,11 +347,11 @@ function overviewPanel(report: PeriodComparisonReport, x: number, y: number, wid
   const columnWidth = (width - 28 - labelWidth) / periods.length;
   const headerY = y + 50;
   const rowHeight = (height - 50 - 44) / rows.length;
-  let output = panel(x, y, width, height, "1. VISÃO GERAL");
+  let output = panel(theme, x, y, width, height, "1. VISÃO GERAL");
   output += text("Indicador", left + 8, headerY + 23, { size: 14, weight: 700 });
   periods.forEach((period, index) => {
     const columnX = left + labelWidth + columnWidth * index;
-    output += rect(columnX + 2, headerY, columnWidth - 4, 34, `${PERIOD_COLORS[index]}33`, 5);
+    output += rect(columnX + 2, headerY, columnWidth - 4, 34, `${theme.periods[index]}33`, 5);
     const size = estimateWidth(period.label, 14) > columnWidth - 8 ? 11.5 : 14;
     output += text(period.label, columnX + columnWidth / 2, headerY + 22, { size, weight: 700, anchor: "middle" });
   });
@@ -314,7 +366,7 @@ function overviewPanel(report: PeriodComparisonReport, x: number, y: number, wid
   return output;
 }
 
-function volumePanel(report: PeriodComparisonReport, x: number, y: number, width: number, height: number): string {
+function volumePanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
   const { periods } = report;
   const max = niceMax(Math.max(...periods.map((period) => period.sacks)) * 1.08);
   const chartX = x + 72;
@@ -323,20 +375,20 @@ function volumePanel(report: PeriodComparisonReport, x: number, y: number, width
   const chartHeight = height - 138;
   const slot = chartWidth / periods.length;
   const barWidth = Math.min(92, slot * 0.68);
-  let output = panel(x, y, width, height, "2. VOLUME COMERCIALIZADO");
+  let output = panel(theme, x, y, width, height, "2. VOLUME COMERCIALIZADO");
   output += text("Quantidade de sacas em cada período.", x + 16, y + 64, { size: 13.5, fill: MUTED });
   output += gridLines(chartX, chartTop, chartWidth, chartHeight, max);
   periods.forEach((period, index) => {
     const barHeight = (period.sacks / max) * chartHeight;
     const center = chartX + slot * index + slot / 2;
-    output += rect(center - barWidth / 2, chartTop + chartHeight - barHeight, barWidth, barHeight, PERIOD_COLORS[index], 3);
+    output += rect(center - barWidth / 2, chartTop + chartHeight - barHeight, barWidth, barHeight, theme.periods[index], 3);
     output += text(formatSacks(period.sacks), center, chartTop + chartHeight - barHeight - 7, { size: 14, weight: 700, anchor: "middle" });
     output += text(truncate(period.label, slot - 4, 13), center, chartTop + chartHeight + 22, { size: 13, weight: 600, anchor: "middle" });
   });
   return output;
 }
 
-function evolutionPanel(report: PeriodComparisonReport, x: number, y: number, width: number, height: number): string {
+function evolutionPanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
   const { periods } = report;
   const pairCount = periods.length - 1;
   const gap = 10;
@@ -349,12 +401,12 @@ function evolutionPanel(report: PeriodComparisonReport, x: number, y: number, wi
     ["Valor financeiro", (period) => period.amountCents]
   ];
   const rowHeight = (y + height - 12 - bodyTop) / rows.length;
-  let output = panel(x, y, width, height, "3. EVOLUÇÃO ENTRE OS PERÍODOS");
+  let output = panel(theme, x, y, width, height, "3. EVOLUÇÃO ENTRE OS PERÍODOS");
   for (let index = 0; index < pairCount; index += 1) {
     const columnX = x + 12 + (columnWidth + gap) * index;
     const previous = periods[index];
     const current = periods[index + 1];
-    output += rect(columnX, top, columnWidth, height - 62, "#F4F7FA", 8);
+    output += rect(columnX, top, columnWidth, height - 62, theme.soft, 8);
     output += text(truncate(previous.label, columnWidth - 10, 13), columnX + columnWidth / 2, top + 20, { size: 13, weight: 700, anchor: "middle" });
     output += text(truncate(`→ ${current.label}`, columnWidth - 10, 13), columnX + columnWidth / 2, top + 38, { size: 13, weight: 700, anchor: "middle" });
     rows.forEach(([label, value], rowIndex) => {
@@ -377,11 +429,11 @@ function evolutionPanel(report: PeriodComparisonReport, x: number, y: number, wi
   return output;
 }
 
-function legend(periods: ComparisonPeriodSummary[], right: number, y: number): string {
+function legend(periods: ComparisonPeriodSummary[], theme: PeriodComparisonTheme, right: number, y: number): string {
   let cursor = right;
   let output = "";
   [...periods].reverse().forEach((period, reversedIndex) => {
-    const color = PERIOD_COLORS[periods.length - 1 - reversedIndex];
+    const color = theme.periods[periods.length - 1 - reversedIndex];
     const labelWidth = estimateWidth(period.label, 13);
     cursor -= labelWidth;
     output += text(period.label, cursor, y, { size: 13 });
@@ -392,7 +444,7 @@ function legend(periods: ComparisonPeriodSummary[], right: number, y: number): s
   return output;
 }
 
-function companiesPanel(report: PeriodComparisonReport, x: number, y: number, width: number, height: number): string {
+function companiesPanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
   const { periods, companies } = report;
   // Folga para o valor escrito na vertical nao invadir a legenda.
   const max = niceMax(Math.max(1, ...companies.flatMap((company) => company.sacks)) * 1.25);
@@ -400,8 +452,8 @@ function companiesPanel(report: PeriodComparisonReport, x: number, y: number, wi
   const chartTop = y + 86;
   const chartWidth = width - 92;
   const chartHeight = height - 146;
-  let output = panel(x, y, width, height, "4. VOLUME POR EMPRESA (SACAS)");
-  output += legend(periods, x + width - 18, y + 66);
+  let output = panel(theme, x, y, width, height, "4. VOLUME POR EMPRESA (SACAS)");
+  output += legend(periods, theme, x + width - 18, y + 66);
   output += gridLines(chartX, chartTop, chartWidth, chartHeight, max);
   if (!companies.length) return output;
   const slot = chartWidth / companies.length;
@@ -412,7 +464,7 @@ function companiesPanel(report: PeriodComparisonReport, x: number, y: number, wi
     company.sacks.forEach((value, periodIndex) => {
       const barHeight = (value / max) * chartHeight;
       const barX = groupLeft + barWidth * periodIndex;
-      output += rect(barX + 1, chartTop + chartHeight - barHeight, barWidth - 2, barHeight, PERIOD_COLORS[periodIndex], 2);
+      output += rect(barX + 1, chartTop + chartHeight - barHeight, barWidth - 2, barHeight, theme.periods[periodIndex], 2);
       output += `<text transform="translate(${(barX + barWidth / 2 + 3).toFixed(1)} ${(chartTop + chartHeight - barHeight - 5).toFixed(1)}) rotate(-90)" font-size="10.5" font-weight="600" fill="${INK}">${escapeXml(formatSacks(value))}</text>`;
     });
     wrap(company.name, slot - 8, 12).slice(0, 2).forEach((line, lineIndex) => {
@@ -422,18 +474,18 @@ function companiesPanel(report: PeriodComparisonReport, x: number, y: number, wi
   return output;
 }
 
-function clientsPanel(report: PeriodComparisonReport, x: number, y: number, width: number, height: number): string {
+function clientsPanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
   const { periods, topClients } = report;
   const gap = 10;
   const columnWidth = (width - 24 - gap * (periods.length - 1)) / periods.length;
   const top = y + 50;
-  let output = panel(x, y, width, height, "5. PRINCIPAIS CLIENTES POR VOLUME (SACAS)");
+  let output = panel(theme, x, y, width, height, "5. PRINCIPAIS CLIENTES POR VOLUME (SACAS)");
   const max = Math.max(1, ...topClients.flatMap((rows) => rows.map((row) => row.sacks)));
   periods.forEach((period, index) => {
     const columnX = x + 12 + (columnWidth + gap) * index;
-    output += rect(columnX, top, columnWidth, height - 62, "#F4F7FA", 8);
-    output += rect(columnX, top, columnWidth, 32, PERIOD_COLORS[index], 8);
-    output += text(truncate(period.label, columnWidth - 10, 15), columnX + columnWidth / 2, top + 22, { size: 15, weight: 700, fill: "#FFFFFF", anchor: "middle" });
+    output += rect(columnX, top, columnWidth, height - 62, theme.soft, 8);
+    output += rect(columnX, top, columnWidth, 32, theme.periods[index], 8);
+    output += text(truncate(period.label, columnWidth - 10, 15), columnX + columnWidth / 2, top + 22, { size: 15, weight: 700, fill: readableOn(theme.periods[index]), anchor: "middle" });
     const rowHeight = (height - 62 - 42) / 5;
     const rows = topClients[index] ?? [];
     if (!rows.length) output += text("Sem vendas", columnX + columnWidth / 2, top + 80, { size: 13, fill: MUTED, anchor: "middle" });
@@ -444,7 +496,7 @@ function clientsPanel(report: PeriodComparisonReport, x: number, y: number, widt
       output += text(truncate(`${rowIndex + 1}. ${row.name}`, nameWidth, 13), columnX + 10, rowY + 14, { size: 13, weight: 600 });
       output += text(value, columnX + columnWidth - 10, rowY + 14, { size: 13, weight: 600, anchor: "end" });
       output += rect(columnX + 10, rowY + 21, columnWidth - 20, 7, "#E1E7ED", 3);
-      output += rect(columnX + 10, rowY + 21, ((columnWidth - 20) * row.sacks) / max, 7, PERIOD_COLORS[index], 3);
+      output += rect(columnX + 10, rowY + 21, ((columnWidth - 20) * row.sacks) / max, 7, theme.periods[index], 3);
     });
   });
   return output;
@@ -463,11 +515,11 @@ function moverColumn(title: string, color: string, rows: ComparisonClientMover[]
   return output;
 }
 
-function moversPanel(report: PeriodComparisonReport, x: number, y: number, width: number, height: number): string {
+function moversPanel(report: PeriodComparisonReport, theme: PeriodComparisonTheme, x: number, y: number, width: number, height: number): string {
   const { periods, risers, fallers, absentClients, newClients } = report;
   const last = periods[periods.length - 1];
   const previous = periods[periods.length - 2];
-  let output = panel(x, y, width, height, "6. MOVIMENTO DOS CLIENTES (SACAS)");
+  let output = panel(theme, x, y, width, height, "6. MOVIMENTO DOS CLIENTES (SACAS)");
   output += text(truncate(`${previous.label} → ${last.label}`, width - 24, 13.5), x + 16, y + 62, { size: 13.5, fill: MUTED });
   const gap = 10;
   const columnWidth = (width - 24 - gap) / 2;
@@ -482,8 +534,8 @@ function moversPanel(report: PeriodComparisonReport, x: number, y: number, width
   return output;
 }
 
-function listPanel(title: string, items: string[], x: number, y: number, width: number, height: number, bullet: string, headerFill?: string): string {
-  let output = panel(x, y, width, height, title, headerFill);
+function listPanel(theme: PeriodComparisonTheme, title: string, items: string[], x: number, y: number, width: number, height: number, bullet: string): string {
+  let output = panel(theme, x, y, width, height, title);
   let cursor = y + 66;
   const limit = y + height - 14;
   const fontSize = 14;
@@ -500,7 +552,7 @@ function listPanel(title: string, items: string[], x: number, y: number, width: 
   return output;
 }
 
-export function buildPeriodComparisonSvg(report: PeriodComparisonReport): string {
+export function buildPeriodComparisonSvg(report: PeriodComparisonReport, theme: PeriodComparisonTheme): string {
   const width = COMPARISON_IMAGE_WIDTH;
   const height = COMPARISON_IMAGE_HEIGHT;
   const { periods } = report;
@@ -528,21 +580,20 @@ export function buildPeriodComparisonSvg(report: PeriodComparisonReport): string
   const attentionWidth = usable - moversWidth - observationsWidth - gap * 2;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="${FONT}">
-    ${rect(0, 0, width, height, "#EDF1F5")}
-    <defs><linearGradient id="comparisonHeader" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0F3358"/><stop offset="1" stop-color="#1A5A8E"/></linearGradient></defs>
+    ${rect(0, 0, width, height, theme.background)}
+    <defs><linearGradient id="comparisonHeader" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${theme.header}"/><stop offset="1" stop-color="${theme.headerEnd}"/></linearGradient></defs>
     ${rect(0, 0, width, 88, "url(#comparisonHeader)")}
-    <g transform="rotate(-25 74 44)"><ellipse cx="62" cy="44" rx="17" ry="24" fill="#B9794A"/><path d="M62 21C54 36 70 50 62 67" fill="none" stroke="#6B3F22" stroke-width="3"/></g>
-    <g transform="rotate(20 96 50)"><ellipse cx="98" cy="52" rx="13" ry="19" fill="#C98A58"/><path d="M98 34C92 46 104 56 98 70" fill="none" stroke="#6B3F22" stroke-width="2.5"/></g>
-    ${text(truncate(title, width - 160, titleSize), 130, 44, { size: titleSize, weight: 700, fill: "#FFFFFF" })}
-    ${text(truncate(subtitle, width - 160, 15.5), 130, 72, { size: 15.5, fill: "#DCE8F3" })}
-    ${overviewPanel(report, margin, rowOneY, overviewWidth, rowOneHeight)}
-    ${volumePanel(report, margin + overviewWidth + gap, rowOneY, volumeWidth, rowOneHeight)}
-    ${evolutionPanel(report, margin + overviewWidth + volumeWidth + gap * 2, rowOneY, evolutionWidth, rowOneHeight)}
-    ${companiesPanel(report, margin, rowTwoY, companiesWidth, rowTwoHeight)}
-    ${clientsPanel(report, margin + companiesWidth + gap, rowTwoY, clientsWidth, rowTwoHeight)}
-    ${moversPanel(report, margin, rowThreeY, moversWidth, rowThreeHeight)}
-    ${listPanel("7. PRINCIPAIS OBSERVAÇÕES", report.observations, margin + moversWidth + gap, rowThreeY, observationsWidth, rowThreeHeight, "#2F7BDF")}
-    ${listPanel("8. PONTOS DE ATENÇÃO", report.attention.length ? report.attention : ["Nenhum ponto de atenção identificado."], margin + moversWidth + observationsWidth + gap * 2, rowThreeY, attentionWidth, rowThreeHeight, "#7C4DD6", "#3D2C7A")}
+    ${theme.logoDataUrl ? `<image href="${theme.logoDataUrl}" x="30" y="6" width="84" height="76" preserveAspectRatio="xMidYMid meet"/>` : ""}
+    ${text(truncate(title, width - 160, titleSize), 130, 44, { size: titleSize, weight: 700, fill: theme.onHeader })}
+    ${text(truncate(subtitle, width - 160, 15.5), 130, 72, { size: 15.5, fill: theme.onHeaderMuted })}
+    ${overviewPanel(report, theme, margin, rowOneY, overviewWidth, rowOneHeight)}
+    ${volumePanel(report, theme, margin + overviewWidth + gap, rowOneY, volumeWidth, rowOneHeight)}
+    ${evolutionPanel(report, theme, margin + overviewWidth + volumeWidth + gap * 2, rowOneY, evolutionWidth, rowOneHeight)}
+    ${companiesPanel(report, theme, margin, rowTwoY, companiesWidth, rowTwoHeight)}
+    ${clientsPanel(report, theme, margin + companiesWidth + gap, rowTwoY, clientsWidth, rowTwoHeight)}
+    ${moversPanel(report, theme, margin, rowThreeY, moversWidth, rowThreeHeight)}
+    ${listPanel(theme, "7. PRINCIPAIS OBSERVAÇÕES", report.observations, margin + moversWidth + gap, rowThreeY, observationsWidth, rowThreeHeight, theme.accent)}
+    ${listPanel(theme, "8. PONTOS DE ATENÇÃO", report.attention.length ? report.attention : ["Nenhum ponto de atenção identificado."], margin + moversWidth + observationsWidth + gap * 2, rowThreeY, attentionWidth, rowThreeHeight, theme.secondary)}
     ${graonexSvgFooter(width, height - 10)}
   </svg>`;
 }

@@ -7,10 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../electron/main/database/database";
 import { AppRepository } from "../electron/main/services/appRepository";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
-import { buildPeriodComparisonReport, buildPeriodComparisonSvg, periodComparisonInputSchema, type ComparisonSaleRow } from "../electron/main/services/periodComparison";
+import { buildPeriodComparisonReport, buildPeriodComparisonSvg, periodComparisonInputSchema, periodComparisonTheme, type ComparisonSaleRow } from "../electron/main/services/periodComparison";
 import { PeriodComparisonPage } from "../src/renderer/pages/comparison/PeriodComparisonPage";
 import type { BootstrapData } from "../src/shared/types/domain";
-import { applyDayRangeToPeriods, comparisonPeriodDays, comparisonPeriodLabels, comparisonPresetPeriods, percentChange } from "../src/shared/utils/periodComparison";
+import { applyDayRangeToPeriods, nextComparisonPeriod, comparisonPeriodDays, comparisonPeriodLabels, comparisonPresetPeriods, percentChange } from "../src/shared/utils/periodComparison";
 
 const tempDirs: string[] = [];
 const villaId = "11111111-1111-4111-8111-111111111111";
@@ -22,6 +22,8 @@ afterEach(() => {
 
 // O icone do rodape e' base64 e pode conter "NaN" por acaso.
 const visibleSvg = (svg: string): string => svg.replace(/href="[^"]*"/g, "");
+const villaTheme = periodComparisonTheme({ primaryColor: "#0F0D0A", secondaryColor: "#D4A875", accentColor: "#16B86A" });
+const graoTheme = periodComparisonTheme({ primaryColor: "#073F28", secondaryColor: "#9A7449", accentColor: "#05B866" }, "data:image/png;base64,AAAA");
 
 function sale(overrides: Partial<ComparisonSaleRow>): ComparisonSaleRow {
   return { fiscalDocumentId: "nota-1", scope: "INTERNAL", status: "CONFIRMED", quantitySacks: "100", amountCents: 30000, clientId: "cliente-a", clientName: "Cliente A", companyName: "Villa MG", ...overrides };
@@ -51,6 +53,8 @@ describe("period comparison dates", () => {
     expect(comparisonPeriodDays({ start: "2026-02-01", end: "2026-02-28" })).toBe(28);
     expect(percentChange(0, 10)).toBeNull();
     expect(percentChange(200, 100)).toBe(-50);
+    expect(nextComparisonPeriod({ start: "2026-01-01", end: "2026-01-31" })).toEqual({ start: "2026-02-01", end: "2026-02-28" });
+    expect(nextComparisonPeriod({ start: "2026-09-01", end: "2026-09-20" })).toEqual({ start: "2026-10-01", end: "2026-10-20" });
   });
 
   it("rejects an inverted period and a single period", () => {
@@ -86,21 +90,27 @@ describe("period comparison report", () => {
     expect(report.attention.join(" ")).toContain("rascunho");
     expect(report.observations.join(" ")).toContain("caiu");
 
-    const svg = buildPeriodComparisonSvg(report);
+    const svg = buildPeriodComparisonSvg(report, villaTheme);
     expect(svg).toContain("Prime &lt;Coffee&gt;");
     expect(visibleSvg(svg)).not.toMatch(/NaN|undefined|Infinity/);
+    expect(svg).toContain("#0F0D0A");
+
+    const graoSvg = buildPeriodComparisonSvg(report, graoTheme);
+    expect(graoSvg).toContain("#073F28");
+    expect(graoSvg).not.toContain("#0F0D0A");
+    expect(graoSvg).toContain("data:image/png;base64,AAAA");
   });
 
   it("renders empty periods without invalid numbers", () => {
     const report = buildPeriodComparisonReport([...periods, { start: "2026-09-01", end: "2026-09-30" }, { start: "2026-10-01", end: "2026-10-31" }], [[], [], [], []], "Villa Coffee", "2026-10-31");
     expect(report.attention[0]).toContain("não tem vendas");
     expect(report.periods[3].inProgress).toBe(true);
-    expect(visibleSvg(buildPeriodComparisonSvg(report))).not.toMatch(/NaN|undefined|Infinity/);
+    expect(visibleSvg(buildPeriodComparisonSvg(report, graoTheme))).not.toMatch(/NaN|undefined|Infinity/);
   });
 });
 
 describe("period comparison data", () => {
-  it("counts only active sales in the selected period and scope, matching the operational indicators", async () => {
+  it("always counts active sales of every company, whatever the selected company is", async () => {
     const userData = mkdtempSync(join(tmpdir(), "operacoes-comparison-"));
     tempDirs.push(userData);
     const dirs = resolveAppDirectories(userData);
@@ -123,12 +133,14 @@ describe("period comparison data", () => {
       repo.cancelFiscalDocument(addSale("4", "2026-08-06", "99"), "Teste");
 
       const report = repo.getPeriodComparison({ periods: [{ start: "2026-07-01", end: "2026-07-20" }, { start: "2026-08-01", end: "2026-08-31" }] }, "2026-10-31");
-      expect(report.scopeLabel).toBe("Todas as empresas");
+      expect(report.scopeLabel).toContain("Todas as empresas");
+      expect(report.scopeLabel).toContain("Villa Coffee");
       expect(report.periods.map((period) => period.sacks)).toEqual([10, 5]);
       expect(report.periods.map((period) => period.notes)).toEqual([1, 1]);
       expect(report.topClients[0][0].name).toBe("Cliente Teste");
 
-      const scoped = repo.getPeriodComparison({ periods: [{ start: "2026-07-01", end: "2026-07-31" }, { start: "2026-08-01", end: "2026-08-31" }], organizationId: villaId, ownLegalEntityId }, "2026-10-31");
+      const graoId = "22222222-2222-4222-8222-222222222222";
+      const scoped = repo.getPeriodComparison({ periods: [{ start: "2026-07-01", end: "2026-07-31" }, { start: "2026-08-01", end: "2026-08-31" }], themeOrganizationId: graoId }, "2026-10-31");
       expect(scoped.periods[0].sacks).toBe(30);
       const indicators = repo.getOperationalIndicators({ organizationId: villaId, ownLegalEntityId, periodStart: "2026-07-01", periodEnd: "2026-07-31" });
       expect(Number(indicators.sacksDecimal)).toBe(scoped.periods[0].sacks);
@@ -140,15 +152,17 @@ describe("period comparison data", () => {
 });
 
 describe("period comparison page", () => {
-  it("offers presets, the day range and the company scope", () => {
+  it("offers presets and the day range, and always explains that every company is included", () => {
     const data = {
-      organizations: [{ id: villaId, displayName: "Villa Coffee" }],
-      legalEntities: [{ id: ownLegalEntityId, organizationId: villaId, tradeName: "Villa Coffee Minas Gerais" }]
+      organizations: [{ id: villaId, displayName: "Villa Coffee" }, { id: "22222222-2222-4222-8222-222222222222", displayName: "Grao & Grao" }],
+      profile: { defaultOrganizationId: villaId }
     } as unknown as BootstrapData;
     const html = renderToStaticMarkup(createElement(PeriodComparisonPage, { data }));
     expect(html).toContain("Últimos 3 meses inteiros");
     expect(html).toContain("Aplicar aos períodos");
-    expect(html).toContain("Villa Coffee Minas Gerais");
+    expect(html).toContain("Todas as empresas");
+    expect(html).toContain("Grao &amp; Grao");
+    expect(html).not.toContain("<select");
     expect(html).toContain("Gerar comparativo");
     expect(html).not.toContain("Salvar imagem");
   });

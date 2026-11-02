@@ -5,8 +5,7 @@ export interface ComparisonPeriodInput {
 
 export interface PeriodComparisonInput {
   periods: ComparisonPeriodInput[];
-  organizationId?: string | null;
-  ownLegalEntityId?: string | null;
+  themeOrganizationId?: string | null;
 }
 
 export interface ComparisonPeriodSummary extends ComparisonPeriodInput {
@@ -61,7 +60,7 @@ export const COMPARISON_PRESETS: Array<{ id: ComparisonPresetId; label: string }
   { id: "sameDaysLastMonth", label: "Este mês x anterior (mesmos dias)" },
   { id: "lastTwoMonths", label: "Últimos 2 meses inteiros" },
   { id: "lastThreeMonths", label: "Últimos 3 meses inteiros" },
-  { id: "sameDaysLastYear", label: "Este mês x ano passado (mesmos dias)" }
+  { id: "sameDaysLastYear", label: "Este mês x ano passado" }
 ];
 
 const MONTH_NAMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
@@ -107,6 +106,16 @@ export function applyDayRangeToPeriods(periods: ComparisonPeriodInput[], fromDay
     const { year, month } = parts(period.start);
     return monthRange(year, month, fromDay, toDay);
   });
+}
+
+/** Sugere o periodo seguinte: o mesmo intervalo de dias no mes posterior. */
+export function nextComparisonPeriod(period: ComparisonPeriodInput): ComparisonPeriodInput {
+  const start = parts(period.start);
+  const end = parts(period.end);
+  const next = shiftMonth(start.year, start.month, 1);
+  if (start.year !== end.year || start.month !== end.month) return { ...period };
+  const isFullMonth = start.day === 1 && end.day === lastDayOfMonth(end.year, end.month);
+  return monthRange(next.year, next.month, start.day, isFullMonth ? 31 : end.day);
 }
 
 export function comparisonPeriodDays(period: ComparisonPeriodInput): number {

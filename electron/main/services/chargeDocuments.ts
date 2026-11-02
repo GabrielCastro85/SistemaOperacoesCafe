@@ -517,7 +517,7 @@ async function embedLogo(doc: PDFDocument, organization: Organization): Promise<
   }
 }
 
-function resolveBrandingLogoBytes(organization: Organization): { bytes: Buffer; ext: "png" | "jpeg" } | null {
+export function resolveBrandingLogoBytes(organization: Organization): { bytes: Buffer; ext: "png" | "jpeg" } | null {
   if (organization.logoPath?.startsWith("data:")) {
     const match = /^data:image\/(png|jpe?g);base64,(.+)$/.exec(organization.logoPath);
     if (match) return { bytes: Buffer.from(match[2], "base64"), ext: match[1] === "png" ? "png" : "jpeg" };

@@ -8,7 +8,7 @@ import type { Diagnostics } from "../../../src/shared/types/domain.js";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { buildPartnerPeriodReportPdf, getPartnerPeriodReport } from "../services/partnerPeriodReport.js";
 import { buildChargeControlPrintHtml, buildChargeControlWorkbook } from "../services/chargeControlWorkbook.js";
-import { buildPeriodComparisonSvg, renderPeriodComparisonImage } from "../services/periodComparison.js";
+import { buildPeriodComparisonSvg, periodComparisonInputSchema, periodComparisonThemeForOrganization, renderPeriodComparisonImage } from "../services/periodComparison.js";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentMigration } from "../database/database.js";
@@ -1198,16 +1198,21 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.regenerateChargeDocuments, async (_event, payload: unknown) => {
     return repository.regenerateChargeDocuments(z.string().uuid().parse(payload));
   });
+  const periodComparison = (payload: unknown) => {
+    const report = repository.getPeriodComparison(payload);
+    const { themeOrganizationId } = periodComparisonInputSchema.parse(payload);
+    const organization = repository.getOrganization(themeOrganizationId ?? repository.listOrganizations()[0].id);
+    return { report, svg: buildPeriodComparisonSvg(report, periodComparisonThemeForOrganization(organization)) };
+  };
   handle(IPC_CHANNELS.getPeriodComparison, async (_event, payload: unknown) => {
     // Mesmo criterio do Resumo: tenta trazer a revisao central mais recente,
     // mas continua com os dados locais se o computador estiver offline.
     await centralSync.synchronize().catch(() => undefined);
-    const report = repository.getPeriodComparison(payload);
-    return { report, svg: buildPeriodComparisonSvg(report) };
+    return periodComparison(payload);
   });
   handle(IPC_CHANNELS.exportPeriodComparisonImage, async (_event, payload: unknown) => {
-    const report = repository.getPeriodComparison(payload);
-    const image = await renderPeriodComparisonImage(buildPeriodComparisonSvg(report));
+    const { report, svg } = periodComparison(payload);
+    const image = await renderPeriodComparisonImage(svg);
     if (image.isEmpty()) throw new Error("Nao foi possivel gerar a imagem do comparativo.");
     const labels = report.periods.map((period) => period.label.replace(/\//g, "-")).join(" x ");
     const destination = await dialog.showSaveDialog({
@@ -1222,7 +1227,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return true;
   });
   handle(IPC_CHANNELS.copyPeriodComparisonImage, async (_event, payload: unknown) => {
-    const image = await renderPeriodComparisonImage(buildPeriodComparisonSvg(repository.getPeriodComparison(payload)));
+    const image = await renderPeriodComparisonImage(periodComparison(payload).svg);
     if (image.isEmpty()) throw new Error("Nao foi possivel gerar a imagem do comparativo.");
     clipboard.writeImage(image);
   });

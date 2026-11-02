@@ -3543,15 +3543,11 @@ export class AppRepository {
     };
   }
 
-  // Mesmo recorte do card "Sacas vendidas" do Resumo: vendas nao canceladas pela
-  // data da operacao, inclusive as ainda em rascunho (o relatorio avisa quantas).
+  // Sempre soma todas as empresas (Villa e Grao & Grao): a empresa selecionada so'
+  // define o tema da imagem. Conta vendas nao canceladas pela data da operacao,
+  // inclusive as ainda em rascunho (o relatorio avisa quantas).
   getPeriodComparison(input: unknown, today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())): PeriodComparisonReport {
     const data = periodComparisonInputSchema.parse(input);
-    if (data.organizationId) this.assertOrganizationWritable(data.organizationId);
-    const clauses = ["o.operation_type = 'SALE'", "o.status <> 'CANCELED'", "o.operation_date BETWEEN ? AND ?"];
-    const scopeParams: string[] = [];
-    if (data.organizationId) { clauses.push("o.organization_id = ?"); scopeParams.push(data.organizationId); }
-    if (data.ownLegalEntityId) { clauses.push("o.own_legal_entity_id = ?"); scopeParams.push(data.ownLegalEntityId); }
     const salesQuery = this.db.prepare(`SELECT o.fiscal_document_id AS fiscalDocumentId, o.operation_scope AS scope, o.status,
         o.quantity_sacks_decimal AS quantitySacks, o.service_amount_cents AS amountCents, o.responsible_partner_id AS clientId,
         COALESCE(partner.display_name, 'Sem cliente') AS clientName,
@@ -3559,11 +3555,10 @@ export class AppRepository {
       FROM operations o
       LEFT JOIN business_partners partner ON partner.id = o.responsible_partner_id
       LEFT JOIN legal_entities company ON company.id = o.own_legal_entity_id
-      WHERE ${clauses.join(" AND ")}`);
-    const rowsByPeriod = data.periods.map((period) => salesQuery.all(period.start, period.end, ...scopeParams) as ComparisonSaleRow[]);
-    const company = data.ownLegalEntityId ? this.db.prepare("SELECT COALESCE(NULLIF(trade_name, ''), legal_name) AS name FROM legal_entities WHERE id = ?").get(data.ownLegalEntityId) as { name: string } | undefined : undefined;
-    const organization = data.organizationId ? this.db.prepare("SELECT display_name AS name FROM organizations WHERE id = ?").get(data.organizationId) as { name: string } | undefined : undefined;
-    return buildPeriodComparisonReport(data.periods, rowsByPeriod, company?.name ?? organization?.name ?? "Todas as empresas", today);
+      WHERE o.operation_type = 'SALE' AND o.status <> 'CANCELED' AND o.operation_date BETWEEN ? AND ?`);
+    const rowsByPeriod = data.periods.map((period) => salesQuery.all(period.start, period.end) as ComparisonSaleRow[]);
+    const organizations = (this.db.prepare("SELECT display_name AS name FROM organizations WHERE is_active = 1 ORDER BY display_name").all() as Array<{ name: string }>).map((row) => row.name);
+    return buildPeriodComparisonReport(data.periods, rowsByPeriod, `Todas as empresas: ${organizations.join(" e ")}`, today);
   }
 
   listTransferReconciliations(filters: { organizationId: string; clientPartnerId?: string; status?: string }): TransferReconciliation[] {

@@ -5957,15 +5957,36 @@ table tbody tr:hover {
   .assistant-error { align-items: stretch; flex-direction: column; }
 }
 
-.period-comparison { display: grid; gap: 16px; }
-.period-comparison__panel { display: grid; gap: 16px; padding: 18px; border: 1px solid var(--line, #ddd6c8); border-radius: 14px; background: var(--surface, #fff); }
-.period-comparison__group { display: grid; gap: 8px; }
-.period-comparison__label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.72; }
-.period-comparison__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.period-comparison__row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
-.period-comparison__row > strong { align-self: center; min-width: 16px; }
-.period-comparison__row label { display: grid; gap: 4px; font-size: 13px; }
-.period-comparison__row input[type="number"] { width: 90px; }
-.period-comparison select { max-width: 420px; }
-.period-comparison__message { margin: 0; font-weight: 600; }
-.period-comparison__preview { display: block; width: 100%; height: auto; border-radius: 10px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.16); }
+.period-comparison__layout { display: grid; grid-template-columns: minmax(310px, 350px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.period-comparison__side { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.period-comparison__section { display: grid; gap: 8px; }
+.period-comparison__section + .period-comparison__section { padding-top: 14px; border-top: 1px solid var(--color-border); }
+.period-comparison__label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-muted); }
+.period-comparison__presets { display: grid; gap: 6px; }
+.period-comparison__presets button { width: 100%; justify-content: flex-start; text-align: left; }
+.period-comparison__period { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.period-comparison__field { display: grid; gap: 3px; min-width: 0; font-size: 12px; color: var(--color-text-muted); }
+.period-comparison__field input { width: 100%; min-width: 0; padding-left: 8px; padding-right: 4px; font-size: 13px; }
+.period-comparison__remove { width: 34px; height: 38px; padding: 0; line-height: 1; }
+.period-comparison__days { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.period-comparison__info { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--color-text-muted); }
+.period-comparison__generate { width: 100%; }
+.period-comparison__message { margin: 0; font-size: 13px; font-weight: 600; }
+.period-comparison__stage { position: sticky; top: 0; display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.period-comparison__toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.period-comparison__stale { margin-right: auto; font-size: 13px; font-weight: 600; color: var(--color-warning); }
+.period-comparison__image-button { display: flex; justify-content: center; width: 100%; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: zoom-in; box-shadow: none; }
+.period-comparison__image-button:hover { background: transparent; transform: none; }
+.period-comparison__image-button img { display: block; width: auto; max-width: 100%; height: auto; max-height: calc(100vh - 290px); min-height: 300px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18); }
+.period-comparison__image-button--stale img { opacity: 0.45; }
+.period-comparison__empty { display: grid; place-items: center; min-height: 380px; padding: 24px; text-align: center; color: var(--color-text-muted); }
+.period-comparison__viewer { position: fixed; inset: 0; z-index: 3000; display: grid; grid-template-rows: auto minmax(0, 1fr); background: rgba(12, 10, 8, 0.92); }
+.period-comparison__viewer-bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding: 10px 14px; }
+.period-comparison__viewer-body { min-height: 0; overflow: auto; padding: 0 14px 14px; text-align: center; }
+.period-comparison__viewer-body img { display: inline-block; max-width: 100%; max-height: 100%; cursor: zoom-in; }
+.period-comparison__viewer-body--zoom img { width: 2400px; max-width: none; max-height: none; cursor: zoom-out; }
+@media (max-width: 1100px) {
+  .period-comparison__layout { grid-template-columns: minmax(0, 1fr); }
+  .period-comparison__stage { position: static; }
+  .period-comparison__image-button img { max-height: none; min-height: 0; }
+}
