@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.66
+
+- Comparativo com novo layout: filtros à esquerda e a imagem inteira à direita, sem precisar salvar para ver, com botão para ampliar.
+- A imagem é gerada ao abrir a tela, ao usar um atalho e ao trocar de grupo.
+- Os dados somam sempre todas as empresas (Villa Coffee e Grão & Grão). As cores e o logo seguem o grupo selecionado no topo.
+
 ## 1.1.65
 
 - Nova tela Comparativo: compara de 2 a 4 períodos, como meses inteiros ou o mesmo intervalo de dias, e gera uma imagem para salvar ou copiar.

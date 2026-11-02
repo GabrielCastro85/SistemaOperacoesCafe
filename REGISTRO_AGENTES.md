@@ -23,12 +23,12 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-10-31, pelo Claude.
+- **Atualizado em:** 2026-11-02, pelo Claude.
 - **Branch:** `codex/central-server-neon`.
-- **Última versão publicada:** 1.1.65, em 2026-10-31.
+- **Última versão publicada:** 1.1.66, em 2026-11-02.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
-- **Próxima versão:** 1.1.66. **Não publique sem o Gabriel pedir.**
+- **Próxima versão:** 1.1.67. **Não publique sem o Gabriel pedir.**
 
 ### Onde fica o Comparativo de períodos
 
@@ -39,6 +39,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - **Confirmação e cliente são independentes (2026-10-31):** a confirmação é feita com a empresa, não com o cliente. Por isso, a nota pode mudar de cliente mesmo ligada a uma confirmação, e a confirmação não muda.
 - **Excluir nota:** continua bloqueado enquanto houver confirmação ativa ligada a ela.
 - **Excluir confirmação:** confirmação numerada não é excluída, só cancelada, para preservar o histórico e a numeração.
+- **Comparativo (2026-10-31):** os dados são sempre de todas as empresas (Villa e Grão & Grão). A empresa selecionada no topo define só as cores e o logo da imagem.
 - **Grãonex:** o site fica em outro repositório e não deve compartilhar código nem infraestrutura com este projeto.
 
 ## Como rodar neste computador
@@ -48,6 +49,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-10-31 - Claude
+- Pedido: melhorar o layout do Comparativo, mostrar a imagem sem precisar salvar, usar o tema da empresa e somar sempre todas as empresas.
+- Feito: filtros em coluna à esquerda e imagem inteira à direita, botão Ampliar, geração automática ao abrir, ao usar atalhos e ao trocar de empresa. Removido o filtro de empresas. Cores e logo vêm da organização selecionada.
+- Testado: suíte completa, typecheck e tela com a barra e o menu reais no navegador interno, com dados de IPC simulados. PNG dos dois temas gerados com dados reais. Salvar e copiar não foram testados no programa instalado nesta rodada.
+- Publicado: versão 1.1.66, em 2026-11-02.
+- Pendente: o Gabriel testar salvar e copiar a imagem no programa instalado.
 
 ### 2026-10-31 - Claude
 - Pedido: publicar a atualização.
