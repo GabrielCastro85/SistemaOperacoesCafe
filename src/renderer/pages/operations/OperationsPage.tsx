@@ -10,6 +10,7 @@ import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives"
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
+import { isPackagingDocument, PACKAGING_OVERRIDE_PREFIX } from "../../../shared/utils/packagingBilling";
 import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
@@ -245,6 +246,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [returnDate, setReturnDate] = useState(() => brazilDateValue());
   const [returnUnit, setReturnUnit] = useState<"SACKS" | "KG">("SACKS");
   const [returnQuantity, setReturnQuantity] = useState("");
+  const [packagingUnitValue, setPackagingUnitValue] = useState("");
   const [returnReason, setReturnReason] = useState("");
   // Nota terceirizada lancada manualmente: nem emitente nem destinatario e' a
   // empresa propria ativa no topo -- ver resolveIssuerLegalEntityFromPartner.
@@ -504,6 +506,25 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       scrollTo(manualDetailRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao adicionar operacao."}`);
+    }
+  }
+
+  async function savePackagingUnitValue(): Promise<void> {
+    const operation = detail?.operations[0];
+    if (!detail || !operation) return;
+    const unitValueCents = parseCurrency(packagingUnitValue);
+    if (!packagingUnitValue.trim() || !Number.isFinite(unitValueCents) || unitValueCents < 0) {
+      setMessage("Erro: informe o valor a cobrar por unidade, por exemplo 30,00.");
+      return;
+    }
+    try {
+      await window.operationsCafe.updateOperationManualRate(operation.id, unitValueCents, "Valor por unidade da remessa de sacaria");
+      setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
+      setPackagingUnitValue("");
+      await load();
+      setMessage(`Remessa de sacaria: ${formatCurrencyFromCents(unitValueCents)} por unidade. A nota nao soma sacas.`);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar o valor por unidade."}`);
     }
   }
 
@@ -1085,6 +1106,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const visibleServiceCents = Object.values(documentServiceInfo).reduce((sum, item) => sum + item.serviceCents, 0);
   const detailMainItem = detail?.items[0] ?? null;
   const detailMainOperation = detail?.operations[0] ?? null;
+  const detailIsPackaging = detail ? isPackagingDocument({ documentNotes: detail.document.notes, overrideReasons: detail.operations.map((operation) => operation.manualOverrideReason) }) : false;
+  const packagingValueSaved = Boolean(detailMainOperation?.manualOverrideReason?.startsWith(`${PACKAGING_OVERRIDE_PREFIX}:`));
   const operationTypeLabel = detailMainOperation?.operationType === "PURCHASE" ? "Compra" : detailMainOperation?.operationType === "SALE" ? "Venda" : "-";
   const operationScopeLabel = formatOperationScope(detailMainOperation?.operationScope);
   // Nota triangulada: a mesma nota gerou uma operacao de compra (fornecedor)
@@ -1473,9 +1496,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <div><span>Produto</span><strong>{detailMainItem?.description ?? products.find((product) => product.id === detailMainOperation?.productId)?.name ?? "-"}</strong></div>
                 <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${formatProductUnit(detailMainItem.unit)}` : "-"}</strong></div>
                 <div><span>Preco comercial</span><strong>{detailMainItem ? decimalTextBr(detailMainItem.unitPriceDecimal) : "-"}</strong></div>
-                <div><span>Sacas</span><strong>{detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
+                <div><span>Sacas</span><strong>{detailIsPackaging ? (packagingValueSaved ? "0 (sacaria)" : "Nao soma") : detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
                 <div><span>UF da venda</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
-                <div><span>Servico calculado</span><strong>{detailMainOperation ? `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/saca)` : "-"}</strong></div>
+                <div><span>Servico calculado</span><strong>{detailMainOperation ? (detailIsPackaging && !packagingValueSaved ? "Informe o valor por unidade" : `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/${detailIsPackaging ? "un" : "saca"})`) : "-"}</strong></div>
               </div>
             ) : null}
             {detail.items.length ? <p className="muted">Os campos abaixo servem apenas para adicionar outro item/operacao manualmente nesta nota.</p> : null}
@@ -1489,11 +1512,21 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </FormGrid>
             <button className="invoice-action-button invoice-action-button--primary" onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
           </section>
+          {detailIsPackaging ? (
+          <section className="invoice-action-card">
+            <header><span>Remessa de sacaria</span><strong>Valor por unidade</strong></header>
+            <p className="muted">Big bag vazio: a nota nao soma sacas. Informe quanto cobrar por unidade{detailMainItem ? ` (${decimalTextBr(detailMainItem.quantity)} unidades)` : ""}. Use 0 para nao cobrar.</p>
+            {packagingValueSaved && detailMainOperation ? <p className="muted">Atual: {formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)} por unidade, total {formatCurrencyFromCents(detailMainOperation.serviceAmountCents)}.</p> : null}
+            <TextField label="Valor por unidade (R$)" value={packagingUnitValue} onChange={setPackagingUnitValue} />
+            <button className="invoice-action-button invoice-action-button--primary" disabled={!detail.operations.length || detail.operations.some((op) => op.billingStatus !== "UNBILLED")} onClick={() => void savePackagingUnitValue()}>Salvar valor por unidade</button>
+          </section>
+          ) : (
           <section className="invoice-action-card">
             <header><span>Servico</span><strong>Valor por saca</strong></header>
             <p className="muted">Altera manualmente a primeira operacao da nota e exige motivo.</p>
             <button className="invoice-action-button" disabled={!detail.operations.length} onClick={() => void overrideFirstOperation()}>Alterar valor da primeira operacao</button>
           </section>
+          )}
           <section className="invoice-action-card">
             <header><span>Status</span><strong>Controle da nota</strong></header>
             <p className="muted">Confirme para liberar cobranca ou cancele quando a nota deve permanecer no historico.</p>

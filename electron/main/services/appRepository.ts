@@ -4,6 +4,7 @@ import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { deterministicUuid } from "./deterministicId.js";
+import { isPackagingDocument, isPackagingXmlItem, PACKAGING_OVERRIDE_PREFIX, PACKAGING_PENDING_NOTE, packagingOverrideReason, removePendingNote } from "../../../src/shared/utils/packagingBilling.js";
 import { buildPeriodComparisonReport, periodComparisonInputSchema, type ComparisonSaleRow } from "./periodComparison.js";
 import type { PeriodComparisonReport } from "../../../src/shared/utils/periodComparison.js";
 import {
@@ -156,6 +157,7 @@ import type {
   OrganizationListItem
 } from "../../../src/shared/types/domain.js";
 import { isValidCnpj } from "../../../src/shared/utils/format.js";
+import { CHARGE_BANK_FIELD_LABELS } from "../../../src/shared/utils/chargeBankDetails.js";
 import {
   mapBusinessPartner,
   mapBusinessPartnerLegalEntity,
@@ -221,6 +223,8 @@ import { generatePaymentReceiptDocuments } from "./paymentReceiptDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
 import type { AppDirectories, DealConfirmationSequenceStatus } from "../../../src/shared/types/domain.js";
+
+const LEGAL_ENTITY_CHARGE_BANK_COLUMNS = CHARGE_BANK_FIELD_LABELS.map(([field]) => [field, field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] as const);
 
 type DbRecord = Record<string, unknown>;
 type DealItemInput = ReturnType<typeof dealConfirmationItemInputSchema.parse> & { totalAmountCents?: number | null };
@@ -532,6 +536,15 @@ export class AppRepository {
       default_pix_key: data.defaultPixKey, default_pix_key_type: data.defaultPixKeyType,
       default_payment_terms: data.defaultPaymentTerms, default_delivery_terms: data.defaultDeliveryTerms,
       default_confirmation_notes: data.defaultConfirmationNotes,
+      charge_bank_name: data.chargeBankName ?? null,
+      charge_bank_code: data.chargeBankCode ?? null,
+      charge_bank_agency: data.chargeBankAgency ?? null,
+      charge_bank_account: data.chargeBankAccount ?? null,
+      charge_bank_account_type: data.chargeBankAccountType ?? null,
+      charge_bank_holder_name: data.chargeBankHolderName ?? null,
+      charge_bank_holder_document: data.chargeBankHolderDocument ?? null,
+      charge_pix_key: data.chargePixKey ?? null,
+      charge_pix_key_type: data.chargePixKeyType ?? null,
       is_draft: data.isDraft, is_active: data.isActive, created_at: now, updated_at: now
     };
   }
@@ -572,6 +585,7 @@ export class AppRepository {
       default_confirmation_notes: data.defaultConfirmationNotes,
       is_draft: data.isDraft, is_active: data.isActive, updated_at: new Date().toISOString()
     };
+    for (const [field, column] of LEGAL_ENTITY_CHARGE_BANK_COLUMNS) if (data[field] !== undefined) row[column] = data[field];
     this.patchLocalRow("legal_entities", id, row);
     return this.getLegalEntity(id);
   }
@@ -1653,6 +1667,7 @@ export class AppRepository {
     const data = fiscalDocumentReturnInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);
     if (detail.document.status === "CANCELED") throw new Error("Nota cancelada nao aceita devolucao.");
+    if (isPackagingDocument({ documentNotes: detail.document.notes, overrideReasons: detail.operations.map((item) => item.manualOverrideReason) })) throw new Error("Remessa de sacaria nao tem sacas de cafe para devolver.");
     const saleOperations = detail.operations.filter((operation) => operation.operationType === "SALE" && operation.status !== "CANCELED");
     if (!saleOperations.length) throw new Error("Esta nota nao possui operacao de venda para ajustar na cobranca.");
     this.assertReturnCanChangeBilling(saleOperations);
@@ -1791,6 +1806,10 @@ export class AppRepository {
     if (reassigning || financialServiceChanged) {
       const now = new Date().toISOString();
       for (const op of previous.operations.filter((item) => item.responsiblePartnerId === previous.document.responsiblePartnerId)) {
+        if (op.manualOverrideReason?.startsWith(PACKAGING_OVERRIDE_PREFIX)) {
+          this.db.prepare("UPDATE operations SET responsible_partner_id = ?, updated_at = ? WHERE id = ?").run(data.responsiblePartnerId, now, op.id);
+          continue;
+        }
         const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate, hasFinancialService };
         const resolved = op.operationType === "PURCHASE" ? this.resolvePurchaseRateRule(input) : this.resolveServiceRateRule(input);
         if (resolved.status === "conflict") throw new Error("O novo responsavel possui tarifas conflitantes. Ajuste as regras antes de trocar.");
@@ -2005,12 +2024,44 @@ export class AppRepository {
     if (!reason.trim()) throw new Error("Motivo obrigatorio para alteracao manual.");
     if (!Number.isSafeInteger(manualRateValueCents) || manualRateValueCents < 0) throw new Error("Valor por saca invalido.");
     if (operation.status === "CANCELED" || operation.billingStatus !== "UNBILLED" || operation.purchaseSettlementStatus !== "UNSETTLED") throw new Error("Operacao cancelada ou vinculada a cobranca/acerto nao pode ter a tarifa alterada.");
+    const document = this.getFiscalDocument(operation.fiscalDocumentId);
+    if (isPackagingDocument({ documentNotes: document.document.notes, overrideReasons: document.operations.map((item) => item.manualOverrideReason) })) {
+      return this.setPackagingUnitValue(operation, document, manualRateValueCents);
+    }
     const amount = multiplyDecimalByCents(operation.quantitySacks, manualRateValueCents);
     this.db.prepare("UPDATE operations SET applied_rate_value_cents = ?, service_amount_cents = ?, rate_was_manually_overridden = 1, manual_rate_value_cents = ?, manual_override_reason = ?, updated_at = ? WHERE id = ?")
       .run(manualRateValueCents, amount, manualRateValueCents, reason, new Date().toISOString(), id);
     this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
       .run(randomUUID(), id, operation.serviceRateRuleId, operation.appliedRateValueCents, operation.serviceAmountCents, manualRateValueCents, amount, reason.trim(), new Date().toISOString());
     return this.getOperation(id);
+  }
+
+  // Remessa de sacaria: cobra unidades x valor informado e zera as sacas, mesmo
+  // numa nota importada antes desta regra (quando o big bag virava 1.000 kg).
+  private setPackagingUnitValue(operation: Operation, detail: FiscalDocumentDetail, unitValueCents: number): Operation {
+    const item = detail.items.find((entry) => entry.id === operation.fiscalDocumentItemId) ?? detail.items[0];
+    if (!item) throw new Error("Remessa de sacaria sem item para contar as unidades.");
+    const amount = multiplyDecimalByCents(item.quantity, unitValueCents);
+    const reason = packagingOverrideReason(normalizeDecimalText(item.quantity), unitValueCents);
+    const pendingNotes = removePendingNote(detail.document.pendingNotes, PACKAGING_PENDING_NOTE);
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.prepare(`UPDATE operations SET quantity_sacks_decimal = '0', gross_quantity_sacks_decimal = '0', service_rate_rule_id = NULL, applied_rate_value_cents = ?,
+        service_amount_cents = ?, rate_was_manually_overridden = 1, manual_rate_value_cents = ?, manual_override_reason = ?, updated_at = ? WHERE id = ?`)
+        .run(unitValueCents, amount, unitValueCents, reason, now, operation.id);
+      this.db.prepare("UPDATE fiscal_document_items SET sacks_quantity_decimal = '0', updated_at = ? WHERE id = ?").run(now, item.id);
+      this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), operation.id, operation.serviceRateRuleId, operation.appliedRateValueCents, operation.serviceAmountCents, null, unitValueCents, amount, reason, now);
+      this.db.prepare("UPDATE fiscal_documents SET pending_notes = ?, has_pending_issues = ?, updated_at = ? WHERE id = ?").run(pendingNotes, pendingNotes ? 1 : 0, now, detail.document.id);
+    })();
+    if (!pendingNotes && detail.document.status === "PENDING") {
+      try {
+        this.confirmFiscalDocument(detail.document.id);
+      } catch (error) {
+        log.warn("Remessa de sacaria ficou sem confirmar", error instanceof Error ? error.message : String(error));
+      }
+    }
+    return this.getOperation(operation.id);
   }
 
   confirmFiscalDocument(id: string): FiscalDocumentDetail {
@@ -4669,7 +4720,14 @@ export class AppRepository {
         });
         this.db.prepare("UPDATE operations SET source = 'XML', xml_import_job_id = ?, classification_rule_id = ? WHERE id = ?").run(job.id, resolution.classificationRuleId ?? null, operation.id);
         createdOperations += 1;
-        if (secondaryResponsiblePartnerId && secondaryOperationType) {
+        const packaging = isPackagingXmlItem(xmlItem);
+        if (packaging) {
+          // O valor por unidade e' informado depois, no lancamento da nota; ate la ela fica pendente.
+          this.db.prepare("UPDATE operations SET service_rate_rule_id = NULL, applied_rate_value_cents = 0, service_amount_cents = 0, rate_was_manually_overridden = 1, manual_rate_value_cents = 0, manual_override_reason = ? WHERE id = ?")
+            .run(PACKAGING_OVERRIDE_PREFIX, operation.id);
+          if (!itemWarnings.includes(PACKAGING_PENDING_NOTE)) itemWarnings.push(PACKAGING_PENDING_NOTE);
+        }
+        if (secondaryResponsiblePartnerId && secondaryOperationType && !packaging) {
           const secondaryPartnerLegalEntity = this.listPartnerLegalEntities(secondaryResponsiblePartnerId).find((entity) => entity.isPrimary && entity.isActive)
             ?? this.listPartnerLegalEntities(secondaryResponsiblePartnerId).find((entity) => entity.isActive)
             ?? null;
@@ -4916,6 +4974,15 @@ export class AppRepository {
       defaultPaymentTerms: null,
       defaultDeliveryTerms: null,
       defaultConfirmationNotes: null,
+      chargeBankName: null,
+      chargeBankCode: null,
+      chargeBankAgency: null,
+      chargeBankAccount: null,
+      chargeBankAccountType: null,
+      chargeBankHolderName: null,
+      chargeBankHolderDocument: null,
+      chargePixKey: null,
+      chargePixKeyType: null,
       isDraft: true,
       isActive: true
     }, deterministicUuid("thirdPartyLegalEntity", cnpj));
@@ -4970,6 +5037,15 @@ export class AppRepository {
       defaultPaymentTerms: null,
       defaultDeliveryTerms: null,
       defaultConfirmationNotes: null,
+      chargeBankName: null,
+      chargeBankCode: null,
+      chargeBankAgency: null,
+      chargeBankAccount: null,
+      chargeBankAccountType: null,
+      chargeBankHolderName: null,
+      chargeBankHolderDocument: null,
+      chargePixKey: null,
+      chargePixKeyType: null,
       isDraft: true,
       isActive: true
     }, deterministicUuid("thirdPartyLegalEntity", partnerEntity.cnpj));
@@ -5145,6 +5221,9 @@ export class AppRepository {
     const description = this.normalizeXmlDescription(xmlItem.description);
     const quantity = String(xmlItem.commercialQuantity ?? "");
     if (!quantity) return null;
+
+    // Remessa de vasilhame/sacaria (big bag vazio) nao tem cafe: nada de sacas.
+    if (isPackagingXmlItem(xmlItem)) return "0";
 
     // Complemento de valor não representa sacas e não deve gerar corretagem.
     // O valor fiscal continua armazenado no item e entra normalmente na confirmação.

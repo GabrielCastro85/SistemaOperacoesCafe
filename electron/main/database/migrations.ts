@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 
 export interface Migration {
   name: string;
@@ -3599,4 +3600,40 @@ export const migrations: Migration[] = [
         ON warehouse_movements(organization_id, origin, issue_date);
     `)
   }
+  ,{
+    // Conta das cobrancas separada da conta das confirmacoes (default_*).
+    name: "061_legal_entity_charge_bank_account",
+    up: (db) => {
+      const columns = ["charge_bank_name", "charge_bank_code", "charge_bank_agency", "charge_bank_account", "charge_bank_account_type", "charge_bank_holder_name", "charge_bank_holder_document", "charge_pix_key", "charge_pix_key_type"];
+      const existing = new Set((db.prepare("PRAGMA table_info(legal_entities)").all() as Array<{ name: string }>).map((item) => item.name));
+      const added = columns.filter((column) => !existing.has(column));
+      for (const column of added) db.exec(`ALTER TABLE legal_entities ADD COLUMN ${column} TEXT`);
+      rebaselineAddedNullColumns(db, "legal_entities", added);
+    }
+  }
 ];
+
+/**
+ * Coluna nova (nula) muda o hash de todas as linhas da tabela e faria cada PC
+ * reenviar sua copia local, possivelmente atrasada, por cima da central. Se a
+ * linha nao tinha alteracao pendente antes da coluna, atualiza o baseline.
+ * Mesmo hash de centralSyncService (JSON com chaves ordenadas, BLOB em base64).
+ */
+function rebaselineAddedNullColumns(db: Database.Database, table: string, added: string[]): void {
+  if (!added.length) return;
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'central_sync_baseline'").get()) return;
+  const hash = (row: Record<string, unknown>): string => {
+    const data = Object.fromEntries(Object.entries(row).map(([key, value]) => [key,
+      Buffer.isBuffer(value) ? { $binaryBase64: value.toString("base64") } : typeof value === "bigint" ? value.toString() : value]));
+    return createHash("sha256").update(JSON.stringify(data, Object.keys(data).sort())).digest("hex");
+  };
+  const baseline = db.prepare("SELECT row_sha256 AS sha256 FROM central_sync_baseline WHERE table_name = ? AND row_key = ?");
+  const update = db.prepare("UPDATE central_sync_baseline SET row_sha256 = ? WHERE table_name = ? AND row_key = ?");
+  for (const row of db.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>) {
+    if (typeof row.id !== "string") continue;
+    const current = baseline.get(table, row.id) as { sha256: string } | undefined;
+    if (!current) continue;
+    const before = Object.fromEntries(Object.entries(row).filter(([column]) => !added.includes(column)));
+    if (hash(before) === current.sha256) update.run(hash(row), table, row.id);
+  }
+}

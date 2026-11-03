@@ -69,6 +69,16 @@ export interface LegalEntity {
   defaultPaymentTerms: string | null;
   defaultDeliveryTerms: string | null;
   defaultConfirmationNotes: string | null;
+  // Conta propria das cobrancas; vazia = cobranca usa a conta das confirmacoes.
+  chargeBankName?: string | null;
+  chargeBankCode?: string | null;
+  chargeBankAgency?: string | null;
+  chargeBankAccount?: string | null;
+  chargeBankAccountType?: string | null;
+  chargeBankHolderName?: string | null;
+  chargeBankHolderDocument?: string | null;
+  chargePixKey?: string | null;
+  chargePixKeyType?: string | null;
   isDraft: boolean;
   isActive: boolean;
   createdAt: string;

@@ -15,6 +15,15 @@ import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
 import { calculateChargeCte, defaultsToCte, type ChargeCteNote } from "../../../shared/utils/chargeCte";
 import { chargeCompanyClass } from "../../../shared/utils/chargeCompanyClass";
+import { isPackagingChargeLine, packagingUnits } from "../../../shared/utils/packagingBilling";
+import { CHARGE_BANK_FIELD_LABELS, chargeBankFormValues } from "../../../shared/utils/chargeBankDetails";
+
+// Sacaria (big bag vazio) entra por unidade e nao soma sacas.
+function chargeQuantityLabel(quantitySacks: string, rateCents: number, amountCents: number): string {
+  return isPackagingChargeLine({ quantitySacks, amountCents, rateCents })
+    ? `${packagingUnits(amountCents, rateCents)} big bags · ${formatCurrencyFromCents(rateCents)}/un`
+    : `${decimalTextBr(quantitySacks)} sacas · ${formatCurrencyFromCents(rateCents)}/saca`;
+}
 
 function decimalTextBr(value: string | null | undefined): string {
   return value ? value.replace(".", ",") : "0";
@@ -91,7 +100,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       await window.operationsCafe.updateLegalEntity(bankEditor.id, bankEditor);
       setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
       setBankEditor(null);
-      setMessage("Dados para pagamento salvos para esta empresa. Serao usados nos proximos PDFs gerados.");
+      setMessage("Conta das cobrancas salva para esta empresa. Sera usada nos proximos PDFs gerados; a conta das confirmacoes nao mudou.");
     } catch (error) { setMessage(`Erro ao salvar dados bancarios: ${error instanceof Error ? error.message : "Falha inesperada"}`); }
     finally { setSavingBank(false); }
   }
@@ -1207,16 +1216,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
         <div className="charge-diagnostics">
           <h3>Dados para pagamento</h3>
-          <p>Conta da empresa que emite a cobranca. As alteracoes valem para os proximos documentos gerados desta empresa.</p>
-          <button onClick={() => setBankEditor(legalEntities.find((entity) => entity.id === ownLegalEntityId) ?? null)}>Editar dados bancarios</button>
+          <p>Conta usada so nas cobrancas desta empresa. Alterar aqui nao muda a conta das confirmacoes. As alteracoes valem para os proximos documentos gerados.</p>
+          <button onClick={() => { const entity = legalEntities.find((item) => item.id === ownLegalEntityId); setBankEditor(entity ? { ...entity, ...chargeBankFormValues(entity) } : null); }}>Editar dados bancarios</button>
           {bankEditor ? <div>
             <strong>{bankEditor.tradeName}</strong>
             <FormGrid>
-              {([
-                ["defaultBankName", "Banco"], ["defaultBankCode", "Codigo do banco"], ["defaultBankAgency", "Agencia"],
-                ["defaultBankAccount", "Conta"], ["defaultBankAccountType", "Tipo de conta"], ["defaultBankHolderName", "Titular"],
-                ["defaultBankHolderDocument", "CPF/CNPJ do titular"], ["defaultPixKey", "Chave PIX"], ["defaultPixKeyType", "Tipo de chave PIX"]
-              ] as const).map(([field, label]) => <label key={field}>{label}<input value={bankEditor[field] ?? ""} onChange={(event) => setBankEditor({ ...bankEditor, [field]: event.target.value || null })} /></label>)}
+              {CHARGE_BANK_FIELD_LABELS.map(([field, label]) => <label key={field}>{label}<input value={bankEditor[field] ?? ""} onChange={(event) => setBankEditor({ ...bankEditor, [field]: event.target.value || null })} /></label>)}
             </FormGrid>
             <button disabled={savingBank} onClick={() => void saveBankDetails()}>Salvar dados para pagamento</button>
             <button disabled={savingBank} onClick={() => setBankEditor(null)}>Cancelar</button>
@@ -1241,7 +1246,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
                       <span><label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={selectedNoteIds.has(op.fiscalDocumentId)} onChange={() => toggleNote(op.fiscalDocumentId)} aria-label={`Selecionar ${operationNoteLabel(op)}`} /> <strong>{operationNoteLabel(op)}</strong></label><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
                       <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
-                      <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
+                      <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{chargeQuantityLabel(op.quantitySacks, op.appliedRateValueCents, op.serviceAmountCents)}</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
                       <span>{formatStatusLabel(op.billingStatus)}</span>
                       <span className="row-actions"><button onClick={() => void settleSingleOperation(op)}>Receber NF</button></span>
@@ -1279,7 +1284,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                       <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
                         <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
                         <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
-                        <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{decimalTextBr(op.quantitySacks)} sacas · {formatCurrencyFromCents(op.appliedRateValueCents)}/saca</small></span>
+                        <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{chargeQuantityLabel(op.quantitySacks, op.appliedRateValueCents, op.serviceAmountCents)}</small></span>
                         <span>
                           <strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong>
                           <small>{op.serviceAmountCents <= 0 ? "Nao entra no total ate ter regra" : isOperationInOpenCharge(op) ? openChargeLabel(op) : operationValueByNote(op)}</small>
@@ -1486,7 +1491,9 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 <span><strong>{noteCompanyLabel}</strong><small>{companyLabel}</small></span>
                 <span>{formatDateOnlyBr(operation.operationDateSnapshot)}</span>
                 <span>{operation.productNameSnapshot ?? "-"}</span>
-                <span><strong>{decimalTextBr(operation.quantitySacksDecimalSnapshot)}</strong><small>{formatCurrencyFromCents(operation.serviceRateCentsSnapshot)}/saca</small></span>
+                <span>{isPackagingChargeLine({ quantitySacks: operation.quantitySacksDecimalSnapshot, amountCents: operation.serviceAmountCentsSnapshot, rateCents: operation.serviceRateCentsSnapshot })
+                  ? <><strong>{packagingUnits(operation.serviceAmountCentsSnapshot, operation.serviceRateCentsSnapshot)} un</strong><small>{formatCurrencyFromCents(operation.serviceRateCentsSnapshot)}/un · big bag</small></>
+                  : <><strong>{decimalTextBr(operation.quantitySacksDecimalSnapshot)}</strong><small>{formatCurrencyFromCents(operation.serviceRateCentsSnapshot)}/saca</small></>}</span>
                 <span>{formatCurrencyFromCents(operation.serviceAmountCentsSnapshot)} x NF {operation.fiscalDocumentNumberSnapshot ?? "-"}</span>
                 <span>{detail.charge.status === "PAID" ? "Paga" : detail.charge.paidAmountCents > 0 ? "Pagamento parcial" : "Em aberto"}</span>
               </div>

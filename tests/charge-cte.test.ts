@@ -73,3 +73,30 @@ describe("CT-e por saca", () => {
     });
   });
 });
+
+describe("sacaria na cobranca", () => {
+  it("mostra unidades de big bag em secao propria, sem somar sacas", async () => {
+    const snapshot = (overrides: Record<string, unknown>) => ({
+      operationDateSnapshot: "2026-10-16", fiscalDocumentNumberSnapshot: "7414", fiscalDocumentSeriesSnapshot: "1", issuerNameSnapshot: "GRAO & GRAO", destinationNameSnapshot: "CAFEEIRA TERRA BOA",
+      ownLegalEntityNameSnapshot: "Grao & Grao", productNameSnapshot: "BIG BAG", operationScopeSnapshot: "INTERNAL", quantitySacksDecimalSnapshot: "0", serviceRateCentsSnapshot: 3000,
+      serviceAmountCentsSnapshot: 780000, contractNumberSnapshot: null, billingObservationsSnapshot: null, ...overrides
+    });
+    const input = {
+      organization: { slug: "teste", displayName: "Teste", appDisplayName: "Teste", logoPath: null },
+      ownLegalEntity: { tradeName: "Teste", legalName: "Empresa Teste", cnpj: "00000000000000" },
+      client: { displayName: "TERRA" },
+      detail: {
+        charge: { status: "DRAFT", notes: "PREVIA INTERNA", createdAt: "2026-10-30", dueDate: "2026-10-30", periodStart: "2026-10-01", periodEnd: "2026-10-31", periodicity: "MONTHLY", openAmountCents: 830000, finalAmountCents: 830000, paidAmountCents: 0 },
+        operations: [snapshot({}), snapshot({ fiscalDocumentNumberSnapshot: "7000", productNameSnapshot: "CAFE", quantitySacksDecimalSnapshot: "100", serviceRateCentsSnapshot: 500, serviceAmountCentsSnapshot: 50000 })],
+        payments: [], adjustments: []
+      }
+    } as unknown as ChargeDocumentsInput;
+    const draw = vi.spyOn(PDFPage.prototype, "drawText");
+    await buildChargePdf(input);
+    const text = draw.mock.calls.map(([value]) => value).join(" | ");
+    expect(text).toContain("SACARIA (BIG BAG)");
+    expect(text).toContain("260 un");
+    expect(text).toContain("TOTAL: 260 UN - R$ 30,00/un");
+    expect(text).toContain("TOTAL SACAS: 100");
+  });
+});

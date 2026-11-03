@@ -60,9 +60,14 @@ function getChargeControlRows(repository: AppRepository, chargeIds: string[]) {
   }).filter((row) => row.charge.openAmountCents > 0 && !["DRAFT", "CANCELLED", "REPLACED", "PAID"].includes(row.charge.status));
 }
 
-function isLikelyDataMutation(channel: string): boolean {
+// Sem este aviso, a alteracao so chega aos outros computadores na varredura de
+// seguranca (ate 10 minutos). Uma lista de verbos de escrita sempre fica
+// incompleta (xmlImports:execute, clientCharges:issue...), entao tudo o que nao
+// for claramente leitura conta como alteracao; o excesso custa so uma varredura.
+export function isLikelyDataMutation(channel: string): boolean {
   if (/^(auth|backups|restore|integrity|app|updates|files|dialogs):/.test(channel)) return false;
-  return /:(create|update|delete|permanentlyDelete|activate|deactivate|save|set|add|remove|link|unlink|merge|confirm|cancel|register|apply|import|resolve|generate|assign|replace|pay|return|ignore)/i.test(channel);
+  const action = channel.slice(channel.indexOf(":") + 1);
+  return !/^(list|get|preview|select|inspect|validate|calculate|find|export|print|open|bytes|reveal|lookup|ask|compare|history|progress|verify|suggest|alerts|indicators|monthlyTotals|summary|copyImage|vulpeDev|collectorCommand)|Summary$/.test(action);
 }
 
 export function createDiagnostics(context: AppContext, repository: AppRepository, centralSync?: CentralSyncService): Diagnostics {
