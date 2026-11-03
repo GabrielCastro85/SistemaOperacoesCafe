@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.68
+
+- Notas importadas por XML, cobranças e confirmações emitidas, pagamentos e outras alterações passam a chegar aos outros computadores em segundos. Antes algumas esperavam até 10 minutos.
+- Remessa de sacaria (big bag vazio) não soma sacas: fica pendente até informar o valor por unidade na tela da nota e aparece na cobrança em seção própria.
+- Cada empresa pode ter uma conta para as confirmações e outra para as cobranças. Alterar uma não muda a outra.
+
 ## 1.1.67
 
 - Comparativo e Resumo deixam de contar vendas de notas canceladas, mesmo quando a operação ficou ativa depois da sincronização entre computadores.
