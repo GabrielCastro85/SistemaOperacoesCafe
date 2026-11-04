@@ -140,8 +140,10 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
     setLinkCompanySearching(true);
     try {
       const query = term.trim().toLocaleLowerCase("pt-BR");
+      const queryDigits = onlyDigits(term) ?? "";
       setLinkCompanyResults(Array.from(new Map(allLegalEntities.map((entity) => [entity.id, entity])).values()).filter((entity) => entity.isActive && !legalEntities.some((linked) => linked.id === entity.id)
-        && `${entity.tradeName} ${entity.legalName} ${entity.cnpj ?? ""}`.toLocaleLowerCase("pt-BR").includes(query)));
+        && (`${entity.tradeName} ${entity.legalName} ${entity.cnpj ?? ""}`.toLocaleLowerCase("pt-BR").includes(query)
+          || Boolean(queryDigits && (onlyDigits(entity.cnpj) ?? "").includes(queryDigits)))));
     } finally {
       setLinkCompanySearching(false);
     }
@@ -567,7 +569,17 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       setActiveTab("companies");
       scrollTo(partnersListRef);
     } catch (errorValue) {
-      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar empresa."}`);
+      const errorMessage = errorValue instanceof Error ? errorValue.message : "falha ao salvar empresa.";
+      if (cnpjDigits && errorMessage.includes("CNPJ ja cadastrado")) {
+        closePartnerModal();
+        setActiveTab("companies");
+        setCompanySearch(cnpjDigits);
+        await load();
+        setMessage("Este CNPJ ja estava cadastrado. A empresa existente foi localizada na lista; use Editar para completar os dados ou vincula-la a um cliente/fornecedor.");
+        scrollTo(partnersListRef);
+        return;
+      }
+      setMessage(`Erro: ${errorMessage}`);
     }
   }
 
@@ -641,13 +653,15 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   }
 
   const companySearchTerm = companySearch.trim().toUpperCase();
+  const companySearchDigits = onlyDigits(companySearch) ?? "";
   const companyItems = Array.from(new Map(allLegalEntities.map((entity) => [entity.id, entity])).values())
     .filter((entity) => {
       const owner = allPartners.find((partner) => partner.id === entity.businessPartnerId);
       if (!companySearchTerm) return true;
       return [entity.tradeName, entity.legalName, entity.cnpj, entity.city, entity.state, owner?.displayName]
         .filter(Boolean)
-        .some((value) => String(value).toUpperCase().includes(companySearchTerm));
+        .some((value) => String(value).toUpperCase().includes(companySearchTerm))
+        || Boolean(companySearchDigits && (onlyDigits(entity.cnpj) ?? "").includes(companySearchDigits));
     })
     // Ordem alfabetica pelo nome da empresa, independente de ter cliente/corretor vinculado ou nao.
     .sort((a, b) => a.tradeName.localeCompare(b.tradeName, "pt-BR", { sensitivity: "base" }));
