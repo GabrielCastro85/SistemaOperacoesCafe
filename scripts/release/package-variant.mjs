@@ -324,7 +324,10 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.60"
+  const highlights = releaseVersion === "1.1.69"
+    ? `- A sincronizacao central renova automaticamente a sessao quando ela expira e repete o envio ou a consulta interrompida, sem precisar sair e entrar novamente no programa.
+- A busca de empresas encontra o CNPJ com ou sem pontuacao; ao tentar cadastrar novamente um CNPJ existente, o programa localiza o cadastro ja existente para editar ou vincular.`
+    : releaseVersion === "1.1.60"
     ? `- A tela Notas e operacoes passa a abrir diretamente em Notas emitidas.
 - Saldos manuais e movimentos de NF-e de armazem passam a ser vinculados pelo CNPJ, mesmo quando os nomes sao diferentes.
 - Retornos com descricao generica reaproveitam a classificacao manual quando ha um unico produto identificado no armazem.

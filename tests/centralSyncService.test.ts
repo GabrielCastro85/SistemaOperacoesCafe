@@ -159,6 +159,46 @@ describe("CentralSyncService", () => {
     }
   });
 
+  it("renova automaticamente a sessao central expirada e repete a sincronizacao", async () => {
+    const db = createDatabase();
+    db.exec(`
+      UPDATE central_sync_state
+      SET server_revision = 1, source_installation_id = 'install-source', last_success_at = '2026-11-03T23:20:00.000Z'
+      WHERE singleton = 1;
+      INSERT INTO central_sync_baseline VALUES ('organizations', 'org-1', '32f79fb1e77c40a2f14cfd4114f48587ce66be99194a393489860014ee4e6b5c');
+    `);
+    let loginCalls = 0;
+    let expireFirstToken = false;
+    const authorizations: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.pathname === "/v1/session/login") {
+        loginCalls += 1;
+        return jsonResponse({ token: loginCalls === 1 ? "token-expiravel" : "token-renovado", user: { desktopProfile: null } });
+      }
+      const authorization = new Headers(init?.headers).get("authorization") ?? "";
+      authorizations.push(authorization);
+      if (expireFirstToken && authorization === "Bearer token-expiravel") return jsonResponse({ error: "UNAUTHORIZED" }, 401);
+      if (url.pathname === "/v1/sync/status") return jsonResponse({ revision: 1, sourceInstallationId: "install-source", recordCount: 1 });
+      if (url.pathname === "/v1/sync/changes") return jsonResponse({ currentRevision: 1, changes: [], next: null });
+      throw new Error(`Rota inesperada: ${url.pathname}`);
+    }));
+
+    const service = new CentralSyncService(db, "test");
+    try {
+      await service.login("Gabriel", "senha-teste");
+      expireFirstToken = true;
+      await service.synchronize();
+
+      expect(loginCalls).toBe(2);
+      expect(authorizations).toContain("Bearer token-renovado");
+      expect(service.getStatus()).toMatchObject({ status: "ONLINE", revision: 1, error: null });
+    } finally {
+      service.stop();
+      db.close();
+    }
+  });
+
   it("informa relacionamentos locais que impedem a carga sem apagar dados ou enviar alteracoes", async () => {
     const db = createDatabase();
     db.exec(`

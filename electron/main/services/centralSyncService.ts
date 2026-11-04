@@ -160,6 +160,8 @@ function quoteIdentifier(value: string): string {
 
 export class CentralSyncService {
   private token: string | null = null;
+  private loginCredentials: { username: string; password: string } | null = null;
+  private reauthentication: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
   private mutationTimer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
@@ -244,6 +246,7 @@ export class CentralSyncService {
       })
     }, false);
     this.token = response.token;
+    this.loginCredentials = { username, password };
     try {
       await this.synchronize();
     } catch (error) {
@@ -294,6 +297,8 @@ export class CentralSyncService {
     this.timer = null;
     this.mutationTimer = null;
     this.token = null;
+    this.loginCredentials = null;
+    this.reauthentication = null;
     this.initialized = false;
     this.consecutiveFailures = 0;
     this.nextAllowedSyncAt = 0;
@@ -637,23 +642,29 @@ export class CentralSyncService {
   }
 
   private async request<T>(path: string, init: RequestInit = {}, authenticated = true): Promise<T> {
-    const headers = new Headers(init.headers);
-    headers.set("content-type", "application/json");
-    if (authenticated) {
-      if (!this.token) throw new Error("Sessao central ausente.");
-      headers.set("authorization", `Bearer ${this.token}`);
-    }
-    const requestInit = { ...init, headers };
-    if (requestInit.method && requestInit.method !== "GET" && requestInit.body === undefined) requestInit.body = "{}";
-    let response: Response;
-    try {
-      response = await fetch(`${API_URL}${path}`, requestInit);
-    } catch (error) {
-      // Leituras sao seguras para repetir; a conexao deste computador com o
-      // servidor apresenta quedas curtas e uma nova tentativa costuma bastar.
-      if (requestInit.method && requestInit.method !== "GET") throw error;
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      response = await fetch(`${API_URL}${path}`, requestInit);
+    const send = async (): Promise<Response> => {
+      const headers = new Headers(init.headers);
+      headers.set("content-type", "application/json");
+      if (authenticated) {
+        if (!this.token) throw new Error("Sessao central ausente.");
+        headers.set("authorization", `Bearer ${this.token}`);
+      }
+      const requestInit = { ...init, headers };
+      if (requestInit.method && requestInit.method !== "GET" && requestInit.body === undefined) requestInit.body = "{}";
+      try {
+        return await fetch(`${API_URL}${path}`, requestInit);
+      } catch (error) {
+        // Leituras sao seguras para repetir; a conexao deste computador com o
+        // servidor apresenta quedas curtas e uma nova tentativa costuma bastar.
+        if (requestInit.method && requestInit.method !== "GET") throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        return fetch(`${API_URL}${path}`, requestInit);
+      }
+    };
+    let response = await send();
+    if (authenticated && response.status === 401 && this.loginCredentials) {
+      await this.reauthenticate();
+      response = await send();
     }
     const text = await response.text();
     let body: unknown = null;
@@ -664,5 +675,34 @@ export class CentralSyncService {
       throw new Error(`Servidor central (${response.status}) em ${path}: ${detail || "falha na requisicao"}`);
     }
     return body as T;
+  }
+
+  private async reauthenticate(): Promise<void> {
+    if (this.reauthentication) return this.reauthentication;
+    const credentials = this.loginCredentials;
+    if (!credentials) throw new Error("Sessao central expirada. Entre novamente.");
+    const attempt = (async () => {
+      const installationId = this.getInstallationId() ?? `unconfigured-${randomUUID()}`;
+      const response = await this.request<{ token: string }>("/v1/session/login", {
+        method: "POST",
+        body: JSON.stringify({
+          username: credentials.username,
+          password: credentials.password,
+          device: { installationId, displayName: "Operacoes Cafe Desktop", platform: process.platform, appVersion: this.appVersion }
+        })
+      }, false);
+      // Se o usuario saiu ou iniciou outra sessao durante a requisicao, a
+      // resposta antiga nao pode reabrir silenciosamente a sessao encerrada.
+      if (this.loginCredentials === credentials) {
+        this.token = response.token;
+        log.info("Central session renewed automatically");
+      }
+    })();
+    this.reauthentication = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.reauthentication === attempt) this.reauthentication = null;
+    }
   }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.69
+
+- A sincronização central renova automaticamente a sessão quando ela expira e repete o envio ou a consulta interrompida, sem precisar sair e entrar novamente no programa.
+- A busca de empresas encontra o CNPJ com ou sem pontuação; ao tentar cadastrar novamente um CNPJ existente, o programa localiza o cadastro já existente para editar ou vincular.
+
 ## 1.1.68
 
 - Notas importadas por XML, cobranças e confirmações emitidas, pagamentos e outras alterações passam a chegar aos outros computadores em segundos. Antes algumas esperavam até 10 minutos.
