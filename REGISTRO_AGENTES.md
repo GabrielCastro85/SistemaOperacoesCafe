@@ -74,6 +74,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-04 16:42 - Codex
+- Pedido: orientar como excluir um adiantamento de R$ 100.000,00 lançado incorretamente em 04/11/2026 na conta-corrente.
+- Achado: a tela e a API atuais permitem criar lançamentos, mas não oferecem ação para excluir ou cancelar um lançamento do histórico. O resumo já considera somente registros com status `CONFIRMED`, e a tabela já sabe exibir status `CANCELLED`.
+- Orientação: não criar um acréscimo contrário apenas para compensar. A correção adequada é cancelar o lançamento, preservando o registro para auditoria e retirando-o do saldo.
+- Feito: diagnóstico somente leitura; nenhum dado nem código alterado.
+- Publicado: nada.
+- Pendente: mediante confirmação do Gabriel, cancelar diretamente este adiantamento específico e/ou implementar um botão “Cancelar lançamento” com confirmação e bloqueio quando o valor já tiver sido usado em cobrança.
+
 ### 2026-11-04 16:18 - Codex
 - Pedido: publicar a atualização 1.1.69 que estava pendente.
 - Feito: versão e changelog atualizados; renovação automática da sessão central commitada em `6d7c92b`; correção anterior da busca de CNPJ está no commit `32191c7`; branch `codex/central-server-neon` enviada ao GitHub.
