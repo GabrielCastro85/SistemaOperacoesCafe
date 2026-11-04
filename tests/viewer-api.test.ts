@@ -64,7 +64,7 @@ function fixture(): Record<string, Row[]> {
     client_charges: [
       // Permanece ISSUED no servidor, mas ja venceu. O desktop transforma esse
       // estado em OVERDUE durante a leitura e o site deve calcular o mesmo.
-      { id: chargeId, organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2000-01-01", status: "ISSUED", subtotal_services_cents: 200000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 200000, paid_amount_cents: 0, open_amount_cents: 200000, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" },
+      { id: chargeId, organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, charge_number: "COB-0099", reference_code: "SET-2026", periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2000-01-01", status: "ISSUED", subtotal_services_cents: 200000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 200000, paid_amount_cents: 0, open_amount_cents: 200000, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" },
       { id: "charge-paid", organization_id: "org2", own_legal_entity_id: "entity2", client_partner_id: "client2", periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2026-10-05", status: "PAID", subtotal_services_cents: 45000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 45000, paid_amount_cents: 45000, open_amount_cents: 0, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" }
     ],
     client_charge_operations: [{ id: "charge-operation", client_charge_id: chargeId, operation_id: "operation", own_legal_entity_id_snapshot: legalEntityId, own_legal_entity_name_snapshot: "Villa Coffee LTDA", operation_date_snapshot: "2026-09-10", fiscal_document_number_snapshot: "123", issuer_name_snapshot: "Villa Coffee LTDA", destination_name_snapshot: "Cliente Teste", product_name_snapshot: "Cafe", operation_scope_snapshot: "INTERNAL", quantity_sacks_decimal_snapshot: "500", service_rate_cents_snapshot: 400, service_amount_cents_snapshot: 200000, created_at: "2026-09-30T12:00:00Z" }],
@@ -101,6 +101,12 @@ describe("viewer API", () => {
       expect.objectContaining({ documentNumber: "123", companyTone: "villa", billingStatus: "UNBILLED" }),
       expect.objectContaining({ documentNumber: "5201", companyTone: "other", companyContext: "Operacao terceirizada", issuerName: "Emitente Terceiro LTDA" })
     ]));
+
+    const charges = await app.inject({ method: "GET", url: `/v1/viewer/charges?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
+    expect(charges.statusCode).toBe(200);
+    expect(charges.json()).toEqual([
+      expect.objectContaining({ chargeNumber: "COB-0099", referenceCode: "SET-2026", clientName: "Cliente Teste", status: "OVERDUE", openAmountCents: 200000 })
+    ]);
 
     const confirmations = await app.inject({ method: "GET", url: `/v1/viewer/confirmations?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(confirmations.statusCode).toBe(200);

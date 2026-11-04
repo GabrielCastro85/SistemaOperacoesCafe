@@ -491,10 +491,27 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     const [charges, partners, entities] = await Promise.all([records(pool, "client_charges"), records(pool, "business_partners"), records(pool, "legal_entities")]);
     const partnerMap = new Map(partners.map((row) => [text(row.id), text(row.display_name)]));
     const entityMap = new Map(entities.map((row) => [text(row.id), text(row.trade_name)]));
+    const today = new Date().toISOString().slice(0, 10);
     return charges.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd))
       .filter((row) => !filters.clientId || text(row.client_partner_id) === filters.clientId)
       .filter((row) => filters.status === "ALL" || (filters.status === "PAID" ? text(row.status) === "PAID" : openCharge(row)))
-      .map((row) => ({ id: text(row.id), clientId: text(row.client_partner_id), clientName: partnerMap.get(text(row.client_partner_id)) ?? "Cliente", legalEntityName: entityMap.get(text(row.own_legal_entity_id)) ?? "", periodStart: text(row.period_start), periodEnd: text(row.period_end), dueDate: nullableText(row.due_date), status: text(row.status), finalAmountCents: numberValue(row.final_amount_cents), paidAmountCents: numberValue(row.paid_amount_cents), openAmountCents: numberValue(row.open_amount_cents) }))
+      .map((row) => {
+        const dueDate = nullableText(row.due_date);
+        const openAmountCents = numberValue(row.open_amount_cents);
+        const storedStatus = text(row.status);
+        const status = ["ISSUED", "PARTIALLY_PAID", "OVERDUE"].includes(storedStatus)
+          && openAmountCents > 0
+          && Boolean(dueDate && dueDate < today)
+          ? "OVERDUE"
+          : storedStatus;
+        return {
+          id: text(row.id), chargeNumber: nullableText(row.charge_number), referenceCode: nullableText(row.reference_code),
+          clientId: text(row.client_partner_id), clientName: partnerMap.get(text(row.client_partner_id)) ?? "Cliente",
+          legalEntityName: entityMap.get(text(row.own_legal_entity_id)) ?? "", periodStart: text(row.period_start), periodEnd: text(row.period_end),
+          issueDate: nullableText(row.issue_date), dueDate, status, finalAmountCents: numberValue(row.final_amount_cents),
+          paidAmountCents: numberValue(row.paid_amount_cents), openAmountCents
+        };
+      })
       .sort((a, b) => b.periodStart.localeCompare(a.periodStart) || a.clientName.localeCompare(b.clientName, "pt-BR"));
   });
 

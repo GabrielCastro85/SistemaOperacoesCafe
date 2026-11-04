@@ -307,8 +307,64 @@
   min-width: min(100%, 360px);
 }
 
+.viewer-charge-period {
+  margin-top: var(--space-4);
+}
+
+.viewer-charge-grid .ui-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.viewer-charge-card__dates,
+.viewer-charge-card__values {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.viewer-charge-card__dates {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.viewer-charge-card__values {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-block: var(--space-3);
+  border-block: 1px solid var(--color-border);
+}
+
+.viewer-charge-card__dates span,
+.viewer-charge-card__values span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.viewer-charge-card__dates small,
+.viewer-charge-card__values small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.viewer-charge-card__dates strong,
+.viewer-charge-card__values strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.viewer-charge-card__download {
+  width: 100%;
+  margin-top: auto;
+}
+
 @media (max-width: 480px) {
   .viewer-period-filter {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .viewer-charge-card__values {
     grid-template-columns: minmax(0, 1fr);
   }
 }
