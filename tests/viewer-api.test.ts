@@ -44,6 +44,12 @@ function fixture(): Record<string, Row[]> {
       { id: "entity2", organization_id: "org2", legal_name: "Grao & Grao LTDA", trade_name: "Grao & Grao Minas Gerais", cnpj: "16594876000224", is_active: 1 }
     ],
     business_partners: [{ id: clientId, display_name: "Cliente Teste" }, { id: "client2", display_name: "Cliente Org2" }],
+    partner_legal_entities: [{ id: "partner-entity", business_partner_id: clientId, legal_name: "Comprador Teste LTDA", trade_name: "Comprador Teste" }],
+    deal_confirmations: [{ id: "confirmation", organization_id: organizationId, own_legal_entity_id: legalEntityId, confirmation_number: "VCMG 0200", temporary_reference: "TEMP-200", confirmation_date: "2026-09-20", status: "ISSUED", signature_status: "NOT_SENT", total_quantity_sacks_decimal: "500", total_commercial_amount_cents: 90000000 }],
+    deal_confirmation_parties: [
+      { id: "party-own", deal_confirmation_id: "confirmation", party_role: "SELLER", own_legal_entity_id: legalEntityId, sort_order: 1, snapshot_json: JSON.stringify({ legalName: "Villa Coffee LTDA" }) },
+      { id: "party-buyer", deal_confirmation_id: "confirmation", party_role: "BUYER", business_partner_id: clientId, partner_legal_entity_id: "partner-entity", sort_order: 2, snapshot_json: JSON.stringify({ legalName: "Comprador Teste LTDA" }) }
+    ],
     operations: [
       { id: "operation", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, fiscal_document_id: "document", operation_date: "2026-09-10", operation_type: "SALE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "500", applied_rate_value_cents: 400, service_amount_cents: 150000 },
       { id: "third-operation", organization_id: organizationId, own_legal_entity_id: "third-party", responsible_partner_id: clientId, fiscal_document_id: "third-document", operation_date: "2026-09-11", operation_type: "SALE", operation_scope: "EXTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "100", applied_rate_value_cents: 800, service_amount_cents: 80000 },
@@ -62,7 +68,7 @@ function fixture(): Record<string, Row[]> {
       { id: "charge-paid", organization_id: "org2", own_legal_entity_id: "entity2", client_partner_id: "client2", periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2026-10-05", status: "PAID", subtotal_services_cents: 45000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 45000, paid_amount_cents: 45000, open_amount_cents: 0, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" }
     ],
     client_charge_operations: [{ id: "charge-operation", client_charge_id: chargeId, operation_id: "operation", own_legal_entity_id_snapshot: legalEntityId, own_legal_entity_name_snapshot: "Villa Coffee LTDA", operation_date_snapshot: "2026-09-10", fiscal_document_number_snapshot: "123", issuer_name_snapshot: "Villa Coffee LTDA", destination_name_snapshot: "Cliente Teste", product_name_snapshot: "Cafe", operation_scope_snapshot: "INTERNAL", quantity_sacks_decimal_snapshot: "500", service_rate_cents_snapshot: 400, service_amount_cents_snapshot: 200000, created_at: "2026-09-30T12:00:00Z" }],
-    client_charge_adjustments: [], client_payment_allocations: [], client_ledger_entries: [], partner_legal_entities: [],
+    client_charge_adjustments: [], client_payment_allocations: [], client_ledger_entries: [],
     client_payments: [{ id: "payment", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, payment_date: "2026-09-15", amount_cents: 50000, status: "CONFIRMED" }]
   };
 }
@@ -95,6 +101,12 @@ describe("viewer API", () => {
       expect.objectContaining({ documentNumber: "123", companyTone: "villa", billingStatus: "UNBILLED" }),
       expect.objectContaining({ documentNumber: "5201", companyTone: "other", companyContext: "Operacao terceirizada", issuerName: "Emitente Terceiro LTDA" })
     ]));
+
+    const confirmations = await app.inject({ method: "GET", url: `/v1/viewer/confirmations?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
+    expect(confirmations.statusCode).toBe(200);
+    expect(confirmations.json()).toEqual([
+      expect.objectContaining({ confirmationNumber: "VCMG 0200", counterpartyName: "Comprador Teste LTDA", ownLegalEntityName: "Villa Coffee Minas Gerais", totalQuantitySacks: "500" })
+    ]);
 
     const pdf = await app.inject({ method: "GET", url: `/v1/viewer/charges/${chargeId}/pdf`, headers: { authorization: "Bearer test" } });
     expect(pdf.statusCode).toBe(200);

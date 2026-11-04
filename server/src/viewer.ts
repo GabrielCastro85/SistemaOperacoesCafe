@@ -23,6 +23,10 @@ const openNoteListSchema = filterSchema.extend({
   clientId: z.string().min(1).optional()
 });
 
+const confirmationListSchema = filterSchema.extend({
+  status: z.enum(["OPEN", "SIGNED", "ALL"]).default("ALL")
+});
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -162,6 +166,44 @@ function snapshotParty(document: JsonRecord, key: "issuer" | "recipient"): JsonR
 
 function partyName(party: JsonRecord | null): string | null {
   return party ? nullableText(party.legalName) ?? nullableText(party.tradeName) : null;
+}
+
+function confirmationPartySnapshotName(row: JsonRecord): string | null {
+  try {
+    const snapshot = JSON.parse(text(row.snapshot_json)) as JsonRecord;
+    return nullableText(snapshot.legalName)
+      ?? nullableText(snapshot.tradeName)
+      ?? nullableText(snapshot.displayName)
+      ?? nullableText(snapshot.name);
+  } catch {
+    return null;
+  }
+}
+
+function confirmationCounterparty(
+  confirmationId: string,
+  ownLegalEntityId: string,
+  parties: JsonRecord[],
+  partners: Map<string, JsonRecord>,
+  partnerEntities: Map<string, JsonRecord>
+): { name: string; role: string | null } {
+  const candidates = parties
+    .filter((row) => text(row.deal_confirmation_id) === confirmationId)
+    .filter((row) => ["SELLER", "BUYER"].includes(text(row.party_role)))
+    .sort((left, right) => numberValue(left.sort_order) - numberValue(right.sort_order));
+  const counterparty = candidates.find((row) => text(row.own_legal_entity_id) !== ownLegalEntityId) ?? candidates[0];
+  if (!counterparty) return { name: "Nao informado", role: null };
+  const partner = partners.get(text(counterparty.business_partner_id));
+  const partnerEntity = partnerEntities.get(text(counterparty.partner_legal_entity_id));
+  return {
+    name: nullableText(counterparty.manual_name)
+      ?? nullableText(partnerEntity?.legal_name)
+      ?? nullableText(partnerEntity?.trade_name)
+      ?? nullableText(partner?.display_name)
+      ?? confirmationPartySnapshotName(counterparty)
+      ?? "Nao informado",
+    role: nullableText(counterparty.party_role)
+  };
 }
 
 function digits(value: unknown): string {
@@ -352,6 +394,49 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
         + scopedOperations.filter((row) => text(row.responsible_partner_id) === id && text(row.billing_status) === "UNBILLED").reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       receivedCents: scopedPayments.filter((row) => text(row.client_partner_id) === id).reduce((sum, row) => sum + numberValue(row.amount_cents), 0)
     })).sort((a, b) => a.displayName.localeCompare(b.displayName, "pt-BR"));
+  });
+
+  app.get("/v1/viewer/confirmations", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = confirmationListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [confirmations, parties, entities, partners, partnerEntities] = await Promise.all([
+      records(pool, "deal_confirmations"), records(pool, "deal_confirmation_parties"), records(pool, "legal_entities"),
+      records(pool, "business_partners"), records(pool, "partner_legal_entities")
+    ]);
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
+    const partnerMap = new Map(partners.map((row) => [text(row.id), row]));
+    const partnerEntityMap = new Map(partnerEntities.map((row) => [text(row.id), row]));
+    const openStatuses = new Set(["DRAFT", "PENDING_REVIEW", "ISSUED", "SENT_FOR_SIGNATURE"]);
+    return confirmations
+      .filter((row) => inScope(row, filters) && inPeriod(row.confirmation_date, filters.periodStart, filters.periodEnd))
+      .filter((row) => filters.status === "ALL"
+        || (filters.status === "SIGNED" ? text(row.status) === "SIGNED" : openStatuses.has(text(row.status))))
+      .map((row) => {
+        const ownLegalEntityId = text(row.own_legal_entity_id);
+        const ownEntity = entityMap.get(ownLegalEntityId);
+        const counterparty = confirmationCounterparty(text(row.id), ownLegalEntityId, parties, partnerMap, partnerEntityMap);
+        return {
+          id: text(row.id),
+          confirmationNumber: nullableText(row.confirmation_number),
+          temporaryReference: text(row.temporary_reference),
+          confirmationDate: text(row.confirmation_date),
+          status: text(row.status),
+          signatureStatus: text(row.signature_status),
+          ownLegalEntityName: nullableText(ownEntity?.trade_name) ?? nullableText(ownEntity?.legal_name) ?? "Empresa",
+          counterpartyName: counterparty.name,
+          counterpartyRole: counterparty.role,
+          totalQuantitySacks: text(row.total_quantity_sacks_decimal),
+          totalCommercialAmountCents: numberValue(row.total_commercial_amount_cents)
+        };
+      })
+      .sort((left, right) => right.confirmationDate.localeCompare(left.confirmationDate)
+        || (right.confirmationNumber ?? right.temporaryReference).localeCompare(
+          left.confirmationNumber ?? left.temporaryReference,
+          "pt-BR",
+          { numeric: true }
+        ));
   });
 
   app.get("/v1/viewer/open-notes", async (request, reply) => {

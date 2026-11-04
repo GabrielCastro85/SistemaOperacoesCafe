@@ -23,12 +23,13 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-11-03, pelo Claude.
+- **Atualizado em:** 2026-11-04, pelo Codex.
 - **Branch:** `codex/central-server-neon`.
 - **Última versão publicada:** 1.1.68, em 2026-11-03.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.69. **Não publique sem o Gabriel pedir.**
+- **Migração web gradual:** `graobase.com.br` já hospeda no GitHub Pages a consulta web do Operações Café. A próxima ampliação (consulta de confirmações pelo servidor central) está pronta localmente, mas ainda não foi publicada. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
 
 ### Publicado na 1.1.68 (commit `dd10be0`)
 
@@ -66,6 +67,45 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-04 10:42 - Codex
+- Pedido: iniciar aos poucos a migração do Operações Café para navegador, sem desativar o aplicativo, usando `graobase.com.br` e sem tocar na Grãonex.
+- Verificado: `graobase.com.br` já aponta para GitHub Pages e serve o `mobile-viewer`; a API central e o banco estavam saudáveis em `/health` e `/ready`.
+- Feito: primeira ampliação segura e somente leitura do site. Adicionado endpoint autenticado `/v1/viewer/confirmations` com controle de acesso por organização/CNPJ, período e status; a resposta traz número, empresa, contraparte, data, sacas, valor e situação. O menu web ganhou a tela “Confirmações”, com filtros e busca. O aplicativo desktop permanece inalterado e ativo.
+- Testado: build do servidor, build do `mobile-viewer`, ESLint dos arquivos alterados, testes específicos do viewer e suíte completa (55 arquivos, 317 testes), além do typecheck; tudo aprovado. O build web mantém apenas avisos já existentes sobre resolução de fontes em tempo de build.
+- Publicado: nada. A nova tela depende de publicar a API e o GitHub Pages; não publicar junto com outras alterações sem o Gabriel pedir.
+- Pendente: publicar esta etapa quando autorizado e então validar login e dados reais em `https://graobase.com.br`. Próximas etapas devem migrar um módulo por vez, mantendo o desktop como alternativa até as gravações web estarem maduras.
+
+### 2026-11-04 10:21 - Codex
+- Pedido: avaliar se migrar o Operações Café para o navegador resolveria os problemas de sincronização entre PCs.
+- Recomendação: sim, desde que o navegador use diretamente uma API e um único banco central, sem uma cópia SQLite completa por computador. Apenas trocar a interface Electron por uma página web mantendo bancos locais e sincronização não resolve.
+- Arquitetura sugerida: sistema principal web/central; coletor e, quando necessário, um auxiliar local para XML, certificado A1 e arquivos do Windows. Migração gradual por módulos, mantendo o desktop durante a transição.
+- Feito: análise apenas; nenhum código alterado além deste registro.
+- Publicado: nada.
+- Pendente: Gabriel decidir se quer iniciar um plano de migração gradual para web.
+
+### 2026-11-04 10:10 - Codex
+- Pedido: não exigir sair e entrar sempre que a sessão central expirar.
+- Feito: `CentralSyncService` agora guarda em memória a credencial usada no login, detecta 401, renova a sessão central silenciosamente e repete a requisição original. Renovações simultâneas compartilham uma única tentativa; logout durante a renovação não reabre a sessão encerrada.
+- Testado: teste novo de expiração/renovação automática, suíte completa (317 testes), typecheck e ESLint dos arquivos alterados; tudo aprovado.
+- Publicado: nada. Correção preparada para a versão 1.1.69.
+- Pendente: publicar somente quando o Gabriel pedir. Na versão 1.1.68 já instalada, ainda será necessário sair e entrar uma vez para enviar as 25 notas que ficaram locais; depois de instalar a próxima versão, a renovação será automática.
+
+### 2026-11-04 09:56 - Codex
+- Pedido: investigar por que a NF 1916 não apareceu no PC 2.
+- Achado: a NF 1916 está íntegra neste PC (Villa MG, 04/11/2026, 600 sacas, confirmada), mas não entrou no baseline da sincronização. O servidor central retorna 401/UNAUTHORIZED desde 04/11 às 08:12; a última sincronização bem-sucedida foi 03/11 às 23:20 (revisão 2915).
+- Impacto: não é só a NF 1916. Há 25 documentos novos/alterados sem baseline desde a última sincronização, incluindo as NF 1897 a 1916 (com lacunas), Villa ES 843 a 847 e o cancelamento da NF 1905.
+- Feito: apenas diagnóstico, sem alterar banco ou código.
+- Testado: conferidos `central_sync_state`, `central_sync_baseline`, documentos, itens, operações e `main.log`.
+- Publicado: nada.
+- Pendente: sair e entrar novamente no PC que lançou as notas para renovar a sessão central; depois conferir o envio e, se necessário, renovar a sessão do PC 2. Avaliar renovação automática do token para evitar recorrência.
+
+### 2026-11-04 09:44 - Codex
+- Pedido: atualizar `VENDAS 10-26.xlsx` com todas as notas de venda de outubro.
+- Feito: gerada uma cópia em `outputs/2026-11-04-vendas-outubro/VENDAS 10-26 - ATUALIZADA.xlsx`, reconstruindo a aba DADOS com as 930 NF-e de venda confirmadas e não canceladas de 01/10 a 31/10/2026. Operações múltiplas da mesma NF foram consolidadas em uma linha. A aba RESUMO foi recalculada e recebeu seis clientes novos.
+- Testado: arquivo exportado e reaberto; 930 linhas, 285.793,155403 sacas, intervalo completo de outubro e nenhuma fórmula com erro. Prévia visual conferida nas duas abas.
+- Publicado: nada; o arquivo original da Área de Trabalho foi preservado.
+- Pendente: nenhum.
 
 ### 2026-11-03 - Claude
 - Pedido: NF 1891, 1892 e 1893 (Villa MG, importadas por XML às 15:45) não apareciam no PC 2.
