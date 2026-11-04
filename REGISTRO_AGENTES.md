@@ -25,11 +25,17 @@ Modelo de entrada:
 
 - **Atualizado em:** 2026-11-04, pelo Codex.
 - **Branch:** `codex/central-server-neon`.
-- **Última versão publicada:** 1.1.68, em 2026-11-03.
+- **Última versão publicada:** 1.1.69, em 2026-11-04.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
-- **Próxima versão:** 1.1.69. **Não publique sem o Gabriel pedir.**
-- **Migração web gradual:** `graobase.com.br` já hospeda no GitHub Pages a consulta web do Operações Café. A próxima ampliação (consulta de confirmações pelo servidor central) está pronta localmente, mas ainda não foi publicada. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
+- **Próxima versão:** 1.1.70. **Não publique sem o Gabriel pedir.**
+- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. A consulta de confirmações pelo servidor central foi publicada em 2026-11-04. A consulta de cobranças emitidas está preparada localmente, mas ainda não foi publicada. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
+
+### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
+
+- A sincronização central guarda as credenciais somente em memória durante a sessão, renova o token automaticamente quando o servidor devolve 401 e repete a operação interrompida. Sair do programa limpa essas credenciais.
+- A busca de empresas/CNPJs aceita o número com ou sem pontuação. Uma tentativa de cadastrar CNPJ já existente localiza o cadastro original para editar ou vincular.
+- Release pública `v1.1.69` contém instalador, `latest.yml`, blockmap, coletor portátil e checksum do coletor. O instalador publicado foi baixado novamente e seu SHA-512 confere com o `latest.yml` remoto.
 
 ### Publicado na 1.1.68 (commit `dd10be0`)
 
@@ -67,6 +73,55 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-04 16:18 - Codex
+- Pedido: publicar a atualização 1.1.69 que estava pendente.
+- Feito: versão e changelog atualizados; renovação automática da sessão central commitada em `6d7c92b`; correção anterior da busca de CNPJ está no commit `32191c7`; branch `codex/central-server-neon` enviada ao GitHub.
+- Testado: typecheck, ESLint dos arquivos alterados, smoke test do pacote e verificador de release aprovados. A suíte completa passou 316 de 317 testes; um teste de cobrança excedeu o limite enquanto outras validações rodavam em paralelo e passou isoladamente logo depois (1/1). O novo teste de renovação da sessão passou.
+- Publicado: release pública `v1.1.69` no repositório de instaladores, com instalador Windows, `latest.yml`, blockmap, coletor portátil e SHA-256 do coletor. O primeiro envio do coletor sofreu `ECONNABORTED`, foi repetido isoladamente e concluído. A API do GitHub confirmou a release fora de rascunho e todos os cinco arquivos enviados; o instalador remoto foi baixado e conferido contra o SHA-512 do `latest.yml` remoto.
+- Orientação de instalação: se o instalador disser que não consegue fechar o Operações Café, fechar o aplicativo (inclusive no Gerenciador de Tarefas, se necessário) e clicar em Repetir. Isso não apaga os dados.
+- Pendente: instalar a 1.1.69 nos computadores. No PC 2, entrar novamente uma vez depois da atualização para carregar as credenciais da sessão; a partir daí a renovação é automática.
+
+### 2026-11-04 15:48 - Codex
+- Pedido: notas da MUNIZ foram lançadas no PC 2, mas não aparecem neste computador.
+- Achado: este computador está recebendo normalmente e avançou até a revisão central 2952, com sucesso às 15:44. Inclusive recebeu notas novas de outras empresas, mas nenhuma nota nova da MUNIZ. Portanto, o PC 2 ainda não enviou essas notas ao servidor central.
+- Orientação imediata: no PC 2, sair da conta e entrar novamente para renovar a sessão central; aguardar a sincronização e conferir os números das notas. Fechar e abrir pode não renovar a autenticação.
+- Correção permanente: a renovação automática de sessão já está preparada localmente para a 1.1.69, mas ainda não foi publicada.
+- Publicado: nada.
+- Confirmação posterior: a 1.1.69 ainda não está disponível; `package.json` e a última release publicada permanecem na 1.1.68.
+- Pendente: obter os números das notas da MUNIZ e/ou confirmar o envio depois de relogar no PC 2; publicar a 1.1.69 somente quando o Gabriel autorizar.
+
+### 2026-11-04 15:40 - Codex
+- Pedido: conferir por que notas emitidas hoje para a empresa MUNIZ não permitem criar fechamento.
+- Achado: não existe no banco local nenhuma NF-e de 04/11/2026 ligada ao CNPJ `67.994.763/0001-76`, nem pelo vínculo da empresa nem dentro do snapshot fiscal bruto. A sincronização central já voltou a funcionar e estava atualizada na revisão 2948, com sucesso às 15:38 (horário local), portanto o problema ocorre antes da confirmação: essas notas ainda não entraram neste banco.
+- Decisão: não é necessário atualizar o programa para resolver este caso; uma atualização não cria notas que ainda não foram coletadas/importadas. A correção separada da busca por CNPJ formatado continua preparada para a próxima versão.
+- Feito: diagnóstico somente leitura; nenhum dado ou código alterado.
+- Publicado: nada.
+- Pendente: obter os números das notas para verificar se faltou coleta/importação, se foram emitidas por outro CNPJ próprio ou se estão em outro computador sem envio central.
+
+### 2026-11-04 15:25 - Codex
+- Pedido: investigar por que não foi possível criar uma confirmação com notas da MUNIZ COMERCIO DE GRAOS LTDA.
+- Achado: nenhuma tentativa da MUNIZ chegou a criar rascunho no banco, indicando bloqueio ainda na seleção. Todas as notas confirmadas dessa empresa são de outubro ou anteriores; a tela abre o filtro de notas no mês atual (novembro), por isso elas ficam ocultas até ampliar o período. Para Villa MG, as notas de outubro são 838, 839, 843, 844, 845, 863 e 864.
+- Testado: numa cópia isolada do banco real, foi criada com sucesso uma confirmação de compra usando a NF 864 e a empresa MUNIZ sem cliente/corretor vinculado. Nenhum dado real foi alterado.
+- Feito: diagnóstico apenas; nenhum código nem dado de produção foi alterado nesta etapa.
+- Publicado: nada.
+- Pendente: o Gabriel deve selecionar o intervalo de outubro na tela de criação. Se houver outra mensagem depois de selecionar as notas, registrar o texto ou imagem para investigar essa segunda etapa.
+
+### 2026-11-04 15:05 - Codex
+- Pedido: continuar a migração web e corrigir um CNPJ que o sistema dizia já estar cadastrado, mas não aparecia na lista de empresas.
+- Achado: o CNPJ `67.994.763/0001-76` já existe como MUNIZ COMERCIO DE GRAOS LTDA, está ativo e ainda não está vinculado a cliente/corretor. A busca da tela comparava o CNPJ formatado com os dígitos armazenados e por isso ocultava o registro.
+- Feito no desktop: a lista e o seletor de vinculação agora pesquisam CNPJ com ou sem pontuação. Se o usuário tentar cadastrar novamente um CNPJ existente, o formulário fecha e a empresa existente é localizada na lista, com orientação para editar ou vincular.
+- Feito no site: preparada a consulta somente leitura de cobranças emitidas dentro da tela Cobranças, mantendo também as notas em aberto. Inclui filtros, totais, vencimento calculado e download do PDF.
+- Testado: build do servidor, build do `mobile-viewer`, typecheck, ESLint dos arquivos alterados, testes específicos e suíte completa (55 arquivos, 317 testes); tudo aprovado.
+- Publicado: nada nesta etapa. O site em produção continua na etapa das confirmações e o desktop continua na 1.1.68.
+- Pendente: publicar a consulta web de cobranças e incluir a correção da busca de empresas na próxima versão do desktop somente quando o Gabriel pedir.
+
+### 2026-11-04 10:55 - Codex
+- Pedido: publicar a primeira ampliação da migração web gradual do Operações Café.
+- Feito: commit `9d4bfc0` enviado à branch `codex/central-server-neon`; integração sem conflitos com a `master` no commit `68785d6`, preservando as correções exclusivas que já existiam nela.
+- Testado: build do servidor, build de produção do `mobile-viewer` e teste da API do viewer na árvore integrada. Após a publicação, `graobase.com.br` passou a servir o novo JavaScript contendo a tela “Confirmações” e o endpoint `/v1/viewer/confirmations`; a rota sem sessão retorna 401, como esperado. `/health` informa o commit `9d4bfc0` e `/ready` está saudável com o banco conectado.
+- Publicado: GitHub Pages concluído com sucesso pelo workflow `41841972183`; API Railway publicada e saudável. Nenhuma release nem instalador Windows foi gerado.
+- Pendente: validar o login e os dados reais da tela “Confirmações” com um usuário do sistema. Continuar a migração web módulo a módulo, sem desativar o desktop.
 
 ### 2026-11-04 10:42 - Codex
 - Pedido: iniciar aos poucos a migração do Operações Café para navegador, sem desativar o aplicativo, usando `graobase.com.br` e sem tocar na Grãonex.
