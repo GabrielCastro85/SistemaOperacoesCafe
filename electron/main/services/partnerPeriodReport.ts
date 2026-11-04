@@ -10,6 +10,7 @@ import { sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
 import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentIssuerNameFromSnapshot } from "../../../src/shared/utils/fiscalDocumentLabels.js";
 import type { ClientChargeDetail, Organization } from "../../../src/shared/types/domain.js";
 import type { AppRepository } from "./appRepository.js";
+import { addGraonexPdfFooter } from "./generatedDocumentBranding.js";
 
 export const partnerPeriodReportInputSchema = partnerRateSummaryInputSchema.extend({ clientPartnerId: z.string().uuid() })
   .refine((value) => value.periodStart <= value.periodEnd, "O inicio deve ser anterior ao fim do periodo.");
@@ -194,6 +195,7 @@ export async function buildPartnerPeriodReportPdf(report: PartnerPeriodReport): 
     item.drawText(`Gerado pelo Sistema de Operacoes de Cafe em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`, { x: margin, y: 18, size: 6.5, font, color: muted });
     item.drawText(`${report.organization.appDisplayName} | ${index + 1} / ${pdf.getPageCount()}`, { x: width - margin - 190, y: 18, size: 6.5, font: bold, color: gold });
   });
+  await addGraonexPdfFooter(pdf, font);
   return pdf.save();
 }
 

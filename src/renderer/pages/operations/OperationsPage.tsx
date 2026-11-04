@@ -8,8 +8,10 @@ import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { Feedback } from "../../components/feedback/Feedback";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
+import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
-import { parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
+import { isPackagingDocument, PACKAGING_OVERRIDE_PREFIX } from "../../../shared/utils/packagingBilling";
+import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
@@ -43,11 +45,35 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
 }
 
+function formatCnpjCompact(value: string | null | undefined): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.length !== 14) return value || "CNPJ nao informado";
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+}
+
+function xmlPartySummary(file: XmlFileInspection, direction: "INBOUND" | "OUTBOUND"): { title: string; subtitle: string } {
+  const extracted = file.extractedData as Record<string, unknown> | null;
+  const counterparty = extracted?.[direction === "INBOUND" ? "issuer" : "recipient"] as Record<string, unknown> | undefined;
+  const ownParty = extracted?.[direction === "INBOUND" ? "recipient" : "issuer"] as Record<string, unknown> | undefined;
+  const name = String(counterparty?.legalName ?? counterparty?.tradeName ?? (direction === "INBOUND" ? "Fornecedor nao identificado" : "Cliente nao identificado"));
+  const counterpartyCnpj = formatCnpjCompact(counterparty?.cnpjCpf == null ? null : String(counterparty.cnpjCpf));
+  const ownName = String(ownParty?.tradeName ?? ownParty?.legalName ?? "empresa propria");
+  const ownCnpj = formatCnpjCompact(ownParty?.cnpjCpf == null ? null : String(ownParty.cnpjCpf));
+  return {
+    title: name,
+    subtitle: `${direction === "INBOUND" ? "Fornecedor" : "Cliente"}: ${counterpartyCnpj} · ${direction === "INBOUND" ? "Recebida por" : "Emitida por"}: ${ownName} (${ownCnpj})`
+  };
+}
+
 function inferXmlOperationScope(preview: NfeExtractedPreview | null): OperationScope | null {
   const issuerState = preview?.issuer?.state?.trim().toUpperCase() ?? "";
   const recipientState = preview?.recipient?.state?.trim().toUpperCase() ?? "";
   if (!issuerState || !recipientState) return null;
   return issuerState === recipientState ? "INTERNAL" : "EXTERNAL";
+}
+
+function xmlInspectionIsWarehouse(file: XmlFileInspection): boolean {
+  return classifyWarehouseXml(parseNfeExtractedPreview(file.extractedData ?? null)) !== null;
 }
 
 function xmlImportIsVisuallyDeleted(job: XmlImportJob): boolean {
@@ -60,6 +86,7 @@ function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
 
 type DocumentSortKey = "number" | "client";
 type SortDirection = "asc" | "desc";
+type OperationsPageTab = "received" | "issued" | "documents" | "spreadsheets";
 type VulpeDevScanResult = Awaited<ReturnType<Window["operationsCafe"]["scanVulpeDevXml"]>>;
 type VulpeDevStatusResult = Awaited<ReturnType<Window["operationsCafe"]["getVulpeDevStatus"]>>;
 type CollectorMonitorStatus = VulpeDevStatusResult["collectors"][number];
@@ -109,6 +136,7 @@ function collectorCompanyLabels(cnpjs: string[]): string {
   const labels = cnpjs.map((cnpj) => {
     if (cnpj === "16594876000224") return "Grao & Grao MG";
     if (cnpj === "16594876000496") return "Grao & Grao SP";
+    if (cnpj === "44963370000108") return "Villa SP";
     return cnpj;
   });
   return labels.join(" e ");
@@ -180,7 +208,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [sacks, setSacks] = useState("1");
   const [scope, setScope] = useState<OperationScope>("EXTERNAL");
   const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
-  const [pageTab, setPageTab] = useState<"documents" | "spreadsheets" | "xml">("xml");
+  const [pageTab, setPageTab] = useState<OperationsPageTab>("issued");
   const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
   const [importJob, setImportJob] = useState<{ job: SpreadsheetImportJob; rows: SpreadsheetImportRow[] } | null>(null);
@@ -206,7 +234,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled] = useState<Record<string, boolean>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
-  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
+  const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
   const [collectorStatuses, setCollectorStatuses] = useState<CollectorMonitorStatus[]>([]);
   const [collectorMonitorError, setCollectorMonitorError] = useState<string | null>(null);
   const [collectorCommandBusy, setCollectorCommandBusy] = useState<string | null>(null);
@@ -218,12 +246,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [returnDate, setReturnDate] = useState(() => brazilDateValue());
   const [returnUnit, setReturnUnit] = useState<"SACKS" | "KG">("SACKS");
   const [returnQuantity, setReturnQuantity] = useState("");
+  const [packagingUnitValue, setPackagingUnitValue] = useState("");
   const [returnReason, setReturnReason] = useState("");
   // Nota terceirizada lancada manualmente: nem emitente nem destinatario e' a
   // empresa propria ativa no topo -- ver resolveIssuerLegalEntityFromPartner.
   // Vazio = comportamento de sempre (emissora = CNPJ proprio ativo).
   const [manualIssuerSearchTerm, setManualIssuerSearchTerm] = useState("");
   const [manualIssuerPartnerLegalEntityId, setManualIssuerPartnerLegalEntityId] = useState<string | null>(null);
+  const [manualCounterpartyLegalEntityId, setManualCounterpartyLegalEntityId] = useState("");
   // Cliente da revenda numa nota triangulada lancada manualmente -- so' usado
   // quando manualIssuerPartnerLegalEntityId esta preenchido (ver createDocument).
   const [manualSecondaryPartnerId, setManualSecondaryPartnerId] = useState("");
@@ -315,6 +345,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     ]);
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setPartnerId((current) => (rolePartners.some((partner) => partner.id === current) ? current : ""));
+    setManualCounterpartyLegalEntityId((current) => {
+      if (!current) return "";
+      const selected = [...linkedLegalEntities.flat(), ...unlinkedLegalEntities].find((entity) => entity.id === current);
+      return selected && rolePartners.some((partner) => partner.id === selected.businessPartnerId) ? current : "";
+    });
     const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
@@ -338,10 +373,30 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Recebe notas e alteracoes feitas em outro computador sem desmontar a
+  // tela nem limpar a aba, a pesquisa ou um formulario em andamento.
+  useCentralDataRefresh(load);
+
+  useEffect(() => {
+    if (manualIssuerPartnerLegalEntityId || !partnerId) {
+      setManualCounterpartyLegalEntityId("");
+      return;
+    }
+    const options = partnerLegalEntities.filter((entity) => entity.businessPartnerId === partnerId && entity.isActive);
+    setManualCounterpartyLegalEntityId((current) => {
+      if (options.some((entity) => entity.id === current)) return current;
+      return options.length === 1 ? options[0].id : "";
+    });
+  }, [manualIssuerPartnerLegalEntityId, partnerId, partnerLegalEntities]);
+
   const parseCurrency = (value: string): number => parseCurrencyToCents(value);
 
   async function createDocument(): Promise<void> {
     try {
+      const selectedCounterpartyEntity = partnerLegalEntities.find((entity) => entity.id === manualCounterpartyLegalEntityId) ?? null;
+      if (!manualIssuerPartnerLegalEntityId && partnerId && !selectedCounterpartyEntity) {
+        throw new Error(`Selecione o CNPJ exato ${operationType === "PURCHASE" ? "do fornecedor" : "do cliente"}.`);
+      }
       // Nota terceirizada: usuario escolheu uma empresa emissora diferente do
       // CNPJ proprio ativo -- resolve (ou cria) o "CNPJ emissor" terceirizado
       // ANTES de criar a nota, e usa ele no lugar do ownLegalEntityId normal.
@@ -364,7 +419,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         organizationId,
         ownLegalEntityId: issuerLegalEntityId,
         responsiblePartnerId: partnerId,
-        partnerLegalEntityId: null,
+        partnerLegalEntityId: manualIssuerPartnerLegalEntityId ? null : selectedCounterpartyEntity?.id ?? null,
         operationType,
         secondaryResponsiblePartnerId: isTriangulated ? manualSecondaryPartnerId : null,
         secondaryOperationType: isTriangulated ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null,
@@ -384,6 +439,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage(created.document.duplicateWarning ?? (isTriangulated ? "Nota triangulada criada -- cada item lancado abaixo ja gera compra e venda automaticamente." : "Nota criada."));
       setManualIssuerSearchTerm("");
       setManualIssuerPartnerLegalEntityId(null);
+      setManualCounterpartyLegalEntityId("");
       setManualSecondaryPartnerId("");
       await load();
       scrollTo(manualDetailRef);
@@ -450,6 +506,25 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       scrollTo(manualDetailRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao adicionar operacao."}`);
+    }
+  }
+
+  async function savePackagingUnitValue(): Promise<void> {
+    const operation = detail?.operations[0];
+    if (!detail || !operation) return;
+    const unitValueCents = parseCurrency(packagingUnitValue);
+    if (!packagingUnitValue.trim() || !Number.isFinite(unitValueCents) || unitValueCents < 0) {
+      setMessage("Erro: informe o valor a cobrar por unidade, por exemplo 30,00.");
+      return;
+    }
+    try {
+      await window.operationsCafe.updateOperationManualRate(operation.id, unitValueCents, "Valor por unidade da remessa de sacaria");
+      setDetail(await window.operationsCafe.getFiscalDocument(detail.document.id));
+      setPackagingUnitValue("");
+      await load();
+      setMessage(`Remessa de sacaria: ${formatCurrencyFromCents(unitValueCents)} por unidade. A nota nao soma sacas.`);
+    } catch (errorValue) {
+      setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao salvar o valor por unidade."}`);
     }
   }
 
@@ -681,11 +756,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
-  async function prepareVulpeDevImport(source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"): Promise<void> {
+  async function prepareVulpeDevImport(source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"): Promise<void> {
     try {
       if (!vulpePeriodStart || !vulpePeriodEnd) throw new Error("Informe as datas inicial e final.");
       if (vulpePeriodStart > vulpePeriodEnd) throw new Error("A data inicial nao pode ser posterior a data final.");
-      const result = await window.operationsCafe.scanVulpeDevXml({ source, periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd });
+      const direction = pageTab === "issued" ? "OUTBOUND" : "INBOUND";
+      const result = await window.operationsCafe.scanVulpeDevXml({ source, direction, periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd });
       setVulpeScan(result);
       if (result.files.length === 0) {
         setXmlSelections([]);
@@ -752,6 +828,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       const missingPartner = xmlQueue.find((file) =>
         file.status !== "ERROR"
         && !file.xmlType.startsWith("EVENT_")
+        && !xmlInspectionIsWarehouse(file)
         && !xmlIgnoredSelections[file.token]
         && !xmlPartnerOverrides[file.token]
       );
@@ -762,7 +839,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         return;
       }
     }
-    if (!partnerId && !vulpeScan) {
+    const requiresCommercialPartner = xmlQueue.some((file) =>
+      file.status !== "ERROR"
+      && !file.xmlType.startsWith("EVENT_")
+      && !xmlInspectionIsWarehouse(file)
+    );
+    if (!partnerId && !vulpeScan && requiresCommercialPartner) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
       scrollTo(xmlDataRef);
       return;
@@ -818,7 +900,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
-    if (!partnerId && !vulpeScan) {
+    const requiresCommercialPartner = xmlQueue.some((file) =>
+      file.status !== "ERROR"
+      && !file.xmlType.startsWith("EVENT_")
+      && !xmlInspectionIsWarehouse(file)
+    );
+    if (!partnerId && !vulpeScan && requiresCommercialPartner) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
       scrollTo(xmlDataRef);
       return;
@@ -947,6 +1034,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     ? xmlPartnerOverrides[selectedXmlFile.token] ?? ""
     : partnerId;
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
+  const selectedWarehouseMovement = classifyWarehouseXml(selectedXmlPreview);
   const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
     ? selectedXmlFile.extractedData.contractNumber
     : "";
@@ -964,12 +1052,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     selectedXmlParties.ownEntityLabel !== (ownLegalEntity.legalName || ownLegalEntity.tradeName)
   );
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
+  const xmlQueueRequiresCommercialPartner = xmlQueue.some((file) =>
+    file.status !== "ERROR"
+    && !file.xmlType.startsWith("EVENT_")
+    && !xmlInspectionIsWarehouse(file)
+  );
+  const xmlQueueHasWarehouseMovement = xmlQueue.some((file) => file.status !== "ERROR" && xmlInspectionIsWarehouse(file));
   const xmlBatchRows = xmlQueue.map((file) => {
     const preview = parseNfeExtractedPreview(file.extractedData ?? null);
     const parties = resolveOwnAndCounterparty(preview, data.legalEntities);
     const firstItem = preview?.items[0] ?? null;
     const inferredScope = inferXmlOperationScope(preview);
     const assignedPartner = partners.find((partner) => partner.id === xmlPartnerOverrides[file.token]);
+    const warehouseMovement = classifyWarehouseXml(preview);
     return {
       file,
       preview,
@@ -978,6 +1073,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope,
       classificationLabel: file.xmlType.startsWith("EVENT_")
         ? "Cancelamento"
+        : warehouseMovement
+          ? `${warehouseMovement.movementType === "RETURN" ? "Retorno" : "Remessa"} ${warehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}`
         : xmlIgnoredSelections[file.token]
           ? "Nao cadastrar"
           : assignedPartner?.displayName ?? "Escolher cliente"
@@ -994,7 +1091,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlImportSteps: StepperStep[] = [
     { id: "import", label: "Importar arquivo", status: xmlQueue.length > 0 ? "complete" : "current" },
     { id: "read", label: "Leitura automatica", status: xmlQueue.length > 0 ? "complete" : "pending" },
-    { id: "rule", label: "Aplicar regra", status: xmlJob ? "complete" : xmlQueue.length > 0 ? "current" : "pending" },
+    { id: "rule", label: xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Reconhecer armazem" : "Aplicar regra", status: xmlJob ? "complete" : xmlQueue.length > 0 ? "current" : "pending" },
     {
       id: "save",
       label: "Salvar nota",
@@ -1009,6 +1106,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const visibleServiceCents = Object.values(documentServiceInfo).reduce((sum, item) => sum + item.serviceCents, 0);
   const detailMainItem = detail?.items[0] ?? null;
   const detailMainOperation = detail?.operations[0] ?? null;
+  const detailIsPackaging = detail ? isPackagingDocument({ documentNotes: detail.document.notes, overrideReasons: detail.operations.map((operation) => operation.manualOverrideReason) }) : false;
+  const packagingValueSaved = Boolean(detailMainOperation?.manualOverrideReason?.startsWith(`${PACKAGING_OVERRIDE_PREFIX}:`));
   const operationTypeLabel = detailMainOperation?.operationType === "PURCHASE" ? "Compra" : detailMainOperation?.operationType === "SALE" ? "Venda" : "-";
   const operationScopeLabel = formatOperationScope(detailMainOperation?.operationScope);
   // Nota triangulada: a mesma nota gerou uma operacao de compra (fornecedor)
@@ -1122,14 +1221,38 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       <Tabs
         active={pageTab}
         items={[
-          { id: "xml", label: "XML NF-e" },
-          { id: "documents", label: "Notas fiscais" },
+          { id: "received", label: "Notas recebidas" },
+          { id: "issued", label: "Notas emitidas" },
+          { id: "documents", label: "Lancamento manual" },
           { id: "spreadsheets", label: "Planilhas" }
         ]}
-        onChange={setPageTab}
+        onChange={(nextTab) => {
+          const next = nextTab as OperationsPageTab;
+          if (next === "documents" && (pageTab === "received" || pageTab === "issued")) {
+            setOperationType(pageTab === "received" ? "PURCHASE" : "SALE");
+            setPartnerId("");
+            setManualCounterpartyLegalEntityId("");
+          }
+          const changedDirection = (pageTab === "received" || pageTab === "issued") && (next === "received" || next === "issued") && pageTab !== next;
+          if (changedDirection) {
+            setVulpeScan(null);
+            setXmlSelections([]);
+            setXmlQueue([]);
+            setXmlJob(null);
+            setSelectedXmlToken(null);
+          }
+          setPageTab(next);
+        }}
       />
       {pageTab === "documents" && <>
-      <AdminBlock title="Notas e operacoes manuais">
+      <AdminBlock title="Lancamento manual de nota">
+        <div className="notes-flow-intro">
+          <div>
+            <span className="notes-flow-intro__eyebrow">Alternativa ao XML</span>
+            <strong>Use este formulario somente quando a nota nao estiver disponivel na busca automatica.</strong>
+            <small>Primeiro escolha se e compra ou venda, depois o responsavel e o CNPJ exato que aparece na NF-e.</small>
+          </div>
+        </div>
         <div className="operation-context-note">
           <span>CNPJ ativo para notas</span>
           <strong>{ownLegalEntity ? (ownLegalEntity.legalName || ownLegalEntity.tradeName) : "Nao selecionado"}</strong>
@@ -1180,8 +1303,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </>
           ) : (
             <>
-              <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor responsavel" : "Cliente/corretor responsavel"} value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
+              <SelectField label="Tipo da nota" value={operationType} onChange={(value) => { setOperationType(value as "PURCHASE" | "SALE"); setPartnerId(""); setManualCounterpartyLegalEntityId(""); }} options={[["PURCHASE", "Nota recebida (compra/entrada)"], ["SALE", "Nota emitida (venda/saida)"]]} />
+              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor" : "Cliente/corretor"} value={partnerId} onChange={(value) => { setPartnerId(value); setManualCounterpartyLegalEntityId(""); }} partners={partners} legalEntities={partnerLegalEntities} />
+              <SelectField
+                label={operationType === "PURCHASE" ? "CNPJ emissor da nota" : "CNPJ destinatario da nota"}
+                value={manualCounterpartyLegalEntityId}
+                onChange={setManualCounterpartyLegalEntityId}
+                options={[
+                  ["", partnerId ? "Selecione o CNPJ exato" : "Escolha primeiro o responsavel"],
+                  ...partnerLegalEntities
+                    .filter((entity) => entity.businessPartnerId === partnerId && entity.isActive)
+                    .map((entity) => [entity.id, `${entity.legalName || entity.tradeName} — ${formatCnpjCompact(entity.cnpj)}`] as [string, string])
+                ]}
+              />
             </>
           )}
           <TextField label="Numero da nota" value={number} onChange={setNumber} />
@@ -1192,7 +1326,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <TextField label="Valor total" value={total} onChange={setTotal} />
           <button
             className="primary"
-            disabled={Boolean(manualIssuerPartnerLegalEntityId) && (!partnerId || !manualSecondaryPartnerId || partnerId === manualSecondaryPartnerId)}
+            disabled={manualIssuerPartnerLegalEntityId
+              ? (!partnerId || !manualSecondaryPartnerId || partnerId === manualSecondaryPartnerId)
+              : (!partnerId || !manualCounterpartyLegalEntityId)}
             onClick={() => void createDocument()}
           >
             Criar nota
@@ -1259,7 +1395,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <button disabled={!replacementPartnerId || replacementPartnerId === detail.document.responsiblePartnerId || detail.document.status === "CANCELED" || detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
             try {
               const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: replacementPartnerId, operationType: detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE" });
-              setDetail(updated); setReplacementPartnerId(""); await load(); setMessage("Responsavel corrigido e tarifa recalculada. Confira os valores e confirme a nota novamente.");
+              setDetail(updated); setReplacementPartnerId(""); await load(); setMessage("Responsavel corrigido e tarifa recalculada. Confira os valores.");
             } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao corrigir responsavel."}`); }
           }}>Trocar responsavel e recalcular</button>
           <TextField label="Contrato" value={detail.document.contractNumber ?? ""} onChange={(value) => setDetail((current) => current ? ({ ...current, document: { ...current.document, contractNumber: value } }) : current)} />
@@ -1360,9 +1496,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <div><span>Produto</span><strong>{detailMainItem?.description ?? products.find((product) => product.id === detailMainOperation?.productId)?.name ?? "-"}</strong></div>
                 <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${formatProductUnit(detailMainItem.unit)}` : "-"}</strong></div>
                 <div><span>Preco comercial</span><strong>{detailMainItem ? decimalTextBr(detailMainItem.unitPriceDecimal) : "-"}</strong></div>
-                <div><span>Sacas</span><strong>{detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
+                <div><span>Sacas</span><strong>{detailIsPackaging ? (packagingValueSaved ? "0 (sacaria)" : "Nao soma") : detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
                 <div><span>UF da venda</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
-                <div><span>Servico calculado</span><strong>{detailMainOperation ? `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/saca)` : "-"}</strong></div>
+                <div><span>Servico calculado</span><strong>{detailMainOperation ? (detailIsPackaging && !packagingValueSaved ? "Informe o valor por unidade" : `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/${detailIsPackaging ? "un" : "saca"})`) : "-"}</strong></div>
               </div>
             ) : null}
             {detail.items.length ? <p className="muted">Os campos abaixo servem apenas para adicionar outro item/operacao manualmente nesta nota.</p> : null}
@@ -1376,11 +1512,21 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             </FormGrid>
             <button className="invoice-action-button invoice-action-button--primary" onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
           </section>
+          {detailIsPackaging ? (
+          <section className="invoice-action-card">
+            <header><span>Remessa de sacaria</span><strong>Valor por unidade</strong></header>
+            <p className="muted">Big bag vazio: a nota nao soma sacas. Informe quanto cobrar por unidade{detailMainItem ? ` (${decimalTextBr(detailMainItem.quantity)} unidades)` : ""}. Use 0 para nao cobrar.</p>
+            {packagingValueSaved && detailMainOperation ? <p className="muted">Atual: {formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)} por unidade, total {formatCurrencyFromCents(detailMainOperation.serviceAmountCents)}.</p> : null}
+            <TextField label="Valor por unidade (R$)" value={packagingUnitValue} onChange={setPackagingUnitValue} />
+            <button className="invoice-action-button invoice-action-button--primary" disabled={!detail.operations.length || detail.operations.some((op) => op.billingStatus !== "UNBILLED")} onClick={() => void savePackagingUnitValue()}>Salvar valor por unidade</button>
+          </section>
+          ) : (
           <section className="invoice-action-card">
             <header><span>Servico</span><strong>Valor por saca</strong></header>
             <p className="muted">Altera manualmente a primeira operacao da nota e exige motivo.</p>
             <button className="invoice-action-button" disabled={!detail.operations.length} onClick={() => void overrideFirstOperation()}>Alterar valor da primeira operacao</button>
           </section>
+          )}
           <section className="invoice-action-card">
             <header><span>Status</span><strong>Controle da nota</strong></header>
             <p className="muted">Confirme para liberar cobranca ou cancele quando a nota deve permanecer no historico.</p>
@@ -1491,13 +1637,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="table"><div className="table-head import-history-grid"><span>Arquivo</span><span>Aba</span><span>Status</span><span>Linhas</span><span>Importadas</span><span>Acoes</span></div>{importHistory.map((job) => <div key={job.id} className="table-row import-history-grid"><span>{job.originalFileName}</span><span>{job.selectedSheetName}</span><span><StatusBadge status={job.status} /></span><span>{job.totalRows}</span><span>{job.importedRows}</span><span><button onClick={() => window.operationsCafe.getSpreadsheetImportJob(job.id).then(setImportJob)}>Detalhar</button><button onClick={() => { void requestTextInput({ title: "Reverter importação", label: "Motivo da reversão" }).then((reason) => { if (reason) void window.operationsCafe.revertSpreadsheetImportJob(job.id, reason).then(setImportJob).then(() => load()); }); }}>Reverter</button></span></div>)}</div>
       </AdminBlock></div>
       </>}
-      {pageTab === "xml" && <>
-      <AdminBlock title="Importacao automatica de NF-e">
-        <p className="muted">Leitura de XML e captura automatica dos dados.</p>
+      {(pageTab === "received" || pageTab === "issued") && <>
+      <AdminBlock title={pageTab === "received" ? "Notas recebidas de fornecedores" : "Notas emitidas para clientes"}>
+        <div className={`notes-direction-hero notes-direction-hero--${pageTab}`}>
+          <div className="notes-direction-hero__icon" aria-hidden="true">{pageTab === "received" ? "↓" : "↑"}</div>
+          <div>
+            <span>{pageTab === "received" ? "ENTRADAS / COMPRAS" : "SAIDAS / VENDAS"}</span>
+            <strong>{pageTab === "received" ? "Localize as notas que fornecedores emitiram para cada uma das suas empresas." : "Localize as notas emitidas por cada uma das suas empresas."}</strong>
+            <small>{pageTab === "received" ? "O nome e o CNPJ exato do fornecedor ficam visiveis antes do lancamento." : "O cliente e o CNPJ destinatario ficam visiveis antes do lancamento."}</small>
+          </div>
+        </div>
         {vulpeDevAvailable ? (
           <div className="operation-warning-card operation-warning-card--neutral">
-            <strong>Caixa de entrada de NF-e</strong>
-            <span>Busca as NF-e autorizadas no periodo escolhido, remove as chaves ja cadastradas e envia as restantes para revisao. O mes atual ja vem selecionado e nenhuma nota e lancada antes da sua confirmacao.</span>
+            <strong>{pageTab === "received" ? "Buscar notas recebidas" : "Buscar notas emitidas"}</strong>
+            <span>Escolha abaixo qual empresa propria deve ser consultada. O sistema separa as notas pelo sentido correto, remove as chaves ja cadastradas e nao lanca nada antes da sua confirmacao.</span>
             <section className="collector-monitor" aria-label="Monitor do coletor remoto">
               <div className="collector-monitor__heading">
                 <div>
@@ -1590,7 +1743,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="toolbar vulpe-search-actions">
               {[...vulpeDevSources].sort((left, right) => Number(right.source === "ALL") - Number(left.source === "ALL")).map((source) => (
                 <button key={source.source} className={source.source === "ALL" ? "vulpe-search-all" : undefined} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
-                  Buscar {source.label}
+                  {pageTab === "received" ? "Recebidas por" : "Emitidas por"} {source.label}
                 </button>
               ))}
             </div>
@@ -1603,7 +1756,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         <div className="import-columns">
           <div className="import-column" ref={xmlDataRef}>
-            <h3>Importar NF-e</h3>
+            <h3>{pageTab === "received" ? "Adicionar nota recebida por XML" : "Adicionar nota emitida por XML"}</h3>
             <FileDropzone
               title="Arraste XMLs aqui ou selecione os arquivos"
               description="Solte um ou mais XMLs da NF-e nesta area para inspecionar automaticamente."
@@ -1620,21 +1773,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
             {xmlQueue.length ? (
               <ul className="xml-queue-list">
-                {xmlQueue.map((file) => (
+                  {xmlQueue.map((file) => {
+                    const party = xmlPartySummary(file, pageTab === "received" ? "INBOUND" : "OUTBOUND");
+                    return (
                   <li key={file.token}>
                     <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
-                      <span>{file.originalFileName}</span>
+                      <span className="xml-queue-party"><strong>{party.title}</strong><small>{party.subtitle}</small></span>
                       <StatusBadge status={file.status} />
-                      <small>{formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
+                      <small>{file.originalFileName} · {formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
                     </button>
                   </li>
-                ))}
+                    );
+                  })}
               </ul>
             ) : (
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
             )}
             <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan)}>Validar fila</button>
+              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
+                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentacao" : "Validar fila"}
+              </button>
             </div>
           </div>
 
@@ -1693,7 +1851,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
                   <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
                 </dl>
-                {selectedXmlFile ? (
+                {selectedXmlFile && !selectedWarehouseMovement ? (
                   <FormGrid>
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
                     <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
@@ -1732,13 +1890,29 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
           <div className="import-column">
             <h3><ListStepsIcon /> Fluxo de importacao</h3>
-            <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
-            <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
+            {selectedWarehouseMovement ? (
+              <p className="muted">Movimentacoes de armazem sao registradas somente no controle de cafes armazenados e nao passam pelas regras comerciais.</p>
+            ) : (
+              <>
+                <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
+                <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
+              </>
+            )}
             <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             {selectedXmlIsEvent ? (
               <div className="operation-warning-card operation-warning-card--neutral">
                 <strong>Evento de cancelamento</strong>
                 <span>Ao concluir a fila, o sistema registra o evento e cancela automaticamente a nota e suas operacoes, quando a chave ja estiver cadastrada.</span>
+              </div>
+            ) : selectedWarehouseMovement ? (
+              <div className="operation-warning-card operation-warning-card--neutral">
+                <strong>{selectedWarehouseMovement.movementType === "RETURN" ? "Retorno de armazem reconhecido" : "Remessa para armazem reconhecida"}</strong>
+                <span>
+                  {selectedWarehouseMovement.movementType === "RETURN"
+                    ? `Ao importar, o sistema descontara ${decimalTextBr(selectedXmlSacks)} sacas do estoque mantido em ${selectedXmlParties.issuerLabel ?? "armazem identificado no XML"}.`
+                    : `Ao importar, o sistema acrescentara ${decimalTextBr(selectedXmlSacks)} sacas ao estoque mantido em ${selectedXmlParties.recipientLabel ?? "armazem identificado no XML"}.`}
+                </span>
+                <span>CFOP {selectedWarehouseMovement.cfops.join(", ")} · movimentacao {selectedWarehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}. Nao sera criada compra, venda ou cobranca.</span>
               </div>
             ) : (
               <>
@@ -1789,7 +1963,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             )}
             <div className="toolbar">
               <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
-              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan)}>Importar XMLs</button>
+              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
+                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentacao" : "Importar XMLs"}
+              </button>
             </div>
           </div>
         </div>

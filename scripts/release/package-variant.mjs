@@ -324,7 +324,56 @@ function latestDatabaseMigrationVersion() {
 }
 
 function releaseNotes(currentVariant, releaseVersion) {
-  const highlights = releaseVersion === "1.1.48"
+  const highlights = releaseVersion === "1.1.60"
+    ? `- A tela Notas e operacoes passa a abrir diretamente em Notas emitidas.
+- Saldos manuais e movimentos de NF-e de armazem passam a ser vinculados pelo CNPJ, mesmo quando os nomes sao diferentes.
+- Retornos com descricao generica reaproveitam a classificacao manual quando ha um unico produto identificado no armazem.
+- Evita criar uma segunda linha negativa quando uma nota de retorno deve abater o saldo informado manualmente.
+- Novos ajustes manuais exigem o CNPJ completo do armazem para garantir o vinculo com futuras NF-e.`
+    : releaseVersion === "1.1.59"
+    ? `- Remove a consulta direta de NF-e na SEFAZ para evitar disputa de NSU com a Vulpe, que permanece como fonte prioritaria dos XMLs.
+- Reconhece automaticamente notas de remessa e retorno de armazem pelo CFOP durante a importacao do XML.
+- Movimentacoes de armazem deixam de exigir fornecedor e campos comerciais.
+- A tela mostra se as sacas serao acrescentadas ou descontadas sem gerar compra, venda ou cobranca.`
+    : releaseVersion === "1.1.58"
+    ? `- Consulta diretamente na SEFAZ as NF-e recebidas por cada CNPJ proprio usando o certificado digital instalado no Windows.
+- Permite buscar novas notas pela distribuicao de documentos fiscais ou localizar uma NF-e pela chave de acesso.
+- XMLs completos entram na fila normal de revisao e importacao, sem exigir selecao manual do arquivo.
+- Quando a SEFAZ exigir Ciencia da Operacao, o programa pede confirmacao explicita antes de registrar o evento.`
+    : releaseVersion === "1.1.57"
+    ? `- Reorganiza a tela de notas em areas separadas para notas recebidas, notas emitidas, lancamento manual e planilhas.
+- A busca automatica filtra entradas e saidas por empresa e identifica razao social e CNPJ exatos do fornecedor ou cliente.
+- O lancamento manual exige a escolha do CNPJ correto, evitando misturar filiais de um mesmo fornecedor ou cliente.
+- Prepara o coletor para as notas da Villa Coffee SP e oculta cadastros tecnicos de XML da lista de CNPJs proprios.`
+    : releaseVersion === "1.1.56"
+    ? `- Corrige os paineis do controle de cafes armazenados que ficavam comprimidos em janelas com menor altura.
+- Reconhece referencias de remessa com separador de milhar, como NF-e REMESSA 1.344.
+- Retornos simbolicos vinculam corretamente a remessa original e atualizam o estoque armazenado.
+- Reduz varreduras completas do banco durante a sincronizacao para diminuir pequenas travadas.`
+    : releaseVersion === "1.1.55"
+    ? `- Novo controle de cafes armazenados em terceiros, com saldo por armazem, empresa e produto em quilos e sacas.
+- Reconhecimento automatico das NF-e de remessa, retorno fisico, remessa simbolica e retorno simbolico.
+- O coletor passa a reconhecer notas em que a empresa e emitente ou destinataria e aplica cancelamentos ao estoque.
+- Movimentos simbolicos sem referencia clara ficam separados para conferencia manual.
+- Sincronizacao e consultas automaticas foram ajustadas para reduzir travamentos e uso de memoria.`
+    : releaseVersion === "1.1.54"
+    ? `- A conferencia de repasses reune notas da Villa Coffee e da Grao & Grao para o mesmo cliente ou fornecedor e identifica a origem de cada nota.
+- Nos pagamentos, somente o valor precisa ser informado; os demais campos passam a ser opcionais.
+- O campo de valor vazio recebe um alerta visual, e a tecla Tab cria automaticamente a proxima linha de pagamento.`
+    : releaseVersion === "1.1.53"
+    ? `- A lista de fechamentos passa a mostrar o comprador nas vendas e o vendedor nas compras.
+- O PDF de fechamento ganha uma terceira area de assinatura para o corretor.
+- O rodape do fechamento foi simplificado para exibir somente a marca discreta Gerado por Graonex.`
+    : releaseVersion === "1.1.52"
+    ? `- A conferencia de repasses passa a aceitar notas de saida de clientes e notas de entrada de fornecedores.
+- Adicionada a opcao de criar uma conferencia sem notas fiscais, informando diretamente um valor inicial.
+- Novos pagamentos podem ser incluidos posteriormente e sao abatidos automaticamente do saldo da conferencia manual.
+- O historico identifica se a origem do valor foi uma lista de notas ou um valor informado manualmente.`
+    : releaseVersion === "1.1.49"
+    ? `- A lista de fechamentos pode ser filtrada por empresa e periodo e ordenada pela numeracao ou pela data.
+- Fechamentos de compra deixam de mostrar os dados bancarios da empresa compradora e passam a indicar que o deposito sera combinado com o vendedor.
+- Os arquivos de previa e confirmacao passam a incluir a numeracao completa do fechamento e a contraparte no nome sugerido.`
+    : releaseVersion === "1.1.48"
     ? `- O card Valor total dos servicos soma todos os servicos do periodo selecionado.
 - O total inclui operacoes ja cobradas e ainda nao cobradas.
 - Villa Coffee e Grao & Grao, com todos os seus CNPJs, entram no mesmo valor corporativo.`

@@ -18,6 +18,7 @@ import { XmlImportHistoryPage } from "../pages/imports/xml/XmlImportHistoryPage"
 import { XmlImportPage } from "../pages/imports/xml/XmlImportPage";
 import { ChargesPage } from "../pages/charges/ChargesPage";
 import { TransferReconciliationsPage } from "../pages/transferReconciliations/TransferReconciliationsPage";
+import { PeriodComparisonPage } from "../pages/comparison/PeriodComparisonPage";
 import { ClientLedgerPage } from "../pages/clientLedger/ClientLedgerPage";
 import { Dashboard, NotFoundPage, SetupWizard, Splash } from "../pages/appStates/AppStatePages";
 import { AssistantPage } from "../pages/assistant/AssistantPage";
@@ -38,6 +39,7 @@ import { PayablesPage } from "../pages/finance/PayablesPage";
 import { RecurringPayableDetailsPage } from "../pages/finance/RecurringPayableDetailsPage";
 import { RecurringPayablesPage } from "../pages/finance/RecurringPayablesPage";
 import { OperationsPage } from "../pages/operations/OperationsPage";
+import { WarehouseStockPage } from "../pages/warehouses/WarehouseStockPage";
 import { PartnersPage } from "../pages/partners/PartnersPage";
 import { ProductsPage } from "../pages/products/ProductsPage";
 import { PurchaseRateRulesPage } from "../pages/purchaseRates/PurchaseRateRulesPage";
@@ -219,6 +221,7 @@ function renderRoute(
   if (path.startsWith("/settings/change-password")) return <ChangePasswordPage session={session} onSession={setSession} />;
   if (path.startsWith("/assistant")) return <AssistantPage organizationId={data.profile?.defaultOrganizationId ?? ""} ownLegalEntityId={data.profile?.defaultLegalEntityId ?? null} />;
   if (path.startsWith("/operations")) return <OperationsPage data={data} />;
+  if (path.startsWith("/warehouse-stock")) return <WarehouseStockPage data={data} />;
   if (path.startsWith("/imports/spreadsheets/history")) return <SpreadsheetImportHistoryPage />;
   if (path.startsWith("/imports/spreadsheets/templates")) return <SpreadsheetMappingTemplatesPage />;
   if (path.startsWith("/imports/spreadsheets")) return <SpreadsheetImportPage data={data} />;
@@ -235,6 +238,7 @@ function renderRoute(
   if (path.startsWith("/billing/rates") || path.startsWith("/rates")) return <ServiceRateRulesPage data={data} />;
   if (path.startsWith("/charges")) return <ChargesPage data={data} />;
   if (path.startsWith("/transfer-reconciliations")) return <TransferReconciliationsPage data={data} />;
+  if (path.startsWith("/comparison")) return <PeriodComparisonPage data={data} />;
   if (path.startsWith("/client-ledger")) return <ClientLedgerPage data={data} />;
   if (path.startsWith("/finance/purchase-settlements")) return <PurchaseSettlementsPage data={data} />;
   if (path.startsWith("/finance/purchase-rates")) return <PurchaseRateRulesPage data={data} />;

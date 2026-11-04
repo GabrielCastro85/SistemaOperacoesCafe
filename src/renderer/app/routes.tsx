@@ -1,7 +1,9 @@
 export type AppRouteId =
   | "dashboard"
   | "assistant"
+  | "periodComparison"
   | "invoices"
+  | "warehouseStock"
   | "productAliases"
   | "partners"
   | "products"
@@ -26,6 +28,7 @@ export const routeTitleById: Record<AppRouteId, string> = {
   dashboard: "Dashboard",
   assistant: "Assistente",
   invoices: "Notas e operações",
+  warehouseStock: "Cafés armazenados",
   productAliases: "Aliases de produto",
   partners: "Cadastros comerciais",
   products: "Produtos",
@@ -34,6 +37,7 @@ export const routeTitleById: Record<AppRouteId, string> = {
   purchaseSettlements: "Acertos de entrada",
   charges: "Cobranças",
   transferReconciliations: "Conferência de repasses",
+  periodComparison: "Comparativo de períodos",
   ledger: "Conta-corrente",
   confirmations: "Confirmações de negócio",
   finance: "Financeiro",

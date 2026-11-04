@@ -302,6 +302,11 @@
   box-sizing: border-box;
 }
 
+.viewer-period-filter--inline {
+  margin-bottom: 0;
+  min-width: min(100%, 360px);
+}
+
 @media (max-width: 480px) {
   .viewer-period-filter {
     grid-template-columns: minmax(0, 1fr);

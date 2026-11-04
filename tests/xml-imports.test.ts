@@ -774,7 +774,7 @@ describe("commercial import safeguards", () => {
       await ctx.repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: other.id, ownLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 700, effectiveFrom: "1900-01-01", effectiveTo: null, priority: 0, notes: null, isActive: true });
       ctx.repo.updateOperationManualRate(detail.operations[0].id, 300, "Acordo anterior");
       const updated = ctx.repo.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: other.id });
-      expect(updated.document.status).toBe("DRAFT");
+      expect(updated.document.status).toBe(detail.document.status);
       expect(updated.operations[0].id).toBe(detail.operations[0].id);
       expect(updated.operations[0].responsiblePartnerId).toBe(other.id);
       expect(updated.operations[0].appliedRateValueCents).toBe(700);
@@ -881,6 +881,158 @@ describe("commercial import safeguards", () => {
   });
 });
 
+describe("warehouse coffee movements", () => {
+  it("recognizes deposits and returns without creating commercial operations, and reverses a canceled return", async () => {
+    const ctx = await setup();
+    try {
+      const depositKey = makeAccessKey(9101);
+      const depositXml = nfeXml(depositKey)
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Remessa para deposito fechado</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5905</CFOP>");
+      const deposited = await importAuditXml(ctx, depositXml);
+      expect(deposited.files[0].status).toBe("IMPORTED");
+      expect(deposited.files[0].fiscalDocumentId).toBeNull();
+      expect(deposited.job.createdOperations).toBe(0);
+      expect(ctx.repo.listFiscalDocuments({ organizationId: villaId })).toHaveLength(0);
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "630", totalSacks: "10.5", warehouseCount: 1, activeMovementCount: 1 });
+
+      const returnKey = makeAccessKey(9102);
+      const returnXml = nfeXml(returnKey)
+        .replace(`<CNPJ>${ownCnpj}</CNPJ>`, "<CNPJ>__WAREHOUSE__</CNPJ>")
+        .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${ownCnpj}</CNPJ>`)
+        .replace("<CNPJ>__WAREHOUSE__</CNPJ>", `<CNPJ>${partnerCnpj}</CNPJ>`)
+        .replace("<xNome>Villa Coffee MG</xNome>", "<xNome>__WAREHOUSE_NAME__</xNome>")
+        .replace("<xNome>Cliente XML Ltda</xNome>", "<xNome>Villa Coffee MG</xNome>")
+        .replace("<xNome>__WAREHOUSE_NAME__</xNome>", "<xNome>Cliente XML Ltda</xNome>")
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Retorno de mercadoria depositada</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5906</CFOP>")
+        .replaceAll("10.5", "2");
+      const returned = await importAuditXml(ctx, returnXml);
+      expect(returned.files[0].status).toBe("IMPORTED");
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "510", totalSacks: "8.5", activeMovementCount: 2 });
+
+      await importAuditXml(ctx, cancelXml(returnKey));
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "630", totalSacks: "10.5", activeMovementCount: 1 });
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId, status: "CANCELED" })).toHaveLength(1);
+    } finally { ctx.db.close(); }
+  });
+
+  it("holds a symbolic movement for review when the original note reference cannot be identified", async () => {
+    const ctx = await setup();
+    try {
+      await importAuditXml(ctx, nfeXml(makeAccessKey(9103)).replace("<CFOP>5102</CFOP>", "<CFOP>5934</CFOP>"));
+      const summary = ctx.repo.getWarehouseSummary({ organizationId: villaId });
+      expect(summary.pendingReviewCount).toBe(1);
+      expect(summary.activeMovementCount).toBe(0);
+      const pending = ctx.repo.listWarehouseMovements({ organizationId: villaId, status: "PENDING_REVIEW" })[0];
+      expect(pending?.notes).toMatch(/Referencia/);
+      const reviewed = ctx.repo.reviewWarehouseMovement(pending!.id, "1208", "Conferido com o DANFE.");
+      expect(reviewed).toMatchObject({ status: "ACTIVE", referencedDocumentNumber: "1208", notes: "Conferido com o DANFE." });
+      const afterReview = ctx.repo.getWarehouseSummary({ organizationId: villaId });
+      expect(afterReview.pendingReviewCount).toBe(0);
+      expect(afterReview.activeMovementCount).toBe(1);
+    } finally { ctx.db.close(); }
+  });
+
+  it("recognizes a symbolic return whose remittance reference uses thousand separators", async () => {
+    const ctx = await setup();
+    try {
+      const returnKey = makeAccessKey(9105);
+      const returnXml = nfeXml(returnKey)
+        .replace(`<CNPJ>${ownCnpj}</CNPJ>`, "<CNPJ>__WAREHOUSE__</CNPJ>")
+        .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${ownCnpj}</CNPJ>`)
+        .replace("<CNPJ>__WAREHOUSE__</CNPJ>", `<CNPJ>${partnerCnpj}</CNPJ>`)
+        .replace("<xNome>Villa Coffee MG</xNome>", "<xNome>__WAREHOUSE_NAME__</xNome>")
+        .replace("<xNome>Cliente XML Ltda</xNome>", "<xNome>Villa Coffee MG</xNome>")
+        .replace("<xNome>__WAREHOUSE_NAME__</xNome>", "<xNome>Santa Fe Armazens Gerais</xNome>")
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Retorno de mercadoria depositada em armazem geral</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5907</CFOP>")
+        .replace("<infCpl>Informacao complementar</infCpl>", "<infCpl>REF. NF-e REMESSA 1.344 (PARTE)</infCpl>")
+        .replaceAll("10.5", "500");
+
+      const result = await importAuditXml(ctx, returnXml);
+      expect(result.files[0].status).toBe("IMPORTED");
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId })[0]).toMatchObject({
+        accessKey: returnKey,
+        warehouseName: "Santa Fe Armazens Gerais",
+        movementType: "RETURN",
+        movementKind: "SYMBOLIC",
+        quantityKg: "30000",
+        referencedDocumentNumber: "1344",
+        status: "ACTIVE"
+      });
+    } finally { ctx.db.close(); }
+  });
+
+  it("records auditable manual adjustments without changing the original warehouse note", async () => {
+    const ctx = await setup();
+    try {
+      const depositKey = makeAccessKey(9104);
+      await importAuditXml(ctx, nfeXml(depositKey).replace("<CFOP>5102</CFOP>", "<CFOP>5905</CFOP>"));
+      const base = {
+        organizationId: villaId, ownLegalEntityId, warehouseName: "Cliente XML Ltda", warehouseCnpj: null,
+        productDescription: "CAFE ARABICA", unit: "SACK" as const, issueDate: "2026-07-17", reason: "Conferencia fisica do armazem"
+      };
+      const setBalance = ctx.repo.createWarehouseAdjustment({ ...base, adjustmentMode: "SET_BALANCE", quantity: "8" }, null);
+      expect(setBalance).toMatchObject({ origin: "MANUAL", movementType: "RETURN", quantityKg: "150", warehouseCnpj: partnerCnpj, notes: base.reason });
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalSacks: "8" });
+
+      ctx.repo.createWarehouseAdjustment({ ...base, adjustmentMode: "ADD", quantity: "2" }, null);
+      ctx.repo.createWarehouseAdjustment({ ...base, adjustmentMode: "REMOVE", quantity: "1" }, null);
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({ totalKg: "540", totalSacks: "9" });
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId }).filter((row) => row.origin === "MANUAL")).toHaveLength(3);
+      expect(ctx.repo.listWarehouseMovements({ organizationId: villaId }).find((row) => row.accessKey === depositKey)).toMatchObject({ origin: "XML", quantityKg: "630" });
+    } finally { ctx.db.close(); }
+  });
+
+  it("links a generic return to a manual warehouse balance by CNPJ instead of name", async () => {
+    const ctx = await setup();
+    try {
+      ctx.repo.createWarehouseAdjustment({
+        organizationId: villaId,
+        ownLegalEntityId,
+        warehouseName: "SANTA FE",
+        warehouseCnpj: partnerCnpj,
+        productDescription: "ARABICA",
+        adjustmentMode: "SET_BALANCE",
+        unit: "SACK",
+        quantity: "500",
+        issueDate: "2026-10-29",
+        reason: "Saldo inicial informado pelo armazem"
+      }, null);
+
+      const returnKey = makeAccessKey(9106);
+      const returnXml = nfeXml(returnKey)
+        .replace(`<CNPJ>${ownCnpj}</CNPJ>`, "<CNPJ>__WAREHOUSE__</CNPJ>")
+        .replace(`<CNPJ>${partnerCnpj}</CNPJ>`, `<CNPJ>${ownCnpj}</CNPJ>`)
+        .replace("<CNPJ>__WAREHOUSE__</CNPJ>", `<CNPJ>${partnerCnpj}</CNPJ>`)
+        .replace("<xNome>Villa Coffee MG</xNome>", "<xNome>__WAREHOUSE_NAME__</xNome>")
+        .replace("<xNome>Cliente XML Ltda</xNome>", "<xNome>Villa Coffee MG</xNome>")
+        .replace("<xNome>__WAREHOUSE_NAME__</xNome>", "<xNome>SANTA FE ARMAZENS GERAIS EIRELI</xNome>")
+        .replace("<xProd>CAFE ARABICA</xProd>", "<xProd>CAFE BENEFICIADO CRU EM GRAO</xProd>")
+        .replace("<natOp>Venda de cafe</natOp>", "<natOp>Retorno de mercadoria depositada em armazem geral</natOp>")
+        .replace("<CFOP>5102</CFOP>", "<CFOP>5906</CFOP>")
+        .replaceAll("10.5", "500");
+
+      const result = await importAuditXml(ctx, returnXml);
+      expect(result.files[0].status).toBe("IMPORTED");
+      const movements = ctx.repo.listWarehouseMovements({ organizationId: villaId });
+      expect(movements.find((row) => row.accessKey === returnKey)).toMatchObject({
+        warehouseCnpj: partnerCnpj,
+        warehouseName: "SANTA FE",
+        productDescription: "ARABICA",
+        movementType: "RETURN"
+      });
+      expect(ctx.repo.getWarehouseSummary({ organizationId: villaId })).toMatchObject({
+        totalKg: "0",
+        totalSacks: "0",
+        warehouseCount: 0,
+        balances: []
+      });
+    } finally { ctx.db.close(); }
+  });
+});
+
 function makeAccessKey(sequence = 9001): string {
   const number = String(sequence).padStart(9, "0");
   const control = String(sequence).padStart(8, "0");
@@ -952,3 +1104,65 @@ function realWorldHighPrecisionNfeXml(): string {
   // Trimmed real, SEFAZ-authorized NF-e (signature/certificate block removed, not needed by the parser).
   return `<?xml version="1.0" encoding="UTF-8"?><nfeProc versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe"><NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe31260744963370000523550010000006621163793580" versao="4.00"><ide><cUF>31</cUF><cNF>16379358</cNF><natOp>VENDA DE MERCADORIA ADQUIRIDA OU RECEBIDA DE TERCE</natOp><mod>55</mod><serie>1</serie><nNF>662</nNF><dhEmi>2026-07-17T18:14:05-03:00</dhEmi><dhSaiEnt>2026-07-17T18:24:05-03:00</dhSaiEnt><tpNF>1</tpNF><idDest>1</idDest><cMunFG>3143203</cMunFG><tpImp>1</tpImp><tpEmis>1</tpEmis><cDV>0</cDV><tpAmb>1</tpAmb><finNFe>1</finNFe><indFinal>0</indFinal><indPres>0</indPres><procEmi>0</procEmi><verProc>4.00</verProc></ide><emit><CNPJ>44963370000523</CNPJ><xNome>VILLA COFFEE COMERCIO E EXP. LTDA</xNome><enderEmit><xLgr>AVENIDA VITAL PAULINO DA COSTA</xLgr><nro>466</nro><xBairro>CENTRO</xBairro><cMun>3143203</cMun><xMun>MONTE SANTO DE MINAS</xMun><UF>MG</UF><CEP>37968000</CEP><cPais>1058</cPais><xPais>BRASIL</xPais></enderEmit><IE>0053761240090</IE><CRT>3</CRT></emit><dest><CNPJ>12454636000192</CNPJ><xNome>S B DE OLIVEIRA COMERCIO DE CAFE LTDA</xNome><enderDest><xLgr>AVENIDA AILTON ALVES DOS SANTOS</xLgr><nro>601</nro><xBairro>POUSO ALEGRE</xBairro><cMun>3139409</cMun><xMun>MANHUACU</xMun><UF>MG</UF><CEP>36904082</CEP><cPais>1058</cPais><xPais>BRASIL</xPais></enderDest><indIEDest>1</indIEDest><IE>0024322560040</IE></dest><det nItem="1"><prod><cProd>1</cProd><cEAN>1000000000016</cEAN><xProd>CAFE EM GRAOS CRU ARABICA</xProd><NCM>09011110</NCM><CEST>1709601</CEST><CFOP>5102</CFOP><uCom>SC</uCom><qCom>350.0000</qCom><vUnCom>1997.0000000000</vUnCom><vProd>698950.00</vProd><cEANTrib>1000000000016</cEANTrib><uTrib>SC</uTrib><qTrib>350.0000</qTrib><vUnTrib>1997.0000000000</vUnTrib><indTot>1</indTot></prod><imposto><ICMS><ICMS51><orig>0</orig><CST>51</CST><modBC>3</modBC></ICMS51></ICMS></imposto><vItem>698950.00</vItem></det><total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>698950.00</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>698950.00</vNF></ICMSTot></total><transp><modFrete>0</modFrete><transporta><CPF>08578492714</CPF><xNome>AGNALDO SANTOS DA SILVA</xNome><xMun>IBATIBA</xMun><UF>ES</UF></transporta><vol><qVol>350</qVol><esp>GRANEL</esp><marca>CAFE</marca><pesoL>21000.000</pesoL><pesoB>21000.000</pesoB></vol></transp><pag><detPag><tPag>01</tPag><vPag>698950.00</vPag></detPag></pag><infAdic><infCpl>ICMS DIFERIDO</infCpl></infAdic></infNFe></NFe><protNFe versao="4.00"><infProt><tpAmb>1</tpAmb><verAplic>W-3.4.14</verAplic><chNFe>31260744963370000523550010000006621163793580</chNFe><dhRecbto>2026-07-17T18:15:36-03:00</dhRecbto><nProt>131267734373529</nProt><digVal>Aiv0HwQX7JFDXuMxcZtf6M4DoRk=</digVal><cStat>100</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo></infProt></protNFe></nfeProc>`;
 }
+
+function packagingXml(key: string): string {
+  return nfeXml(key)
+    .replace("<natOp>Venda de cafe</natOp>", "<natOp>REMESSA DE VASILHAME OU SACARIA</natOp>")
+    .replace(
+      "<xProd>CAFE ARABICA</xProd><NCM>09011110</NCM><CFOP>5102</CFOP><uCom>SC</uCom><qCom>10.5</qCom><vUnCom>1234.567</vUnCom><vProd>12962.95</vProd><uTrib>SC</uTrib><qTrib>10.5</qTrib><vUnTrib>1234.567</vUnTrib>",
+      "<xProd>BIG BAG</xProd><NCM>63053200</NCM><CFOP>5920</CFOP><uCom>UN</uCom><qCom>260.0000</qCom><vUnCom>30</vUnCom><vProd>7800.00</vProd><uTrib>UN</uTrib><qTrib>260.0000</qTrib><vUnTrib>30</vUnTrib>"
+    );
+}
+
+describe("remessa de sacaria (big bag vazio)", () => {
+  it("nao soma sacas e cobra o valor por unidade informado na nota", async () => {
+    const ctx = await setup();
+    try {
+      const xml = packagingXml(makeAccessKey());
+      expect(xml).toContain("<CFOP>5920</CFOP>");
+      const result = await importAuditXml(ctx, xml);
+      const id = result.files[0].fiscalDocumentId as string;
+      const imported = ctx.repo.getFiscalDocument(id);
+      expect(imported.items[0].sacksQuantity).toBe("0");
+      expect(imported.operations).toHaveLength(1);
+      expect(imported.operations[0]).toMatchObject({ quantitySacks: "0", serviceAmountCents: 0 });
+      expect(imported.document.hasPendingIssues).toBe(true);
+      expect(imported.document.pendingNotes).toContain("valor a cobrar por unidade");
+      const period = { organizationId: villaId, clientPartnerId: ctx.partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      expect(ctx.repo.findEligibleOperations(period)).toHaveLength(0);
+
+      ctx.repo.updateOperationManualRate(imported.operations[0].id, 3000, "Valor por unidade da remessa de sacaria");
+      const priced = ctx.repo.getFiscalDocument(id);
+      expect(priced.operations[0]).toMatchObject({ quantitySacks: "0", appliedRateValueCents: 3000, serviceAmountCents: 780000 });
+      expect(priced.document.hasPendingIssues).toBe(false);
+      expect(priced.document.status).toBe("CONFIRMED");
+      // A consulta da cobranca recalcula tarifas: a sacaria precisa continuar intacta.
+      const eligible = ctx.repo.findEligibleOperations(period);
+      expect(eligible.map((operation) => [operation.id, operation.serviceAmountCents, operation.quantitySacks])).toEqual([[priced.operations[0].id, 780000, "0"]]);
+      expect(() => ctx.repo.addFiscalDocumentReturn({ fiscalDocumentId: id, returnDate: "2026-07-20", inputUnit: "SACKS", inputQuantity: "1", reason: "Teste" })).toThrow(/sacaria/);
+
+      const other = await ctx.repo.createBusinessPartner({ organizationId: villaId, displayName: "Outro cliente", roles: ["CLIENT"], isActive: true, notes: null });
+      await ctx.repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: other.id, ownLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 700, effectiveFrom: "2026-01-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+      const reassigned = ctx.repo.updateFiscalDocument(id, { ...priced.document, responsiblePartnerId: other.id, operationType: "SALE" });
+      expect(reassigned.operations[0]).toMatchObject({ responsiblePartnerId: other.id, quantitySacks: "0", serviceAmountCents: 780000 });
+    } finally { ctx.db.close(); }
+  });
+
+  it("corrige uma remessa importada antes da regra, quando o big bag virava 1.000 kg", async () => {
+    const ctx = await setup();
+    try {
+      const result = await importAuditXml(ctx, packagingXml(makeAccessKey()));
+      const id = result.files[0].fiscalDocumentId as string;
+      const operationId = ctx.repo.getFiscalDocument(id).operations[0].id;
+      ctx.db.prepare("UPDATE operations SET quantity_sacks_decimal = '4333.333333', service_amount_cents = 2166667, applied_rate_value_cents = 500, rate_was_manually_overridden = 0, manual_rate_value_cents = NULL, manual_override_reason = NULL WHERE id = ?").run(operationId);
+      ctx.db.prepare("UPDATE fiscal_document_items SET sacks_quantity_decimal = '4333.333333' WHERE fiscal_document_id = ?").run(id);
+      ctx.db.prepare("UPDATE fiscal_documents SET has_pending_issues = 0, pending_notes = NULL, status = 'CONFIRMED' WHERE id = ?").run(id);
+
+      ctx.repo.updateOperationManualRate(operationId, 2500, "Valor por unidade da remessa de sacaria");
+      const fixed = ctx.repo.getFiscalDocument(id);
+      expect(fixed.items[0].sacksQuantity).toBe("0");
+      expect(fixed.operations[0]).toMatchObject({ quantitySacks: "0", appliedRateValueCents: 2500, serviceAmountCents: 650000 });
+      expect(fixed.operations[0].manualOverrideReason).toBe("Remessa de sacaria: 260 un x R$ 25,00");
+    } finally { ctx.db.close(); }
+  });
+});

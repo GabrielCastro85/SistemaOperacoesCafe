@@ -4,6 +4,9 @@ import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { deterministicUuid } from "./deterministicId.js";
+import { isPackagingDocument, isPackagingXmlItem, PACKAGING_OVERRIDE_PREFIX, PACKAGING_PENDING_NOTE, packagingOverrideReason, removePendingNote } from "../../../src/shared/utils/packagingBilling.js";
+import { buildPeriodComparisonReport, periodComparisonInputSchema, type ComparisonSaleRow } from "./periodComparison.js";
+import type { PeriodComparisonReport } from "../../../src/shared/utils/periodComparison.js";
 import {
   legalEntityInputSchema,
   locationInputSchema,
@@ -103,6 +106,8 @@ import type {
   XmlImportJob,
   XmlImportFile,
   FiscalDocumentEvent,
+  WarehouseMovement,
+  WarehouseSummary,
   ProductAlias,
   OperationClassificationRule,
   FiscalDocumentMergeHistory,
@@ -152,6 +157,7 @@ import type {
   OrganizationListItem
 } from "../../../src/shared/types/domain.js";
 import { isValidCnpj } from "../../../src/shared/utils/format.js";
+import { CHARGE_BANK_FIELD_LABELS } from "../../../src/shared/utils/chargeBankDetails.js";
 import {
   mapBusinessPartner,
   mapBusinessPartnerLegalEntity,
@@ -217,6 +223,8 @@ import { generatePaymentReceiptDocuments } from "./paymentReceiptDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
 import type { AppDirectories, DealConfirmationSequenceStatus } from "../../../src/shared/types/domain.js";
+
+const LEGAL_ENTITY_CHARGE_BANK_COLUMNS = CHARGE_BANK_FIELD_LABELS.map(([field]) => [field, field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] as const);
 
 type DbRecord = Record<string, unknown>;
 type DealItemInput = ReturnType<typeof dealConfirmationItemInputSchema.parse> & { totalAmountCents?: number | null };
@@ -528,6 +536,15 @@ export class AppRepository {
       default_pix_key: data.defaultPixKey, default_pix_key_type: data.defaultPixKeyType,
       default_payment_terms: data.defaultPaymentTerms, default_delivery_terms: data.defaultDeliveryTerms,
       default_confirmation_notes: data.defaultConfirmationNotes,
+      charge_bank_name: data.chargeBankName ?? null,
+      charge_bank_code: data.chargeBankCode ?? null,
+      charge_bank_agency: data.chargeBankAgency ?? null,
+      charge_bank_account: data.chargeBankAccount ?? null,
+      charge_bank_account_type: data.chargeBankAccountType ?? null,
+      charge_bank_holder_name: data.chargeBankHolderName ?? null,
+      charge_bank_holder_document: data.chargeBankHolderDocument ?? null,
+      charge_pix_key: data.chargePixKey ?? null,
+      charge_pix_key_type: data.chargePixKeyType ?? null,
       is_draft: data.isDraft, is_active: data.isActive, created_at: now, updated_at: now
     };
   }
@@ -568,6 +585,7 @@ export class AppRepository {
       default_confirmation_notes: data.defaultConfirmationNotes,
       is_draft: data.isDraft, is_active: data.isActive, updated_at: new Date().toISOString()
     };
+    for (const [field, column] of LEGAL_ENTITY_CHARGE_BANK_COLUMNS) if (data[field] !== undefined) row[column] = data[field];
     this.patchLocalRow("legal_entities", id, row);
     return this.getLegalEntity(id);
   }
@@ -1649,6 +1667,7 @@ export class AppRepository {
     const data = fiscalDocumentReturnInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);
     if (detail.document.status === "CANCELED") throw new Error("Nota cancelada nao aceita devolucao.");
+    if (isPackagingDocument({ documentNotes: detail.document.notes, overrideReasons: detail.operations.map((item) => item.manualOverrideReason) })) throw new Error("Remessa de sacaria nao tem sacas de cafe para devolver.");
     const saleOperations = detail.operations.filter((operation) => operation.operationType === "SALE" && operation.status !== "CANCELED");
     if (!saleOperations.length) throw new Error("Esta nota nao possui operacao de venda para ajustar na cobranca.");
     this.assertReturnCanChangeBilling(saleOperations);
@@ -1768,7 +1787,6 @@ export class AppRepository {
     if (previous.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")) throw new Error("Nota vinculada a cobranca/acerto. Libere o vinculo antes de editar.");
     const reassigning = data.responsiblePartnerId !== previous.document.responsiblePartnerId;
     if (data.organizationId !== previous.document.organizationId) throw new Error("A organizacao da nota nao pode ser alterada.");
-    if (reassigning && this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ? UNION SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id, id)) throw new Error("Nota vinculada a confirmacao de negocio. Remova o vinculo antes de trocar o responsavel.");
     if (previous.document.status === "CANCELED") throw new Error("Nota cancelada nao pode ser editada.");
     if (reassigning && (data.secondaryResponsiblePartnerId !== previous.document.secondaryResponsiblePartnerId || data.ownLegalEntityId !== previous.document.ownLegalEntityId || data.issueDate !== previous.document.issueDate || data.partnerLegalEntityId !== previous.document.partnerLegalEntityId)) throw new Error("Corrija o responsavel separadamente dos demais dados comerciais.");
     const transaction = this.db.transaction(() => {
@@ -1788,6 +1806,10 @@ export class AppRepository {
     if (reassigning || financialServiceChanged) {
       const now = new Date().toISOString();
       for (const op of previous.operations.filter((item) => item.responsiblePartnerId === previous.document.responsiblePartnerId)) {
+        if (op.manualOverrideReason?.startsWith(PACKAGING_OVERRIDE_PREFIX)) {
+          this.db.prepare("UPDATE operations SET responsible_partner_id = ?, updated_at = ? WHERE id = ?").run(data.responsiblePartnerId, now, op.id);
+          continue;
+        }
         const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate, hasFinancialService };
         const resolved = op.operationType === "PURCHASE" ? this.resolvePurchaseRateRule(input) : this.resolveServiceRateRule(input);
         if (resolved.status === "conflict") throw new Error("O novo responsavel possui tarifas conflitantes. Ajuste as regras antes de trocar.");
@@ -1801,8 +1823,15 @@ export class AppRepository {
         this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(randomUUID(), op.id, op.serviceRateRuleId, op.appliedRateValueCents, op.serviceAmountCents, op.operationType === "SALE" ? resolved.rule?.id ?? null : null, rate, amount, reason, now);
       }
-      this.db.prepare("UPDATE fiscal_documents SET status = 'DRAFT', confirmed_at = NULL WHERE id = ?").run(id);
-      this.db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(id);
+      // A confirmacao de negocio registra a negociacao entre as empresas e
+      // guarda seus proprios snapshots. Trocar o cliente/corretor responsavel
+      // pela cobranca nao altera essa confirmacao e, por isso, nao deve
+      // reabrir uma nota que ja estava confirmada. Alterar a condicao de
+      // financeiro continua exigindo nova confirmacao comercial.
+      if (financialServiceChanged) {
+        this.db.prepare("UPDATE fiscal_documents SET status = 'DRAFT', confirmed_at = NULL WHERE id = ?").run(id);
+        this.db.prepare("UPDATE operations SET status = 'DRAFT' WHERE fiscal_document_id = ?").run(id);
+      }
     }
     });
     transaction();
@@ -1813,13 +1842,7 @@ export class AppRepository {
     const detail = this.getFiscalDocument(id);
     const linkedCharge = detail.operations.find((operation) => operation.clientChargeId || operation.billingStatus !== "UNBILLED");
     if (linkedCharge) throw new Error("Nota ja vinculada a cobranca. Cancele/libere a cobranca antes de excluir.");
-    const linkedDeal = this.tableExists("deal_confirmation_fiscal_documents")
-      ? this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ? LIMIT 1").get(id)
-      : null;
-    const linkedDealOperation = this.tableExists("deal_confirmation_operations")
-      ? this.db.prepare("SELECT 1 FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?) LIMIT 1").get(id)
-      : null;
-    if (linkedDeal || linkedDealOperation) throw new Error("Nota ja vinculada a confirmacao de negocio. Remova o vinculo antes de excluir.");
+    if (this.fiscalDocumentHasActiveDeal(id)) throw new Error("Nota ja vinculada a confirmacao de negocio ativa. Cancele a confirmacao ou remova o vinculo antes de excluir.");
     const xmlImportJobIds = this.tableExists("xml_import_files")
       ? (this.db.prepare("SELECT DISTINCT import_job_id FROM xml_import_files WHERE fiscal_document_id = ?").all(id) as Array<{ import_job_id: string }>).map((row) => row.import_job_id)
       : [];
@@ -1828,6 +1851,10 @@ export class AppRepository {
       if (this.tableExists("xml_import_files")) this.db.prepare("UPDATE xml_import_files SET fiscal_document_id = NULL, status = 'REVERTED', updated_at = ? WHERE fiscal_document_id = ?").run(new Date().toISOString(), id);
       if (this.tableExists("fiscal_document_merge_history")) this.db.prepare("DELETE FROM fiscal_document_merge_history WHERE fiscal_document_id = ?").run(id);
       if (this.tableExists("fiscal_document_events")) this.db.prepare("DELETE FROM fiscal_document_events WHERE fiscal_document_id = ?").run(id);
+      // Aqui so' restam vinculos de confirmacoes canceladas (ver guarda acima):
+      // a confirmacao cancelada continua existindo, apenas sem a nota excluida.
+      if (this.tableExists("deal_confirmation_fiscal_documents")) this.db.prepare("DELETE FROM deal_confirmation_fiscal_documents WHERE fiscal_document_id = ?").run(id);
+      if (this.tableExists("deal_confirmation_operations")) this.db.prepare("DELETE FROM deal_confirmation_operations WHERE operation_id IN (SELECT id FROM operations WHERE fiscal_document_id = ?)").run(id);
       this.db.prepare("DELETE FROM operations WHERE fiscal_document_id = ?").run(id);
       this.db.prepare("DELETE FROM fiscal_document_items WHERE fiscal_document_id = ?").run(id);
       this.db.prepare("DELETE FROM fiscal_documents WHERE id = ?").run(id);
@@ -1997,12 +2024,44 @@ export class AppRepository {
     if (!reason.trim()) throw new Error("Motivo obrigatorio para alteracao manual.");
     if (!Number.isSafeInteger(manualRateValueCents) || manualRateValueCents < 0) throw new Error("Valor por saca invalido.");
     if (operation.status === "CANCELED" || operation.billingStatus !== "UNBILLED" || operation.purchaseSettlementStatus !== "UNSETTLED") throw new Error("Operacao cancelada ou vinculada a cobranca/acerto nao pode ter a tarifa alterada.");
+    const document = this.getFiscalDocument(operation.fiscalDocumentId);
+    if (isPackagingDocument({ documentNotes: document.document.notes, overrideReasons: document.operations.map((item) => item.manualOverrideReason) })) {
+      return this.setPackagingUnitValue(operation, document, manualRateValueCents);
+    }
     const amount = multiplyDecimalByCents(operation.quantitySacks, manualRateValueCents);
     this.db.prepare("UPDATE operations SET applied_rate_value_cents = ?, service_amount_cents = ?, rate_was_manually_overridden = 1, manual_rate_value_cents = ?, manual_override_reason = ?, updated_at = ? WHERE id = ?")
       .run(manualRateValueCents, amount, manualRateValueCents, reason, new Date().toISOString(), id);
     this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
       .run(randomUUID(), id, operation.serviceRateRuleId, operation.appliedRateValueCents, operation.serviceAmountCents, manualRateValueCents, amount, reason.trim(), new Date().toISOString());
     return this.getOperation(id);
+  }
+
+  // Remessa de sacaria: cobra unidades x valor informado e zera as sacas, mesmo
+  // numa nota importada antes desta regra (quando o big bag virava 1.000 kg).
+  private setPackagingUnitValue(operation: Operation, detail: FiscalDocumentDetail, unitValueCents: number): Operation {
+    const item = detail.items.find((entry) => entry.id === operation.fiscalDocumentItemId) ?? detail.items[0];
+    if (!item) throw new Error("Remessa de sacaria sem item para contar as unidades.");
+    const amount = multiplyDecimalByCents(item.quantity, unitValueCents);
+    const reason = packagingOverrideReason(normalizeDecimalText(item.quantity), unitValueCents);
+    const pendingNotes = removePendingNote(detail.document.pendingNotes, PACKAGING_PENDING_NOTE);
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.prepare(`UPDATE operations SET quantity_sacks_decimal = '0', gross_quantity_sacks_decimal = '0', service_rate_rule_id = NULL, applied_rate_value_cents = ?,
+        service_amount_cents = ?, rate_was_manually_overridden = 1, manual_rate_value_cents = ?, manual_override_reason = ?, updated_at = ? WHERE id = ?`)
+        .run(unitValueCents, amount, unitValueCents, reason, now, operation.id);
+      this.db.prepare("UPDATE fiscal_document_items SET sacks_quantity_decimal = '0', updated_at = ? WHERE id = ?").run(now, item.id);
+      this.db.prepare(`INSERT INTO operation_rate_history (id, operation_id, previous_service_rate_rule_id, previous_rate_value_cents, previous_service_amount_cents, new_service_rate_rule_id, new_rate_value_cents, new_service_amount_cents, reason, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), operation.id, operation.serviceRateRuleId, operation.appliedRateValueCents, operation.serviceAmountCents, null, unitValueCents, amount, reason, now);
+      this.db.prepare("UPDATE fiscal_documents SET pending_notes = ?, has_pending_issues = ?, updated_at = ? WHERE id = ?").run(pendingNotes, pendingNotes ? 1 : 0, now, detail.document.id);
+    })();
+    if (!pendingNotes && detail.document.status === "PENDING") {
+      try {
+        this.confirmFiscalDocument(detail.document.id);
+      } catch (error) {
+        log.warn("Remessa de sacaria ficou sem confirmar", error instanceof Error ? error.message : String(error));
+      }
+    }
+    return this.getOperation(operation.id);
   }
 
   confirmFiscalDocument(id: string): FiscalDocumentDetail {
@@ -2038,15 +2097,15 @@ export class AppRepository {
     if (periodEnd) docs = docs.filter((doc) => doc.issueDate <= periodEnd);
     const operations = this.listOperations({ organizationId, ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined });
     const activeDocs = docs.filter((doc) => doc.status !== "CANCELED");
-    const activeOperations = operations.filter((operation) => operation.status !== "CANCELED");
+    const activeOperations = this.withoutCanceledDocuments(operations).filter((operation) => operation.status !== "CANCELED");
     const activeSales = activeOperations.filter((operation) => operation.operationType === "SALE");
     // O total bruto do Dashboard e' corporativo: soma Villa e Grao & Grao,
     // todos os CNPJs, cobrados ou nao, respeitando somente o periodo escolhido.
-    const allCompaniesSales = this.listOperations({
+    const allCompaniesSales = this.withoutCanceledDocuments(this.listOperations({
       periodStart: periodStart ?? undefined,
       periodEnd: periodEnd ?? undefined,
       status: "all"
-    }).filter((operation) => operation.status !== "CANCELED" && operation.operationType === "SALE");
+    })).filter((operation) => operation.status !== "CANCELED" && operation.operationType === "SALE");
     return {
       documents: docs.length,
       pending: docs.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length,
@@ -2071,7 +2130,7 @@ export class AppRepository {
     const periodEnd = input.periodEnd ?? undefined;
     this.assertOrganizationWritable(organizationId);
     this.getBusinessPartner(businessPartnerId);
-    const operations = this.listOperations({ organizationId, ownLegalEntityId, responsiblePartnerId: businessPartnerId, periodStart, periodEnd })
+    const operations = this.withoutCanceledDocuments(this.listOperations({ organizationId, ownLegalEntityId, responsiblePartnerId: businessPartnerId, periodStart, periodEnd }))
       .filter((operation) => operation.status !== "CANCELED");
     return {
       sacksDecimal: operations.length ? sumDecimalTexts(operations.map((operation) => operation.quantitySacks)) : "0",
@@ -2095,7 +2154,7 @@ export class AppRepository {
     const periodEnd = input.periodEnd ?? undefined;
     this.assertOrganizationWritable(organizationId);
     this.getPartnerLegalEntity(partnerLegalEntityId);
-    const clauses = ["operations.organization_id = ?", "fiscal_documents.partner_legal_entity_id = ?", "operations.status != 'CANCELED'"];
+    const clauses = ["operations.organization_id = ?", "fiscal_documents.partner_legal_entity_id = ?", "operations.status != 'CANCELED'", "fiscal_documents.status != 'CANCELED'"];
     const params: unknown[] = [organizationId, partnerLegalEntityId];
     if (ownLegalEntityId) { clauses.push("operations.own_legal_entity_id = ?"); params.push(ownLegalEntityId); }
     if (periodStart) { clauses.push("operations.operation_date >= ?"); params.push(periodStart); }
@@ -2116,7 +2175,7 @@ export class AppRepository {
   getMonthlyOperationTotals(organizationId: string, year: number, ownLegalEntityId?: string | null): Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }> {
     this.assertOrganizationWritable(organizationId);
     this.refreshOperationServiceRates({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` });
-    const rows = this.listOperations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, status: "CONFIRMED", periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` })
+    const rows = this.withoutCanceledDocuments(this.listOperations({ organizationId, ownLegalEntityId: ownLegalEntityId ?? undefined, status: "CONFIRMED", periodStart: `${year}-01-01`, periodEnd: `${year}-12-31` }))
       .filter((operation) => operation.operationType !== "PURCHASE")
       .map((operation) => ({ operationDate: operation.operationDate, sacks: operation.quantitySacks, amountCents: operation.serviceAmountCents }));
     const byMonth = new Map<number, { sacks: string[]; amountCents: number; count: number }>();
@@ -2382,12 +2441,13 @@ export class AppRepository {
     const sameHash = this.db.prepare(`
       SELECT xml_import_files.id
       FROM xml_import_files
-      INNER JOIN fiscal_documents
+      LEFT JOIN fiscal_documents
         ON fiscal_documents.id = xml_import_files.fiscal_document_id
       LEFT JOIN xml_import_jobs
         ON xml_import_jobs.id = xml_import_files.import_job_id
       WHERE xml_import_files.file_hash = ?
         AND xml_import_files.status = 'IMPORTED'
+        AND (xml_import_files.fiscal_document_id IS NULL OR fiscal_documents.id IS NOT NULL)
         AND COALESCE(xml_import_jobs.status, '') <> 'REVERTED'
       LIMIT 1
     `).get(data.fileHash);
@@ -2396,7 +2456,10 @@ export class AppRepository {
       errorCode = "DUPLICATE_HASH";
       errorMessage = "Arquivo XML identico ja processado.";
     }
-    if (data.accessKey && this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ? LIMIT 1").get(data.accessKey)) {
+    if (data.accessKey && (
+      this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ? LIMIT 1").get(data.accessKey)
+      || (this.tableExists("warehouse_movements") && this.db.prepare("SELECT id FROM warehouse_movements WHERE access_key = ? LIMIT 1").get(data.accessKey))
+    )) {
       status = "DUPLICATE";
       errorCode = "DUPLICATE_ACCESS_KEY";
       errorMessage = "Nota com a mesma chave ja cadastrada.";
@@ -3515,7 +3578,7 @@ export class AppRepository {
       JOIN client_charges ON client_charges.id = operations.client_charge_id
       WHERE ${receivedOperationClauses.join(" AND ")}
     `).get(...receivedOperationParams) as { total: number };
-    const unbilledRows = this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined, status: periodStart || periodEnd ? "all" : "CONFIRMED", billingStatus: "UNBILLED" }).filter((item) => item.operationType !== "PURCHASE" && item.status !== "CANCELED");
+    const unbilledRows = this.withoutCanceledDocuments(this.listOperations({ organizationId: includeAllCompanies ? undefined : organizationId, ownLegalEntityId: includeAllCompanies ? undefined : ownLegalEntityId, periodStart: periodStart ?? undefined, periodEnd: periodEnd ?? undefined, status: periodStart || periodEnd ? "all" : "CONFIRMED", billingStatus: "UNBILLED" })).filter((item) => item.operationType !== "PURCHASE" && item.status !== "CANCELED");
     const unbilledServiceCents = unbilledRows.reduce((sum, item) => sum + item.serviceAmountCents, 0);
     return {
       issuedCents: charges.reduce((sum, item) => sum + item.finalAmountCents, 0),
@@ -3531,6 +3594,25 @@ export class AppRepository {
     };
   }
 
+  // Sempre soma todas as empresas (Villa e Grao & Grao): a empresa selecionada so'
+  // define o tema da imagem. Conta vendas de notas nao canceladas pela data da
+  // operacao, inclusive as ainda em rascunho (o relatorio avisa quantas).
+  getPeriodComparison(input: unknown, today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())): PeriodComparisonReport {
+    const data = periodComparisonInputSchema.parse(input);
+    const salesQuery = this.db.prepare(`SELECT o.fiscal_document_id AS fiscalDocumentId, o.operation_scope AS scope, o.status,
+        o.quantity_sacks_decimal AS quantitySacks, o.service_amount_cents AS amountCents, o.responsible_partner_id AS clientId,
+        COALESCE(partner.display_name, 'Sem cliente') AS clientName,
+        COALESCE(NULLIF(company.trade_name, ''), company.legal_name, 'Sem empresa') AS companyName
+      FROM operations o
+      JOIN fiscal_documents document ON document.id = o.fiscal_document_id
+      LEFT JOIN business_partners partner ON partner.id = o.responsible_partner_id
+      LEFT JOIN legal_entities company ON company.id = o.own_legal_entity_id
+      WHERE o.operation_type = 'SALE' AND o.status <> 'CANCELED' AND document.status <> 'CANCELED' AND o.operation_date BETWEEN ? AND ?`);
+    const rowsByPeriod = data.periods.map((period) => salesQuery.all(period.start, period.end) as ComparisonSaleRow[]);
+    const organizations = (this.db.prepare("SELECT display_name AS name FROM organizations WHERE is_active = 1 ORDER BY display_name").all() as Array<{ name: string }>).map((row) => row.name);
+    return buildPeriodComparisonReport(data.periods, rowsByPeriod, `Todas as empresas: ${organizations.join(" e ")}`, today);
+  }
+
   listTransferReconciliations(filters: { organizationId: string; clientPartnerId?: string; status?: string }): TransferReconciliation[] {
     this.assertOrganizationWritable(filters.organizationId);
     const clauses = ["r.organization_id = ?"];
@@ -3543,17 +3625,31 @@ export class AppRepository {
     return rows.map((row) => this.mapTransferReconciliation(row));
   }
 
-  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
+  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; counterpartyRole?: "CLIENT" | "SUPPLIER"; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
     this.assertOrganizationWritable(input.organizationId);
+    const counterpartyRole = input.counterpartyRole ?? "CLIENT";
+    const operationType = counterpartyRole === "SUPPLIER" ? "PURCHASE" : "SALE";
+    const selectedPartner = this.getBusinessPartner(input.clientPartnerId);
+    const selectedDocument = selectedPartner.documentNumber?.replace(/\D/g, "") ?? "";
+    const selectedName = this.normalizeName(selectedPartner.displayName);
+    const matchingPartnerIds = this.listBusinessPartners({ role: counterpartyRole, status: "all" })
+      .filter((partner) => {
+        const candidateDocument = partner.documentNumber?.replace(/\D/g, "") ?? "";
+        const sameName = this.normalizeName(partner.displayName) === selectedName;
+        return selectedDocument ? candidateDocument === selectedDocument || (!candidateDocument && sameName) : sameName;
+      })
+      .map((partner) => partner.id);
+    if (!matchingPartnerIds.includes(input.clientPartnerId)) matchingPartnerIds.push(input.clientPartnerId);
+    const partnerPlaceholders = matchingPartnerIds.map(() => "?").join(", ");
     const usageRows = this.db.prepare(`
       SELECT ri.reconciliation_id, ri.fiscal_document_id, ri.source_amount_cents,
         rr.status, rr.total_source_cents, rr.total_payments_cents
       FROM transfer_reconciliation_invoices ri
       JOIN transfer_reconciliations rr ON rr.id = ri.reconciliation_id
-      WHERE rr.organization_id = ? AND rr.status <> 'CANCELLED'
+      WHERE rr.status <> 'CANCELLED'
         ${input.reconciliationId ? "AND rr.id <> ?" : ""}
       ORDER BY ri.reconciliation_id, ri.created_at, ri.id
-    `).all(...(input.reconciliationId ? [input.organizationId, input.reconciliationId] : [input.organizationId])) as DbRecord[];
+    `).all(...(input.reconciliationId ? [input.reconciliationId] : [])) as DbRecord[];
     const rowsByReconciliation = new Map<string, DbRecord[]>();
     for (const row of usageRows) {
       const reconciliationId = String(row.reconciliation_id);
@@ -3580,17 +3676,19 @@ export class AppRepository {
       });
     }
     const rows = this.db.prepare(`
-      SELECT f.id, f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
+      SELECT f.id, f.organization_id, org.display_name AS organization_name,
+        f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
         own.legal_name AS own_legal_name, own.trade_name AS own_trade_name,
         partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name
       FROM fiscal_documents f
+      JOIN organizations org ON org.id = f.organization_id
       JOIN legal_entities own ON own.id = f.own_legal_entity_id
       LEFT JOIN partner_legal_entities partner ON partner.id = f.partner_legal_entity_id
-      WHERE f.organization_id = ? AND f.status <> 'CANCELED'
-        AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = 'SALE'
-          AND o.status <> 'CANCELED' AND o.responsible_partner_id = ?)
+      WHERE f.status <> 'CANCELED'
+        AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
+          AND o.status <> 'CANCELED' AND o.responsible_partner_id IN (${partnerPlaceholders}))
       ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
-    `).all(input.organizationId, input.clientPartnerId) as DbRecord[];
+    `).all(operationType, ...matchingPartnerIds) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
       try {
@@ -3601,10 +3699,13 @@ export class AppRepository {
       const recipient = snapshot.recipient as Record<string, unknown> | undefined;
       const invoiceTotalCents = Number.isFinite(Number(row.total_amount_cents)) ? Number(row.total_amount_cents) : 0;
       const previouslyUsedCents = usedByDocument.get(String(row.id)) ?? 0;
+      const ownName = String(row.own_legal_name ?? row.own_trade_name ?? "");
+      const partnerName = this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name);
       return {
-        fiscalDocumentId: String(row.id), documentNumber: String(row.document_number), issueDate: String(row.issue_date),
-        issuerName: this.stringOrNull(issuer?.legalName) ?? String(row.own_legal_name ?? row.own_trade_name ?? ""),
-        recipientName: this.stringOrNull(recipient?.legalName) ?? this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name),
+        fiscalDocumentId: String(row.id), organizationId: String(row.organization_id), organizationName: String(row.organization_name),
+        documentNumber: String(row.document_number), issueDate: String(row.issue_date),
+        issuerName: this.stringOrNull(issuer?.legalName) ?? (counterpartyRole === "SUPPLIER" ? partnerName : ownName),
+        recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),
         invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents
       };
     });
@@ -3634,25 +3735,36 @@ export class AppRepository {
 
   saveTransferReconciliation(input: {
     id?: string; organizationId: string; clientPartnerId: string; referenceDate: string; title?: string | null; notes?: string | null;
+    counterpartyRole?: "CLIENT" | "SUPPLIER";
+    sourceMode?: "INVOICES" | "MANUAL"; manualSourceCents?: number | null;
     status?: "DRAFT" | "COMPLETED"; invoices: Array<{ fiscalDocumentId: string; sourceAmountCents: number }>;
     payments: Array<{ id?: string; beneficiaryName: string; beneficiaryDocument?: string | null; description?: string | null; paymentDate?: string | null; amountCents: number; notes?: string | null }>;
   }): TransferReconciliationDetail {
     this.assertOrganizationWritable(input.organizationId);
-    if (!input.invoices.length) throw new Error("Selecione pelo menos uma nota fiscal.");
+    const storedSource = input.id ? this.db.prepare("SELECT source_mode, manual_source_cents FROM transfer_reconciliations WHERE id = ?").get(input.id) as { source_mode: "INVOICES" | "MANUAL"; manual_source_cents: number | null } | undefined : undefined;
+    const sourceMode = input.sourceMode ?? storedSource?.source_mode ?? "INVOICES";
+    const manualSourceCents = sourceMode === "MANUAL" ? input.manualSourceCents ?? storedSource?.manual_source_cents ?? null : null;
+    if (sourceMode === "INVOICES" && !input.invoices.length) throw new Error("Selecione pelo menos uma nota fiscal.");
+    if (sourceMode === "MANUAL" && (!Number.isInteger(manualSourceCents) || Number(manualSourceCents) <= 0)) throw new Error("Informe um valor inicial valido para a conferencia.");
+    if (sourceMode === "MANUAL" && input.invoices.length) throw new Error("Uma conferencia com valor manual nao pode ter notas vinculadas.");
     if (input.invoices.some((item) => !Number.isInteger(item.sourceAmountCents) || item.sourceAmountCents <= 0)) throw new Error("Informe um valor valido para cada nota.");
-    if (input.payments.some((item) => !item.beneficiaryName.trim() || !Number.isInteger(item.amountCents) || item.amountCents <= 0)) throw new Error("Preencha favorecido e valor em todos os pagamentos.");
+    if (input.payments.some((item) => !Number.isInteger(item.amountCents) || item.amountCents <= 0)) throw new Error("Informe um valor valido para cada pagamento.");
     const id = input.id ?? randomUUID();
     const now = new Date().toISOString();
-    const totalSource = input.invoices.reduce((sum, item) => sum + item.sourceAmountCents, 0);
+    const totalSource = sourceMode === "MANUAL" ? Number(manualSourceCents) : input.invoices.reduce((sum, item) => sum + item.sourceAmountCents, 0);
     const totalPayments = input.payments.reduce((sum, item) => sum + item.amountCents, 0);
     const balance = totalSource - totalPayments;
     const status = input.status ?? "DRAFT";
     const run = this.db.transaction(() => {
-      const existing = this.db.prepare("SELECT id, created_at FROM transfer_reconciliations WHERE id = ?").get(id) as { id: string; created_at: string } | undefined;
-      const row = [id, input.organizationId, input.clientPartnerId, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
-      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      const existing = this.db.prepare("SELECT id, created_at, counterparty_role FROM transfer_reconciliations WHERE id = ?").get(id) as { id: string; created_at: string; counterparty_role: "CLIENT" | "SUPPLIER" } | undefined;
+      const counterpartyRole = input.counterpartyRole ?? existing?.counterparty_role ?? "CLIENT";
+      const hasRequiredRole = this.db.prepare("SELECT 1 FROM business_partner_roles WHERE business_partner_id = ? AND role = ?").get(input.clientPartnerId, counterpartyRole);
+      if (!hasRequiredRole) throw new Error(counterpartyRole === "SUPPLIER" ? "O parceiro selecionado nao e fornecedor." : "O parceiro selecionado nao e cliente.");
+      const row = [id, input.organizationId, input.clientPartnerId, counterpartyRole, sourceMode, manualSourceCents, input.referenceDate, input.title?.trim() || null, input.notes?.trim() || null, status, totalSource, totalPayments, balance, status === "COMPLETED" ? now : null, existing?.created_at ?? now, now];
+      this.db.prepare(`INSERT INTO transfer_reconciliations (id, organization_id, client_partner_id, counterparty_role, source_mode, manual_source_cents, reference_date, title, notes, status, total_source_cents, total_payments_cents, balance_cents, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET organization_id=excluded.organization_id, client_partner_id=excluded.client_partner_id, reference_date=excluded.reference_date,
+          counterparty_role=excluded.counterparty_role, source_mode=excluded.source_mode, manual_source_cents=excluded.manual_source_cents,
           title=excluded.title, notes=excluded.notes, status=excluded.status, total_source_cents=excluded.total_source_cents,
           total_payments_cents=excluded.total_payments_cents, balance_cents=excluded.balance_cents, completed_at=excluded.completed_at, cancelled_at=NULL, updated_at=excluded.updated_at`).run(...row);
       this.db.prepare("DELETE FROM transfer_reconciliation_invoices WHERE reconciliation_id = ?").run(id);
@@ -3661,7 +3773,7 @@ export class AppRepository {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const selection of input.invoices) {
         const document = this.getFiscalDocument(selection.fiscalDocumentId).document;
-        const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
+        const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, counterpartyRole, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
         if (!available) throw new Error("Nota indisponivel para conferencia.");
         if (selection.sourceAmountCents > available.availableCents) throw new Error("O valor informado supera o saldo disponivel da nota.");
         insertInvoice.run(randomUUID(), id, document.id, document.documentNumber, document.issueDate, available.issuerName, available.recipientName, document.totalAmountCents, selection.sourceAmountCents, now, now);
@@ -3697,7 +3809,7 @@ export class AppRepository {
         COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' AND r.balance_cents < 0 THEN -r.balance_cents ELSE 0 END), 0) AS debit_cents,
         COALESCE(SUM(CASE WHEN r.status = 'COMPLETED' THEN r.balance_cents ELSE 0 END), 0) AS net_balance_cents,
         SUM(CASE WHEN r.status = 'DRAFT' THEN 1 ELSE 0 END) AS open_reconciliations
-      FROM business_partners p LEFT JOIN transfer_reconciliations r ON r.client_partner_id = p.id AND r.organization_id = ?
+      FROM business_partners p LEFT JOIN transfer_reconciliations r ON r.client_partner_id = p.id AND r.organization_id = ? AND r.counterparty_role = 'CLIENT'
       WHERE p.organization_id = ? AND p.is_active = 1
         AND EXISTS (SELECT 1 FROM business_partner_roles role WHERE role.business_partner_id = p.id AND role.role = 'CLIENT')
       GROUP BY p.id, p.display_name HAVING COUNT(r.id) > 0 ORDER BY ABS(net_balance_cents) DESC, p.display_name`).all(organizationId, organizationId) as DbRecord[];
@@ -3707,6 +3819,8 @@ export class AppRepository {
   private mapTransferReconciliation(row: DbRecord): TransferReconciliation {
     return {
       id: String(row.id), organizationId: String(row.organization_id), clientPartnerId: String(row.client_partner_id), clientName: String(row.client_name ?? ""),
+      counterpartyRole: String(row.counterparty_role ?? "CLIENT") as TransferReconciliation["counterpartyRole"],
+      sourceMode: String(row.source_mode ?? "INVOICES") as TransferReconciliation["sourceMode"], manualSourceCents: row.manual_source_cents == null ? null : Number(row.manual_source_cents),
       referenceDate: String(row.reference_date), title: this.stringOrNull(row.title), notes: this.stringOrNull(row.notes),
       status: String(row.status) as TransferReconciliation["status"], totalSourceCents: Number(row.total_source_cents), totalPaymentsCents: Number(row.total_payments_cents),
       balanceCents: Number(row.balance_cents), completedAt: this.stringOrNull(row.completed_at), cancelledAt: this.stringOrNull(row.cancelled_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
@@ -4076,6 +4190,395 @@ export class AppRepository {
     };
   }
 
+  listWarehouseMovements(filters: {
+    organizationId: string;
+    ownLegalEntityId?: string | null;
+    warehouseCnpj?: string | null;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    status?: "ALL" | "ACTIVE" | "CANCELED" | "PENDING_REVIEW";
+  }): WarehouseMovement[] {
+    if (!this.isOrganizationAllowed(filters.organizationId)) throw new Error("Organizacao nao autorizada.");
+    if (!this.tableExists("warehouse_movements")) return [];
+    const clauses = ["wm.organization_id = ?"];
+    const params: unknown[] = [filters.organizationId];
+    if (filters.ownLegalEntityId) { clauses.push("wm.own_legal_entity_id = ?"); params.push(filters.ownLegalEntityId); }
+    if (filters.warehouseCnpj) { clauses.push("wm.warehouse_cnpj = ?"); params.push(this.onlyDigits(filters.warehouseCnpj)); }
+    if (filters.periodStart) { clauses.push("wm.issue_date >= ?"); params.push(filters.periodStart); }
+    if (filters.periodEnd) { clauses.push("wm.issue_date <= ?"); params.push(filters.periodEnd); }
+    if (filters.status && filters.status !== "ALL") { clauses.push("wm.status = ?"); params.push(filters.status); }
+    const rows = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY wm.issue_date DESC, CAST(wm.document_number AS INTEGER) DESC, CAST(wm.item_number AS INTEGER)
+    `).all(...params) as DbRecord[];
+    return rows.map((row) => this.mapWarehouseMovement(row));
+  }
+
+  private warehouseIdentityKey(row: DbRecord): string {
+    const cnpj = this.onlyDigits(String(row.warehouse_cnpj ?? ""));
+    const name = String(row.warehouse_name ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+    return `${String(row.own_legal_entity_id)}:${cnpj || `NAME:${name}`}`;
+  }
+
+  private warehouseProductFamily(description: string): "ARABICA" | "CONILON" | null {
+    const normalized = description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+    if (/\bARABICA\b/.test(normalized)) return "ARABICA";
+    if (/\b(?:CONILON|ROBUSTA)\b/.test(normalized)) return "CONILON";
+    return null;
+  }
+
+  private warehouseBalanceRows(organizationId: string, ownLegalEntityId?: string | null): Array<{
+    ownLegalEntityId: string;
+    ownLegalEntityName: string;
+    warehouseName: string;
+    warehouseCnpj: string | null;
+    productDescription: string;
+    quantityKg: number;
+  }> {
+    const entityClause = ownLegalEntityId ? "AND wm.own_legal_entity_id = ?" : "";
+    const params: unknown[] = ownLegalEntityId ? [organizationId, ownLegalEntityId] : [organizationId];
+    const rows = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE wm.organization_id = ? ${entityClause} AND wm.status = 'ACTIVE'
+      ORDER BY wm.created_at, wm.id
+    `).all(...params) as DbRecord[];
+
+    const manualProducts = new Map<string, Map<string, string>>();
+    const manualWarehouseNames = new Map<string, string>();
+    for (const row of rows) {
+      if (String(row.origin ?? "XML") !== "MANUAL") continue;
+      const identity = this.warehouseIdentityKey(row);
+      manualWarehouseNames.set(identity, String(row.warehouse_name));
+      const description = String(row.product_description);
+      const family = this.warehouseProductFamily(description);
+      const key = family ?? `TEXT:${description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase()}`;
+      const products = manualProducts.get(identity) ?? new Map<string, string>();
+      products.set(key, description);
+      manualProducts.set(identity, products);
+    }
+
+    const balances = new Map<string, {
+      ownLegalEntityId: string;
+      ownLegalEntityName: string;
+      warehouseName: string;
+      warehouseCnpj: string | null;
+      productDescription: string;
+      quantityKg: number;
+    }>();
+    for (const row of rows) {
+      const identity = this.warehouseIdentityKey(row);
+      const description = String(row.product_description);
+      const family = this.warehouseProductFamily(description);
+      const knownProducts = manualProducts.get(identity);
+      let productKey: string = family ?? `TEXT:${description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase()}`;
+      let productDescription = family ? knownProducts?.get(family) ?? family : description;
+      if (!family && knownProducts?.size === 1) {
+        const onlyProduct = [...knownProducts.entries()][0];
+        productKey = onlyProduct[0];
+        productDescription = onlyProduct[1];
+      }
+      const balanceKey = `${identity}:${productKey}`;
+      const current = balances.get(balanceKey) ?? {
+        ownLegalEntityId: String(row.own_legal_entity_id),
+        ownLegalEntityName: String(row.own_legal_entity_name),
+        warehouseName: manualWarehouseNames.get(identity) ?? String(row.warehouse_name),
+        warehouseCnpj: this.onlyDigits(String(row.warehouse_cnpj ?? "")) || null,
+        productDescription,
+        quantityKg: 0
+      };
+      current.quantityKg += (String(row.movement_type) === "DEPOSIT" ? 1 : -1) * Number(row.quantity_kg_decimal ?? 0);
+      balances.set(balanceKey, current);
+    }
+    return [...balances.values()]
+      .filter((row) => Math.abs(row.quantityKg) > 0.0001)
+      .sort((a, b) => a.warehouseName.localeCompare(b.warehouseName, "pt-BR") || a.productDescription.localeCompare(b.productDescription, "pt-BR") || a.ownLegalEntityName.localeCompare(b.ownLegalEntityName, "pt-BR"));
+  }
+
+  getWarehouseSummary(filters: { organizationId: string; ownLegalEntityId?: string | null }): WarehouseSummary {
+    if (!this.isOrganizationAllowed(filters.organizationId)) throw new Error("Organizacao nao autorizada.");
+    if (!this.tableExists("warehouse_movements")) {
+      return { totalKg: "0", totalSacks: "0", warehouseCount: 0, activeMovementCount: 0, pendingReviewCount: 0, balances: [] };
+    }
+    const entityClause = filters.ownLegalEntityId ? "AND wm.own_legal_entity_id = ?" : "";
+    const params: unknown[] = filters.ownLegalEntityId ? [filters.organizationId, filters.ownLegalEntityId] : [filters.organizationId];
+    const balanceRows = this.warehouseBalanceRows(filters.organizationId, filters.ownLegalEntityId);
+    const balances = balanceRows.map((row) => {
+      const kg = row.quantityKg;
+      return {
+        ownLegalEntityId: row.ownLegalEntityId,
+        ownLegalEntityName: row.ownLegalEntityName,
+        warehouseName: row.warehouseName,
+        warehouseCnpj: row.warehouseCnpj,
+        productDescription: row.productDescription,
+        quantityKg: compactDecimal(kg),
+        quantitySacks: compactDecimal(kg / 60)
+      };
+    });
+    const totals = this.db.prepare(`
+      SELECT
+        COUNT(*) AS active_movement_count,
+        SUM(CASE WHEN movement_type = 'DEPOSIT' THEN CAST(quantity_kg_decimal AS REAL) ELSE -CAST(quantity_kg_decimal AS REAL) END) AS total_kg
+      FROM warehouse_movements wm
+      WHERE organization_id = ? ${entityClause} AND status = 'ACTIVE'
+    `).get(...params) as DbRecord;
+    const pending = this.db.prepare(`SELECT COUNT(*) AS total FROM warehouse_movements wm WHERE organization_id = ? ${entityClause} AND status = 'PENDING_REVIEW'`).get(...params) as DbRecord;
+    const totalKg = Number(totals.total_kg ?? 0);
+    return {
+      totalKg: compactDecimal(totalKg),
+      totalSacks: compactDecimal(totalKg / 60),
+      warehouseCount: new Set(balances.map((row) => `${row.ownLegalEntityId}:${row.warehouseCnpj ?? row.warehouseName.trim().toUpperCase()}`)).size,
+      activeMovementCount: Number(totals.active_movement_count ?? 0),
+      pendingReviewCount: Number(pending.total ?? 0),
+      balances
+    };
+  }
+
+  reviewWarehouseMovement(id: string, referencedDocumentNumber: string, notes: string | null): WarehouseMovement {
+    if (!this.tableExists("warehouse_movements")) throw new Error("Controle de armazens ainda nao esta disponivel.");
+    const before = this.db.prepare("SELECT organization_id, status FROM warehouse_movements WHERE id = ?").get(id) as DbRecord | undefined;
+    if (!before || !this.isOrganizationAllowed(String(before.organization_id))) throw new Error("Movimento de armazem nao encontrado.");
+    if (String(before.status) === "CANCELED") throw new Error("Movimento cancelado nao pode ser aprovado.");
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE warehouse_movements
+      SET referenced_document_number = ?, notes = ?, status = 'ACTIVE', updated_at = ?
+      WHERE id = ?
+    `).run(referencedDocumentNumber.trim(), notes?.trim() || "Conferido manualmente.", now, id);
+    const row = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm
+      JOIN legal_entities le ON le.id = wm.own_legal_entity_id
+      WHERE wm.id = ?
+    `).get(id) as DbRecord;
+    return this.mapWarehouseMovement(row);
+  }
+
+  createWarehouseAdjustment(input: {
+    organizationId: string;
+    ownLegalEntityId: string;
+    warehouseName: string;
+    warehouseCnpj?: string | null;
+    productDescription: string;
+    adjustmentMode: "SET_BALANCE" | "ADD" | "REMOVE";
+    unit: "SACK" | "KG";
+    quantity: string;
+    issueDate: string;
+    reason: string;
+  }, actorUserId: string | null): WarehouseMovement {
+    if (!this.tableExists("warehouse_movements")) throw new Error("Controle de armazens ainda nao esta disponivel.");
+    if (!this.isOrganizationAllowed(input.organizationId)) throw new Error("Organizacao nao autorizada.");
+    const entity = this.getLegalEntity(input.ownLegalEntityId);
+    if (entity.organizationId !== input.organizationId) throw new Error("Empresa nao pertence a organizacao selecionada.");
+    const warehouseName = input.warehouseName.trim();
+    let warehouseCnpj = this.onlyDigits(input.warehouseCnpj ?? "") || null;
+    const productDescription = input.productDescription.trim();
+    const reason = input.reason.trim();
+    const rawQuantity = input.quantity.trim().replace(/\s/g, "");
+    const enteredQuantity = Number(rawQuantity.includes(",") ? rawQuantity.replace(/\./g, "").replace(",", ".") : rawQuantity);
+    if (!warehouseName || !productDescription || !reason) throw new Error("Informe armazem, produto e motivo do ajuste.");
+    if (!warehouseCnpj) {
+      const knownCnpjs = this.db.prepare(`
+        SELECT DISTINCT warehouse_cnpj
+        FROM warehouse_movements
+        WHERE organization_id = ? AND own_legal_entity_id = ?
+          AND LOWER(TRIM(warehouse_name)) = LOWER(TRIM(?))
+          AND COALESCE(warehouse_cnpj, '') <> ''
+      `).all(input.organizationId, input.ownLegalEntityId, warehouseName) as Array<{ warehouse_cnpj: string }>;
+      if (knownCnpjs.length === 1) warehouseCnpj = this.onlyDigits(knownCnpjs[0].warehouse_cnpj) || null;
+    }
+    if (!warehouseCnpj || warehouseCnpj.length !== 14) throw new Error("Informe o CNPJ completo do armazem. Ele e a chave usada para vincular ajustes e futuras NF-e.");
+    if (!Number.isFinite(enteredQuantity) || enteredQuantity < 0 || (input.adjustmentMode !== "SET_BALANCE" && enteredQuantity === 0)) throw new Error("Informe uma quantidade valida.");
+    const requestedKg = input.unit === "SACK" ? enteredQuantity * 60 : enteredQuantity;
+    const productFamily = this.warehouseProductFamily(productDescription);
+    const existingBalance = this.warehouseBalanceRows(input.organizationId, input.ownLegalEntityId).find((row) =>
+      row.warehouseCnpj === warehouseCnpj && (productFamily
+        ? this.warehouseProductFamily(row.productDescription) === productFamily
+        : row.productDescription.trim().localeCompare(productDescription, undefined, { sensitivity: "base" }) === 0)
+    );
+    const currentKg = existingBalance?.quantityKg ?? 0;
+    const canonicalWarehouseName = existingBalance?.warehouseName ?? warehouseName;
+    const canonicalWarehouseCnpj = existingBalance?.warehouseCnpj ?? warehouseCnpj;
+    const canonicalProductDescription = existingBalance?.productDescription ?? productDescription;
+    const deltaKg = input.adjustmentMode === "SET_BALANCE"
+      ? requestedKg - currentKg
+      : input.adjustmentMode === "ADD" ? requestedKg : -requestedKg;
+    if (Math.abs(deltaKg) < 0.0001) throw new Error("O saldo informado ja e o saldo atual; nenhum ajuste foi necessario.");
+    if (input.adjustmentMode === "REMOVE" && currentKg + deltaKg < -0.0001) throw new Error("A retirada deixaria o estoque armazenado negativo.");
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const movementType = deltaKg > 0 ? "DEPOSIT" : "RETURN";
+    const sourceQuantity = input.unit === "SACK" ? Math.abs(deltaKg) / 60 : Math.abs(deltaKg);
+    this.db.prepare(`
+      INSERT INTO warehouse_movements (
+        id, organization_id, own_legal_entity_id, access_key, item_number, document_number, series, issue_date,
+        warehouse_name, warehouse_cnpj, product_description, cfop, movement_type, movement_kind,
+        quantity_kg_decimal, source_unit, source_quantity_decimal, referenced_document_number, reference_text,
+        status, notes, origin, created_by_user_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, '1', 'AJUSTE', NULL, ?, ?, ?, ?, 'AJUSTE', ?, 'PHYSICAL', ?, ?, ?, NULL, NULL, 'ACTIVE', ?, 'MANUAL', ?, ?, ?)
+    `).run(
+      id, input.organizationId, input.ownLegalEntityId, `MANUAL-${id}`, input.issueDate,
+      canonicalWarehouseName, canonicalWarehouseCnpj, canonicalProductDescription, movementType, compactDecimal(Math.abs(deltaKg)),
+      input.unit === "SACK" ? "SC" : "KG", compactDecimal(sourceQuantity), reason, actorUserId, now, now
+    );
+    const row = this.db.prepare(`
+      SELECT wm.*, le.trade_name AS own_legal_entity_name
+      FROM warehouse_movements wm JOIN legal_entities le ON le.id = wm.own_legal_entity_id WHERE wm.id = ?
+    `).get(id) as DbRecord;
+    return this.mapWarehouseMovement(row);
+  }
+
+  private mapWarehouseMovement(row: DbRecord): WarehouseMovement {
+    return {
+      id: String(row.id), organizationId: String(row.organization_id), ownLegalEntityId: String(row.own_legal_entity_id),
+      ownLegalEntityName: String(row.own_legal_entity_name ?? ""), accessKey: String(row.access_key), itemNumber: String(row.item_number),
+      documentNumber: String(row.document_number), series: this.stringOrNull(row.series), issueDate: String(row.issue_date),
+      warehouseName: String(row.warehouse_name), warehouseCnpj: this.stringOrNull(row.warehouse_cnpj), productDescription: String(row.product_description),
+      cfop: String(row.cfop), movementType: row.movement_type as WarehouseMovement["movementType"], movementKind: row.movement_kind as WarehouseMovement["movementKind"],
+      quantityKg: String(row.quantity_kg_decimal), sourceUnit: String(row.source_unit), sourceQuantity: String(row.source_quantity_decimal),
+      referencedDocumentNumber: this.stringOrNull(row.referenced_document_number), referenceText: this.stringOrNull(row.reference_text),
+      status: row.status as WarehouseMovement["status"], notes: this.stringOrNull(row.notes),
+      origin: (row.origin ?? "XML") as WarehouseMovement["origin"], createdByUserId: this.stringOrNull(row.created_by_user_id),
+      createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+    };
+  }
+
+  private importWarehouseDocumentIfRecognized(job: XmlImportJob, file: XmlImportFile, extracted: Record<string, unknown>): boolean {
+    if (!this.tableExists("warehouse_movements") || !file.accessKey) return false;
+    const warehouseCfops: Record<string, { type: "DEPOSIT" | "RETURN"; kind: "PHYSICAL" | "SYMBOLIC" }> = {
+      "5905": { type: "DEPOSIT", kind: "PHYSICAL" }, "6905": { type: "DEPOSIT", kind: "PHYSICAL" },
+      "5934": { type: "DEPOSIT", kind: "SYMBOLIC" }, "6934": { type: "DEPOSIT", kind: "SYMBOLIC" },
+      "5906": { type: "RETURN", kind: "PHYSICAL" }, "6906": { type: "RETURN", kind: "PHYSICAL" },
+      "5907": { type: "RETURN", kind: "SYMBOLIC" }, "6907": { type: "RETURN", kind: "SYMBOLIC" }
+    };
+    const items = (Array.isArray(extracted.items) ? extracted.items : []) as Array<Record<string, unknown>>;
+    const classifiedItems = items.flatMap((item) => {
+      const cfop = String(item.cfop ?? "").replace(/\D/g, "");
+      const classification = warehouseCfops[cfop];
+      return classification ? [{ item, cfop, classification }] : [];
+    });
+    if (!classifiedItems.length) return false;
+
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerCnpj = this.onlyDigits(String(issuer?.cnpjCpf ?? "")) || this.issuerCnpjFromAccessKey(file.accessKey) || "";
+    const recipientCnpj = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    const ownEntities = this.listLegalEntities({ status: "all" }).filter((entity) => !this.isThirdPartyLegalEntity(entity));
+    const issuerOwn = ownEntities.find((entity) => entity.cnpj === issuerCnpj && entity.isActive);
+    const recipientOwn = ownEntities.find((entity) => entity.cnpj === recipientCnpj && entity.isActive);
+    const firstType = classifiedItems[0]?.classification.type;
+    const ownEntity = firstType === "DEPOSIT" ? issuerOwn : recipientOwn;
+    if (!ownEntity) return false;
+    if (classifiedItems.some(({ classification }) => classification.type !== firstType)) {
+      throw new Error("NF-e de armazem contem remessa e retorno no mesmo documento. Revise o XML manualmente.");
+    }
+    const warehouseParty = firstType === "DEPOSIT" ? recipient : issuer;
+    const warehouseName = this.stringOrNull(warehouseParty?.legalName) ?? this.stringOrNull(warehouseParty?.tradeName) ?? "Armazem nao identificado";
+    const warehouseCnpj = this.onlyDigits(String(warehouseParty?.cnpjCpf ?? "")) || null;
+    const manualReferences = warehouseCnpj ? this.db.prepare(`
+      SELECT warehouse_name, product_description
+      FROM warehouse_movements
+      WHERE organization_id = ? AND own_legal_entity_id = ? AND warehouse_cnpj = ?
+        AND origin = 'MANUAL' AND status = 'ACTIVE'
+      ORDER BY created_at DESC
+    `).all(ownEntity.organizationId, ownEntity.id, warehouseCnpj) as Array<{ warehouse_name: string; product_description: string }> : [];
+    const canonicalWarehouseName = manualReferences[0]?.warehouse_name ?? warehouseName;
+    const manualProducts = new Map<string, string>();
+    for (const reference of manualReferences) {
+      const family = this.warehouseProductFamily(reference.product_description);
+      const key = family ?? `TEXT:${reference.product_description.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase()}`;
+      manualProducts.set(key, reference.product_description);
+    }
+    const additionalInfo = extracted.additionalInfo as Record<string, unknown> | undefined;
+    const referenceText = [this.stringOrNull(additionalInfo?.complementary), ...classifiedItems.map(({ item }) => this.stringOrNull(item.additionalInfo))]
+      .filter((value): value is string => Boolean(value)).join(" | ") || null;
+    const referencedKeys = (Array.isArray(extracted.referencedAccessKeys) ? extracted.referencedAccessKeys : []).map(String).filter((key) => /^\d{44}$/.test(key));
+    const referencedByKey = referencedKeys[0]?.slice(25, 34).replace(/^0+/, "") || null;
+    const referencedByTextMatch = referenceText?.match(
+      /\b(?:REF(?:ERENTE)?\.?\s*)?(?:NF-?E|NF)(?:\s+(?:DE\s+)?(?:REMESSA|ORIGEM))?\s*(?:N[º°.]?\s*)?[:#º°.\-\s]*(\d(?:[\d.]*\d)?)/i
+    )?.[1] ?? null;
+    // DANFEs frequentemente imprimem o numero com separador de milhar (ex.:
+    // "REF. NF-e REMESSA 1.344 (PARTE)"). O numero fiscal armazenado nao
+    // possui pontuacao, portanto normalizamos antes de vincular o retorno.
+    const referencedByText = referencedByTextMatch ? referencedByTextMatch.replace(/\D/g, "") || null : null;
+    const referencedDocumentNumber = referencedByKey ?? referencedByText;
+    const now = new Date().toISOString();
+    const canceled = Boolean(this.db.prepare(`
+      SELECT 1 FROM fiscal_document_events
+      WHERE access_key = ? AND event_type = 'CANCELLATION' AND status_code IN ('135','155') AND COALESCE(protocol_number, '') <> ''
+      LIMIT 1
+    `).get(file.accessKey));
+    const upsert = this.db.prepare(`
+      INSERT INTO warehouse_movements (
+        id, organization_id, own_legal_entity_id, access_key, item_number, document_number, series, issue_date,
+        warehouse_name, warehouse_cnpj, product_description, cfop, movement_type, movement_kind,
+        quantity_kg_decimal, source_unit, source_quantity_decimal, referenced_document_number, reference_text,
+        status, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(access_key, item_number) DO UPDATE SET
+        organization_id = excluded.organization_id,
+        own_legal_entity_id = excluded.own_legal_entity_id,
+        document_number = excluded.document_number,
+        series = excluded.series,
+        issue_date = excluded.issue_date,
+        warehouse_name = excluded.warehouse_name,
+        warehouse_cnpj = excluded.warehouse_cnpj,
+        product_description = excluded.product_description,
+        cfop = excluded.cfop,
+        movement_type = excluded.movement_type,
+        movement_kind = excluded.movement_kind,
+        quantity_kg_decimal = excluded.quantity_kg_decimal,
+        source_unit = excluded.source_unit,
+        source_quantity_decimal = excluded.source_quantity_decimal,
+        referenced_document_number = excluded.referenced_document_number,
+        reference_text = excluded.reference_text,
+        status = excluded.status,
+        notes = excluded.notes,
+        updated_at = excluded.updated_at
+    `);
+    for (const { item, cfop, classification } of classifiedItems) {
+      const rawProductDescription = String(item.description ?? "Cafe");
+      const productFamily = this.warehouseProductFamily(rawProductDescription);
+      const canonicalProductDescription = productFamily
+        ? manualProducts.get(productFamily) ?? rawProductDescription
+        : manualProducts.size === 1 ? [...manualProducts.values()][0] : rawProductDescription;
+      const commercialUnit = String(item.commercialUnit ?? "");
+      const taxableUnit = String(item.taxableUnit ?? "");
+      const commercialQuantity = String(item.commercialQuantity ?? "0");
+      const taxableQuantity = String(item.taxableQuantity ?? "0");
+      let sourceUnit = taxableUnit || commercialUnit;
+      let sourceQuantity = taxableQuantity || commercialQuantity;
+      let quantityKg = 0;
+      if (isXmlKgUnit(taxableUnit) && decimalNumber(taxableQuantity) > 0) {
+        quantityKg = decimalNumber(taxableQuantity);
+      } else if (isXmlKgUnit(commercialUnit)) {
+        sourceUnit = commercialUnit; sourceQuantity = commercialQuantity; quantityKg = decimalNumber(commercialQuantity);
+      } else if (isXmlSackUnit(commercialUnit)) {
+        sourceUnit = commercialUnit; sourceQuantity = commercialQuantity; quantityKg = decimalNumber(commercialQuantity) * 60;
+      } else if (isXmlTonUnit(commercialUnit)) {
+        sourceUnit = commercialUnit; sourceQuantity = commercialQuantity; quantityKg = decimalNumber(commercialQuantity) * 1000;
+      }
+      if (!(quantityKg > 0)) throw new Error(`Quantidade da nota ${String(extracted.number ?? "")} item ${String(item.itemNumber ?? "")} nao pode ser convertida para kg.`);
+      const needsReference = classification.kind === "SYMBOLIC" && !referencedDocumentNumber;
+      const status = canceled ? "CANCELED" : needsReference ? "PENDING_REVIEW" : "ACTIVE";
+      upsert.run(
+        deterministicUuid("warehouseMovement", file.accessKey, String(item.itemNumber ?? "1")),
+        ownEntity.organizationId, ownEntity.id, file.accessKey, String(item.itemNumber ?? "1"), String(extracted.number ?? ""),
+        this.stringOrNull(extracted.series), String(extracted.issuedAt ?? new Date().toISOString().slice(0, 10)), canonicalWarehouseName, warehouseCnpj,
+        canonicalProductDescription, cfop, classification.type, classification.kind, compactDecimal(quantityKg),
+        sourceUnit || "NAO_INFORMADA", sourceQuantity, referencedDocumentNumber, referenceText, status,
+        needsReference ? "Referencia da remessa original nao identificada automaticamente; conferir manualmente." : null, now, now
+      );
+    }
+    this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?").run(now, file.id);
+    this.db.prepare("UPDATE xml_import_jobs SET imported_notes = imported_notes + 1 WHERE id = ?").run(job.id);
+    return true;
+  }
+
   private processXmlImportFile(job: XmlImportJob, file: XmlImportFile, resolution: Record<string, unknown>, fileResolution: Record<string, unknown> = {}): void {
     if (!file.extractedDataJson) throw new Error("Arquivo XML sem dados extraidos.");
     const extracted = JSON.parse(file.extractedDataJson) as Record<string, unknown>;
@@ -4084,6 +4587,7 @@ export class AppRepository {
       return;
     }
     if (file.xmlType === "UNKNOWN") throw new Error("XML nao reconhecido como NF-e.");
+    if (this.importWarehouseDocumentIfRecognized(job, file, extracted)) return;
     if (file.accessKey) {
       const existing = this.db.prepare("SELECT id FROM fiscal_documents WHERE access_key = ?").get(file.accessKey) as { id: string } | undefined;
       if (existing) {
@@ -4216,7 +4720,14 @@ export class AppRepository {
         });
         this.db.prepare("UPDATE operations SET source = 'XML', xml_import_job_id = ?, classification_rule_id = ? WHERE id = ?").run(job.id, resolution.classificationRuleId ?? null, operation.id);
         createdOperations += 1;
-        if (secondaryResponsiblePartnerId && secondaryOperationType) {
+        const packaging = isPackagingXmlItem(xmlItem);
+        if (packaging) {
+          // O valor por unidade e' informado depois, no lancamento da nota; ate la ela fica pendente.
+          this.db.prepare("UPDATE operations SET service_rate_rule_id = NULL, applied_rate_value_cents = 0, service_amount_cents = 0, rate_was_manually_overridden = 1, manual_rate_value_cents = 0, manual_override_reason = ? WHERE id = ?")
+            .run(PACKAGING_OVERRIDE_PREFIX, operation.id);
+          if (!itemWarnings.includes(PACKAGING_PENDING_NOTE)) itemWarnings.push(PACKAGING_PENDING_NOTE);
+        }
+        if (secondaryResponsiblePartnerId && secondaryOperationType && !packaging) {
           const secondaryPartnerLegalEntity = this.listPartnerLegalEntities(secondaryResponsiblePartnerId).find((entity) => entity.isPrimary && entity.isActive)
             ?? this.listPartnerLegalEntities(secondaryResponsiblePartnerId).find((entity) => entity.isActive)
             ?? null;
@@ -4276,6 +4787,10 @@ export class AppRepository {
       .run(id, job.organizationId, document?.id ?? null, file.accessKey, eventType, String(extracted.sequenceNumber ?? "1"), extracted.eventDate ?? null, extracted.protocolNumber ?? null, extracted.statusCode ?? null, extracted.statusMessage ?? null, extracted.correctionText ?? null, file.storedFilePath, file.fileHash, now);
     if (eventType === "CANCELLATION" && document?.id && ["135", "155"].includes(String(extracted.statusCode ?? "")) && extracted.protocolNumber) {
       this.cancelFiscalDocument(document.id, `Cancelamento XML protocolo ${String(extracted.protocolNumber ?? "")}`.trim());
+    }
+    if (eventType === "CANCELLATION" && ["135", "155"].includes(String(extracted.statusCode ?? "")) && extracted.protocolNumber && this.tableExists("warehouse_movements")) {
+      this.db.prepare("UPDATE warehouse_movements SET status = 'CANCELED', notes = COALESCE(notes || ' ', '') || ?, updated_at = ? WHERE access_key = ?")
+        .run(`Cancelamento XML protocolo ${String(extracted.protocolNumber)}`.trim(), now, file.accessKey);
     }
     this.db.prepare("UPDATE xml_import_files SET status = 'IMPORTED', fiscal_document_event_id = ?, fiscal_document_id = ?, updated_at = ? WHERE id = ?").run(id, document?.id ?? null, now, file.id);
     this.db.prepare("UPDATE xml_import_jobs SET imported_events = imported_events + 1 WHERE id = ?").run(job.id);
@@ -4459,6 +4974,15 @@ export class AppRepository {
       defaultPaymentTerms: null,
       defaultDeliveryTerms: null,
       defaultConfirmationNotes: null,
+      chargeBankName: null,
+      chargeBankCode: null,
+      chargeBankAgency: null,
+      chargeBankAccount: null,
+      chargeBankAccountType: null,
+      chargeBankHolderName: null,
+      chargeBankHolderDocument: null,
+      chargePixKey: null,
+      chargePixKeyType: null,
       isDraft: true,
       isActive: true
     }, deterministicUuid("thirdPartyLegalEntity", cnpj));
@@ -4513,6 +5037,15 @@ export class AppRepository {
       defaultPaymentTerms: null,
       defaultDeliveryTerms: null,
       defaultConfirmationNotes: null,
+      chargeBankName: null,
+      chargeBankCode: null,
+      chargeBankAgency: null,
+      chargeBankAccount: null,
+      chargeBankAccountType: null,
+      chargeBankHolderName: null,
+      chargeBankHolderDocument: null,
+      chargePixKey: null,
+      chargePixKeyType: null,
       isDraft: true,
       isActive: true
     }, deterministicUuid("thirdPartyLegalEntity", partnerEntity.cnpj));
@@ -4688,6 +5221,9 @@ export class AppRepository {
     const description = this.normalizeXmlDescription(xmlItem.description);
     const quantity = String(xmlItem.commercialQuantity ?? "");
     if (!quantity) return null;
+
+    // Remessa de vasilhame/sacaria (big bag vazio) nao tem cafe: nada de sacas.
+    if (isPackagingXmlItem(xmlItem)) return "0";
 
     // Complemento de valor não representa sacas e não deve gerar corretagem.
     // O valor fiscal continua armazenado no item e entra normalmente na confirmação.
@@ -6134,8 +6670,48 @@ export class AppRepository {
 
   listDealConfirmations(input: unknown = {}): DealConfirmation[] {
     const filters = dealConfirmationListFiltersSchema.optional().parse(input) ?? {};
-    return (this.db.prepare("SELECT * FROM deal_confirmations ORDER BY confirmation_date DESC, updated_at DESC").all() as DbRecord[])
-      .map(mapDealConfirmation)
+    const confirmations = (this.db.prepare("SELECT * FROM deal_confirmations ORDER BY confirmation_date DESC, updated_at DESC").all() as DbRecord[])
+      .map(mapDealConfirmation);
+    const partyRows = this.db.prepare(
+      "SELECT deal_confirmation_id, party_role, own_legal_entity_id, manual_name, snapshot_json FROM deal_confirmation_parties WHERE party_role IN ('SELLER', 'BUYER') ORDER BY sort_order, party_role"
+    ).all() as Array<{ deal_confirmation_id: string; party_role: "SELLER" | "BUYER"; own_legal_entity_id: string | null; manual_name: string | null; snapshot_json: string }>;
+    const partiesByConfirmation = new Map<string, typeof partyRows>();
+    partyRows.forEach((party) => {
+      const current = partiesByConfirmation.get(party.deal_confirmation_id) ?? [];
+      current.push(party);
+      partiesByConfirmation.set(party.deal_confirmation_id, current);
+    });
+    const withCounterparty = confirmations.map((confirmation) => {
+      const parties = partiesByConfirmation.get(confirmation.id) ?? [];
+      const ownParty = parties.find((party) => party.own_legal_entity_id === confirmation.ownLegalEntityId);
+      const expectedRole: "SELLER" | "BUYER" | null = ownParty?.party_role === "SELLER"
+        ? "BUYER"
+        : ownParty?.party_role === "BUYER"
+          ? "SELLER"
+          : null;
+      const counterparty = (expectedRole ? parties.find((party) => party.party_role === expectedRole) : null)
+        ?? parties.find((party) => party.own_legal_entity_id !== confirmation.ownLegalEntityId)
+        ?? null;
+      let snapshotName: string | null = null;
+      if (counterparty?.snapshot_json) {
+        try {
+          const snapshot = JSON.parse(counterparty.snapshot_json) as { name?: unknown; legalName?: unknown };
+          snapshotName = typeof snapshot.name === "string" && snapshot.name.trim()
+            ? snapshot.name.trim()
+            : typeof snapshot.legalName === "string" && snapshot.legalName.trim()
+              ? snapshot.legalName.trim()
+              : null;
+        } catch {
+          snapshotName = null;
+        }
+      }
+      return {
+        ...confirmation,
+        counterpartyName: snapshotName ?? counterparty?.manual_name?.trim() ?? null,
+        counterpartyRole: counterparty?.party_role ?? expectedRole
+      };
+    });
+    return withCounterparty
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
       .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
       .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId)
@@ -7399,6 +7975,28 @@ export class AppRepository {
     return Boolean(this.db.prepare("SELECT 1 FROM deal_confirmation_items WHERE deal_confirmation_id = ? AND product_id = ? LIMIT 1").get(id, productId));
   }
 
+  // Confirmacao cancelada nao aceita mais edicao (nem remover o vinculo), entao
+  // nao pode continuar travando a nota: so' confirmacoes vigentes contam aqui.
+  private fiscalDocumentHasActiveDeal(fiscalDocumentId: string): boolean {
+    if (!this.tableExists("deal_confirmation_fiscal_documents") || !this.tableExists("deal_confirmation_operations")) return false;
+    return Boolean(this.db.prepare(`SELECT 1 FROM deal_confirmation_fiscal_documents link
+        JOIN deal_confirmations deal ON deal.id = link.deal_confirmation_id
+        WHERE link.fiscal_document_id = ? AND deal.status <> 'CANCELLED'
+      UNION ALL
+      SELECT 1 FROM deal_confirmation_operations link
+        JOIN deal_confirmations deal ON deal.id = link.deal_confirmation_id
+        JOIN operations operation ON operation.id = link.operation_id
+        WHERE operation.fiscal_document_id = ? AND deal.status <> 'CANCELLED'
+      LIMIT 1`).get(fiscalDocumentId, fiscalDocumentId));
+  }
+
+  // A sincronizacao entre computadores pode deixar a operacao ativa numa nota ja
+  // cancelada (cada linha sincroniza sozinha). Vale o status da nota nos totais.
+  private withoutCanceledDocuments(operations: Operation[]): Operation[] {
+    const canceled = new Set((this.db.prepare("SELECT id FROM fiscal_documents WHERE status = 'CANCELED'").all() as Array<{ id: string }>).map((row) => row.id));
+    return operations.filter((operation) => !canceled.has(operation.fiscalDocumentId));
+  }
+
   private dealHasFiscalDocument(id: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM deal_confirmation_fiscal_documents WHERE deal_confirmation_id = ? LIMIT 1").get(id));
   }
@@ -7770,6 +8368,17 @@ function parseLocalDate(value: string): Date {
 
 function normalizeXmlUnit(value: string): string {
   return value.trim().toUpperCase().replace(/[\s_-]+/g, "");
+}
+
+function decimalNumber(value: unknown): number {
+  const normalized = String(value ?? "0").trim().replace(/\s/g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compactDecimal(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return value.toFixed(6).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
 function isXmlSackUnit(value: string): boolean {

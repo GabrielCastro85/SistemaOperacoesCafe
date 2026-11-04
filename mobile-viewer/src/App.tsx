@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiJson, clearSession, hasStoredSession, login, logout } from "./api";
 import { AppShell } from "./AppShell";
 import { ChargesTab } from "./ChargesTab";
+import { ConfirmationsTab } from "./ConfirmationsTab";
 import { DashboardTab } from "./DashboardTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { assetUrl } from "./assetUrl";
@@ -75,6 +76,7 @@ export function App(): JSX.Element {
       <div className="content-section">
         {page === "dashboard" ? <DashboardTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "charges" ? <ChargesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "confirmations" ? <ConfirmationsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
       </div>
     </AppShell>
   );

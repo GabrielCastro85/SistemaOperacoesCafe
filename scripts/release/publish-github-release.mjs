@@ -12,7 +12,11 @@ const token = tokenMatch[1].trim().replace(/^["']|["']$/g, '');
 const owner = 'GabrielCastro85';
 const repo = 'SistemaOperacoesCafe-releases';
 const tag = `v${version}`;
-const releaseNotes = version === '1.1.25'
+const releaseNotes = version === '1.1.64'
+  ? 'Melhora a apresentacao dos PDFs de cobranca: CT-e em quadro proprio com total em destaque, quantidade de notas, sacas e tarifa por saca. As referencias ficam agrupadas por empresa em duas colunas. A tabela das notas ganhou letras maiores, o cabecalho ficou mais compacto e as paginas passam a ser numeradas. Preserva a selecao de notas, os calculos e os valores dos ajustes existentes.'
+  : version === '1.1.63'
+  ? 'Calcula o ajuste de CT-e pela soma das sacas das notas selecionadas, com valor por saca editavel e padrao de R$ 1,50. As notas da Vassuler vem pre-selecionadas nas novas cobrancas e podem ser desmarcadas. O PDF inclui as notas de referencia, sem cortar listas longas, e a planilha preserva essas observacoes. Ajustes de CT-e ja existentes nao recebem novamente a selecao automatica.'
+  : version === '1.1.25'
   ? 'Corrige a importacao de notas terceirizadas quando o CNPJ emissor tambem esta cadastrado como fornecedor. Essas notas permanecem somente no fluxo de cobranca do cliente e nao geram automaticamente uma segunda operacao de compra ou um acerto de fornecedor.'
   : version === '1.1.24'
   ? 'Corrige os dados das empresas nas confirmacoes de negocio geradas por nota fiscal. CNPJ, inscricao estadual e endereco agora sao preenchidos a partir da empresa identificada no XML, mesmo sem associacao com um cliente ou corretor.'

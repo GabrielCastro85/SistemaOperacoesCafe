@@ -108,6 +108,12 @@ describe("deal confirmations", () => {
       const result = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
       expect(result.items).toHaveLength(1);
       expect(result.items[0]).toMatchObject({ productId: null, productNameSnapshot: "Cafe arabica da NF", quantitySacksDecimal: "550", totalAmountCents: 109780000 });
+      repo.addDealConfirmationParty({ dealConfirmationId: result.confirmation.id, partyRole: "SELLER", businessPartnerId: null, partnerLegalEntityId: null, ownLegalEntityId, manualName: null, representativeName: null, sortOrder: 1 });
+      repo.addDealConfirmationParty({ dealConfirmationId: result.confirmation.id, partyRole: "BUYER", businessPartnerId: buyer.id, partnerLegalEntityId: null, ownLegalEntityId: null, manualName: null, representativeName: null, sortOrder: 2 });
+      expect(repo.listDealConfirmations({ organizationId: villaId }).find((item) => item.id === result.confirmation.id)).toMatchObject({
+        counterpartyName: "Empresa IF Compradora",
+        counterpartyRole: "BUYER"
+      });
       expect(repo.getFiscalDocument(doc.document.id).items[0].productId).toBe(otherProduct.id);
       const another = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
       expect(another.confirmation.id).not.toBe(result.confirmation.id);
@@ -306,6 +312,50 @@ describe("deal confirmations", () => {
     const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [], fiscalDocumentIds: [doc.document.id] });
     expect(second.confirmation.id).not.toBe(first.confirmation.id);
     expect(second.fiscalDocuments.map((document) => document.id)).toEqual([doc.document.id]);
+    db.close();
+  });
+
+  it("allows changing the billing client without altering linked confirmations, while keeping the delete lock", async () => {
+    const { repo, db, product } = await setup();
+    const buyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Original", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    const newBuyer = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Novo", notes: null, roles: ["BUYER", "CLIENT"], isActive: true });
+    await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: newBuyer.id, ownLegalEntityId: null, productId: product.id, operationScope: "EXTERNAL", rateType: "PER_SACK", rateValueCents: 500, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+    const createDocument = (documentNumber: string) => {
+      const doc = repo.createFiscalDocument({ organizationId: villaId, ownLegalEntityId, responsiblePartnerId: buyer.id, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-07-17", totalAmountCents: 500000, hasPendingIssues: false, pendingNotes: null, notes: null });
+      const item = repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "Cafe", quantity: "5", unit: "SACK", unitPriceDecimal: "1000", totalAmountCents: 500000, sacksQuantity: "5" });
+      const operation = repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: buyer.id, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-07-17", quantitySacks: "5", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+      repo.confirmFiscalDocument(doc.document.id);
+      return { doc, operation };
+    };
+    const reassign = (id: string, responsiblePartnerId: string) => repo.updateFiscalDocument(id, { ...repo.getFiscalDocument(id).document, responsiblePartnerId, operationType: "SALE" });
+
+    const edited = createDocument("NF-960");
+    const first = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [edited.operation.id], fiscalDocumentIds: [edited.doc.document.id] });
+    const second = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [edited.operation.id], fiscalDocumentIds: [edited.doc.document.id] });
+    const reassigned = reassign(edited.doc.document.id, newBuyer.id);
+    expect(reassigned.document.responsiblePartnerId).toBe(newBuyer.id);
+    expect(reassigned.document.status).toBe("CONFIRMED");
+    expect(repo.getDealConfirmation(first.confirmation.id).parties).toEqual(first.parties);
+    expect(repo.getDealConfirmation(second.confirmation.id).parties).toEqual(second.parties);
+    expect(reassigned.operations.map((operation) => operation.responsiblePartnerId)).toEqual([newBuyer.id]);
+    expect(reassigned.operations.map((operation) => operation.status)).toEqual(["CONFIRMED"]);
+    expect(repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: buyer.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" })).toHaveLength(0);
+    expect(repo.findEligibleOperations({ organizationId: villaId, clientPartnerId: newBuyer.id, periodStart: "2026-07-01", periodEnd: "2026-07-31" }).map((operation) => operation.id)).toEqual([edited.operation.id]);
+    expect(() => repo.deleteFiscalDocument(edited.doc.document.id)).toThrow(/confirmacao de negocio ativa/);
+    repo.cancelDealConfirmation(first.confirmation.id, "Desistencia");
+    expect(() => repo.deleteFiscalDocument(edited.doc.document.id)).toThrow(/confirmacao de negocio ativa/);
+    repo.cancelDealConfirmation(second.confirmation.id, "Desistencia");
+    expect(repo.getDealConfirmation(first.confirmation.id).fiscalDocuments.map((document) => document.id)).toEqual([edited.doc.document.id]);
+
+    const removed = createDocument("NF-961");
+    const cancelled = repo.createDealConfirmationFromFiscalDocuments({ organizationId: villaId, ownLegalEntityId, operationIds: [removed.operation.id], fiscalDocumentIds: [removed.doc.document.id] });
+    repo.cancelDealConfirmation(cancelled.confirmation.id, "Desistencia");
+    repo.deleteFiscalDocument(removed.doc.document.id);
+    const afterDelete = repo.getDealConfirmation(cancelled.confirmation.id);
+    expect(afterDelete.confirmation.status).toBe("CANCELLED");
+    expect(afterDelete.fiscalDocuments).toEqual([]);
+    expect(afterDelete.operations).toEqual([]);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     db.close();
   });
 
@@ -555,7 +605,7 @@ describe("deal confirmations", () => {
     repo.addDealConfirmationItem(itemInput(draft.confirmation.id, product.id, "Cafe", "15", "1000", 0));
     const issued = await repo.issueDealConfirmation(draft.confirmation.id);
     const document = issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL");
-    expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE \d+\.pdf$/);
+    expect(document?.originalFileName).toMatch(/^VILLA MG X DIAMANTE VCMG 0001\.pdf$/);
     expect(document?.storedFilePath ? basename(document.storedFilePath) : "").toBe(document?.originalFileName);
     db.close();
   });
@@ -607,7 +657,11 @@ describe("deal confirmations", () => {
       ["BUYER", "VILLA COFFEE COMERCIO E EXP. LTDA"]
     ]);
     expect(issued.confirmation.confirmationNumber).toBe("VCMG 0091");
-    expect(issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL")?.originalFileName).toMatch(/^FORNECEDORA X VILLA 91\.pdf$/);
+    expect(repo.listDealConfirmations({ organizationId: villaId }).find((item) => item.id === draft.confirmation.id)).toMatchObject({
+      counterpartyName: "FAZENDA FORNECEDORA LTDA",
+      counterpartyRole: "SELLER"
+    });
+    expect(issued.documents.find((item) => item.documentType === "ISSUED_ORIGINAL")?.originalFileName).toMatch(/^FORNECEDORA X VILLA VCMG 0091\.pdf$/);
     db.close();
   });
 

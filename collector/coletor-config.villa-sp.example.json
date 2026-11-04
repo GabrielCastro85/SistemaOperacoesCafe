@@ -1,0 +1,12 @@
+{
+  "serverUrl": "https://mindful-peace-production.up.railway.app",
+  "collectorSecret": "COLE_A_CREDENCIAL_DO_COLETOR_AQUI",
+  "sourceCode": "VILLA_SP",
+  "sourceLabel": "Villa Coffee SP",
+  "machineId": "pc-villa-sp-principal",
+  "xmlRoot": "C:\\Vulpe\\NFe",
+  "emitterCnpjs": ["44963370000108"],
+  "scanIntervalSeconds": 60,
+  "updateCheckSeconds": 3600,
+  "monthsBack": 1
+}

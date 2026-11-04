@@ -69,6 +69,16 @@ export interface LegalEntity {
   defaultPaymentTerms: string | null;
   defaultDeliveryTerms: string | null;
   defaultConfirmationNotes: string | null;
+  // Conta propria das cobrancas; vazia = cobranca usa a conta das confirmacoes.
+  chargeBankName?: string | null;
+  chargeBankCode?: string | null;
+  chargeBankAgency?: string | null;
+  chargeBankAccount?: string | null;
+  chargeBankAccountType?: string | null;
+  chargeBankHolderName?: string | null;
+  chargeBankHolderDocument?: string | null;
+  chargePixKey?: string | null;
+  chargePixKeyType?: string | null;
   isDraft: boolean;
   isActive: boolean;
   createdAt: string;
@@ -914,6 +924,71 @@ export interface FiscalDocumentEvent {
   createdAt: string;
 }
 
+export type WarehouseMovementType = "DEPOSIT" | "RETURN";
+export type WarehouseMovementKind = "PHYSICAL" | "SYMBOLIC";
+export type WarehouseMovementStatus = "ACTIVE" | "CANCELED" | "PENDING_REVIEW";
+
+export interface WarehouseMovement {
+  id: string;
+  organizationId: string;
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  accessKey: string;
+  itemNumber: string;
+  documentNumber: string;
+  series: string | null;
+  issueDate: string;
+  warehouseName: string;
+  warehouseCnpj: string | null;
+  productDescription: string;
+  cfop: string;
+  movementType: WarehouseMovementType;
+  movementKind: WarehouseMovementKind;
+  quantityKg: string;
+  sourceUnit: string;
+  sourceQuantity: string;
+  referencedDocumentNumber: string | null;
+  referenceText: string | null;
+  status: WarehouseMovementStatus;
+  notes: string | null;
+  origin: "XML" | "MANUAL";
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWarehouseAdjustmentInput {
+  organizationId: string;
+  ownLegalEntityId: string;
+  warehouseName: string;
+  warehouseCnpj?: string | null;
+  productDescription: string;
+  adjustmentMode: "SET_BALANCE" | "ADD" | "REMOVE";
+  unit: "SACK" | "KG";
+  quantity: string;
+  issueDate: string;
+  reason: string;
+}
+
+export interface WarehouseBalanceRow {
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  warehouseName: string;
+  warehouseCnpj: string | null;
+  productDescription: string;
+  quantityKg: string;
+  quantitySacks: string;
+}
+
+export interface WarehouseSummary {
+  totalKg: string;
+  totalSacks: string;
+  warehouseCount: number;
+  activeMovementCount: number;
+  pendingReviewCount: number;
+  balances: WarehouseBalanceRow[];
+}
+
 export interface ProductAlias {
   id: string;
   organizationId: string;
@@ -1530,6 +1605,9 @@ export interface DealConfirmation {
   cancelledAt: string | null;
   cancellationReason: string | null;
   replacedByConfirmationId: string | null;
+  /** Derived for list views: the seller or buyer that is not the operated company. */
+  counterpartyName: string | null;
+  counterpartyRole: "SELLER" | "BUYER" | null;
 }
 
 export interface DealConfirmationParty {
@@ -1824,12 +1902,17 @@ export interface Diagnostics {
 }
 
 export type TransferReconciliationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
+export type TransferReconciliationCounterpartyRole = "CLIENT" | "SUPPLIER";
+export type TransferReconciliationSourceMode = "INVOICES" | "MANUAL";
 
 export interface TransferReconciliation {
   id: string;
   organizationId: string;
   clientPartnerId: string;
   clientName: string;
+  counterpartyRole: TransferReconciliationCounterpartyRole;
+  sourceMode: TransferReconciliationSourceMode;
+  manualSourceCents: number | null;
   referenceDate: string;
   title: string | null;
   notes: string | null;
@@ -1875,6 +1958,8 @@ export interface TransferReconciliationDetail {
 
 export interface TransferReconciliationAvailableInvoice {
   fiscalDocumentId: string;
+  organizationId: string;
+  organizationName: string;
   documentNumber: string;
   issueDate: string;
   issuerName: string | null;

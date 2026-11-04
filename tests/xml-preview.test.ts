@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveOwnAndCounterparty } from "../src/renderer/pages/operations/xmlPreview";
+import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty } from "../src/renderer/pages/operations/xmlPreview";
 import type { LegalEntity } from "../src/shared/types/domain";
 
 function legalEntity(overrides: Partial<LegalEntity>): LegalEntity {
@@ -86,5 +86,26 @@ describe("resolveOwnAndCounterparty", () => {
     );
     expect(result.isThirdPartyOrigin).toBe(false);
     expect(result.ownEntityLabel).toBe("Villa Coffee Minas Gerais");
+  });
+});
+
+describe("classifyWarehouseXml", () => {
+  it("recognizes a physical warehouse return without requiring a commercial supplier", () => {
+    const preview = parseNfeExtractedPreview({
+      nature: "RETORNO DE MERCADORIA DEPOSITADA EM ARMAZEM GERAL",
+      items: [{ cfop: "5906", description: "CAFE", commercialQuantity: "500", commercialUnit: "SC" }]
+    });
+    expect(classifyWarehouseXml(preview)).toEqual({
+      movementType: "RETURN",
+      movementKind: "PHYSICAL",
+      cfops: ["5906"]
+    });
+  });
+
+  it("does not classify an ordinary purchase as a warehouse movement", () => {
+    const preview = parseNfeExtractedPreview({
+      items: [{ cfop: "5102", description: "CAFE", commercialQuantity: "500", commercialUnit: "SC" }]
+    });
+    expect(classifyWarehouseXml(preview)).toBeNull();
   });
 });

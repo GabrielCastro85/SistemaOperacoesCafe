@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeDatabase } from "../electron/main/database/database";
-import { createDiagnostics } from "../electron/main/ipc/handlers";
+import { createDiagnostics, isLikelyDataMutation } from "../electron/main/ipc/handlers";
 import { AppRepository } from "../electron/main/services/appRepository";
 import { ensureAppDirectories, resolveAppDirectories } from "../electron/main/services/paths";
 import { buildVariantConfigs } from "../src/shared/buildVariants";
@@ -45,5 +45,23 @@ describe("diagnostics IPC handler logic", () => {
     expect(diagnostics.signatureStatus).toBe("UNSIGNED");
     expect(diagnostics.databasePath).toContain("operations.sqlite");
     db.close();
+  });
+});
+
+describe("aviso de alteracao para a sincronizacao central", () => {
+  it("trata como alteracao as acoes que gravam dados, inclusive as fora dos verbos comuns", () => {
+    for (const channel of [
+      "xmlImports:execute", "xmlImports:revert", "spreadsheetImports:execute", "clientCharges:issue",
+      "clientCharges:reserveOperations", "clientPayments:allocate", "dealConfirmations:issue",
+      "dealSequences:reserveConfirmationNumber", "billingProfiles:upsert", "fiscalDocuments:create"
+    ]) expect(isLikelyDataMutation(channel), channel).toBe(true);
+  });
+
+  it("ignora consultas e canais locais", () => {
+    for (const channel of [
+      "fiscalDocuments:list", "fiscalDocuments:get", "xmlImports:progress", "xmlFiles:vulpeDevScan",
+      "operations:monthlyTotals", "operations:partnerPeriodSackSummary", "clientCharges:exportPeriodReport",
+      "dealConfirmationTemplates:preview", "auth:login", "backups:create", "updates:check"
+    ]) expect(isLikelyDataMutation(channel), channel).toBe(false);
   });
 });

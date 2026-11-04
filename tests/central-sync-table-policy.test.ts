@@ -8,5 +8,6 @@ describe("politica de tabelas da sincronizacao central", () => {
     expect(isCentralSynchronizedTable("xml_import_jobs")).toBe(false);
     expect(isCentralSynchronizedTable("xml_import_files")).toBe(false);
     expect(isCentralSynchronizedTable("fiscal_documents")).toBe(true);
+    expect(isCentralSynchronizedTable("warehouse_movements")).toBe(true);
   });
 });

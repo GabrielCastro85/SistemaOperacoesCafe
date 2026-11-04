@@ -10,6 +10,35 @@ const config = { COLLECTOR_INGEST_SECRET: collectorSecret } as ServerConfig;
 afterEach(() => vi.unstubAllGlobals());
 
 describe("monitor remoto do coletor", () => {
+  it("entrega primeiro os XMLs mais recentes da fila", async () => {
+    let inboxQuery = "";
+    const pool = {
+      async query(sql: string) {
+        if (sql.includes("FROM api_sessions")) {
+          return { rows: [{ sessionId: "session", userId: "user", username: "gabriel", displayName: "Gabriel", deviceId: "device" }] };
+        }
+        if (sql.includes("UPDATE api_sessions")) return { rows: [] };
+        if (sql.includes("FROM collector_inbox_files WHERE")) {
+          inboxQuery = sql;
+          return { rows: [] };
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+      }
+    } as unknown as pg.Pool;
+    const app = Fastify();
+    registerCollectorRoutes(app, pool, config);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/collector/inbox?source=GRAO_GRAO&limit=1000",
+      headers: { authorization: "Bearer sessao" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(inboxQuery).toContain("ORDER BY received_at DESC, id DESC");
+    await app.close();
+  });
+
   it("recebe o sinal de vida autenticado com as empresas atendidas", async () => {
     let heartbeatParams: unknown[] | null = null;
     const pool = {

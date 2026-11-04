@@ -42,6 +42,9 @@ import type {
   XmlImportJob,
   XmlImportFile,
   FiscalDocumentEvent,
+  WarehouseMovement,
+  WarehouseSummary,
+  CreateWarehouseAdjustmentInput,
   ProductAlias,
   OperationClassificationRule,
   FiscalDocumentMergeHistory,
@@ -85,6 +88,7 @@ import type {
   OrganizationListItem
 } from "../../src/shared/types/domain.js";
 import type { UpdateStatus } from "../../src/shared/types/updater.js";
+import type { PeriodComparisonInput, PeriodComparisonReport } from "../../src/shared/utils/periodComparison.js";
 import type { saveInstallationProfileSchema } from "../../src/shared/schemas/domainSchemas.js";
 import type { z } from "zod";
 
@@ -239,6 +243,10 @@ const IPC_CHANNELS = {
   getMonthlyOperationTotals: "operations:monthlyTotals",
   getPartnerPeriodSackSummary: "operations:partnerPeriodSackSummary",
   getCompanyPeriodSackSummary: "operations:companyPeriodSackSummary",
+  listWarehouseMovements: "warehouseStock:listMovements",
+  getWarehouseSummary: "warehouseStock:summary",
+  reviewWarehouseMovement: "warehouseStock:updateMovementReview",
+  createWarehouseAdjustment: "warehouseStock:createAdjustment",
   selectSpreadsheetFile: "spreadsheetFiles:select",
   inspectSpreadsheetWorkbook: "spreadsheetFiles:inspectWorkbook",
   previewSpreadsheetSheet: "spreadsheetFiles:previewSheet",
@@ -302,6 +310,9 @@ const IPC_CHANNELS = {
   findEligibleChargeOperations: "clientCharges:findEligibleOperations",
   getPartnerRateSummary: "clientCharges:partnerRateSummary",
   exportPartnerPeriodReport: "clientCharges:exportPeriodReport",
+  getPeriodComparison: "periodComparison:get",
+  exportPeriodComparisonImage: "periodComparison:exportImage",
+  copyPeriodComparisonImage: "periodComparison:copyImage",
   exportChargeControlWorkbook: "clientCharges:exportControlWorkbook",
   printChargeControl: "clientCharges:printControl",
   createClientChargeDraft: "clientCharges:createDraft",
@@ -655,6 +666,10 @@ export interface OperationsCafeApi {
   getMonthlyOperationTotals: (input: { organizationId: string; ownLegalEntityId?: string | null; year: number }) => Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>;
   getPartnerPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; businessPartnerId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
   getCompanyPeriodSackSummary: (input: { organizationId: string; ownLegalEntityId?: string | null; partnerLegalEntityId: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>;
+  listWarehouseMovements: (filters: { organizationId: string; ownLegalEntityId?: string | null; warehouseCnpj?: string | null; periodStart?: string | null; periodEnd?: string | null; status?: "ALL" | "ACTIVE" | "CANCELED" | "PENDING_REVIEW" }) => Promise<WarehouseMovement[]>;
+  getWarehouseSummary: (filters: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<WarehouseSummary>;
+  reviewWarehouseMovement: (input: { id: string; referencedDocumentNumber: string; notes?: string | null }) => Promise<WarehouseMovement>;
+  createWarehouseAdjustment: (input: CreateWarehouseAdjustmentInput) => Promise<WarehouseMovement>;
   selectSpreadsheetFile: () => Promise<WorkbookInspection | null>;
   inspectSpreadsheetWorkbook: (token: string) => Promise<WorkbookInspection>;
   previewSpreadsheetSheet: (input: { token: string; sheetName: string; headerRow: number }) => Promise<SheetPreview>;
@@ -678,11 +693,12 @@ export interface OperationsCafeApi {
   selectXmlFile: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
-  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
+  getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
   sendCollectorCommand: (input: { sourceCode: string; machineId: string; command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" }) => Promise<{ id: string; status: "PENDING"; command: string }>;
-  scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; periodStart: string; periodEnd: string }) => Promise<{
-    source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
+  scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; direction: "INBOUND" | "OUTBOUND"; periodStart: string; periodEnd: string }) => Promise<{
+    source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
+    direction: "INBOUND" | "OUTBOUND";
     period: string;
     periodStart: string;
     periodEnd: string;
@@ -733,6 +749,9 @@ export interface OperationsCafeApi {
   findEligibleChargeOperations: (input: unknown) => Promise<Operation[]>;
   getPartnerRateSummary: (input: unknown) => Promise<PartnerRateSummaryRow[]>;
   exportPartnerPeriodReport: (input: unknown) => Promise<boolean>;
+  getPeriodComparison: (input: PeriodComparisonInput) => Promise<{ report: PeriodComparisonReport; svg: string }>;
+  exportPeriodComparisonImage: (input: PeriodComparisonInput) => Promise<boolean>;
+  copyPeriodComparisonImage: (input: PeriodComparisonInput) => Promise<void>;
   exportChargeControlWorkbook: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
   printChargeControl: (input: { chargeIds: string[]; filterDescription?: string }) => Promise<boolean>;
   createClientChargeDraft: (input: unknown) => Promise<ClientChargeDetail>;
@@ -763,7 +782,7 @@ export interface OperationsCafeApi {
   getDashboardAlerts: (input: { organizationId: string; ownLegalEntityId?: string | null }) => Promise<DashboardAlerts>;
   ignorePreviousPeriodBillingAlert: (input: { organizationId: string; ownLegalEntityId: string; clientPartnerId: string; periodStart: string; periodEnd: string; reason: string }) => Promise<DashboardAlerts>;
   listTransferReconciliations: (filters: { organizationId: string; clientPartnerId?: string; status?: "ALL" | "DRAFT" | "COMPLETED" | "CANCELLED" }) => Promise<TransferReconciliation[]>;
-  listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
+  listTransferReconciliationInvoices: (input: { organizationId: string; clientPartnerId: string; counterpartyRole?: "CLIENT" | "SUPPLIER"; reconciliationId?: string }) => Promise<TransferReconciliationAvailableInvoice[]>;
   getTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
   saveTransferReconciliation: (input: unknown) => Promise<TransferReconciliationDetail>;
   cancelTransferReconciliation: (id: string) => Promise<TransferReconciliationDetail>;
@@ -1070,6 +1089,10 @@ const api: OperationsCafeApi = {
   getMonthlyOperationTotals: (input) => ipcRenderer.invoke(IPC_CHANNELS.getMonthlyOperationTotals, input) as Promise<Array<{ month: number; sacksDecimal: string; amountCents: number; operationCount: number }>>,
   getPartnerPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
   getCompanyPeriodSackSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getCompanyPeriodSackSummary, input) as Promise<{ sacksDecimal: string; operationCount: number; documentCount: number; serviceAmountCents: number }>,
+  listWarehouseMovements: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listWarehouseMovements, filters) as Promise<WarehouseMovement[]>,
+  getWarehouseSummary: (filters) => ipcRenderer.invoke(IPC_CHANNELS.getWarehouseSummary, filters) as Promise<WarehouseSummary>,
+  reviewWarehouseMovement: (input) => ipcRenderer.invoke(IPC_CHANNELS.reviewWarehouseMovement, input) as Promise<WarehouseMovement>,
+  createWarehouseAdjustment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createWarehouseAdjustment, input) as Promise<WarehouseMovement>,
   selectSpreadsheetFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectSpreadsheetFile) as Promise<WorkbookInspection | null>,
   inspectSpreadsheetWorkbook: (token) => ipcRenderer.invoke(IPC_CHANNELS.inspectSpreadsheetWorkbook, token) as Promise<WorkbookInspection>,
   previewSpreadsheetSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.previewSpreadsheetSheet, input) as Promise<SheetPreview>,
@@ -1094,11 +1117,12 @@ const api: OperationsCafeApi = {
   selectXmlFile: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFile) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFiles: () => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFiles) as Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>,
   selectXmlFolder: (includeSubfolders) => ipcRenderer.invoke(IPC_CHANNELS.selectXmlFolder, { includeSubfolders }) as Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>,
-  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>,
+  getVulpeDevStatus: () => ipcRenderer.invoke(IPC_CHANNELS.getVulpeDevStatus) as Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>,
   sendCollectorCommand: (input) => ipcRenderer.invoke(IPC_CHANNELS.sendCollectorCommand, input) as Promise<{ id: string; status: "PENDING"; command: string }>,
   scanVulpeDevXml: (input) => ipcRenderer.invoke(IPC_CHANNELS.scanVulpeDevXml, input) as Promise<{
-    source: "VILLA_MG" | "VILLA_ES" | "GRAO_MG" | "GRAO_SP" | "ALL";
+    source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;
+    direction: "INBOUND" | "OUTBOUND";
     period: string;
     periodStart: string;
     periodEnd: string;
@@ -1149,6 +1173,9 @@ const api: OperationsCafeApi = {
   findEligibleChargeOperations: (input) => ipcRenderer.invoke(IPC_CHANNELS.findEligibleChargeOperations, input) as Promise<Operation[]>,
   getPartnerRateSummary: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPartnerRateSummary, input) as Promise<PartnerRateSummaryRow[]>,
   exportPartnerPeriodReport: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPartnerPeriodReport, input) as Promise<boolean>,
+  getPeriodComparison: (input) => ipcRenderer.invoke(IPC_CHANNELS.getPeriodComparison, input) as Promise<{ report: PeriodComparisonReport; svg: string }>,
+  exportPeriodComparisonImage: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportPeriodComparisonImage, input) as Promise<boolean>,
+  copyPeriodComparisonImage: (input) => ipcRenderer.invoke(IPC_CHANNELS.copyPeriodComparisonImage, input) as Promise<void>,
   exportChargeControlWorkbook: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargeControlWorkbook, input) as Promise<boolean>,
   printChargeControl: (input) => ipcRenderer.invoke(IPC_CHANNELS.printChargeControl, input) as Promise<boolean>,
   createClientChargeDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.createClientChargeDraft, input) as Promise<ClientChargeDetail>,

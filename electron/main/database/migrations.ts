@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 
 export interface Migration {
   name: string;
@@ -3532,4 +3533,107 @@ export const migrations: Migration[] = [
       ALTER TABLE fiscal_documents ADD COLUMN has_financial_service INTEGER NOT NULL DEFAULT 0 CHECK (has_financial_service IN (0, 1));
     `)
   }
+  ,{
+    name: "057_transfer_reconciliation_counterparty_role",
+    up: (db) => db.exec(`
+      ALTER TABLE transfer_reconciliations ADD COLUMN counterparty_role TEXT NOT NULL DEFAULT 'CLIENT'
+        CHECK (counterparty_role IN ('CLIENT', 'SUPPLIER'));
+      CREATE INDEX idx_transfer_reconciliations_counterparty_role
+        ON transfer_reconciliations(organization_id, counterparty_role, client_partner_id);
+    `)
+  }
+  ,{
+    name: "058_transfer_reconciliation_manual_source",
+    up: (db) => db.exec(`
+      ALTER TABLE transfer_reconciliations ADD COLUMN source_mode TEXT NOT NULL DEFAULT 'INVOICES'
+        CHECK (source_mode IN ('INVOICES', 'MANUAL'));
+      ALTER TABLE transfer_reconciliations ADD COLUMN manual_source_cents INTEGER
+        CHECK (manual_source_cents IS NULL OR manual_source_cents > 0);
+    `)
+  }
+  ,{
+    name: "059_warehouse_coffee_movements",
+    up: (db) => db.exec(`
+      CREATE TABLE warehouse_movements (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id),
+        own_legal_entity_id TEXT NOT NULL REFERENCES legal_entities(id),
+        access_key TEXT NOT NULL,
+        item_number TEXT NOT NULL,
+        document_number TEXT NOT NULL,
+        series TEXT,
+        issue_date TEXT NOT NULL,
+        warehouse_name TEXT NOT NULL,
+        warehouse_cnpj TEXT,
+        product_description TEXT NOT NULL,
+        cfop TEXT NOT NULL,
+        movement_type TEXT NOT NULL CHECK (movement_type IN ('DEPOSIT','RETURN')),
+        movement_kind TEXT NOT NULL CHECK (movement_kind IN ('PHYSICAL','SYMBOLIC')),
+        quantity_kg_decimal TEXT NOT NULL,
+        source_unit TEXT NOT NULL,
+        source_quantity_decimal TEXT NOT NULL,
+        referenced_document_number TEXT,
+        reference_text TEXT,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','CANCELED','PENDING_REVIEW')),
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(access_key, item_number)
+      );
+      CREATE INDEX idx_warehouse_movements_scope
+        ON warehouse_movements(organization_id, own_legal_entity_id, issue_date);
+      CREATE INDEX idx_warehouse_movements_warehouse
+        ON warehouse_movements(organization_id, warehouse_cnpj, warehouse_name);
+      CREATE INDEX idx_warehouse_movements_access_key
+        ON warehouse_movements(access_key, status);
+    `)
+  }
+  ,{
+    name: "060_warehouse_manual_adjustments",
+    up: (db) => db.exec(`
+      ALTER TABLE warehouse_movements ADD COLUMN origin TEXT NOT NULL DEFAULT 'XML'
+        CHECK (origin IN ('XML','MANUAL'));
+      -- Identificador informativo, sem FK: usuarios sao provisionados por computador
+      -- e um ajuste precisa sincronizar mesmo antes do autor entrar em outro PC.
+      ALTER TABLE warehouse_movements ADD COLUMN created_by_user_id TEXT;
+      CREATE INDEX idx_warehouse_movements_origin
+        ON warehouse_movements(organization_id, origin, issue_date);
+    `)
+  }
+  ,{
+    // Conta das cobrancas separada da conta das confirmacoes (default_*).
+    name: "061_legal_entity_charge_bank_account",
+    up: (db) => {
+      const columns = ["charge_bank_name", "charge_bank_code", "charge_bank_agency", "charge_bank_account", "charge_bank_account_type", "charge_bank_holder_name", "charge_bank_holder_document", "charge_pix_key", "charge_pix_key_type"];
+      const existing = new Set((db.prepare("PRAGMA table_info(legal_entities)").all() as Array<{ name: string }>).map((item) => item.name));
+      const added = columns.filter((column) => !existing.has(column));
+      for (const column of added) db.exec(`ALTER TABLE legal_entities ADD COLUMN ${column} TEXT`);
+      rebaselineAddedNullColumns(db, "legal_entities", added);
+    }
+  }
 ];
+
+/**
+ * Coluna nova (nula) muda o hash de todas as linhas da tabela e faria cada PC
+ * reenviar sua copia local, possivelmente atrasada, por cima da central. Se a
+ * linha nao tinha alteracao pendente antes da coluna, atualiza o baseline.
+ * Mesmo hash de centralSyncService (JSON com chaves ordenadas, BLOB em base64).
+ */
+function rebaselineAddedNullColumns(db: Database.Database, table: string, added: string[]): void {
+  if (!added.length) return;
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'central_sync_baseline'").get()) return;
+  const hash = (row: Record<string, unknown>): string => {
+    const data = Object.fromEntries(Object.entries(row).map(([key, value]) => [key,
+      Buffer.isBuffer(value) ? { $binaryBase64: value.toString("base64") } : typeof value === "bigint" ? value.toString() : value]));
+    return createHash("sha256").update(JSON.stringify(data, Object.keys(data).sort())).digest("hex");
+  };
+  const baseline = db.prepare("SELECT row_sha256 AS sha256 FROM central_sync_baseline WHERE table_name = ? AND row_key = ?");
+  const update = db.prepare("UPDATE central_sync_baseline SET row_sha256 = ? WHERE table_name = ? AND row_key = ?");
+  for (const row of db.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>) {
+    if (typeof row.id !== "string") continue;
+    const current = baseline.get(table, row.id) as { sha256: string } | undefined;
+    if (!current) continue;
+    const before = Object.fromEntries(Object.entries(row).filter(([column]) => !added.includes(column)));
+    if (hash(before) === current.sha256) update.run(hash(row), table, row.id);
+  }
+}

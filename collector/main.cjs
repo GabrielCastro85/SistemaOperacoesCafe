@@ -229,14 +229,16 @@ function inspectXml(content) {
     const statusCode = text(protocol.cStat);
     if (!/^\d{44}$/.test(accessKey) || !["100", "150"].includes(statusCode)) return null;
     const emitterCnpj = digits(record(record(info.emit)).CNPJ);
-    return { accessKey, emitterCnpj, xmlType: "NFE" };
+    const recipient = record(info.dest);
+    const recipientCnpj = digits(recipient.CNPJ || recipient.CPF);
+    return { accessKey, emitterCnpj, recipientCnpj, xmlType: "NFE" };
   }
   let event = {};
   if (root === "retEnvEvento") event = record(record(record(parsed.retEnvEvento).retEvento).infEvento);
   if (root === "procEventoNFe") event = record(record(record(parsed.procEventoNFe).retEvento).infEvento);
   const accessKey = digits(event.chNFe);
   if (text(event.tpEvento) !== "110111" || !["135", "155"].includes(text(event.cStat)) || !text(event.nProt) || !/^\d{44}$/.test(accessKey)) return null;
-  return { accessKey, emitterCnpj: accessKey.slice(6, 20), xmlType: "CANCELLATION" };
+  return { accessKey, emitterCnpj: accessKey.slice(6, 20), recipientCnpj: "", xmlType: "CANCELLATION" };
 }
 
 function listCandidates(root) {
@@ -469,7 +471,15 @@ async function scan() {
       let metadata;
       try { metadata = inspectXml(content.toString("utf8")); }
       catch { continue; }
-      if (!metadata || !config.emitterCnpjs.includes(metadata.emitterCnpj)) continue;
+      if (!metadata) continue;
+      const belongsToConfiguredCompany = config.emitterCnpjs.includes(metadata.emitterCnpj)
+        || config.emitterCnpjs.includes(metadata.recipientCnpj);
+      // Evento de cancelamento nao repete o destinatario. Para uma nota de
+      // retorno emitida pelo armazem, aceitamos o evento se a nota original
+      // ja foi enviada por este coletor.
+      const originalWasUploaded = metadata.xmlType === "CANCELLATION"
+        && Object.values(state.uploadedHashes).some((entry) => entry && entry.accessKey === metadata.accessKey);
+      if (!belongsToConfiguredCompany && !originalWasUploaded) continue;
       eligible += 1;
       try {
         await upload(config, filePath, metadata, content, fileHash);

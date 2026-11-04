@@ -3,8 +3,15 @@ import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 
 const API_URL = "https://mindful-peace-production.up.railway.app";
-const SYNC_INTERVAL_MS = 8_000;
+const SYNC_INTERVAL_MS = 30_000;
 const MUTATION_SYNC_DELAY_MS = 750;
+// A sincronizacao incremental consulta o servidor a cada 30 segundos, mas
+// varrer todas as tabelas locais e recalcular seus hashes e' caro e bloqueia
+// o processo principal do Electron. As mutacoes IPC solicitam a varredura
+// imediatamente; este intervalo maior fica apenas como rede de seguranca para
+// alteracoes feitas por caminhos que nao passam pelos handlers.
+const LOCAL_SAFETY_SCAN_INTERVAL_MS = 10 * 60_000;
+const MAX_SYNC_BACKOFF_MS = 5 * 60_000;
 // Cada nota fiscal carrega muitos campos. Migracoes que acrescentam colunas
 // podem tornar milhares de notas "alteradas" de uma vez; lotes menores evitam
 // ultrapassar o limite de corpo da API central e permitem retomar gradualmente.
@@ -15,7 +22,7 @@ export const CENTRAL_SYNCED_TABLES = [
   "partner_company_links", "partner_contacts", "partner_aliases", "client_billing_profiles",
   "products", "product_aliases", "service_rate_rules", "purchase_rate_rules", "operation_rate_history",
   "operation_classification_rules", "fiscal_documents", "fiscal_document_items", "fiscal_document_events",
-  "fiscal_document_returns", "fiscal_document_merge_history", "operations", "third_party_operations",
+  "fiscal_document_returns", "fiscal_document_merge_history", "warehouse_movements", "operations", "third_party_operations",
   "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history",
   "billing_alert_ignores",
   "client_ledger_entries", "client_credit_allocations", "client_payments", "client_payment_allocations",
@@ -158,6 +165,10 @@ export class CentralSyncService {
   private running: Promise<void> | null = null;
   private rerunRequested = false;
   private initialized = false;
+  private consecutiveFailures = 0;
+  private nextAllowedSyncAt = 0;
+  private localScanPending = true;
+  private lastLocalScanAt = 0;
   private readonly tableColumns = new Map<string, Set<string>>();
   private readonly primaryKeys = new Map<string, string[]>();
 
@@ -284,6 +295,10 @@ export class CentralSyncService {
     this.mutationTimer = null;
     this.token = null;
     this.initialized = false;
+    this.consecutiveFailures = 0;
+    this.nextAllowedSyncAt = 0;
+    this.localScanPending = true;
+    this.lastLocalScanAt = 0;
   }
 
   start(): void {
@@ -296,6 +311,8 @@ export class CentralSyncService {
 
   scheduleSynchronization(): void {
     if (!this.token) return;
+    this.localScanPending = true;
+    if (this.running) this.rerunRequested = true;
     if (this.mutationTimer) clearTimeout(this.mutationTimer);
     this.mutationTimer = setTimeout(() => {
       this.mutationTimer = null;
@@ -308,6 +325,7 @@ export class CentralSyncService {
 
   async synchronize(): Promise<void> {
     if (!this.token) return;
+    if (!this.running && Date.now() < this.nextAllowedSyncAt) return;
     if (this.running) {
       this.rerunRequested = true;
       return this.running;
@@ -325,12 +343,28 @@ export class CentralSyncService {
     try {
       if (!this.initialized) await this.initializeFromServer();
       await this.pullRemoteChanges();
-      await this.pushLocalChanges();
+      const shouldScanLocal = this.localScanPending || Date.now() - this.lastLocalScanAt >= LOCAL_SAFETY_SCAN_INTERVAL_MS;
+      if (shouldScanLocal) {
+        // Limpa antes do envio: se outra mutacao acontecer enquanto a rede esta
+        // ocupada, scheduleSynchronization marca novamente e pede outro ciclo.
+        this.localScanPending = false;
+        try {
+          await this.pushLocalChanges();
+          this.lastLocalScanAt = Date.now();
+        } catch (error) {
+          this.localScanPending = true;
+          throw error;
+        }
+      }
       await this.pullRemoteChanges();
       this.db.prepare("UPDATE central_sync_state SET last_success_at = ?, last_error = NULL WHERE singleton = 1").run(new Date().toISOString());
+      this.consecutiveFailures = 0;
+      this.nextAllowedSyncAt = 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.db.prepare("UPDATE central_sync_state SET last_error = ? WHERE singleton = 1").run(message.slice(0, 2000));
+      this.consecutiveFailures += 1;
+      this.nextAllowedSyncAt = Date.now() + Math.min(MAX_SYNC_BACKOFF_MS, 15_000 * (2 ** Math.min(5, this.consecutiveFailures - 1)));
       throw error;
     }
   }

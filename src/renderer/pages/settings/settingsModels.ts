@@ -10,11 +10,19 @@ export const locationLabels: Record<Location["type"], string> = {
   OTHER: "Outro"
 };
 
+/**
+ * CNPJs com prefixo TERC-XML sao registros tecnicos usados para preservar a
+ * empresa emitente/destinataria de notas terceirizadas. Eles nao representam
+ * empresas operadas pelo usuario e, por isso, nao devem aparecer nos
+ * cadastros administrativos de CNPJs proprios.
+ */
+export const isOwnLegalEntity = (entity: Pick<LegalEntity, "documentPrefix">): boolean => entity.documentPrefix !== "TERC-XML";
+
 export const blankOrg = (variant: AppVariant): Omit<Organization, "id" | "createdAt" | "updatedAt"> => {
   const branding = getBrandingConfig(variant);
   return { name: "", slug: "", displayName: "", appDisplayName: "", description: null, logoPath: null, compactLogoPath: null, iconPath: null, primaryColor: branding.colors.primary, secondaryColor: branding.colors.secondary, accentColor: branding.colors.accent, themeMode: "light", isActive: true };
 };
 
-export const blankEntity = (organizationId: string): Omit<LegalEntity, "id" | "createdAt" | "updatedAt"> => ({ organizationId, legalName: "", tradeName: "", cnpj: null, stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: "Endereco pendente", addressNumber: "S/N", addressComplement: null, district: "Pendente", city: "Pendente", state: "MG", postalCode: "00000000", documentPrefix: null, defaultBankName: null, defaultBankCode: null, defaultBankAgency: null, defaultBankAccount: null, defaultBankAccountType: null, defaultBankHolderName: null, defaultBankHolderDocument: null, defaultPixKey: null, defaultPixKeyType: null, defaultPaymentTerms: null, defaultDeliveryTerms: null, defaultConfirmationNotes: null, isDraft: false, isActive: true });
+export const blankEntity = (organizationId: string): Omit<LegalEntity, "id" | "createdAt" | "updatedAt"> => ({ organizationId, legalName: "", tradeName: "", cnpj: null, stateRegistration: null, municipalRegistration: null, email: null, phone: null, addressLine: "Endereco pendente", addressNumber: "S/N", addressComplement: null, district: "Pendente", city: "Pendente", state: "MG", postalCode: "00000000", documentPrefix: null, defaultBankName: null, defaultBankCode: null, defaultBankAgency: null, defaultBankAccount: null, defaultBankAccountType: null, defaultBankHolderName: null, defaultBankHolderDocument: null, defaultPixKey: null, defaultPixKeyType: null, defaultPaymentTerms: null, defaultDeliveryTerms: null, defaultConfirmationNotes: null, chargeBankName: null, chargeBankCode: null, chargeBankAgency: null, chargeBankAccount: null, chargeBankAccountType: null, chargeBankHolderName: null, chargeBankHolderDocument: null, chargePixKey: null, chargePixKeyType: null, isDraft: false, isActive: true });
 
 export const blankLocation = (organizationId: string): Omit<Location, "id" | "createdAt" | "updatedAt"> => ({ organizationId, legalEntityId: null, name: "", type: "OFFICE", description: null, addressLine: null, addressNumber: null, addressComplement: null, district: null, city: null, state: null, postalCode: null, isActive: true });

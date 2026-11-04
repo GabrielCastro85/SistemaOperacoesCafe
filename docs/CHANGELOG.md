@@ -1,5 +1,108 @@
 # Changelog
 
+## 1.1.68
+
+- Notas importadas por XML, cobranças e confirmações emitidas, pagamentos e outras alterações passam a chegar aos outros computadores em segundos. Antes algumas esperavam até 10 minutos.
+- Remessa de sacaria (big bag vazio) não soma sacas: fica pendente até informar o valor por unidade na tela da nota e aparece na cobrança em seção própria.
+- Cada empresa pode ter uma conta para as confirmações e outra para as cobranças. Alterar uma não muda a outra.
+
+## 1.1.67
+
+- Comparativo e Resumo deixam de contar vendas de notas canceladas, mesmo quando a operação ficou ativa depois da sincronização entre computadores.
+- No Comparativo, o quadro "Clientes novos" passa a se chamar "Sem vendas em" seguido do período anterior, que é o que ele mostra.
+
+## 1.1.66
+
+- Comparativo com novo layout: filtros à esquerda e a imagem inteira à direita, sem precisar salvar para ver, com botão para ampliar.
+- A imagem é gerada ao abrir a tela, ao usar um atalho e ao trocar de grupo.
+- Os dados somam sempre todas as empresas (Villa Coffee e Grão & Grão). As cores e o logo seguem o grupo selecionado no topo.
+
+## 1.1.65
+
+- Nova tela Comparativo: compara de 2 a 4 períodos, como meses inteiros ou o mesmo intervalo de dias, e gera uma imagem para salvar ou copiar.
+- A imagem mostra volumes, notas, valores, empresas, principais clientes, movimento dos clientes, observações e pontos de atenção.
+- A nota pode trocar de cliente mesmo ligada a uma confirmação ativa: a confirmação não muda, a tarifa é recalculada e a nota continua confirmada.
+
+## 1.1.64
+
+- PDF de cobrança com CT-e em quadro próprio, referências agrupadas por empresa, letras maiores na tabela de notas e páginas numeradas.
+
+## 1.1.63
+
+- Ajuste de CT-e calculado pela soma das sacas das notas selecionadas, com valor por saca editável e padrão de R$ 1,50.
+- Notas da Vassuler vêm pré-selecionadas nas novas cobranças e podem ser desmarcadas.
+
+## 1.1.62
+
+- Confirmação de negócio cancelada deixa de travar a nota: agora é possível trocar o responsável ou excluir a nota depois do cancelamento.
+- Notas ligadas a uma confirmação ainda ativa continuam protegidas, com mensagem indicando cancelar a confirmação ou remover o vínculo.
+
+## 1.1.60
+
+- A tela Notas e operações passa a abrir diretamente em Notas emitidas.
+- Saldos manuais e movimentos de NF-e de armazém passam a ser vinculados pelo CNPJ do armazém, mesmo quando os nomes são diferentes.
+- Retornos com descrição genérica de café reaproveitam a classificação manual existente quando há um único produto identificado no armazém.
+- Evita criar uma segunda linha negativa quando uma nota de retorno deve abater um saldo informado manualmente.
+- Novos ajustes manuais exigem o CNPJ completo do armazém para garantir o vínculo com futuras NF-e.
+
+## 1.1.59
+
+- Remove a consulta direta de NF-e na SEFAZ para evitar disputa de NSU com a Vulpe, que permanece como fonte prioritaria dos XMLs.
+- Notas de remessa e retorno de armazem passam a ser reconhecidas automaticamente pelo CFOP durante a importacao manual do XML.
+- Movimentacoes de armazem nao exigem cadastro de fornecedor nem os campos de compra, venda, contrato ou financeiro.
+- A tela informa antecipadamente o armazem, o tipo de movimento e se as sacas serao acrescentadas ou descontadas, sem gerar operacao comercial ou cobranca.
+
+## 1.1.58
+
+- Adiciona consulta direta de NF-e recebidas na SEFAZ usando o certificado digital instalado no Windows.
+- Permite consultar novas notas de cada CNPJ proprio ou localizar uma NF-e diretamente pela chave de acesso.
+- XMLs completos encontrados entram na fila normal de revisao e importacao, sem exigir selecao manual do arquivo.
+- Quando a SEFAZ exigir Ciencia da Operacao, o programa pede confirmacao explicita antes de registrar o evento e baixar o XML.
+
+## 1.1.57
+
+- Reorganiza a tela de notas em fluxos separados para notas recebidas, notas emitidas, lançamento manual e planilhas.
+- A busca automática passa a filtrar corretamente entradas e saídas para cada empresa própria.
+- A fila de revisão identifica visualmente a razão social e o CNPJ exato do fornecedor ou cliente, além da empresa própria relacionada.
+- O lançamento manual exige a escolha do CNPJ correto da contraparte, evitando misturar filiais de um mesmo fornecedor ou cliente.
+- Prepara o coletor para reconhecer também as notas da Villa Coffee SP quando a pasta da Vulpe estiver disponível.
+- Oculta cadastros técnicos usados internamente por XML da lista de CNPJs próprios.
+
+## 1.1.56
+
+- Corrige os painéis do controle de cafés armazenados que ficavam comprimidos e visualmente sobrepostos em janelas com menor altura.
+- Reconhece automaticamente referências de remessa formatadas com separador de milhar, como “NF-e REMESSA 1.344”.
+- Retornos simbólicos com CFOP 5907/6907 passam a vincular corretamente a remessa original e atualizar o estoque sem exigir conferência manual quando a referência está no XML.
+- Reduz as varreduras completas do banco local durante a sincronização para diminuir pequenas travadas quando há vários programas abertos.
+
+## 1.1.55
+
+- Adiciona o controle de cafés armazenados em terceiros, com saldo por armazém, empresa e produto em quilos e sacas.
+- Reconhece automaticamente remessas, retornos físicos, remessas simbólicas e retornos simbólicos pelos CFOPs 5905/6905, 5934/6934, 5906/6906 e 5907/6907.
+- Passa a coletar NF-e em que a empresa é emitente ou destinatária e estorna automaticamente movimentos de documentos cancelados.
+- Movimentos simbólicos sem referência identificável ficam destacados para conferência manual antes de alterar o saldo.
+- Permite corrigir manualmente o estoque por armazém, empresa e produto, definindo o saldo correto ou lançando acréscimos e retiradas com motivo obrigatório e histórico auditável.
+- Reduz a frequência de sincronizações e atualizações automáticas e aplica espera progressiva durante falhas de rede para melhorar o desempenho.
+
+## 1.1.54
+
+- A conferência de repasses passa a reunir notas da Villa Coffee e da Grão & Grão para o mesmo cliente ou fornecedor, identificando visualmente a origem de cada nota.
+- Os campos complementares dos pagamentos passam a ser opcionais; somente linhas com valor informado são registradas.
+- O campo de valor vazio recebe um alerta visual vermelho, e a tecla Tab cria automaticamente a próxima linha de pagamento.
+
+## 1.1.53
+
+- A lista de fechamentos passa a mostrar a contraparte real: comprador nas vendas e vendedor nas compras.
+- O PDF de fechamento ganha uma terceira área de assinatura para o corretor, ao lado do vendedor e do comprador.
+- O rodapé do fechamento foi simplificado para exibir somente a marca discreta “Gerado por Grãonex”.
+
+## 1.1.52
+
+- A conferência de repasses passa a permitir notas de saída de clientes e notas de entrada de fornecedores.
+- Adicionada a opção de criar uma conferência sem notas fiscais, informando diretamente um valor inicial.
+- Pagamentos podem ser acrescentados posteriormente à conferência manual e são abatidos do saldo restante.
+- O histórico identifica a origem do valor e preserva separadamente as conferências por notas e por valor manual.
+
 ## 1.1.37
 
 - Removido o limite de execucao que podia fazer o Agendador do Windows encerrar o coletor poucos minutos depois da inicializacao.

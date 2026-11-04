@@ -4,8 +4,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Button, ConfirmationDialog, DataTable, DocumentPreviewCard, EmptyState, FileDropzone, Input, Pagination, ProgressBar, StatusBadge, Stepper, Tabs, buildUiTheme, getReadableTextColor } from "../src/renderer/design-system/index.js";
 import { legacyMenuFromPath, navigationGroups, pathFromLegacyMenu, routeIdFromLegacyMenu } from "../src/renderer/app/navigation.js";
+import { isOwnLegalEntity } from "../src/renderer/pages/settings/settingsModels.js";
 
 describe("renderer design system", () => {
+  it("keeps technical third-party XML companies out of own-company settings", () => {
+    expect(isOwnLegalEntity({ documentPrefix: "VCMG" })).toBe(true);
+    expect(isOwnLegalEntity({ documentPrefix: null })).toBe(true);
+    expect(isOwnLegalEntity({ documentPrefix: "TERC-XML" })).toBe(false);
+  });
+
   it("renders accessible basic controls without browser APIs", () => {
     const html = renderToStaticMarkup(
       React.createElement(
@@ -123,5 +130,19 @@ describe("renderer design system", () => {
     expect(pageSource).toContain("issueDealConfirmation(detail.confirmation.id, currentDraftFields())");
     expect(handlerSource).toContain("repository.generateDealConfirmationPreview(id, data.draftInput)");
     expect(handlerSource).toContain("repository.issueDealConfirmation(id, data.draftInput)");
+  });
+
+  it("separates received and issued invoices and requires the exact counterparty CNPJ in manual entry", () => {
+    const pageSource = readFileSync("src/renderer/pages/operations/OperationsPage.tsx", "utf8");
+    const handlerSource = readFileSync("electron/main/ipc/handlers.ts", "utf8");
+
+    expect(pageSource).toContain('{ id: "received", label: "Notas recebidas" }');
+    expect(pageSource).toContain('{ id: "issued", label: "Notas emitidas" }');
+    expect(pageSource).toContain('label={operationType === "PURCHASE" ? "CNPJ emissor da nota" : "CNPJ destinatario da nota"}');
+    expect(pageSource).toContain("manualCounterpartyLegalEntityId");
+    expect(handlerSource).toContain('direction: z.enum(["INBOUND", "OUTBOUND"])');
+    expect(handlerSource).toContain('data.direction === "INBOUND"');
+    expect(handlerSource).toContain("allowedCnpjs.has(recipientCnpj)");
+    expect(handlerSource).toContain("allowedCnpjs.has(issuerCnpj)");
   });
 });

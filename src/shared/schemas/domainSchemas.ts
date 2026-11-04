@@ -141,6 +141,16 @@ export const legalEntityInputSchema = z
     defaultPaymentTerms: nullableText.optional().default(null),
     defaultDeliveryTerms: nullableText.optional().default(null),
     defaultConfirmationNotes: nullableText.optional().default(null),
+    // Sem default: ausente = manter a conta de cobranca gravada.
+    chargeBankName: nullableText.optional(),
+    chargeBankCode: nullableText.optional(),
+    chargeBankAgency: nullableText.optional(),
+    chargeBankAccount: nullableText.optional(),
+    chargeBankAccountType: nullableText.optional(),
+    chargeBankHolderName: nullableText.optional(),
+    chargeBankHolderDocument: nullableText.optional(),
+    chargePixKey: nullableText.optional(),
+    chargePixKeyType: nullableText.optional(),
     isDraft: z.boolean(),
     isActive: z.boolean()
   })
