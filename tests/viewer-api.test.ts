@@ -67,6 +67,11 @@ function fixture(): Record<string, Row[]> {
       { id: "third-item", fiscal_document_id: "third-document", description: "Cafe conilon", quantity_decimal: "100", unit: "SACK", sacks_quantity_decimal: "100", total_amount_cents: 8000000 },
       { id: "pending-item", fiscal_document_id: "pending-document", description: "Cafe arabica", quantity_decimal: "250", unit: "SACK", sacks_quantity_decimal: "250", total_amount_cents: 45000000 }
     ],
+    warehouse_movements: [
+      { id: "warehouse-manual", organization_id: organizationId, own_legal_entity_id: legalEntityId, access_key: "MANUAL:1", item_number: "1", document_number: "AJ-1", issue_date: "2026-09-01", warehouse_name: "SANTA FE", warehouse_cnpj: "04164419000130", product_description: "ARABICA", cfop: "MANUAL", movement_type: "DEPOSIT", movement_kind: "PHYSICAL", quantity_kg_decimal: "60000", source_unit: "SACK", source_quantity_decimal: "1000", status: "ACTIVE", origin: "MANUAL", created_at: "2026-09-01T12:00:00Z" },
+      { id: "warehouse-return", organization_id: organizationId, own_legal_entity_id: legalEntityId, access_key: "NFE:2164", item_number: "1", document_number: "2164", series: "1", issue_date: "2026-09-10", warehouse_name: "SANTA FE ARMAZENS GERAIS EIRELI", warehouse_cnpj: "04164419000130", product_description: "CAFE BENEFICIADO CRU EM GRAO ARABICA", cfop: "1906", movement_type: "RETURN", movement_kind: "PHYSICAL", quantity_kg_decimal: "30000", source_unit: "SACK", source_quantity_decimal: "500", referenced_document_number: "1344", status: "ACTIVE", origin: "XML", created_at: "2026-09-10T12:00:00Z" },
+      { id: "warehouse-pending", organization_id: organizationId, own_legal_entity_id: legalEntityId, access_key: "NFE:2200", item_number: "1", document_number: "2200", series: "1", issue_date: "2026-09-12", warehouse_name: "SANTA FE ARMAZENS GERAIS EIRELI", warehouse_cnpj: "04164419000130", product_description: "CAFE ARABICA", cfop: "1906", movement_type: "RETURN", movement_kind: "PHYSICAL", quantity_kg_decimal: "6000", source_unit: "SACK", source_quantity_decimal: "100", status: "PENDING_REVIEW", notes: "Referencia da remessa nao identificada", origin: "XML", created_at: "2026-09-12T12:00:00Z" }
+    ],
     client_charges: [
       // Permanece ISSUED no servidor, mas ja venceu. O desktop transforma esse
       // estado em OVERDUE durante a leitura e o site deve calcular o mesmo.
@@ -124,6 +129,28 @@ describe("viewer API", () => {
 
     const pendingInvoices = await app.inject({ method: "GET", url: `/v1/viewer/invoices?${query}&direction=INBOUND&status=PENDING`, headers: { authorization: "Bearer test" } });
     expect(pendingInvoices.json()).toEqual([expect.objectContaining({ documentNumber: "124", pendingNotes: "Conferir fornecedor" })]);
+
+    const warehouses = await app.inject({ method: "GET", url: `/v1/viewer/warehouses?${query}&status=ALL`, headers: { authorization: "Bearer test" } });
+    expect(warehouses.statusCode).toBe(200);
+    expect(warehouses.json()).toMatchObject({
+      summary: {
+        totalKg: 30000,
+        totalSacks: 500,
+        warehouseCount: 1,
+        activeMovementCount: 2,
+        pendingReviewCount: 1,
+        balances: [expect.objectContaining({ warehouseName: "SANTA FE", warehouseCnpj: "04164419000130", productDescription: "ARABICA", quantityKg: 30000, quantitySacks: 500 })]
+      },
+      warehouses: [{ cnpj: "04164419000130", name: "SANTA FE" }],
+      movements: expect.arrayContaining([
+        expect.objectContaining({ id: "warehouse-manual", origin: "MANUAL", movementType: "DEPOSIT" }),
+        expect.objectContaining({ id: "warehouse-return", referencedDocumentNumber: "1344", movementType: "RETURN" }),
+        expect.objectContaining({ id: "warehouse-pending", status: "PENDING_REVIEW" })
+      ])
+    });
+
+    const pendingWarehouse = await app.inject({ method: "GET", url: `/v1/viewer/warehouses?${query}&status=PENDING_REVIEW&warehouseCnpj=04164419000130`, headers: { authorization: "Bearer test" } });
+    expect(pendingWarehouse.json()).toMatchObject({ movements: [expect.objectContaining({ documentNumber: "2200", notes: "Referencia da remessa nao identificada" })] });
 
     const charges = await app.inject({ method: "GET", url: `/v1/viewer/charges?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(charges.statusCode).toBe(200);

@@ -7,6 +7,7 @@ import { DashboardTab } from "./DashboardTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { LedgerTab } from "./LedgerTab";
 import { InvoicesTab } from "./InvoicesTab";
+import { WarehousesTab } from "./WarehousesTab";
 import { assetUrl } from "./assetUrl";
 import { selectDefaultLegalEntity, selectDefaultOrganization } from "./defaultCompany";
 import type { PageId } from "./navigation";
@@ -78,6 +79,7 @@ export function App(): JSX.Element {
       <div className="content-section">
         {page === "dashboard" ? <DashboardTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "invoices" ? <InvoicesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "warehouses" ? <WarehousesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "charges" ? <ChargesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "confirmations" ? <ConfirmationsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "ledger" ? <LedgerTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}

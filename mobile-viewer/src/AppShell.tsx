@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { buildUiTheme, themeToCssVariables } from "./renderer/design-system/theme/theme";
-import { CoinsIcon, DashboardIcon, FileTextIcon } from "./renderer/design-system/components/Icons";
+import { CoinsIcon, DashboardIcon, FileTextIcon, PackageIcon } from "./renderer/design-system/components/Icons";
 import { formatCnpj } from "./shared/utils/format";
 import { assetUrl } from "./assetUrl";
 import { navigationGroups, type NavigationItem, type PageId } from "./navigation";
@@ -15,6 +15,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
       return <DashboardIcon />;
     case "invoices":
       return <FileTextIcon />;
+    case "warehouses":
+      return <PackageIcon />;
     case "charges":
       return <CoinsIcon />;
     case "ledger":

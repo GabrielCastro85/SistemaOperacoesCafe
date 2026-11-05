@@ -36,6 +36,11 @@ const invoiceListSchema = filterSchema.extend({
   status: z.enum(["ACTIVE", "PENDING", "CANCELED", "ALL"]).default("ACTIVE")
 });
 
+const warehouseListSchema = filterSchema.extend({
+  warehouseCnpj: z.string().optional(),
+  status: z.enum(["ALL", "ACTIVE", "CANCELED", "PENDING_REVIEW"]).default("ALL")
+});
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -235,6 +240,19 @@ function digits(value: unknown): string {
 
 function normalized(value: unknown): string {
   return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function warehouseIdentity(row: JsonRecord): string {
+  const cnpj = digits(row.warehouse_cnpj);
+  const name = normalized(row.warehouse_name).toUpperCase();
+  return `${text(row.own_legal_entity_id)}:${cnpj || `NAME:${name}`}`;
+}
+
+function warehouseProductFamily(value: unknown): "ARABICA" | "CONILON" | null {
+  const description = normalized(value).toUpperCase();
+  if (/\bARABICA\b/.test(description)) return "ARABICA";
+  if (/\b(?:CONILON|ROBUSTA)\b/.test(description)) return "CONILON";
+  return null;
 }
 
 function isThirdPartyEntity(row: JsonRecord | undefined): boolean {
@@ -461,6 +479,101 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       })
       .sort((left, right) => right.issueDate.localeCompare(left.issueDate)
         || right.documentNumber.localeCompare(left.documentNumber, "pt-BR", { numeric: true }));
+  });
+
+  app.get("/v1/viewer/warehouses", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = warehouseListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [allMovements, entities] = await Promise.all([
+      records(pool, "warehouse_movements"), records(pool, "legal_entities")
+    ]);
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
+    const scoped = allMovements.filter((row) => inScope(row, filters));
+    const active = scoped.filter((row) => text(row.status) === "ACTIVE");
+    const manualProducts = new Map<string, Map<string, string>>();
+    const manualWarehouseNames = new Map<string, string>();
+    for (const row of active) {
+      if (text(row.origin) !== "MANUAL") continue;
+      const identity = warehouseIdentity(row);
+      manualWarehouseNames.set(identity, text(row.warehouse_name));
+      const description = text(row.product_description);
+      const family = warehouseProductFamily(description);
+      const productKey = family ?? `TEXT:${normalized(description).toUpperCase()}`;
+      const products = manualProducts.get(identity) ?? new Map<string, string>();
+      products.set(productKey, description);
+      manualProducts.set(identity, products);
+    }
+    const balanceMap = new Map<string, {
+      ownLegalEntityId: string; ownLegalEntityName: string; warehouseName: string; warehouseCnpj: string | null;
+      productDescription: string; quantityKg: number;
+    }>();
+    for (const row of active) {
+      const identity = warehouseIdentity(row);
+      const description = text(row.product_description);
+      const family = warehouseProductFamily(description);
+      const knownProducts = manualProducts.get(identity);
+      let productKey: string = family ?? `TEXT:${normalized(description).toUpperCase()}`;
+      let productDescription = family ? knownProducts?.get(family) ?? family : description;
+      if (!family && knownProducts?.size === 1) {
+        const onlyProduct = [...knownProducts.entries()][0];
+        productKey = onlyProduct[0];
+        productDescription = onlyProduct[1];
+      }
+      const balanceKey = `${identity}:${productKey}`;
+      const own = entityMap.get(text(row.own_legal_entity_id));
+      const current = balanceMap.get(balanceKey) ?? {
+        ownLegalEntityId: text(row.own_legal_entity_id),
+        ownLegalEntityName: nullableText(own?.trade_name) ?? nullableText(own?.legal_name) ?? "Empresa",
+        warehouseName: manualWarehouseNames.get(identity) ?? text(row.warehouse_name),
+        warehouseCnpj: digits(row.warehouse_cnpj) || null,
+        productDescription,
+        quantityKg: 0
+      };
+      current.quantityKg += (text(row.movement_type) === "DEPOSIT" ? 1 : -1) * numberValue(row.quantity_kg_decimal);
+      balanceMap.set(balanceKey, current);
+    }
+    const balances = [...balanceMap.values()]
+      .filter((row) => Math.abs(row.quantityKg) > 0.0001)
+      .map((row) => ({ ...row, quantitySacks: row.quantityKg / 60 }))
+      .sort((left, right) => left.warehouseName.localeCompare(right.warehouseName, "pt-BR")
+        || left.productDescription.localeCompare(right.productDescription, "pt-BR")
+        || left.ownLegalEntityName.localeCompare(right.ownLegalEntityName, "pt-BR"));
+    const totalKg = active.reduce((sum, row) => sum + (text(row.movement_type) === "DEPOSIT" ? 1 : -1) * numberValue(row.quantity_kg_decimal), 0);
+    const movements = scoped
+      .filter((row) => inPeriod(row.issue_date, filters.periodStart, filters.periodEnd))
+      .filter((row) => !filters.warehouseCnpj || digits(row.warehouse_cnpj) === digits(filters.warehouseCnpj))
+      .filter((row) => filters.status === "ALL" || text(row.status) === filters.status)
+      .map((row) => {
+        const own = entityMap.get(text(row.own_legal_entity_id));
+        return {
+          id: text(row.id), ownLegalEntityId: text(row.own_legal_entity_id),
+          ownLegalEntityName: nullableText(own?.trade_name) ?? nullableText(own?.legal_name) ?? "Empresa",
+          documentNumber: text(row.document_number), series: nullableText(row.series), issueDate: text(row.issue_date),
+          warehouseName: text(row.warehouse_name), warehouseCnpj: digits(row.warehouse_cnpj) || null,
+          productDescription: text(row.product_description), cfop: text(row.cfop), movementType: text(row.movement_type),
+          movementKind: text(row.movement_kind), quantityKg: numberValue(row.quantity_kg_decimal), sourceUnit: text(row.source_unit),
+          sourceQuantity: numberValue(row.source_quantity_decimal), referencedDocumentNumber: nullableText(row.referenced_document_number),
+          referenceText: nullableText(row.reference_text), status: text(row.status), notes: nullableText(row.notes),
+          origin: text(row.origin) || "XML", createdAt: text(row.created_at)
+        };
+      })
+      .sort((left, right) => right.issueDate.localeCompare(left.issueDate)
+        || right.documentNumber.localeCompare(left.documentNumber, "pt-BR", { numeric: true }));
+    return {
+      summary: {
+        totalKg, totalSacks: totalKg / 60,
+        warehouseCount: new Set(balances.map((row) => `${row.ownLegalEntityId}:${row.warehouseCnpj ?? normalized(row.warehouseName)}`)).size,
+        activeMovementCount: active.length,
+        pendingReviewCount: scoped.filter((row) => text(row.status) === "PENDING_REVIEW").length,
+        balances
+      },
+      warehouses: Array.from(new Map(scoped.filter((row) => digits(row.warehouse_cnpj)).map((row) => [digits(row.warehouse_cnpj), {
+        cnpj: digits(row.warehouse_cnpj), name: manualWarehouseNames.get(warehouseIdentity(row)) ?? text(row.warehouse_name)
+      }])).values()).sort((left, right) => left.name.localeCompare(right.name, "pt-BR")),
+      movements
+    };
   });
 
   app.get("/v1/viewer/clients", async (request, reply) => {
