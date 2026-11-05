@@ -68,7 +68,14 @@ function fixture(): Record<string, Row[]> {
       { id: "charge-paid", organization_id: "org2", own_legal_entity_id: "entity2", client_partner_id: "client2", periodicity: "MONTHLY", period_start: "2026-09-01", period_end: "2026-09-30", issue_date: "2026-09-30", due_date: "2026-10-05", status: "PAID", subtotal_services_cents: 45000, additions_cents: 0, deductions_cents: 0, final_amount_cents: 45000, paid_amount_cents: 45000, open_amount_cents: 0, created_at: "2026-09-30T12:00:00Z", updated_at: "2026-09-30T12:00:00Z" }
     ],
     client_charge_operations: [{ id: "charge-operation", client_charge_id: chargeId, operation_id: "operation", own_legal_entity_id_snapshot: legalEntityId, own_legal_entity_name_snapshot: "Villa Coffee LTDA", operation_date_snapshot: "2026-09-10", fiscal_document_number_snapshot: "123", issuer_name_snapshot: "Villa Coffee LTDA", destination_name_snapshot: "Cliente Teste", product_name_snapshot: "Cafe", operation_scope_snapshot: "INTERNAL", quantity_sacks_decimal_snapshot: "500", service_rate_cents_snapshot: 400, service_amount_cents_snapshot: 200000, created_at: "2026-09-30T12:00:00Z" }],
-    client_charge_adjustments: [], client_payment_allocations: [], client_ledger_entries: [],
+    client_charge_adjustments: [], client_payment_allocations: [],
+    client_ledger_entries: [
+      { id: "ledger-service", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, client_charge_id: chargeId, entry_type: "SERVICE_CHARGE", effect: "INCREASE_RECEIVABLE", amount_cents: 200000, entry_date: "2026-09-30", description: "Cobranca de servico", status: "CONFIRMED", created_at: "2026-09-30T12:00:00Z" },
+      { id: "ledger-advance", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, entry_type: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amount_cents: 50000, entry_date: "2026-09-16", description: "Adiantamento recebido", status: "CONFIRMED", created_at: "2026-09-16T12:00:00Z" },
+      { id: "ledger-surcharge", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, entry_type: "SURCHARGE", effect: "INCREASE_RECEIVABLE", amount_cents: 25000, entry_date: "2026-09-17", description: "Acrescimo", status: "CONFIRMED", created_at: "2026-09-17T12:00:00Z" },
+      { id: "ledger-payment", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, entry_type: "PAYMENT_RECEIVED", effect: "REDUCE_RECEIVABLE", amount_cents: 30000, entry_date: "2026-09-18", description: "Pagamento recebido", status: "CONFIRMED", created_at: "2026-09-18T12:00:00Z" },
+      { id: "ledger-cancelled", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, entry_type: "CREDIT", effect: "REDUCE_RECEIVABLE", amount_cents: 10000, entry_date: "2026-09-19", description: "Credito cancelado", status: "CANCELLED", cancellation_reason: "Teste", created_at: "2026-09-19T12:00:00Z" }
+    ],
     client_payments: [{ id: "payment", organization_id: organizationId, own_legal_entity_id: legalEntityId, client_partner_id: clientId, payment_date: "2026-09-15", amount_cents: 50000, status: "CONFIRMED" }]
   };
 }
@@ -107,6 +114,25 @@ describe("viewer API", () => {
     expect(charges.json()).toEqual([
       expect.objectContaining({ chargeNumber: "COB-0099", referenceCode: "SET-2026", clientName: "Cliente Teste", status: "OVERDUE", openAmountCents: 200000 })
     ]);
+
+    const ledger = await app.inject({ method: "GET", url: `/v1/viewer/ledger?${query}&clientId=${clientId}`, headers: { authorization: "Bearer test" } });
+    expect(ledger.statusCode).toBe(200);
+    expect(ledger.json()).toMatchObject({
+      client: { id: clientId, displayName: "Cliente Teste" },
+      summary: {
+        totalServiceCents: 350000,
+        liveUnbilledServiceCents: 150000,
+        surchargeCents: 25000,
+        advanceCents: 50000,
+        creditCents: 0,
+        paymentCents: 30000,
+        balanceCents: 295000
+      },
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: "ledger-service", description: "Cobranca 2026-09-01 a 2026-09-30" }),
+        expect.objectContaining({ id: "ledger-cancelled", status: "CANCELLED", cancellationReason: "Teste" })
+      ])
+    });
 
     const confirmations = await app.inject({ method: "GET", url: `/v1/viewer/confirmations?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(confirmations.statusCode).toBe(200);

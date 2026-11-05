@@ -15,6 +15,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
       return <DashboardIcon />;
     case "charges":
       return <CoinsIcon />;
+    case "ledger":
+      return <CoinsIcon />;
     case "confirmations":
       return <FileTextIcon />;
     default:

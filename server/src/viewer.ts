@@ -27,6 +27,10 @@ const confirmationListSchema = filterSchema.extend({
   status: z.enum(["OPEN", "SIGNED", "ALL"]).default("ALL")
 });
 
+const ledgerListSchema = filterSchema.extend({
+  clientId: z.string().min(1)
+});
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -375,8 +379,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     if (!session) return;
     const filters = filterSchema.parse(request.query);
     if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
-    const [partners, operations, charges, payments, entities] = await Promise.all([
-      records(pool, "business_partners"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments"), records(pool, "legal_entities")
+    const [partners, operations, charges, payments, ledgerEntries, entities] = await Promise.all([
+      records(pool, "business_partners"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments"), records(pool, "client_ledger_entries"), records(pool, "legal_entities")
     ]);
     const partnerMap = new Map(partners.map((row) => [text(row.id), text(row.display_name)]));
     const entityMap = new Map(entities.map((row) => [text(row.id), row]));
@@ -386,7 +390,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       && text(row.status) !== "CANCELED" && text(row.operation_type) !== "PURCHASE" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
     const scopedCharges = charges.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd));
     const scopedPayments = payments.filter((row) => inScope(row, filters) && text(row.status) === "CONFIRMED" && inPeriod(row.payment_date, filters.periodStart, filters.periodEnd));
-    [...scopedOperations, ...scopedCharges, ...scopedPayments].forEach((row) => ids.add(text(row.responsible_partner_id || row.client_partner_id)));
+    const scopedLedgerEntries = ledgerEntries.filter((row) => inScope(row, filters) && inPeriod(row.entry_date, filters.periodStart, filters.periodEnd));
+    [...scopedOperations, ...scopedCharges, ...scopedPayments, ...scopedLedgerEntries].forEach((row) => ids.add(text(row.responsible_partner_id || row.client_partner_id)));
     return Array.from(ids).filter(Boolean).map((id) => ({
       id, displayName: partnerMap.get(id) ?? "Cliente",
       sacks: scopedOperations.filter((row) => text(row.responsible_partner_id) === id).reduce((sum, row) => sum + numberValue(row.quantity_sacks_decimal), 0),
@@ -394,6 +399,58 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
         + scopedOperations.filter((row) => text(row.responsible_partner_id) === id && text(row.billing_status) === "UNBILLED").reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
       receivedCents: scopedPayments.filter((row) => text(row.client_partner_id) === id).reduce((sum, row) => sum + numberValue(row.amount_cents), 0)
     })).sort((a, b) => a.displayName.localeCompare(b.displayName, "pt-BR"));
+  });
+
+  app.get("/v1/viewer/ledger", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = ledgerListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [allEntries, allOperations, allCharges, allPartners] = await Promise.all([
+      records(pool, "client_ledger_entries"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "business_partners")
+    ]);
+    const client = allPartners.find((row) => text(row.id) === filters.clientId);
+    if (!client) return reply.code(404).send({ error: "NOT_FOUND", message: "Cliente nao encontrado." });
+
+    const chargeById = new Map(allCharges.map((row) => [text(row.id), row]));
+    const entries = allEntries
+      .filter((row) => inScope(row, filters) && text(row.client_partner_id) === filters.clientId && inPeriod(row.entry_date, filters.periodStart, filters.periodEnd))
+      .map((row) => {
+        const charge = chargeById.get(text(row.client_charge_id));
+        const description = text(row.entry_type) === "SERVICE_CHARGE" && charge
+          ? `Cobranca ${text(charge.period_start)} a ${text(charge.period_end)}`
+          : text(row.description);
+        return {
+          id: text(row.id), entryType: text(row.entry_type), effect: text(row.effect), amountCents: numberValue(row.amount_cents),
+          entryDate: text(row.entry_date), description, referenceNumber: nullableText(row.reference_number), notes: nullableText(row.notes),
+          status: text(row.status), availableAmountCents: row.available_amount_cents == null ? null : numberValue(row.available_amount_cents),
+          collectionDueDate: nullableText(row.collection_due_date), collectedAt: nullableText(row.collected_at),
+          cancellationReason: nullableText(row.cancellation_reason), createdAt: text(row.created_at)
+        };
+      })
+      .sort((left, right) => right.entryDate.localeCompare(left.entryDate) || right.createdAt.localeCompare(left.createdAt));
+
+    const confirmed = entries.filter((entry) => entry.status === "CONFIRMED");
+    const sumType = (type: string): number => confirmed.filter((entry) => entry.entryType === type).reduce((sum, entry) => sum + entry.amountCents, 0);
+    const liveUnbilledServiceCents = allOperations
+      .filter((row) => inScope(row, filters) && text(row.responsible_partner_id) === filters.clientId)
+      .filter((row) => text(row.status) === "CONFIRMED" && text(row.operation_type) !== "PURCHASE" && text(row.billing_status) !== "BILLED")
+      .filter((row) => inPeriod(row.operation_date, filters.periodStart, filters.periodEnd))
+      .reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0);
+    const totalServiceCents = sumType("SERVICE_CHARGE") + liveUnbilledServiceCents;
+    const surchargeCents = sumType("SURCHARGE") + sumType("LOAN") + sumType("MANUAL_ADJUSTMENT");
+    const advanceCents = sumType("ADVANCE_RECEIVED");
+    const creditCents = sumType("CREDIT");
+    const paymentCents = sumType("PAYMENT_RECEIVED");
+    const balanceCents = confirmed.reduce((sum, entry) => sum + (entry.effect === "INCREASE_RECEIVABLE" ? entry.amountCents : -entry.amountCents), 0) + liveUnbilledServiceCents;
+
+    return {
+      client: { id: text(client.id), displayName: text(client.display_name) || "Cliente" },
+      periodStart: filters.periodStart,
+      periodEnd: filters.periodEnd,
+      summary: { totalServiceCents, liveUnbilledServiceCents, surchargeCents, advanceCents, creditCents, paymentCents, balanceCents },
+      entries
+    };
   });
 
   app.get("/v1/viewer/confirmations", async (request, reply) => {

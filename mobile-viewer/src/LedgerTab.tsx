@@ -1,107 +1,147 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
-import { formatCurrencyBr, formatDateBr } from "./storage";
-import { PageHeader } from "./renderer/design-system/components/PageHeader";
-import { FilterBar } from "./renderer/design-system/components/FilterBar";
-import { Card } from "./renderer/design-system/components/Card";
-import { Button } from "./renderer/design-system/components/Button";
-import { StatusBadge } from "./renderer/design-system/components/Badge";
-import { EmptyState } from "./renderer/design-system/components/EmptyState";
-import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, queryString } from "./api";
+import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
-import type { ClientLedgerEntryRow, LedgerEntryType } from "./types";
+import { StatusBadge } from "./renderer/design-system/components/Badge";
+import { Button } from "./renderer/design-system/components/Button";
+import { Card } from "./renderer/design-system/components/Card";
+import { EmptyState } from "./renderer/design-system/components/EmptyState";
+import { FilterBar } from "./renderer/design-system/components/FilterBar";
+import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { PageHeader } from "./renderer/design-system/components/PageHeader";
 
-const PAGE_SIZE = 300;
+type EntryEffect = "INCREASE_RECEIVABLE" | "REDUCE_RECEIVABLE";
+type FilterMode = "ALL" | EntryEffect;
 
-const ENTRY_TYPE_LABELS: Record<LedgerEntryType, string> = {
-  SERVICE_CHARGE: "Cobrança de serviço",
-  ADVANCE_RECEIVED: "Adiantamento recebido",
-  PAYMENT_RECEIVED: "Pagamento recebido",
-  DISCOUNT: "Desconto",
-  CREDIT: "Crédito",
-  SURCHARGE: "Acréscimo",
-  REIMBURSEMENT: "Reembolso",
-  PREVIOUS_BALANCE: "Saldo anterior",
-  MANUAL_ADJUSTMENT: "Ajuste manual",
-  REVERSAL: "Estorno",
-  OTHER: "Outro"
+interface ClientSummary { id: string; displayName: string; }
+interface LedgerEntry {
+  id: string;
+  entryType: string;
+  effect: EntryEffect;
+  amountCents: number;
+  entryDate: string;
+  description: string;
+  referenceNumber: string | null;
+  notes: string | null;
+  status: string;
+  collectionDueDate: string | null;
+  collectedAt: string | null;
+  cancellationReason: string | null;
+}
+interface LedgerResponse {
+  client: ClientSummary;
+  summary: {
+    totalServiceCents: number;
+    liveUnbilledServiceCents: number;
+    surchargeCents: number;
+    advanceCents: number;
+    creditCents: number;
+    paymentCents: number;
+    balanceCents: number;
+  };
+  entries: LedgerEntry[];
+}
+
+const ENTRY_TYPE_LABELS: Record<string, string> = {
+  SERVICE_CHARGE: "Cobrança de serviço", ADVANCE_RECEIVED: "Adiantamento", PAYMENT_RECEIVED: "Pagamento",
+  DISCOUNT: "Desconto", CREDIT: "Crédito", SURCHARGE: "Acréscimo", REIMBURSEMENT: "Reembolso",
+  PREVIOUS_BALANCE: "Saldo anterior", MANUAL_ADJUSTMENT: "Ajuste manual", REVERSAL: "Estorno", LOAN: "Empréstimo", OTHER: "Outro"
 };
+const FILTER_LABELS: Record<FilterMode, string> = { ALL: "Todos", INCREASE_RECEIVABLE: "Aumentam o saldo", REDUCE_RECEIVABLE: "Reduzem o saldo" };
 
-type FilterMode = "ALL" | "INCREASE_RECEIVABLE" | "REDUCE_RECEIVABLE";
+function currentMonthToTodayRange(): { start: string; end: string } {
+  const today = new Date();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return { start: `${today.getFullYear()}-${month}-01`, end: `${today.getFullYear()}-${month}-${day}` };
+}
 
-const FILTER_LABELS: Record<FilterMode, string> = { ALL: "Todos", INCREASE_RECEIVABLE: "Aumentam saldo", REDUCE_RECEIVABLE: "Reduzem saldo" };
-
-export function LedgerTab(): JSX.Element {
-  const [entries, setEntries] = useState<ClientLedgerEntryRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+export function LedgerTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
+  const initial = currentMonthToTodayRange();
+  const [periodStart, setPeriodStart] = useState(initial.start);
+  const [periodEnd, setPeriodEnd] = useState(initial.end);
+  const [clients, setClients] = useState<ClientSummary[] | null>(null);
+  const [clientId, setClientId] = useState("");
+  const [data, setData] = useState<LedgerResponse | null>(null);
   const [filter, setFilter] = useState<FilterMode>("ALL");
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void load();
-  }, []);
+  const loadClients = useCallback(async (): Promise<void> => {
+    if (!organizationId) return;
+    try {
+      const loaded = await apiJson<ClientSummary[]>(`/v1/viewer/clients?${queryString({ organizationId, legalEntityId, periodStart, periodEnd })}`);
+      setClients(loaded);
+      setClientId((current) => loaded.some((client) => client.id === current) ? current : "");
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao carregar clientes."); }
+  }, [organizationId, legalEntityId, periodStart, periodEnd]);
 
-  async function load(): Promise<void> {
+  const loadLedger = useCallback(async (): Promise<void> => {
+    if (!organizationId || !clientId) { setData(null); return; }
     setError(null);
-    const { data, error: loadError } = await supabase
-      .from("client_ledger_entries")
-      .select("id, entry_type, effect, amount_cents, entry_date, description, status, client:business_partners(display_name)")
-      .neq("status", "CANCELLED")
-      .order("entry_date", { ascending: false })
-      .limit(PAGE_SIZE);
-    if (loadError) {
-      setError(loadError.message);
-      return;
-    }
-    setEntries((data ?? []) as unknown as ClientLedgerEntryRow[]);
-  }
+    setData(null);
+    try {
+      setData(await apiJson<LedgerResponse>(`/v1/viewer/ledger?${queryString({ organizationId, legalEntityId, periodStart, periodEnd, clientId })}`));
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao carregar a conta-corrente."); }
+  }, [organizationId, legalEntityId, periodStart, periodEnd, clientId]);
+
+  useEffect(() => { void loadClients(); }, [loadClients]);
+  useEffect(() => { void loadLedger(); }, [loadLedger]);
 
   const filtered = useMemo(() => {
-    if (!entries) return [];
-    const term = search.trim().toLowerCase();
-    return entries.filter((entry) => {
+    const term = search.trim().toLocaleLowerCase("pt-BR");
+    return (data?.entries ?? []).filter((entry) => {
       if (filter !== "ALL" && entry.effect !== filter) return false;
-      if (term && !(entry.client?.display_name ?? "").toLowerCase().includes(term)) return false;
-      return true;
+      if (!term) return true;
+      return `${ENTRY_TYPE_LABELS[entry.entryType] ?? entry.entryType} ${entry.description} ${entry.referenceNumber ?? ""} ${entry.notes ?? ""}`
+        .toLocaleLowerCase("pt-BR").includes(term);
     });
-  }, [entries, search, filter]);
+  }, [data, filter, search]);
 
   return (
     <>
-      <PageHeader eyebrow="Recebimentos" title="Conta-corrente" description="Lançamentos de conta-corrente dos clientes, gerados pelo PC principal." />
+      <PageHeader eyebrow="Recebimentos" title="Conta-corrente" description="Consulte saldos, adiantamentos, créditos, pagamentos e demais lançamentos dos clientes." />
+      <FilterBar activeCount={(clientId ? 1 : 0) + (filter !== "ALL" ? 1 : 0) + (search ? 1 : 0) + 2} onClear={() => { setClientId(""); setFilter("ALL"); setSearch(""); const range = currentMonthToTodayRange(); setPeriodStart(range.start); setPeriodEnd(range.end); }}>
+        <select className="ui-input" value={clientId} onChange={(event) => setClientId(event.target.value)}>
+          <option value="">Selecione um cliente</option>
+          {(clients ?? []).map((client) => <option key={client.id} value={client.id}>{client.displayName}</option>)}
+        </select>
+        <div className="viewer-period-filter viewer-period-filter--inline">
+          <label>Início<input className="ui-input" type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
+          <label>Fim<input className="ui-input" type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
+        </div>
+        <input className="ui-input" type="search" placeholder="Buscar tipo, descrição ou referência..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className="viewer-chip-row">
+          {(Object.keys(FILTER_LABELS) as FilterMode[]).map((mode) => <Button key={mode} variant={filter === mode ? "primary" : "secondary"} onClick={() => setFilter(mode)}>{FILTER_LABELS[mode]}</Button>)}
+        </div>
+      </FilterBar>
       {error ? <Alert tone="danger" title="Falha ao carregar conta-corrente">{error}</Alert> : null}
-      {!error && !entries ? <LoadingState label="Carregando lançamentos..." /> : null}
-      {entries ? (
+      {!clientId ? <EmptyState title="Selecione um cliente" description="Escolha o cliente acima para consultar o saldo e o histórico do período." /> : null}
+      {clientId && !error && !data ? <LoadingState label="Carregando conta-corrente..." /> : null}
+      {data ? (
         <>
-          <FilterBar
-            activeCount={(filter !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
-            onClear={() => {
-              setSearch("");
-              setFilter("ALL");
-            }}
-          >
-            <input type="search" className="ui-input" placeholder="Buscar cliente..." value={search} onChange={(event) => setSearch(event.target.value)} />
-            <div className="viewer-chip-row">
-              {(Object.keys(FILTER_LABELS) as FilterMode[]).map((mode) => (
-                <Button key={mode} variant={filter === mode ? "primary" : "secondary"} onClick={() => setFilter(mode)}>
-                  {FILTER_LABELS[mode]}
-                </Button>
-              ))}
+          <Card eyebrow="Resumo da conta-corrente" title={data.client.displayName} className="viewer-ledger-summary">
+            <div className="viewer-ledger-summary__grid">
+              <span><small>Total dos serviços</small><strong>{formatCurrencyBr(data.summary.totalServiceCents)}</strong></span>
+              <span><small>Acréscimos/Empréstimos</small><strong>{formatCurrencyBr(data.summary.surchargeCents)}</strong></span>
+              <span><small>Adiantamentos</small><strong>{formatCurrencyBr(data.summary.advanceCents)}</strong></span>
+              <span><small>Créditos</small><strong>{formatCurrencyBr(data.summary.creditCents)}</strong></span>
+              <span><small>Pagamentos recebidos</small><strong>{formatCurrencyBr(data.summary.paymentCents)}</strong></span>
+              <span className="viewer-ledger-summary__balance"><small>Saldo a receber</small><strong>{formatCurrencyBr(data.summary.balanceCents)}</strong></span>
             </div>
-          </FilterBar>
-          {filtered.length === 0 ? (
-            <EmptyState title="Nenhum lançamento encontrado" description="Ajuste a busca ou o filtro para ver outros resultados." />
-          ) : (
-            <div className="viewer-card-grid">
+            {data.summary.liveUnbilledServiceCents > 0 ? <p className="viewer-card-line viewer-card-line--muted">Inclui {formatCurrencyBr(data.summary.liveUnbilledServiceCents)} de notas confirmadas ainda sem cobrança emitida.</p> : null}
+          </Card>
+          {filtered.length === 0 ? <EmptyState title="Nenhum lançamento encontrado" description="Ajuste o período, a busca ou o tipo de movimento." /> : (
+            <div className="viewer-ledger-list" role="table" aria-label="Histórico da conta-corrente">
+              <div className="viewer-ledger-list__head" role="row"><span>Data</span><span>Tipo</span><span>Descrição</span><span>Valor</span><span>Status</span></div>
               {filtered.map((entry) => (
-                <Card key={entry.id} title={entry.client?.display_name ?? "Cliente"} actions={<StatusBadge status={entry.status} />}>
-                  <p className="viewer-card-line">{ENTRY_TYPE_LABELS[entry.entry_type] ?? entry.entry_type}</p>
-                  <p className="viewer-card-line">
-                    {entry.effect === "INCREASE_RECEIVABLE" ? "+ " : "− "}
-                    {formatCurrencyBr(entry.amount_cents)} · {formatDateBr(entry.entry_date)}
-                  </p>
-                  <p className="viewer-card-line viewer-card-line--muted">{entry.description}</p>
-                </Card>
+                <div key={entry.id} className={`viewer-ledger-row viewer-ledger-row--${entry.effect === "INCREASE_RECEIVABLE" ? "increase" : "reduce"}`} role="row">
+                  <span role="cell">{formatDateBr(entry.entryDate)}</span>
+                  <span role="cell"><strong>{ENTRY_TYPE_LABELS[entry.entryType] ?? entry.entryType}</strong>{entry.referenceNumber ? <small>{entry.referenceNumber}</small> : null}</span>
+                  <span role="cell"><strong>{entry.description}</strong><small>{entry.cancellationReason ? `Cancelado: ${entry.cancellationReason}` : entry.notes ?? ""}</small></span>
+                  <span className="viewer-ledger-row__amount" role="cell"><strong>{entry.effect === "INCREASE_RECEIVABLE" ? "+" : "−"} {formatCurrencyBr(entry.amountCents)}</strong></span>
+                  <span role="cell"><StatusBadge status={entry.status} /></span>
+                </div>
               ))}
             </div>
           )}

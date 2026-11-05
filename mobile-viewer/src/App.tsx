@@ -5,6 +5,7 @@ import { ChargesTab } from "./ChargesTab";
 import { ConfirmationsTab } from "./ConfirmationsTab";
 import { DashboardTab } from "./DashboardTab";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { LedgerTab } from "./LedgerTab";
 import { assetUrl } from "./assetUrl";
 import { selectDefaultLegalEntity, selectDefaultOrganization } from "./defaultCompany";
 import type { PageId } from "./navigation";
@@ -77,6 +78,7 @@ export function App(): JSX.Element {
         {page === "dashboard" ? <DashboardTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "charges" ? <ChargesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "confirmations" ? <ConfirmationsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "ledger" ? <LedgerTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
       </div>
     </AppShell>
   );
