@@ -29,7 +29,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Confirmações e cobranças foram publicadas; cobranças incluem notas em aberto, cobranças emitidas, filtros, totais e download de PDF. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
+- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Confirmações, cobranças e conta-corrente foram publicadas. A conta-corrente é somente leitura e inclui seleção de cliente/período, resumo igual ao desktop, busca, filtros e histórico. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 09:35 - Codex
+- Pedido: seguir para a próxima parte da conversão gradual do aplicativo para o site.
+- Feito: publicada a consulta web de Conta-corrente em `graobase.com.br`. A tela usa a API central autenticada, respeita organização/CNPJ e oferece cliente, período, busca, filtros por efeito, resumo financeiro e histórico inclusive de lançamentos cancelados. O resumo replica o desktop e inclui notas confirmadas ainda sem cobrança emitida.
+- Testado: build do servidor, build do `mobile-viewer`, typecheck, ESLint dos arquivos alterados e `tests/viewer-api.test.ts` aprovados. O teste cobre serviços, acréscimos, adiantamentos, pagamentos, cancelamentos e saldo. GitHub Pages `42028028316` concluiu com sucesso; bundle publicado contém Conta-corrente e `/v1/viewer/ledger`. Railway está no commit `987054d`, `/ready` saudável e banco conectado.
+- Publicado: commit `987054d` na branch e na `master`; Conta-corrente disponível no site. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
+- Pendente: validar os valores reais com um cliente no site e escolher o próximo módulo da migração gradual.
 
 ### 2026-11-05 09:05 - Codex
 - Pedido: retomar a conversão gradual do aplicativo para o site, sem desativar o desktop e sem tocar na Grãonex.
