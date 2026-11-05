@@ -1,5 +1,6 @@
 export type PageId =
   | "dashboard"
+  | "assistant"
   | "invoices"
   | "warehouses"
   | "partners"
@@ -9,6 +10,7 @@ export type PageId =
   | "charges"
   | "confirmations"
   | "ledger"
+  | "reconciliations"
   | "settlements"
   | "finance"
   | "reports";
@@ -24,7 +26,7 @@ export interface NavigationGroup {
 }
 
 export const navigationGroups: NavigationGroup[] = [
-  { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard" }] },
+  { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard" }, { id: "assistant", label: "Assistente" }] },
   { title: "Operações", items: [{ id: "invoices", label: "Notas e operações" }, { id: "warehouses", label: "Cafés armazenados" }] },
   { title: "Comercial", items: [
     { id: "partners", label: "Clientes e empresas" },
@@ -32,13 +34,14 @@ export const navigationGroups: NavigationGroup[] = [
     { id: "serviceRates", label: "Regras por saca" },
     { id: "confirmations", label: "Confirmações" }
   ] },
-  { title: "Recebimentos", items: [{ id: "charges", label: "Cobranças" }, { id: "ledger", label: "Conta-corrente" }] },
+  { title: "Recebimentos", items: [{ id: "charges", label: "Cobranças" }, { id: "reconciliations", label: "Conferência de repasses" }, { id: "ledger", label: "Conta-corrente" }] },
   { title: "Pagamentos", items: [{ id: "settlements", label: "Acertos de entrada" }, { id: "purchaseRates", label: "Regras de entrada" }] },
   { title: "Financeiro", items: [{ id: "finance", label: "Visão financeira" }, { id: "reports", label: "Relatórios" }] }
 ];
 
 export const pageTitleById: Record<PageId, string> = {
   dashboard: "Dashboard",
+  assistant: "Assistente",
   invoices: "Notas e operações",
   warehouses: "Cafés armazenados",
   partners: "Clientes e empresas",
@@ -48,6 +51,7 @@ export const pageTitleById: Record<PageId, string> = {
   charges: "Cobranças",
   confirmations: "Confirmações",
   ledger: "Conta-corrente",
+  reconciliations: "Conferência de repasses",
   settlements: "Acertos de entrada",
   finance: "Visão financeira",
   reports: "Relatórios"

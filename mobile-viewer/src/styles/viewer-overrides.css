@@ -897,3 +897,26 @@
     justify-items: end;
   }
 }
+.viewer-field {
+  display: grid;
+  gap: 0.45rem;
+  margin: 1rem 0;
+}
+
+.viewer-field > span {
+  font-weight: 600;
+}
+
+.viewer-field textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.viewer-assistant-answer {
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.viewer-assistant-answer p {
+  margin: 0 0 0.5rem;
+}

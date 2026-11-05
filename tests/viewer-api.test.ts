@@ -54,6 +54,9 @@ function fixture(): Record<string, Row[]> {
     service_rate_rules: [{ id: "service-rate", organization_id: organizationId, own_legal_entity_id: legalEntityId, business_partner_id: clientId, product_id: "product", rate_value_cents: 400, effective_from: "2026-01-01", priority: 10, is_active: 1 }],
     purchase_rate_rules: [{ id: "purchase-rate", organization_id: organizationId, own_legal_entity_id: legalEntityId, business_partner_id: clientId, product_id: "product", rate_value_cents: 700, effective_from: "2026-01-01", priority: 5, is_active: 1 }],
     accounts_payable: [{ id: "payable", organization_id: organizationId, own_legal_entity_id: legalEntityId, supplier_partner_id: clientId, payee_name_snapshot: "Cliente Teste", description: "Acerto de entrada", document_number: "AP-1", due_date: "2000-01-01", final_amount_cents: 100000, paid_amount_cents: 0, open_amount_cents: 100000, status: "OPEN" }],
+    transfer_reconciliations: [{ id: "reconciliation", organization_id: organizationId, client_partner_id: clientId, counterparty_role: "CLIENT", source_mode: "INVOICES", reference_date: "2026-09-30", title: "Repasse setembro", status: "DRAFT", total_source_cents: 90000000, total_payments_cents: 50000000, balance_cents: 40000000 }],
+    transfer_reconciliation_invoices: [{ id: "reconciliation-invoice", reconciliation_id: "reconciliation", fiscal_document_id: "document" }],
+    transfer_reconciliation_payments: [{ id: "reconciliation-payment", reconciliation_id: "reconciliation", amount_cents: 50000000 }],
     deal_confirmations: [{ id: "confirmation", organization_id: organizationId, own_legal_entity_id: legalEntityId, confirmation_number: "VCMG 0200", temporary_reference: "TEMP-200", confirmation_date: "2026-09-20", status: "ISSUED", signature_status: "NOT_SENT", total_quantity_sacks_decimal: "500", total_commercial_amount_cents: 90000000 }],
     deal_confirmation_parties: [
       { id: "party-own", deal_confirmation_id: "confirmation", party_role: "SELLER", own_legal_entity_id: legalEntityId, sort_order: 1, snapshot_json: JSON.stringify({ legalName: "Villa Coffee LTDA" }) },
@@ -183,6 +186,9 @@ describe("viewer API", () => {
 
     const reports = await app.inject({ method: "GET", url: `/v1/viewer/reports?${scope}&year=2026`, headers: { authorization: "Bearer test" } });
     expect(reports.json()[8]).toMatchObject({ month: 9, operationCount: 2, sacks: 1400, amountCents: 510000, confirmationCount: 1 });
+
+    const reconciliations = await app.inject({ method: "GET", url: `/v1/viewer/transfer-reconciliations?${scope}`, headers: { authorization: "Bearer test" } });
+    expect(reconciliations.json()).toEqual([expect.objectContaining({ id: "reconciliation", clientName: "Cliente Teste", invoiceCount: 1, paymentCount: 1, balanceCents: 40000000 })]);
 
     const charges = await app.inject({ method: "GET", url: `/v1/viewer/charges?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(charges.statusCode).toBe(200);

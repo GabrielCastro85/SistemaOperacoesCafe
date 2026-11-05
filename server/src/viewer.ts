@@ -761,6 +761,33 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     return rows;
   });
 
+  app.get("/v1/viewer/transfer-reconciliations", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = scopeSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [reconciliations, partners, invoices, payments] = await Promise.all([
+      records(pool, "transfer_reconciliations"), records(pool, "business_partners"),
+      records(pool, "transfer_reconciliation_invoices"), records(pool, "transfer_reconciliation_payments")
+    ]);
+    const partnerMap = new Map(partners.map((row) => [text(row.id), row]));
+    const invoiceCount = new Map<string, number>();
+    const paymentCount = new Map<string, number>();
+    for (const row of invoices) invoiceCount.set(text(row.reconciliation_id), (invoiceCount.get(text(row.reconciliation_id)) ?? 0) + 1);
+    for (const row of payments) paymentCount.set(text(row.reconciliation_id), (paymentCount.get(text(row.reconciliation_id)) ?? 0) + 1);
+    return reconciliations
+      .filter((row) => text(row.organization_id) === filters.organizationId)
+      .map((row) => ({
+        id: text(row.id), clientName: text(partnerMap.get(text(row.client_partner_id))?.display_name) || "Parceiro",
+        counterpartyRole: text(row.counterparty_role) || "CLIENT", sourceMode: text(row.source_mode) || "INVOICES",
+        referenceDate: text(row.reference_date), title: nullableText(row.title), notes: nullableText(row.notes),
+        status: text(row.status), totalSourceCents: numberValue(row.total_source_cents),
+        totalPaymentsCents: numberValue(row.total_payments_cents), balanceCents: numberValue(row.balance_cents),
+        invoiceCount: invoiceCount.get(text(row.id)) ?? 0, paymentCount: paymentCount.get(text(row.id)) ?? 0
+      }))
+      .sort((left, right) => right.referenceDate.localeCompare(left.referenceDate));
+  });
+
   app.get("/v1/viewer/clients", async (request, reply) => {
     const session = await requireSession(pool, request, reply);
     if (!session) return;

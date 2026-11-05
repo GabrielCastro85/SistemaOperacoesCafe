@@ -13,6 +13,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
   switch (item.id) {
     case "dashboard":
       return <DashboardIcon />;
+    case "assistant":
+      return <ReportIcon />;
     case "invoices":
       return <FileTextIcon />;
     case "warehouses":
@@ -28,6 +30,8 @@ function renderNavigationIcon(item: NavigationItem): JSX.Element {
       return <CoinsIcon />;
     case "ledger":
       return <CoinsIcon />;
+    case "reconciliations":
+      return <FileTextIcon />;
     case "settlements":
       return <WalletIcon />;
     case "finance":
