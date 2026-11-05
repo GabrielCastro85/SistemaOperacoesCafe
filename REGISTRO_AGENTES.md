@@ -29,7 +29,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Confirmações, cobranças e conta-corrente foram publicadas. A conta-corrente é somente leitura e inclui seleção de cliente/período, resumo igual ao desktop, busca, filtros e histórico. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
+- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Dashboard, Notas e operações, Confirmações, Cobranças e Conta-corrente foram publicados em modo somente leitura. Notas e operações consulta o servidor central por período, empresa, entrada/saída e situação, com contraparte fiscal, responsável, produtos, sacas, valor e origem. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 14:25 - Codex
+- Pedido: continuar a implementação gradual do site do Operações Café.
+- Feito: publicada a consulta web de Notas e operações. A tela usa a API central autenticada, respeita organização/CNPJ e permite filtrar período, entradas/saídas, ativas, pendentes e canceladas, além de busca textual. Exibe empresa própria, contraparte fiscal do XML, responsável comercial, produtos, sacas, valor fiscal, origem e situação. As sacas são somadas pelos itens da NF para não duplicar operações triangulares.
+- Testado: build do servidor, build do `mobile-viewer`, typecheck, ESLint dos arquivos alterados, `git diff --check` e `tests/viewer-api.test.ts` aprovados. O teste cobre saída e entrada pendente, contraparte fiscal, itens e filtros. GitHub Pages `42073668265` concluiu com sucesso; o bundle publicado contém Notas e operações e `/v1/viewer/invoices`. Railway está no commit `63a978e`, `/health` e `/ready` saudáveis, banco conectado e a rota sem sessão devolve 401.
+- Publicado: commit `63a978e` na branch e na `master`; módulo disponível em `graobase.com.br`. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
+- Pendente: validar os números reais no site com uma empresa e escolher o próximo módulo da migração gradual.
 
 ### 2026-11-05 10:18 - Codex
 - Pedido: corrigir o erro ao criar fechamento de compra da Villa a partir de uma nota que já tinha empresa identificada.
