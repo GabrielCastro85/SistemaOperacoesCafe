@@ -25,10 +25,10 @@ Modelo de entrada:
 
 - **Atualizado em:** 2026-11-05, pelo Codex.
 - **Branch:** `codex/central-server-neon`.
-- **Última versão publicada:** 1.1.69, em 2026-11-04.
+- **Última versão publicada:** 1.1.70, em 2026-11-05.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
-- **Próxima versão:** 1.1.70. **Não publique sem o Gabriel pedir.**
+- **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
 - **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. A consulta de confirmações pelo servidor central foi publicada em 2026-11-04. A consulta de cobranças emitidas está preparada localmente, mas ainda não foi publicada. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
@@ -36,6 +36,12 @@ Modelo de entrada:
 - A sincronização central guarda as credenciais somente em memória durante a sessão, renova o token automaticamente quando o servidor devolve 401 e repete a operação interrompida. Sair do programa limpa essas credenciais.
 - A busca de empresas/CNPJs aceita o número com ou sem pontuação. Uma tentativa de cadastrar CNPJ já existente localiza o cadastro original para editar ou vincular.
 - Release pública `v1.1.69` contém instalador, `latest.yml`, blockmap, coletor portátil e checksum do coletor. O instalador publicado foi baixado novamente e seu SHA-512 confere com o `latest.yml` remoto.
+
+### Publicado na 1.1.70 (commits `efb122f` e `f1cd2c3`)
+
+- A conta-corrente permite cancelar lançamentos extras incorretos pela própria tela, exigindo motivo e preservando o registro para auditoria.
+- Pagamentos, cobranças, estornos e créditos já utilizados permanecem protegidos e devem ser corrigidos pelos fluxos de origem.
+- Release pública `v1.1.70` contém instalador, `latest.yml`, blockmap, coletor portátil e checksum do coletor. Instalador e coletor foram baixados novamente e seus hashes conferem com os metadados publicados.
 
 ### Publicado na 1.1.68 (commit `dd10be0`)
 
@@ -73,6 +79,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 08:50 - Codex
+- Pedido: publicar a atualização pendente com o cancelamento seguro de lançamentos.
+- Feito: versão e changelog atualizados para 1.1.70; commits `efb122f` e `f1cd2c3` enviados à branch `codex/central-server-neon`.
+- Testado: suíte completa com 55 arquivos e 318 testes aprovados; typecheck aprovado; lint específico da alteração aprovado; smoke test do aplicativo empacotado e verificador de release aprovados. O lint global continua falhando por milhares de ocorrências preexistentes em `.codex-tmp`, artefatos compilados e scripts antigos não relacionados à versão.
+- Publicado: release pública `v1.1.70`, fora de rascunho, com instalador Windows, `latest.yml`, blockmap, coletor portátil e SHA-256 do coletor. O primeiro envio do coletor sofreu `ECONNABORTED`; a repetição isolada concluiu normalmente. O instalador remoto foi baixado e seu SHA-512 confere com o `latest.yml`; o coletor remoto foi baixado e seu SHA-256 confere tanto com o arquivo publicado quanto com o binário local.
+- Pendente: instalar a 1.1.70 nos computadores. Próxima versão 1.1.71, somente mediante autorização do Gabriel.
 
 ### 2026-11-05 08:30 - Codex
 - Pedido: cancelar o adiantamento incorreto de R$ 100.000,00 da conta-corrente do Rafael, permitir cancelamentos seguros pela própria tela e corrigir o CNPJ do armazém SABANA para `32.611.305/0001-26`.
