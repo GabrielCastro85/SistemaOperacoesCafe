@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DealClauseTemplate, DealConfirmation, DealConfirmationDetail, DealConfirmationSummary, DealConfirmationTemplate, FiscalDocument, Product } from "../../../shared/types/domain";
 import { formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
-import { fiscalDocumentCounterpartyNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
+import { fiscalDocumentCounterpartyNameFromSnapshot, resolveFiscalDocumentCounterpartyLegalEntityId } from "../../../shared/utils/fiscalDocumentLabels";
 import { inferConfirmationDealDirection, type ConfirmationDealDirection, type ConfirmationDealDirectionChoice } from "../../../shared/utils/dealDirection";
 import { DateInput, EmptyState, FilterBar, HandshakeIcon, PageHeader, StatusBadge, Stepper, Textarea } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
@@ -450,9 +450,12 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       return;
     }
     const selectedBuyerId = selectedBuyerIds[0] ?? buyerId;
+    const selectedOwnCnpj = data.legalEntities.find((item) => item.id === selectedRows[0]?.document.ownLegalEntityId)?.cnpj ?? null;
     const nfCompanyEntityIds = sourceSearchMode === "empresa" && sourceLegalEntityId
       ? [sourceLegalEntityId]
-      : [...new Set(selectedRows.map((row) => row.document.partnerLegalEntityId).filter((id): id is string => Boolean(id)))];
+      : [...new Set(selectedRows
+        .map((row) => resolveFiscalDocumentCounterpartyLegalEntityId(row.document, selectedOwnCnpj, partnerLegalEntities))
+        .filter((id): id is string => Boolean(id)))];
     if (nfCompanyEntityIds.length === 0) {
       setMessage("Erro: a nota selecionada nao tem empresa da NF vinculada. Abra a nota, vincule a empresa e tente novamente.");
       return;

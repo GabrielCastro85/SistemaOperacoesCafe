@@ -80,6 +80,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-05 10:18 - Codex
+- Pedido: corrigir o erro ao criar fechamento de compra da Villa a partir de uma nota que já tinha empresa identificada.
+- Achado: a NF de entrada 49 da Villa ES (500 sacas, R$ 485.000,00) tem no XML a emitente RODRIGUES ARMAZEM E COMERCIO LTDA, CNPJ 68.369.948/0001-52, e essa empresa existe no cadastro; porém `fiscal_documents.partner_legal_entity_id` ficou vazio. A tela considerava somente esse campo e ignorava o CNPJ fiscal do XML.
+- Feito: a confirmação agora resolve a empresa contraparte pelo CNPJ do XML quando o vínculo técnico da nota estiver vazio. Em compra usa o emitente/vendedor; em venda usa o destinatário/comprador. O responsável comercial continua independente da empresa fiscal.
+- Testado: typecheck, build de produção e 6 testes direcionados aprovados, incluindo compra com a Villa como destinatária e empresa vendedora sem vínculo técnico na nota.
+- Publicado: nada. Alteração preparada para a 1.1.71; não publicar sem o Gabriel pedir.
+- Pendente: Gabriel pedir a publicação e depois testar o fechamento da NF 49 na versão atualizada.
+
 ### 2026-11-05 09:35 - Codex
 - Pedido: seguir para a próxima parte da conversão gradual do aplicativo para o site.
 - Feito: publicada a consulta web de Conta-corrente em `graobase.com.br`. A tela usa a API central autenticada, respeita organização/CNPJ e oferece cliente, período, busca, filtros por efeito, resumo financeiro e histórico inclusive de lançamentos cancelados. O resumo replica o desktop e inclui notas confirmadas ainda sem cobrança emitida.
