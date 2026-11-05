@@ -435,6 +435,22 @@ describe("client charges and ledger", () => {
     db.close();
   });
 
+  it("cancela lancamento incorreto sem apagar o historico e bloqueia credito ja usado", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      const incorrect = repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 10000000, entryDate: "2026-11-04", description: "Adiantamento recebido", referenceNumber: null, notes: "Lancamento incorreto", attachmentPath: null, availableAmountCents: 10000000 });
+      const cancelled = repo.cancelLedgerEntry(incorrect.id, "Valor informado por engano");
+      expect(cancelled).toMatchObject({ status: "CANCELLED", availableAmountCents: 0, cancellationReason: "Valor informado por engano" });
+
+      createConfirmedOperation(repo, partnerId, productId, "CREDIT-USED", "10");
+      const operation = repo.findEligibleOperations({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" })[0];
+      const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, billingProfileId: null, periodicity: "MONTHLY", periodStart: "2026-07-01", periodEnd: "2026-07-31", dueDate: null, notes: null, internalNotes: null, operationIds: [operation.id] });
+      const used = repo.createAdvance({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, clientChargeId: null, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amountCents: 1000, entryDate: "2026-07-20", description: "Credito usado", referenceNumber: null, notes: null, attachmentPath: null, availableAmountCents: 1000 });
+      repo.applyCredit({ ledgerEntryId: used.id, clientChargeId: draft.charge.id, amountCents: 1000 });
+      expect(() => repo.cancelLedgerEntry(used.id, "Tentativa invalida")).toThrow("já foi usado em uma cobrança");
+    } finally { db.close(); }
+  });
+
   it("summarizes internal/external sacks and value per client, zeroing clients without operations in the period", async () => {
     const { repo, db, partnerId, productId } = await setup();
     const otherPartner = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Cliente Sem Operacao", notes: null, roles: ["CLIENT"], isActive: true });

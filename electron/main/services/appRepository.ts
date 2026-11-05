@@ -3089,6 +3089,28 @@ export class AppRepository {
     return this.getLedgerEntry(id);
   }
 
+  cancelLedgerEntry(id: string, reason: string): ClientLedgerEntry {
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new Error("Informe o motivo do cancelamento.");
+    const entry = this.getLedgerEntry(id);
+    if (entry.status === "CANCELLED") return entry;
+    if (["SERVICE_CHARGE", "PAYMENT_RECEIVED", "REVERSAL"].includes(entry.entryType)) {
+      throw new Error("Este lançamento deve ser cancelado pela cobrança ou pelo pagamento de origem.");
+    }
+    const activeAllocation = this.db.prepare(`SELECT 1 FROM client_credit_allocations
+      WHERE ledger_entry_id = ? AND cancelled_at IS NULL LIMIT 1`).get(id);
+    const activeAdjustment = this.db.prepare(`SELECT 1 FROM client_charge_adjustments
+      WHERE ledger_entry_id = ? LIMIT 1`).get(id);
+    if (activeAllocation || activeAdjustment || entry.clientChargeId) {
+      throw new Error("Este lançamento já foi usado em uma cobrança e não pode ser cancelado por aqui.");
+    }
+    const now = new Date().toISOString();
+    this.db.prepare(`UPDATE client_ledger_entries
+      SET status = 'CANCELLED', available_amount_cents = 0, cancelled_at = ?, cancellation_reason = ?, updated_at = ?
+      WHERE id = ?`).run(now, normalizedReason, now, id);
+    return this.getLedgerEntry(id);
+  }
+
   createAdvance(input: unknown): ClientLedgerEntry {
     const base = clientLedgerEntryInputSchema.parse(input);
     return this.createLedgerEntry({ ...base, entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", availableAmountCents: base.amountCents });

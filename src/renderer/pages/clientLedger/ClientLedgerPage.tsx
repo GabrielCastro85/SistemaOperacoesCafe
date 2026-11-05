@@ -236,7 +236,21 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
       </AdminBlock>
 
       <AdminBlock title="Historico de lancamentos">
-        {entries.length ? <ClientLedgerTable entries={entries} onMarkLoanCollected={async (id) => { await window.operationsCafe.markLoanCollected(id); await load(); }} /> : <EmptyState title="Nenhum lancamento" description="Este cliente ainda nao possui movimentos na conta-corrente no periodo selecionado." />}
+        {entries.length ? <ClientLedgerTable
+          entries={entries}
+          onMarkLoanCollected={async (id) => { await window.operationsCafe.markLoanCollected(id); await load(); }}
+          onCancel={async (id) => {
+            const reason = window.prompt("Informe o motivo do cancelamento:", "Lançamento incorreto");
+            if (!reason?.trim()) return;
+            try {
+              await window.operationsCafe.cancelLedgerEntry(id, reason.trim());
+              setMessage("Lançamento cancelado. O valor foi retirado do saldo.");
+              await load();
+            } catch (errorValue) {
+              setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cancelar o lançamento."}`);
+            }
+          }}
+        /> : <EmptyState title="Nenhum lancamento" description="Este cliente ainda nao possui movimentos na conta-corrente no periodo selecionado." />}
       </AdminBlock>
       <Feedback message={message} />
     </section>

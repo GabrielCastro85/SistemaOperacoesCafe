@@ -237,6 +237,7 @@ export const IPC_CHANNELS = {
   openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",
   createLedgerEntry: "clientLedger:createEntry",
+  cancelLedgerEntry: "clientLedger:cancelEntry",
   createAdvance: "clientLedger:createAdvance",
   createCredit: "clientLedger:createCredit",
   getAvailableCredits: "clientLedger:getAvailableCredits",

@@ -1326,6 +1326,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const result = repository.createLedgerEntry(payload);
     return result;
   });
+  handle(IPC_CHANNELS.cancelLedgerEntry, async (_event, payload: unknown) => {
+    const data = z.object({ id: z.string().uuid(), reason: z.string().trim().min(1) }).parse(payload);
+    return repository.cancelLedgerEntry(data.id, data.reason);
+  });
   handle(IPC_CHANNELS.createAdvance, async (_event, payload: unknown) => {
     const result = repository.createAdvance(payload);
     return result;

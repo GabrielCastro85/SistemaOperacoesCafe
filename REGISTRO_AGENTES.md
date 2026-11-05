@@ -23,7 +23,7 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-11-04, pelo Codex.
+- **Atualizado em:** 2026-11-05, pelo Codex.
 - **Branch:** `codex/central-server-neon`.
 - **Última versão publicada:** 1.1.69, em 2026-11-04.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
@@ -73,6 +73,15 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 08:30 - Codex
+- Pedido: cancelar o adiantamento incorreto de R$ 100.000,00 da conta-corrente do Rafael, permitir cancelamentos seguros pela própria tela e corrigir o CNPJ do armazém SABANA para `32.611.305/0001-26`.
+- Dados corrigidos: o lançamento `20924b5c-954f-4f35-a10c-0fdb971d2aef` foi marcado como `CANCELLED`, teve o saldo disponível zerado e permaneceu no histórico para auditoria. O ajuste manual de 329 sacas da SABANA foi vinculado ao CNPJ `32611305000126`, sem alterar quantidade, produto ou histórico. Os dois registros permaneceram corretos após a sincronização central avançar para a revisão 2998, sem erro.
+- Segurança: backups SQLite criados antes das duas correções em `backups/manual-before-cancel-ledger-2026-11-04-1652.sqlite` e `backups/manual-before-fix-sabana-cnpj-2026-11-05T11-26-13-956Z.sqlite` dentro da pasta de dados do aplicativo.
+- Código preparado: a conta-corrente ganhou a ação `Cancelar lançamento`, exigindo motivo, preservando o histórico e bloqueando pagamentos, cobranças, estornos e créditos já utilizados. A ação será incluída na próxima versão 1.1.70.
+- Testado: typecheck aprovado; `client-charges-ledger`, paridade dos preloads e IPC somaram 36 testes aprovados. `git diff --check` sem erro.
+- Publicado: nada. O cancelamento e a correção da SABANA já estão nos dados sincronizados, mas o novo botão depende de publicação futura.
+- Pendente: publicar a 1.1.70 somente quando o Gabriel pedir.
 
 ### 2026-11-04 16:42 - Codex
 - Pedido: orientar como excluir um adiantamento de R$ 100.000,00 lançado incorretamente em 04/11/2026 na conta-corrente.

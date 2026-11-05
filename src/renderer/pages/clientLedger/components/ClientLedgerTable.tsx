@@ -17,7 +17,7 @@ const ENTRY_TYPE_LABELS: Record<LedgerEntryType, string> = {
   OTHER: "Outro"
 };
 
-export function ClientLedgerTable({ entries, onMarkLoanCollected }: { entries: ClientLedgerEntry[]; onMarkLoanCollected?: (id: string) => void | Promise<void> }): JSX.Element {
+export function ClientLedgerTable({ entries, onMarkLoanCollected, onCancel }: { entries: ClientLedgerEntry[]; onMarkLoanCollected?: (id: string) => void | Promise<void>; onCancel?: (id: string) => void | Promise<void> }): JSX.Element {
   return (
     <DataTable
       rows={entries}
@@ -50,6 +50,14 @@ export function ClientLedgerTable({ entries, onMarkLoanCollected }: { entries: C
                 {onMarkLoanCollected ? <button onClick={() => void onMarkLoanCollected(row.id)}>Marcar como cobrado</button> : null}
               </span>
             );
+          }
+        },
+        {
+          key: "actions",
+          header: "Ações",
+          render: (row) => {
+            const canCancel = row.status !== "CANCELLED" && !["SERVICE_CHARGE", "PAYMENT_RECEIVED", "REVERSAL"].includes(row.entryType);
+            return canCancel && onCancel ? <button className="danger" onClick={() => void onCancel(row.id)}>Cancelar lançamento</button> : "-";
           }
         }
       ]}

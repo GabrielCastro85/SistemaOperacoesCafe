@@ -331,6 +331,7 @@ const IPC_CHANNELS = {
   openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",
   createLedgerEntry: "clientLedger:createEntry",
+  cancelLedgerEntry: "clientLedger:cancelEntry",
   createAdvance: "clientLedger:createAdvance",
   createCredit: "clientLedger:createCredit",
   getAvailableCredits: "clientLedger:getAvailableCredits",
@@ -770,6 +771,7 @@ export interface OperationsCafeApi {
   openChargeDocument: (input: { chargeId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;
+  cancelLedgerEntry: (id: string, reason: string) => Promise<ClientLedgerEntry>;
   createAdvance: (input: unknown) => Promise<ClientLedgerEntry>;
   createCredit: (input: unknown) => Promise<ClientLedgerEntry>;
   getAvailableCredits: (organizationId: string, ownLegalEntityId: string, clientPartnerId: string) => Promise<ClientLedgerEntry[]>;
@@ -1194,6 +1196,7 @@ const api: OperationsCafeApi = {
   openChargeDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.openChargeDocument, input) as Promise<boolean>,
   listLedgerEntries: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLedgerEntries, filters) as Promise<ClientLedgerEntry[]>,
   createLedgerEntry: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLedgerEntry, input) as Promise<ClientLedgerEntry>,
+  cancelLedgerEntry: (id, reason) => ipcRenderer.invoke(IPC_CHANNELS.cancelLedgerEntry, { id, reason }) as Promise<ClientLedgerEntry>,
   createAdvance: (input) => ipcRenderer.invoke(IPC_CHANNELS.createAdvance, input) as Promise<ClientLedgerEntry>,
   createCredit: (input) => ipcRenderer.invoke(IPC_CHANNELS.createCredit, input) as Promise<ClientLedgerEntry>,
   getAvailableCredits: (organizationId, ownLegalEntityId, clientPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.getAvailableCredits, { organizationId, ownLegalEntityId, clientPartnerId }) as Promise<ClientLedgerEntry[]>,
