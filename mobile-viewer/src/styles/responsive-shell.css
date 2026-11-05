@@ -34,14 +34,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 34px;
+    height: 34px;
     border: 1px solid color-mix(in srgb, var(--color-text) 20%, transparent);
     border-radius: var(--radius-md);
     background: var(--color-surface);
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1;
-    margin-right: var(--space-3);
+    margin-right: var(--space-2);
     flex: none;
   }
 
@@ -102,88 +102,117 @@
     z-index: 55;
   }
 
+  /* O header original (pensado pro Electron) empilhava grupo, empresa/CNPJ,
+     o card "vendo" e o usuario cada um em sua propria linha cheia -- no
+     celular isso tomava quase a tela toda. Aqui o objetivo e' caber tudo
+     em 2 linhas curtas: logo + trocar de empresa (linha 1) e a empresa
+     ativa com a bandeira + Sair (linha 2). */
   .app-topbar {
     display: flex;
     flex-wrap: wrap;
-    row-gap: var(--space-2);
-    column-gap: var(--space-2);
+    row-gap: 6px;
+    column-gap: 8px;
     min-height: 0;
-    padding: 10px 14px;
+    padding: 8px 12px;
   }
 
   .app-topbar__brandline {
-    flex: 1 1 100%;
-    gap: var(--space-2);
+    order: 1;
+    flex: 0 1 auto;
+    gap: 8px;
   }
 
   .app-topbar__brandline img,
   .app-topbar__brandline .brand-mark {
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
   }
 
-  .page-context {
-    gap: 0;
-  }
-
-  .page-context span,
-  .page-context small {
+  /* O titulo da pagina ja aparece no cabecalho do conteudo logo abaixo (e
+     o item ativo do menu lateral tambem indica onde voce esta), entao aqui
+     fica de fora pra abrir espaco pros seletores ao lado do logo. */
+  .app-topbar .page-context {
     display: none;
   }
 
-  .page-context strong {
-    font-size: 16px;
-  }
-
   .app-topbar .context-select {
+    order: 2;
     flex: 1 1 0;
     min-width: 0;
+    gap: 0;
+  }
+
+  .app-topbar .context-select span {
+    display: none;
   }
 
   .app-topbar .context-select select {
-    min-height: 34px;
-    font-size: 12.5px;
+    min-height: 32px;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+
+  .app-topbar .context-pill--user {
+    display: none;
   }
 
   .context-pill--active-company {
-    flex: 1 1 100%;
+    order: 3;
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    column-gap: 8px;
+    row-gap: 0;
     min-height: 0;
     padding: 6px 10px;
   }
 
-  .context-pill--active-company strong {
-    font-size: 13px;
-  }
-
-  .app-topbar .context-pill--user {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .context-pill--user {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding-left: 0;
-    border-left: none;
-  }
-
-  .context-pill--user span,
-  .context-pill--user small {
+  .context-pill--active-company::before,
+  .context-pill--active-company::after {
     display: none;
   }
 
-  .context-pill--user strong {
-    max-width: 190px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--color-text-muted);
+  .context-pill--active-company span {
+    display: none;
+  }
+
+  .context-pill--active-company strong {
+    font-size: 12.5px;
+  }
+
+  .context-pill--active-company small {
+    font-size: 11px;
+  }
+
+  /* A bandeira original e' um fundo decorativo em diagonal pensado pro
+     card grande do desktop; aqui vira so' um iconezinho antes do nome da
+     empresa, do jeito que aparece numa linha compacta. */
+  .context-pill__state-flag {
+    position: static;
+    order: -1;
+    width: 20px;
+    height: 15px;
+    min-width: 20px;
+    object-fit: cover;
+    object-position: center;
+    border-radius: 3px;
+    opacity: 1;
+    filter: none;
+    transform: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .context-pill--state-mg .context-pill__state-flag,
+  .context-pill--state-es .context-pill__state-flag,
+  .context-pill--state-sp .context-pill__state-flag {
+    object-position: center;
   }
 
   .topbar-actions {
+    order: 4;
     flex: none;
     margin-left: auto;
   }
@@ -203,7 +232,7 @@
   }
 }
 
-@media (max-width: 420px) {
+@media (max-width: 380px) {
   .app-topbar .context-select:first-of-type {
     flex: 1 1 100%;
   }
