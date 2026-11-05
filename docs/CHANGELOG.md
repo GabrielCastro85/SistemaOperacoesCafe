@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.70
+
+- A conta-corrente permite cancelar lançamentos extras informados incorretamente, exigindo um motivo e preservando o registro no histórico para auditoria.
+- Pagamentos, cobranças, estornos e créditos já utilizados continuam protegidos e devem ser corrigidos pelos fluxos de origem.
+
 ## 1.1.69
 
 - A sincronização central renova automaticamente a sessão quando ela expira e repete o envio ou a consulta interrompida, sem precisar sair e entrar novamente no programa.
