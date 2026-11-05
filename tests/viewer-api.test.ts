@@ -58,8 +58,14 @@ function fixture(): Record<string, Row[]> {
       { id: "purchase", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, operation_date: "2026-09-14", operation_type: "PURCHASE", operation_scope: "INTERNAL", status: "CONFIRMED", billing_status: "UNBILLED", quantity_sacks_decimal: "900", applied_rate_value_cents: 400, service_amount_cents: 360000 }
     ],
     fiscal_documents: [
-      { id: "document", document_number: "123", status: "CONFIRMED", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Villa Coffee LTDA", cnpjCpf: "44963370000523" }, recipient: { legalName: "Cliente Teste", cnpjCpf: "11111111000111" } }) },
-      { id: "third-document", document_number: "5201", status: "CONFIRMED", direction: "OUTBOUND", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Emitente Terceiro LTDA", cnpjCpf: "22222222000122" }, recipient: { legalName: "Destino Final LTDA", cnpjCpf: "33333333000133" } }) }
+      { id: "document", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, document_number: "123", series: "1", issue_date: "2026-09-10", total_amount_cents: 90000000, status: "CONFIRMED", direction: "OUTBOUND", source: "XML", has_pending_issues: 0, fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Villa Coffee LTDA", cnpjCpf: "44963370000523" }, recipient: { legalName: "Cliente Teste", cnpjCpf: "11111111000111" } }) },
+      { id: "third-document", organization_id: organizationId, own_legal_entity_id: "third-party", responsible_partner_id: clientId, document_number: "5201", series: "1", issue_date: "2026-09-11", total_amount_cents: 8000000, status: "CONFIRMED", direction: "OUTBOUND", source: "XML", has_pending_issues: 0, fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Emitente Terceiro LTDA", cnpjCpf: "22222222000122" }, recipient: { legalName: "Destino Final LTDA", cnpjCpf: "33333333000133" } }) },
+      { id: "pending-document", organization_id: organizationId, own_legal_entity_id: legalEntityId, responsible_partner_id: clientId, document_number: "124", series: "1", issue_date: "2026-09-12", total_amount_cents: 45000000, status: "PENDING", direction: "INBOUND", source: "MANUAL", has_pending_issues: 1, pending_notes: "Conferir fornecedor", fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Fornecedor Teste LTDA", cnpjCpf: "44444444000144" }, recipient: { legalName: "Villa Coffee LTDA", cnpjCpf: "44963370000523" } }) }
+    ],
+    fiscal_document_items: [
+      { id: "item", fiscal_document_id: "document", description: "Cafe arabica", quantity_decimal: "500", unit: "SACK", sacks_quantity_decimal: "500", total_amount_cents: 90000000 },
+      { id: "third-item", fiscal_document_id: "third-document", description: "Cafe conilon", quantity_decimal: "100", unit: "SACK", sacks_quantity_decimal: "100", total_amount_cents: 8000000 },
+      { id: "pending-item", fiscal_document_id: "pending-document", description: "Cafe arabica", quantity_decimal: "250", unit: "SACK", sacks_quantity_decimal: "250", total_amount_cents: 45000000 }
     ],
     client_charges: [
       // Permanece ISSUED no servidor, mas ja venceu. O desktop transforma esse
@@ -108,6 +114,16 @@ describe("viewer API", () => {
       expect.objectContaining({ documentNumber: "123", companyTone: "villa", billingStatus: "UNBILLED" }),
       expect.objectContaining({ documentNumber: "5201", companyTone: "other", companyContext: "Operacao terceirizada", issuerName: "Emitente Terceiro LTDA" })
     ]));
+
+    const invoices = await app.inject({ method: "GET", url: `/v1/viewer/invoices?${query}&direction=ALL&status=ACTIVE`, headers: { authorization: "Bearer test" } });
+    expect(invoices.statusCode).toBe(200);
+    expect(invoices.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ documentNumber: "123", counterpartyName: "Cliente Teste", ownLegalEntityName: "Villa Coffee Minas Gerais", sacks: 500, totalAmountCents: 90000000 }),
+      expect.objectContaining({ documentNumber: "124", counterpartyName: "Fornecedor Teste LTDA", direction: "INBOUND", hasPendingIssues: true, sacks: 250 })
+    ]));
+
+    const pendingInvoices = await app.inject({ method: "GET", url: `/v1/viewer/invoices?${query}&direction=INBOUND&status=PENDING`, headers: { authorization: "Bearer test" } });
+    expect(pendingInvoices.json()).toEqual([expect.objectContaining({ documentNumber: "124", pendingNotes: "Conferir fornecedor" })]);
 
     const charges = await app.inject({ method: "GET", url: `/v1/viewer/charges?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(charges.statusCode).toBe(200);

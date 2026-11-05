@@ -31,6 +31,11 @@ const ledgerListSchema = filterSchema.extend({
   clientId: z.string().min(1)
 });
 
+const invoiceListSchema = filterSchema.extend({
+  direction: z.enum(["ALL", "INBOUND", "OUTBOUND"]).default("ALL"),
+  status: z.enum(["ACTIVE", "PENDING", "CANCELED", "ALL"]).default("ACTIVE")
+});
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -170,6 +175,20 @@ function snapshotParty(document: JsonRecord, key: "issuer" | "recipient"): JsonR
 
 function partyName(party: JsonRecord | null): string | null {
   return party ? nullableText(party.legalName) ?? nullableText(party.tradeName) : null;
+}
+
+function fiscalCounterpartyName(document: JsonRecord, own: JsonRecord | undefined, responsible: JsonRecord | undefined): string {
+  const issuer = snapshotParty(document, "issuer");
+  const recipient = snapshotParty(document, "recipient");
+  const issuerDocument = digits(issuer?.cnpjCpf) || text(document.access_key).slice(6, 20);
+  const recipientDocument = digits(recipient?.cnpjCpf);
+  const ownDocument = digits(own?.cnpj);
+  const issuerName = partyName(issuer);
+  const recipientName = partyName(recipient);
+  if (ownDocument && issuerDocument === ownDocument) return (recipientName ?? issuerName ?? text(responsible?.display_name)) || "Nao informado";
+  if (ownDocument && recipientDocument === ownDocument) return (issuerName ?? recipientName ?? text(responsible?.display_name)) || "Nao informado";
+  if (text(document.direction) === "INBOUND") return (issuerName ?? recipientName ?? text(responsible?.display_name)) || "Nao informado";
+  return (recipientName ?? issuerName ?? text(responsible?.display_name)) || "Nao informado";
 }
 
 function confirmationPartySnapshotName(row: JsonRecord): string | null {
@@ -372,6 +391,76 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       overdueCents: charges.filter(isOverdueCharge).reduce((sum, row) => sum + numberValue(row.open_amount_cents), 0),
       overdueCharges
     };
+  });
+
+  app.get("/v1/viewer/invoices", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = invoiceListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [documents, items, operations, entities, partners] = await Promise.all([
+      records(pool, "fiscal_documents"), records(pool, "fiscal_document_items"), records(pool, "operations"),
+      records(pool, "legal_entities"), records(pool, "business_partners")
+    ]);
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
+    const partnerMap = new Map(partners.map((row) => [text(row.id), row]));
+    const itemsByDocument = new Map<string, JsonRecord[]>();
+    const operationsByDocument = new Map<string, JsonRecord[]>();
+    for (const item of items) {
+      const documentId = text(item.fiscal_document_id);
+      itemsByDocument.set(documentId, [...(itemsByDocument.get(documentId) ?? []), item]);
+    }
+    for (const operation of operations) {
+      const documentId = text(operation.fiscal_document_id);
+      operationsByDocument.set(documentId, [...(operationsByDocument.get(documentId) ?? []), operation]);
+    }
+    return documents
+      .filter((row) => inScope(row, filters) && inPeriod(row.issue_date, filters.periodStart, filters.periodEnd))
+      .filter((row) => filters.direction === "ALL" || text(row.direction) === filters.direction)
+      .filter((row) => {
+        const status = text(row.status);
+        if (filters.status === "ALL") return true;
+        if (filters.status === "CANCELED") return status === "CANCELED";
+        if (filters.status === "PENDING") return status === "PENDING" || booleanValue(row.has_pending_issues);
+        return status !== "CANCELED";
+      })
+      .map((row) => {
+        const documentId = text(row.id);
+        const documentItems = itemsByDocument.get(documentId) ?? [];
+        const documentOperations = operationsByDocument.get(documentId) ?? [];
+        const own = entityMap.get(text(row.own_legal_entity_id));
+        const responsible = partnerMap.get(text(row.responsible_partner_id));
+        const productNames = Array.from(new Set(documentItems.map((item) => text(item.description).trim()).filter(Boolean)));
+        const operationTypes = Array.from(new Set(documentOperations.map((operation) => text(operation.operation_type)).filter(Boolean)));
+        const issuer = snapshotParty(row, "issuer");
+        const recipient = snapshotParty(row, "recipient");
+        return {
+          id: documentId,
+          documentNumber: text(row.document_number),
+          series: nullableText(row.series),
+          issueDate: text(row.issue_date),
+          status: text(row.status),
+          direction: text(row.direction) || "UNKNOWN",
+          source: text(row.source) || "MANUAL",
+          ownLegalEntityName: nullableText(own?.trade_name) ?? nullableText(own?.legal_name) ?? "Empresa",
+          responsiblePartnerName: nullableText(responsible?.display_name),
+          counterpartyName: fiscalCounterpartyName(row, own, responsible),
+          issuerName: partyName(issuer),
+          recipientName: partyName(recipient),
+          totalAmountCents: numberValue(row.total_amount_cents),
+          sacks: documentItems.reduce((sum, item) => sum + (
+            item.sacks_quantity_decimal == null && text(item.unit) === "SACK"
+              ? numberValue(item.quantity_decimal)
+              : numberValue(item.sacks_quantity_decimal)
+          ), 0),
+          productNames,
+          operationTypes,
+          hasPendingIssues: booleanValue(row.has_pending_issues),
+          pendingNotes: nullableText(row.pending_notes)
+        };
+      })
+      .sort((left, right) => right.issueDate.localeCompare(left.issueDate)
+        || right.documentNumber.localeCompare(left.documentNumber, "pt-BR", { numeric: true }));
   });
 
   app.get("/v1/viewer/clients", async (request, reply) => {

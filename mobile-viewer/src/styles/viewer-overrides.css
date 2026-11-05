@@ -398,6 +398,138 @@
     gap: 7px;
   }
 }
+
+.viewer-filter-groups {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.viewer-invoice-summary__metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.viewer-invoice-list {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.viewer-invoice-list__head,
+.viewer-invoice-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.72fr) minmax(150px, 1fr) minmax(190px, 1.25fr) minmax(180px, 1.2fr) minmax(120px, 0.78fr) minmax(112px, 0.72fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.viewer-invoice-list__head {
+  padding: 10px 14px;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-surface) 75%, var(--color-background));
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.viewer-invoice-row {
+  min-height: 74px;
+  padding: 12px 14px 12px 11px;
+  border-top: 1px solid var(--color-border);
+  border-left-width: 4px;
+}
+
+.viewer-invoice-row > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.viewer-invoice-row > span:last-child {
+  justify-items: start;
+  gap: 6px;
+}
+
+.viewer-invoice-row strong,
+.viewer-invoice-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.viewer-invoice-row strong {
+  font-size: 13px;
+}
+
+.viewer-invoice-row small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.viewer-invoice-row__note strong,
+.viewer-invoice-row__amount strong {
+  font-size: 15px;
+}
+
+@media (max-width: 1080px) {
+  .viewer-invoice-list__head {
+    display: none;
+  }
+
+  .viewer-invoice-row {
+    grid-template-columns: minmax(100px, 0.75fr) minmax(150px, 1fr) minmax(180px, 1.3fr) minmax(150px, 1fr);
+  }
+
+  .viewer-invoice-row > span:nth-child(4) {
+    grid-column: 3;
+  }
+
+  .viewer-invoice-row > span:nth-child(5) {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .viewer-invoice-row > span:nth-child(6) {
+    grid-column: 4;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 680px) {
+  .viewer-invoice-summary__metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .viewer-invoice-summary__metrics > span:last-child {
+    grid-column: auto;
+  }
+
+  .viewer-invoice-row {
+    grid-template-columns: minmax(92px, 0.7fr) minmax(0, 1.3fr) auto;
+    gap: 9px 10px;
+    padding-block: 10px;
+  }
+
+  .viewer-invoice-row > span:nth-child(3) {
+    grid-column: 2 / -1;
+  }
+
+  .viewer-invoice-row > span:nth-child(4) {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .viewer-invoice-row > span:nth-child(5) {
+    grid-column: 3;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .viewer-invoice-row > span:nth-child(6) {
+    grid-column: 3;
+    grid-row: 3;
+    justify-items: end;
+  }
+}
 /* The consultation header keeps only the active company identity. Context
    controls live in the sidebar so the notes start closer to the top. */
 .app-sidebar {

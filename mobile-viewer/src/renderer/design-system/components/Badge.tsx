@@ -19,6 +19,7 @@ const statusToneMap: Record<string, StatusTone> = {
   PARTIALLY_PAID: "warning",
   OVERDUE: "danger",
   CANCELLED: "danger",
+  CANCELED: "danger",
   REPLACED: "neutral",
   VALID: "success",
   WARNING: "warning",

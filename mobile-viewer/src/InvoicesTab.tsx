@@ -1,141 +1,151 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
-import { formatCurrencyBr, formatDateBr } from "./storage";
-import { PageHeader } from "./renderer/design-system/components/PageHeader";
-import { FilterBar } from "./renderer/design-system/components/FilterBar";
-import { Card } from "./renderer/design-system/components/Card";
-import { Button } from "./renderer/design-system/components/Button";
-import { StatusBadge } from "./renderer/design-system/components/Badge";
-import { EmptyState } from "./renderer/design-system/components/EmptyState";
-import { LoadingState } from "./renderer/design-system/components/LoadingState";
-import { Alert } from "./renderer/design-system/components/Alert";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, queryString } from "./api";
 import { companyColorClass } from "./companyColor";
-import type { FiscalDocumentDirection, FiscalDocumentRow } from "./types";
+import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
+import { Alert } from "./renderer/design-system/components/Alert";
+import { Badge, StatusBadge } from "./renderer/design-system/components/Badge";
+import { Button } from "./renderer/design-system/components/Button";
+import { Card } from "./renderer/design-system/components/Card";
+import { EmptyState } from "./renderer/design-system/components/EmptyState";
+import { FilterBar } from "./renderer/design-system/components/FilterBar";
+import { LoadingState } from "./renderer/design-system/components/LoadingState";
+import { PageHeader } from "./renderer/design-system/components/PageHeader";
 
-const PAGE_SIZE = 200;
+type DirectionFilter = "ALL" | "INBOUND" | "OUTBOUND";
+type StatusFilter = "ACTIVE" | "PENDING" | "CANCELED" | "ALL";
 
-const DIRECTION_LABELS: Record<FiscalDocumentDirection, string> = {
-  INBOUND: "Entrada",
-  OUTBOUND: "Saída",
-  UNKNOWN: "Não identificada"
-};
+interface InvoiceRow {
+  id: string;
+  documentNumber: string;
+  series: string | null;
+  issueDate: string;
+  status: string;
+  direction: string;
+  source: string;
+  ownLegalEntityName: string;
+  responsiblePartnerName: string | null;
+  counterpartyName: string;
+  issuerName: string | null;
+  recipientName: string | null;
+  totalAmountCents: number;
+  sacks: number;
+  productNames: string[];
+  operationTypes: string[];
+  hasPendingIssues: boolean;
+  pendingNotes: string | null;
+}
 
-type FilterMode = "ALL" | FiscalDocumentDirection;
+const DIRECTION_LABELS: Record<DirectionFilter, string> = { ALL: "Entradas e saídas", INBOUND: "Entradas", OUTBOUND: "Saídas" };
+const STATUS_LABELS: Record<StatusFilter, string> = { ACTIVE: "Ativas", PENDING: "Com pendência", CANCELED: "Canceladas", ALL: "Todas" };
+const SOURCE_LABELS: Record<string, string> = { XML: "XML", MANUAL: "Manual", SPREADSHEET: "Planilha", SEFAZ: "SEFAZ" };
 
-export function InvoicesTab(): JSX.Element {
-  const [documents, setDocuments] = useState<FiscalDocumentRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+function currentMonth(): { start: string; end: string } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const end = new Date(year, now.getMonth() + 1, 0).getDate();
+  return { start: `${year}-${month}-01`, end: `${year}-${month}-${String(end).padStart(2, "0")}` };
+}
+
+function formatSacks(value: number): string {
+  return value.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+}
+
+export function InvoicesTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
+  const initial = currentMonth();
+  const [periodStart, setPeriodStart] = useState(initial.start);
+  const [periodEnd, setPeriodEnd] = useState(initial.end);
+  const [direction, setDirection] = useState<DirectionFilter>("ALL");
+  const [status, setStatus] = useState<StatusFilter>("ACTIVE");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterMode>("ALL");
+  const [documents, setDocuments] = useState<InvoiceRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void load(0);
-  }, []);
-
-  async function load(offset: number): Promise<void> {
+  const load = useCallback(async (): Promise<void> => {
+    if (!organizationId) return;
     setError(null);
-    if (offset === 0) setDocuments(null);
-    else setLoadingMore(true);
-    const { data, error: loadError } = await supabase
-      .from("fiscal_documents")
-      .select(
-        `id, document_number, series, issue_date, total_amount_cents, status, direction,
-         own_legal_entity:legal_entities(trade_name),
-         responsible_partner:business_partners(display_name)`
-      )
-      .neq("status", "CANCELED")
-      .order("issue_date", { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1);
-    setLoadingMore(false);
-    if (loadError) {
-      setError(loadError.message);
-      return;
+    setDocuments(null);
+    try {
+      setDocuments(await apiJson(`/v1/viewer/invoices?${queryString({
+        organizationId, legalEntityId, periodStart, periodEnd, direction, status
+      })}`));
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Falha ao carregar as notas fiscais.");
     }
-    const page = (data ?? []) as unknown as FiscalDocumentRow[];
-    setHasMore(page.length === PAGE_SIZE);
-    setDocuments((prev) => (offset === 0 ? page : [...(prev ?? []), ...page]));
-  }
+  }, [organizationId, legalEntityId, periodStart, periodEnd, direction, status]);
+
+  useEffect(() => { void load(); }, [load]);
 
   const filtered = useMemo(() => {
-    if (!documents) return [];
-    const term = search.trim().toLowerCase();
-    return documents.filter((document) => {
-      if (filter !== "ALL" && document.direction !== filter) return false;
-      if (term) {
-        const haystack = `${document.document_number} ${document.responsible_partner?.display_name ?? ""} ${
-          document.own_legal_entity?.trade_name ?? ""
-        }`.toLowerCase();
-        if (!haystack.includes(term)) return false;
-      }
-      return true;
-    });
-  }, [documents, search, filter]);
+    const term = search.trim().toLocaleLowerCase("pt-BR");
+    if (!term) return documents ?? [];
+    return (documents ?? []).filter((document) => [
+      document.documentNumber, document.series, document.counterpartyName, document.responsiblePartnerName,
+      document.ownLegalEntityName, document.issuerName, document.recipientName, ...document.productNames
+    ].filter(Boolean).join(" ").toLocaleLowerCase("pt-BR").includes(term));
+  }, [documents, search]);
+
+  const totals = useMemo(() => ({
+    count: filtered.length,
+    sacks: filtered.reduce((sum, document) => sum + document.sacks, 0),
+    amountCents: filtered.reduce((sum, document) => sum + document.totalAmountCents, 0),
+    pending: filtered.filter((document) => document.hasPendingIssues || document.status === "PENDING").length
+  }), [filtered]);
 
   return (
     <>
-      <PageHeader eyebrow="Operações" title="Notas e operações" description="Notas fiscais lançadas no PC principal (manualmente ou por importação de XML/planilha)." />
+      <PageHeader eyebrow="Operações" title="Notas e operações" description="Consulte entradas e saídas que já chegaram ao servidor central, sem alterar os lançamentos do aplicativo." />
+      <FilterBar
+        activeCount={(direction !== "ALL" ? 1 : 0) + (status !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
+        onClear={() => { setDirection("ALL"); setStatus("ALL"); setSearch(""); }}
+      >
+        <div className="viewer-period-filter viewer-period-filter--inline">
+          <label>Início<input className="ui-input" type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
+          <label>Fim<input className="ui-input" type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
+        </div>
+        <input className="ui-input" type="search" placeholder="Buscar nota, empresa, fornecedor, cliente ou produto..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className="viewer-filter-groups">
+          <div className="viewer-chip-row">
+            {(Object.keys(DIRECTION_LABELS) as DirectionFilter[]).map((mode) => (
+              <Button key={mode} variant={direction === mode ? "primary" : "secondary"} onClick={() => setDirection(mode)}>{DIRECTION_LABELS[mode]}</Button>
+            ))}
+          </div>
+          <div className="viewer-chip-row">
+            {(Object.keys(STATUS_LABELS) as StatusFilter[]).map((mode) => (
+              <Button key={mode} variant={status === mode ? "primary" : "secondary"} onClick={() => setStatus(mode)}>{STATUS_LABELS[mode]}</Button>
+            ))}
+          </div>
+        </div>
+      </FilterBar>
       {error ? <Alert tone="danger" title="Falha ao carregar notas">{error}</Alert> : null}
-      {!error && !documents ? <LoadingState label="Carregando notas..." /> : null}
+      {!error && !documents ? <LoadingState label="Carregando notas e operações..." /> : null}
       {documents ? (
-        <>
-          <FilterBar
-            activeCount={(filter !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
-            onClear={() => {
-              setSearch("");
-              setFilter("ALL");
-            }}
-          >
-            <input
-              type="search"
-              className="ui-input"
-              placeholder="Buscar número, parceiro ou empresa..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-            <div className="viewer-chip-row">
-              <Button variant={filter === "ALL" ? "primary" : "secondary"} onClick={() => setFilter("ALL")}>
-                Todas
-              </Button>
-              <Button variant={filter === "INBOUND" ? "primary" : "secondary"} onClick={() => setFilter("INBOUND")}>
-                Entrada
-              </Button>
-              <Button variant={filter === "OUTBOUND" ? "primary" : "secondary"} onClick={() => setFilter("OUTBOUND")}>
-                Saída
-              </Button>
-            </div>
-          </FilterBar>
-          {filtered.length === 0 ? (
-            <EmptyState title="Nenhuma nota encontrada" description="Ajuste a busca ou o filtro para ver outros resultados." />
-          ) : (
-            <div className="viewer-card-grid">
-              {filtered.map((document) => (
-                <Card
-                  key={document.id}
-                  title={document.document_number ? `NF ${document.document_number}${document.series ? `/${document.series}` : ""}` : "Sem número"}
-                  actions={<StatusBadge status={document.status} />}
-                  className={companyColorClass(document.own_legal_entity?.trade_name)}
-                >
-                  <p className="viewer-card-line">{document.responsible_partner?.display_name ?? "Parceiro não identificado"}</p>
-                  <p className="viewer-card-line">
-                    {document.own_legal_entity?.trade_name ?? ""} · {DIRECTION_LABELS[document.direction]}
-                  </p>
-                  <p className="viewer-card-line">
-                    {formatDateBr(document.issue_date)} · {formatCurrencyBr(document.total_amount_cents)}
-                  </p>
-                </Card>
-              ))}
-            </div>
-          )}
-          {hasMore ? (
-            <div className="viewer-load-more">
-              <Button variant="ghost" loading={loadingMore} onClick={() => void load(documents.length)}>
-                Carregar mais
-              </Button>
-            </div>
-          ) : null}
-        </>
+        <Card className="viewer-open-notes-summary">
+          <div className="viewer-open-notes-summary__metrics viewer-invoice-summary__metrics">
+            <span><small>Notas no filtro</small><strong>{totals.count.toLocaleString("pt-BR")}</strong></span>
+            <span><small>Sacas</small><strong>{formatSacks(totals.sacks)}</strong></span>
+            <span><small>Valor fiscal</small><strong>{formatCurrencyBr(totals.amountCents)}</strong></span>
+            <span><small>Com pendência</small><strong>{totals.pending.toLocaleString("pt-BR")}</strong></span>
+          </div>
+        </Card>
+      ) : null}
+      {documents && filtered.length === 0 ? <EmptyState title="Nenhuma nota encontrada" description="Ajuste o período, o sentido, a situação ou a busca." /> : null}
+      {documents && filtered.length > 0 ? (
+        <div className="viewer-invoice-list">
+          <div className="viewer-invoice-list__head" aria-hidden="true">
+            <span>Nota / emissão</span><span>Sentido / empresa</span><span>Contraparte / responsável</span><span>Produto / sacas</span><span>Valor fiscal</span><span>Situação</span>
+          </div>
+          {filtered.map((document) => (
+            <article key={document.id} className={`viewer-invoice-row ${companyColorClass(document.ownLegalEntityName)}`}>
+              <span className="viewer-invoice-row__note"><strong>NF {document.documentNumber}{document.series ? `/${document.series}` : ""}</strong><small>{formatDateBr(document.issueDate)}</small></span>
+              <span><Badge tone={document.direction === "INBOUND" ? "info" : document.direction === "OUTBOUND" ? "success" : "neutral"}>{document.direction === "INBOUND" ? "Entrada" : document.direction === "OUTBOUND" ? "Saída" : "Não identificada"}</Badge><small>{document.ownLegalEntityName}</small></span>
+              <span><strong>{document.counterpartyName}</strong><small>{document.responsiblePartnerName ? `Responsável: ${document.responsiblePartnerName}` : "Sem responsável comercial"}</small></span>
+              <span><strong>{document.productNames.slice(0, 2).join(" · ") || "Produto não informado"}</strong><small>{formatSacks(document.sacks)} sacas</small></span>
+              <span className="viewer-invoice-row__amount"><strong>{formatCurrencyBr(document.totalAmountCents)}</strong><small>{SOURCE_LABELS[document.source] ?? document.source}</small></span>
+              <span><StatusBadge status={document.status} />{document.hasPendingIssues ? <Badge tone="warning">Revisar</Badge> : null}</span>
+            </article>
+          ))}
+        </div>
       ) : null}
     </>
   );
