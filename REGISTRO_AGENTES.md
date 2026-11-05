@@ -29,7 +29,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Dashboard, Notas e operações, Confirmações, Cobranças e Conta-corrente foram publicados em modo somente leitura. Notas e operações consulta o servidor central por período, empresa, entrada/saída e situação, com contraparte fiscal, responsável, produtos, sacas, valor e origem. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
+- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Dashboard, Notas e operações, Cafés armazenados, Confirmações, Cobranças e Conta-corrente foram publicados em modo somente leitura. Cafés armazenados replica o saldo por CNPJ do armazém, produto e empresa própria, com histórico de remessas, retornos, baixas simbólicas, ajustes manuais e pendências. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 14:51 - Codex
+- Pedido: seguir para o próximo passo da conversão gradual do aplicativo para o site.
+- Feito: publicada a consulta web de Cafés armazenados. A tela usa a API central autenticada, respeita organização/CNPJ próprio e apresenta saldo por armazém e produto, totais em sacas e kg, armazéns com saldo, movimentos ativos, pendências e histórico de remessas, retornos, baixas simbólicas e ajustes manuais. A consolidação usa o CNPJ do armazém como identidade e preserva a nomenclatura canônica do ajuste manual, igual ao aplicativo.
+- Testado: build do servidor, build do `mobile-viewer`, typecheck, ESLint dos arquivos alterados, `git diff --check` e `tests/viewer-api.test.ts` aprovados. O teste cobre ajuste manual, remessa/retorno, saldo líquido, CNPJ, produto e movimento pendente. GitHub Pages `42078155894` concluiu com sucesso; o bundle público contém Cafés armazenados e `/v1/viewer/warehouses`. Railway está no commit `c6550a5`, `/health` e `/ready` saudáveis, banco conectado e a rota sem sessão devolve 401.
+- Publicado: commit `c6550a5` na branch e na `master`; módulo disponível em `graobase.com.br`. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
+- Pendente: validar os saldos reais no site e escolher o próximo módulo da migração gradual.
 
 ### 2026-11-05 14:25 - Codex
 - Pedido: continuar a implementação gradual do site do Operações Café.
