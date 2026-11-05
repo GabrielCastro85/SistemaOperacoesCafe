@@ -43,8 +43,17 @@ function fixture(): Record<string, Row[]> {
       { id: "third-party", organization_id: organizationId, legal_name: "Emitente Terceiro LTDA", trade_name: "Emitente Terceiro", cnpj: "22222222000122", document_prefix: "TERC-XML", is_active: 1 },
       { id: "entity2", organization_id: "org2", legal_name: "Grao & Grao LTDA", trade_name: "Grao & Grao Minas Gerais", cnpj: "16594876000224", is_active: 1 }
     ],
-    business_partners: [{ id: clientId, display_name: "Cliente Teste" }, { id: "client2", display_name: "Cliente Org2" }],
-    partner_legal_entities: [{ id: "partner-entity", business_partner_id: clientId, legal_name: "Comprador Teste LTDA", trade_name: "Comprador Teste" }],
+    business_partners: [
+      { id: clientId, organization_id: organizationId, display_name: "Cliente Teste", document_number: "11111111000111", city: "Varginha", state: "MG", is_active: 1 },
+      { id: "client2", organization_id: "org2", display_name: "Cliente Org2", is_active: 1 }
+    ],
+    business_partner_roles: [{ id: "role-client", organization_id: organizationId, business_partner_id: clientId, role: "CLIENT" }],
+    partner_legal_entities: [{ id: "partner-entity", organization_id: organizationId, business_partner_id: clientId, legal_name: "Comprador Teste LTDA", trade_name: "Comprador Teste", cnpj: "11111111000111", city: "Varginha", state: "MG", is_active: 1 }],
+    products: [{ id: "product", organization_id: organizationId, name: "Cafe Arabica", code: "ARA", category: "COFFEE_ARABICA", default_unit: "SACK", default_sack_weight_kg: 60, is_active: 1 }],
+    product_aliases: [{ id: "alias", organization_id: organizationId, product_id: "product", alias: "ARABICA TIPO 6", is_active: 1 }],
+    service_rate_rules: [{ id: "service-rate", organization_id: organizationId, own_legal_entity_id: legalEntityId, business_partner_id: clientId, product_id: "product", rate_value_cents: 400, effective_from: "2026-01-01", priority: 10, is_active: 1 }],
+    purchase_rate_rules: [{ id: "purchase-rate", organization_id: organizationId, own_legal_entity_id: legalEntityId, business_partner_id: clientId, product_id: "product", rate_value_cents: 700, effective_from: "2026-01-01", priority: 5, is_active: 1 }],
+    accounts_payable: [{ id: "payable", organization_id: organizationId, own_legal_entity_id: legalEntityId, supplier_partner_id: clientId, payee_name_snapshot: "Cliente Teste", description: "Acerto de entrada", document_number: "AP-1", due_date: "2000-01-01", final_amount_cents: 100000, paid_amount_cents: 0, open_amount_cents: 100000, status: "OPEN" }],
     deal_confirmations: [{ id: "confirmation", organization_id: organizationId, own_legal_entity_id: legalEntityId, confirmation_number: "VCMG 0200", temporary_reference: "TEMP-200", confirmation_date: "2026-09-20", status: "ISSUED", signature_status: "NOT_SENT", total_quantity_sacks_decimal: "500", total_commercial_amount_cents: 90000000 }],
     deal_confirmation_parties: [
       { id: "party-own", deal_confirmation_id: "confirmation", party_role: "SELLER", own_legal_entity_id: legalEntityId, sort_order: 1, snapshot_json: JSON.stringify({ legalName: "Villa Coffee LTDA" }) },
@@ -151,6 +160,29 @@ describe("viewer API", () => {
 
     const pendingWarehouse = await app.inject({ method: "GET", url: `/v1/viewer/warehouses?${query}&status=PENDING_REVIEW&warehouseCnpj=04164419000130`, headers: { authorization: "Bearer test" } });
     expect(pendingWarehouse.json()).toMatchObject({ movements: [expect.objectContaining({ documentNumber: "2200", notes: "Referencia da remessa nao identificada" })] });
+
+    const scope = `organizationId=${organizationId}&legalEntityId=${legalEntityId}`;
+    const partners = await app.inject({ method: "GET", url: `/v1/viewer/partners?${scope}`, headers: { authorization: "Bearer test" } });
+    expect(partners.statusCode).toBe(200);
+    expect(partners.json()).toEqual([expect.objectContaining({ display_name: "Cliente Teste", roles: [{ role: "CLIENT" }], legal_entities: [expect.objectContaining({ cnpj: "11111111000111" })] })]);
+
+    const products = await app.inject({ method: "GET", url: `/v1/viewer/products?${scope}`, headers: { authorization: "Bearer test" } });
+    expect(products.json()).toEqual([expect.objectContaining({ name: "Cafe Arabica", aliases: ["ARABICA TIPO 6"] })]);
+
+    const serviceRates = await app.inject({ method: "GET", url: `/v1/viewer/rate-rules?${scope}&kind=SERVICE`, headers: { authorization: "Bearer test" } });
+    expect(serviceRates.json()).toEqual([expect.objectContaining({ id: "service-rate", rate_value_cents: 400, business_partner: { display_name: "Cliente Teste" } })]);
+
+    const purchaseRates = await app.inject({ method: "GET", url: `/v1/viewer/rate-rules?${scope}&kind=PURCHASE`, headers: { authorization: "Bearer test" } });
+    expect(purchaseRates.json()).toEqual([expect.objectContaining({ id: "purchase-rate", rate_value_cents: 700 })]);
+
+    const payables = await app.inject({ method: "GET", url: `/v1/viewer/payables?${scope}`, headers: { authorization: "Bearer test" } });
+    expect(payables.json()).toEqual([expect.objectContaining({ id: "payable", status: "OVERDUE", supplier: { display_name: "Cliente Teste" } })]);
+
+    const finance = await app.inject({ method: "GET", url: `/v1/viewer/finance?${scope}`, headers: { authorization: "Bearer test" } });
+    expect(finance.json()).toMatchObject({ totalReceivableCents: 200000, totalPayableCents: 100000, byEntity: [expect.objectContaining({ name: "Villa Coffee Minas Gerais" })] });
+
+    const reports = await app.inject({ method: "GET", url: `/v1/viewer/reports?${scope}&year=2026`, headers: { authorization: "Bearer test" } });
+    expect(reports.json()[8]).toMatchObject({ month: 9, operationCount: 2, sacks: 1400, amountCents: 510000, confirmationCount: 1 });
 
     const charges = await app.inject({ method: "GET", url: `/v1/viewer/charges?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(charges.statusCode).toBe(200);

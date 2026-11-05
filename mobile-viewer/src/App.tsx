@@ -8,6 +8,12 @@ import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { LedgerTab } from "./LedgerTab";
 import { InvoicesTab } from "./InvoicesTab";
 import { WarehousesTab } from "./WarehousesTab";
+import { PartnersTab } from "./PartnersTab";
+import { ProductsTab } from "./ProductsTab";
+import { RateRulesTab } from "./RateRulesTab";
+import { PurchaseSettlementsTab } from "./PurchaseSettlementsTab";
+import { FinanceTab } from "./FinanceTab";
+import { ReportsTab } from "./ReportsTab";
 import { assetUrl } from "./assetUrl";
 import { selectDefaultLegalEntity, selectDefaultOrganization } from "./defaultCompany";
 import type { PageId } from "./navigation";
@@ -80,9 +86,16 @@ export function App(): JSX.Element {
         {page === "dashboard" ? <DashboardTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "invoices" ? <InvoicesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "warehouses" ? <WarehousesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "partners" ? <PartnersTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "products" ? <ProductsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "serviceRates" ? <RateRulesTab table="service_rate_rules" eyebrow="Comercial" title="Regras por saca" description="Valores de serviço configurados por cliente, produto e vigência." organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "charges" ? <ChargesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "confirmations" ? <ConfirmationsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "ledger" ? <LedgerTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "settlements" ? <PurchaseSettlementsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "purchaseRates" ? <RateRulesTab table="purchase_rate_rules" eyebrow="Pagamentos" title="Regras de entrada" description="Valores de compra configurados por fornecedor, produto e vigência." organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "finance" ? <FinanceTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "reports" ? <ReportsTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
       </div>
     </AppShell>
   );

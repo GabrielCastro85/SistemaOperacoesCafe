@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, queryString } from "./api";
 import { formatCurrencyBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { Card } from "./renderer/design-system/components/Card";
@@ -21,8 +21,6 @@ const MONTH_LABELS = [
   "Novembro",
   "Dezembro"
 ];
-const AGGREGATE_LIMIT = 5000;
-
 interface MonthRow {
   month: number;
   operationCount: number;
@@ -35,65 +33,24 @@ function currentYear(): number {
   return new Date().getFullYear();
 }
 
-export function ReportsTab(): JSX.Element {
+export function ReportsTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
   const [year, setYear] = useState(currentYear());
   const [rows, setRows] = useState<MonthRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void load(year);
-  }, [year]);
-
-  async function load(targetYear: number): Promise<void> {
+  const load = useCallback(async (targetYear: number): Promise<void> => {
     setError(null);
     setRows(null);
-    const yearStart = `${targetYear}-01-01`;
-    const yearEnd = `${targetYear + 1}-01-01`;
-    const [operationsResult, confirmationsResult] = await Promise.all([
-      supabase
-        .from("operations")
-        .select("operation_date, quantity_sacks_decimal, service_amount_cents")
-        .neq("status", "CANCELED")
-        .gte("operation_date", yearStart)
-        .lt("operation_date", yearEnd)
-        .limit(AGGREGATE_LIMIT),
-      supabase
-        .from("deal_confirmations")
-        .select("confirmation_date")
-        .not("status", "in", "(CANCELLED,REPLACED)")
-        .gte("confirmation_date", yearStart)
-        .lt("confirmation_date", yearEnd)
-        .limit(AGGREGATE_LIMIT)
-    ]);
-    const firstError = operationsResult.error?.message ?? confirmationsResult.error?.message;
-    if (firstError) {
-      setError(firstError);
-      return;
+    try {
+      setRows(await apiJson<MonthRow[]>(`/v1/viewer/reports?${queryString({ organizationId, legalEntityId, year: String(targetYear) })}`));
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Falha ao carregar o relatório.");
     }
+  }, [organizationId, legalEntityId]);
 
-    const months: MonthRow[] = Array.from({ length: 12 }, (_, index) => ({
-      month: index + 1,
-      operationCount: 0,
-      sacks: 0,
-      amountCents: 0,
-      confirmationCount: 0
-    }));
-
-    for (const row of operationsResult.data ?? []) {
-      const monthIndex = Number(row.operation_date.slice(5, 7)) - 1;
-      if (monthIndex < 0 || monthIndex > 11) continue;
-      months[monthIndex].operationCount += 1;
-      months[monthIndex].sacks += Number(row.quantity_sacks_decimal) || 0;
-      months[monthIndex].amountCents += row.service_amount_cents ?? 0;
-    }
-    for (const row of confirmationsResult.data ?? []) {
-      const monthIndex = Number(row.confirmation_date.slice(5, 7)) - 1;
-      if (monthIndex < 0 || monthIndex > 11) continue;
-      months[monthIndex].confirmationCount += 1;
-    }
-
-    setRows(months);
-  }
+  useEffect(() => {
+    void load(year);
+  }, [load, year]);
 
   const yearTotals = useMemo(() => {
     if (!rows) return null;

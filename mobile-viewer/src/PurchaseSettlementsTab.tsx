@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, queryString } from "./api";
 import { formatCurrencyBr, formatDateBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -11,40 +11,31 @@ import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
 import type { AccountPayableRow, AccountPayableStatus } from "./types";
 
-const PAGE_SIZE = 300;
-
 const OPEN_STATUSES: AccountPayableStatus[] = ["DRAFT", "SCHEDULED", "OPEN", "PARTIALLY_PAID", "OVERDUE", "CONTESTED"];
 
 type FilterMode = "OPEN" | "PAID" | "ALL";
 
 const FILTER_LABELS: Record<FilterMode, string> = { OPEN: "Em aberto", PAID: "Pagos", ALL: "Todos" };
 
-export function PurchaseSettlementsTab(): JSX.Element {
+export function PurchaseSettlementsTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
   const [payables, setPayables] = useState<AccountPayableRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("OPEN");
 
+  const load = useCallback(async (): Promise<void> => {
+    setError(null);
+    setPayables(null);
+    try {
+      setPayables(await apiJson<AccountPayableRow[]>(`/v1/viewer/payables?${queryString({ organizationId, legalEntityId })}`));
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Falha ao carregar acertos.");
+    }
+  }, [organizationId, legalEntityId]);
+
   useEffect(() => {
     void load();
-  }, []);
-
-  async function load(): Promise<void> {
-    setError(null);
-    const { data, error: loadError } = await supabase
-      .from("accounts_payable")
-      .select(
-        `id, payee_name_snapshot, description, document_number, due_date, final_amount_cents, paid_amount_cents, open_amount_cents, status,
-         supplier:business_partners(display_name)`
-      )
-      .order("due_date", { ascending: false })
-      .limit(PAGE_SIZE);
-    if (loadError) {
-      setError(loadError.message);
-      return;
-    }
-    setPayables((data ?? []) as unknown as AccountPayableRow[]);
-  }
+  }, [load]);
 
   const filtered = useMemo(() => {
     if (!payables) return [];

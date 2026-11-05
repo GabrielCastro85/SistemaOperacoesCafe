@@ -14,6 +14,19 @@ const filterSchema = z.object({
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
 
+const scopeSchema = z.object({
+  organizationId: z.string().min(1),
+  legalEntityId: z.string().min(1).optional()
+});
+
+const rateRuleListSchema = scopeSchema.extend({
+  kind: z.enum(["SERVICE", "PURCHASE"])
+});
+
+const reportListSchema = scopeSchema.extend({
+  year: z.coerce.number().int().min(2000).max(2200)
+});
+
 const chargeListSchema = filterSchema.extend({
   clientId: z.string().min(1).optional(),
   status: z.enum(["OPEN", "PAID", "ALL"]).default("ALL")
@@ -119,6 +132,11 @@ async function assertScope(pool: pg.Pool, session: Session, reply: FastifyReply,
 function inScope(row: JsonRecord, filters: z.infer<typeof filterSchema>): boolean {
   return text(row.organization_id) === filters.organizationId
     && (!filters.legalEntityId || text(row.own_legal_entity_id) === filters.legalEntityId);
+}
+
+function inOrganizationScope(row: JsonRecord, organizationId: string, legalEntityId?: string): boolean {
+  return text(row.organization_id) === organizationId
+    && (!legalEntityId || !row.own_legal_entity_id || text(row.own_legal_entity_id) === legalEntityId);
 }
 
 function inPeriod(value: unknown, start: string, end: string): boolean {
@@ -574,6 +592,173 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       }])).values()).sort((left, right) => left.name.localeCompare(right.name, "pt-BR")),
       movements
     };
+  });
+
+  app.get("/v1/viewer/partners", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = scopeSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [partners, roles, partnerEntities] = await Promise.all([
+      records(pool, "business_partners"), records(pool, "business_partner_roles"), records(pool, "partner_legal_entities")
+    ]);
+    const rolesByPartner = new Map<string, string[]>();
+    for (const role of roles.filter((row) => text(row.organization_id) === filters.organizationId || !row.organization_id)) {
+      const partnerId = text(role.business_partner_id);
+      const list = rolesByPartner.get(partnerId) ?? [];
+      if (text(role.role) && !list.includes(text(role.role))) list.push(text(role.role));
+      rolesByPartner.set(partnerId, list);
+    }
+    const entitiesByPartner = new Map<string, JsonRecord[]>();
+    for (const entity of partnerEntities.filter((row) => text(row.organization_id) === filters.organizationId || !row.organization_id)) {
+      const partnerId = text(entity.business_partner_id);
+      entitiesByPartner.set(partnerId, [...(entitiesByPartner.get(partnerId) ?? []), entity]);
+    }
+    return partners
+      .filter((row) => text(row.organization_id) === filters.organizationId && isActive(row))
+      .map((row) => ({
+        id: text(row.id), display_name: text(row.display_name), document_number: nullableText(row.document_number),
+        email: nullableText(row.email), phone: nullableText(row.phone), city: nullableText(row.city), state: nullableText(row.state),
+        is_active: isActive(row), roles: (rolesByPartner.get(text(row.id)) ?? []).map((role) => ({ role })),
+        legal_entities: (entitiesByPartner.get(text(row.id)) ?? []).filter(isActive).map((entity) => ({
+          id: text(entity.id), legal_name: text(entity.legal_name), trade_name: nullableText(entity.trade_name),
+          cnpj: nullableText(entity.cnpj), city: nullableText(entity.city), state: nullableText(entity.state)
+        }))
+      }))
+      .sort((left, right) => left.display_name.localeCompare(right.display_name, "pt-BR"));
+  });
+
+  app.get("/v1/viewer/products", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = scopeSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [products, aliases] = await Promise.all([records(pool, "products"), records(pool, "product_aliases")]);
+    const aliasesByProduct = new Map<string, string[]>();
+    for (const alias of aliases.filter((row) => text(row.organization_id) === filters.organizationId || !row.organization_id)) {
+      const productId = text(alias.product_id);
+      aliasesByProduct.set(productId, [...(aliasesByProduct.get(productId) ?? []), text(alias.alias)]);
+    }
+    return products
+      .filter((row) => text(row.organization_id) === filters.organizationId && isActive(row))
+      .map((row) => ({
+        id: text(row.id), name: text(row.name), code: nullableText(row.code), category: text(row.category),
+        default_unit: text(row.default_unit), default_sack_weight_kg: row.default_sack_weight_kg == null ? null : numberValue(row.default_sack_weight_kg),
+        is_active: isActive(row), aliases: aliasesByProduct.get(text(row.id)) ?? []
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+  });
+
+  app.get("/v1/viewer/rate-rules", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = rateRuleListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const table = filters.kind === "SERVICE" ? "service_rate_rules" : "purchase_rate_rules";
+    const [rules, partners, products, partnerEntities, ownEntities] = await Promise.all([
+      records(pool, table), records(pool, "business_partners"), records(pool, "products"),
+      records(pool, "partner_legal_entities"), records(pool, "legal_entities")
+    ]);
+    const partnerMap = new Map(partners.map((row) => [text(row.id), row]));
+    const productMap = new Map(products.map((row) => [text(row.id), row]));
+    const partnerEntityMap = new Map(partnerEntities.map((row) => [text(row.id), row]));
+    const ownEntityMap = new Map(ownEntities.map((row) => [text(row.id), row]));
+    return rules
+      .filter((row) => text(row.organization_id) === filters.organizationId && isActive(row))
+      .filter((row) => !filters.legalEntityId || !row.own_legal_entity_id || text(row.own_legal_entity_id) === filters.legalEntityId)
+      .map((row) => ({
+        id: text(row.id), rate_value_cents: numberValue(row.rate_value_cents),
+        financial_rate_value_cents: row.financial_rate_value_cents == null ? null : numberValue(row.financial_rate_value_cents),
+        effective_from: text(row.effective_from), effective_to: nullableText(row.effective_to), priority: numberValue(row.priority),
+        is_active: isActive(row), operation_scope: nullableText(row.operation_scope), state: nullableText(row.state),
+        business_partner: partnerMap.has(text(row.business_partner_id)) ? { display_name: text(partnerMap.get(text(row.business_partner_id))?.display_name) } : null,
+        product: productMap.has(text(row.product_id)) ? { name: text(productMap.get(text(row.product_id))?.name) } : null,
+        partner_legal_entity: partnerEntityMap.has(text(row.partner_legal_entity_id)) ? { legal_name: text(partnerEntityMap.get(text(row.partner_legal_entity_id))?.legal_name) } : null,
+        own_legal_entity: ownEntityMap.has(text(row.own_legal_entity_id)) ? { trade_name: text(ownEntityMap.get(text(row.own_legal_entity_id))?.trade_name) } : null
+      }))
+      .sort((left, right) => right.effective_from.localeCompare(left.effective_from) || right.priority - left.priority);
+  });
+
+  app.get("/v1/viewer/payables", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = scopeSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [payables, partners, entities] = await Promise.all([
+      records(pool, "accounts_payable"), records(pool, "business_partners"), records(pool, "legal_entities")
+    ]);
+    const partnerMap = new Map(partners.map((row) => [text(row.id), row]));
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
+    const today = new Date().toISOString().slice(0, 10);
+    return payables
+      .filter((row) => inOrganizationScope(row, filters.organizationId, filters.legalEntityId))
+      .map((row) => {
+        const openAmount = numberValue(row.open_amount_cents);
+        const storedStatus = text(row.status);
+        const status = ["SCHEDULED", "OPEN", "PARTIALLY_PAID"].includes(storedStatus) && openAmount > 0 && text(row.due_date) < today ? "OVERDUE" : storedStatus;
+        return {
+          id: text(row.id), payee_name_snapshot: text(row.payee_name_snapshot), description: text(row.description),
+          document_number: nullableText(row.document_number), due_date: text(row.due_date), final_amount_cents: numberValue(row.final_amount_cents),
+          paid_amount_cents: numberValue(row.paid_amount_cents), open_amount_cents: openAmount, status,
+          supplier: partnerMap.has(text(row.supplier_partner_id)) ? { display_name: text(partnerMap.get(text(row.supplier_partner_id))?.display_name) } : null,
+          own_legal_entity: entityMap.has(text(row.own_legal_entity_id)) ? { trade_name: text(entityMap.get(text(row.own_legal_entity_id))?.trade_name) } : null
+        };
+      })
+      .sort((left, right) => right.due_date.localeCompare(left.due_date));
+  });
+
+  app.get("/v1/viewer/finance", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = scopeSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [charges, payables, entities] = await Promise.all([
+      records(pool, "client_charges"), records(pool, "accounts_payable"), records(pool, "legal_entities")
+    ]);
+    const entityMap = new Map(entities.map((row) => [text(row.id), row]));
+    const rows = new Map<string, { name: string; receivableCents: number; payableCents: number }>();
+    const entityRow = (id: string) => {
+      const current = rows.get(id);
+      if (current) return current;
+      const entity = entityMap.get(id);
+      const created = { name: nullableText(entity?.trade_name) ?? nullableText(entity?.legal_name) ?? "Empresa", receivableCents: 0, payableCents: 0 };
+      rows.set(id, created);
+      return created;
+    };
+    for (const charge of charges.filter((row) => inOrganizationScope(row, filters.organizationId, filters.legalEntityId) && openCharge(row))) {
+      entityRow(text(charge.own_legal_entity_id)).receivableCents += numberValue(charge.open_amount_cents);
+    }
+    for (const payable of payables.filter((row) => inOrganizationScope(row, filters.organizationId, filters.legalEntityId) && !["PAID", "CANCELLED"].includes(text(row.status)))) {
+      entityRow(text(payable.own_legal_entity_id)).payableCents += numberValue(payable.open_amount_cents);
+    }
+    const byEntity = [...rows.values()].sort((left, right) => right.receivableCents + right.payableCents - left.receivableCents - left.payableCents);
+    return {
+      totalReceivableCents: byEntity.reduce((sum, row) => sum + row.receivableCents, 0),
+      totalPayableCents: byEntity.reduce((sum, row) => sum + row.payableCents, 0),
+      byEntity
+    };
+  });
+
+  app.get("/v1/viewer/reports", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = reportListSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [operations, confirmations] = await Promise.all([records(pool, "operations"), records(pool, "deal_confirmations")]);
+    const rows = Array.from({ length: 12 }, (_, index) => ({ month: index + 1, operationCount: 0, sacks: 0, amountCents: 0, confirmationCount: 0 }));
+    const prefix = `${filters.year}-`;
+    for (const operation of operations.filter((row) => inOrganizationScope(row, filters.organizationId, filters.legalEntityId) && text(row.status) !== "CANCELED" && text(row.operation_date).startsWith(prefix))) {
+      const month = Number(text(operation.operation_date).slice(5, 7));
+      if (month < 1 || month > 12) continue;
+      rows[month - 1].operationCount += 1;
+      rows[month - 1].sacks += numberValue(operation.quantity_sacks_decimal);
+      rows[month - 1].amountCents += numberValue(operation.service_amount_cents);
+    }
+    for (const confirmation of confirmations.filter((row) => inOrganizationScope(row, filters.organizationId, filters.legalEntityId) && !["CANCELLED", "REPLACED"].includes(text(row.status)) && text(row.confirmation_date).startsWith(prefix))) {
+      const month = Number(text(confirmation.confirmation_date).slice(5, 7));
+      if (month >= 1 && month <= 12) rows[month - 1].confirmationCount += 1;
+    }
+    return rows;
   });
 
   app.get("/v1/viewer/clients", async (request, reply) => {

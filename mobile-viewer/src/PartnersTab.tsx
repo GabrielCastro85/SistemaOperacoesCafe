@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, queryString } from "./api";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
 import { Card } from "./renderer/design-system/components/Card";
@@ -9,8 +9,6 @@ import { EmptyState } from "./renderer/design-system/components/EmptyState";
 import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
 import type { BusinessPartnerRole, BusinessPartnerRow } from "./types";
-
-const PAGE_SIZE = 300;
 
 const ROLE_LABELS: Record<BusinessPartnerRole, string> = {
   CLIENT: "Cliente",
@@ -27,30 +25,25 @@ type FilterMode = "ALL" | "CLIENT" | "SUPPLIER";
 
 const FILTER_LABELS: Record<FilterMode, string> = { ALL: "Todos", CLIENT: "Clientes", SUPPLIER: "Fornecedores" };
 
-export function PartnersTab(): JSX.Element {
+export function PartnersTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
   const [partners, setPartners] = useState<BusinessPartnerRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("ALL");
 
+  const load = useCallback(async (): Promise<void> => {
+    setError(null);
+    setPartners(null);
+    try {
+      setPartners(await apiJson<BusinessPartnerRow[]>(`/v1/viewer/partners?${queryString({ organizationId, legalEntityId })}`));
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Falha ao carregar cadastros.");
+    }
+  }, [organizationId, legalEntityId]);
+
   useEffect(() => {
     void load();
-  }, []);
-
-  async function load(): Promise<void> {
-    setError(null);
-    const { data, error: loadError } = await supabase
-      .from("business_partners")
-      .select("id, display_name, document_number, email, phone, city, state, is_active, roles:business_partner_roles(role)")
-      .eq("is_active", true)
-      .order("display_name")
-      .limit(PAGE_SIZE);
-    if (loadError) {
-      setError(loadError.message);
-      return;
-    }
-    setPartners((data ?? []) as unknown as BusinessPartnerRow[]);
-  }
+  }, [load]);
 
   const filtered = useMemo(() => {
     if (!partners) return [];

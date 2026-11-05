@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useState } from "react";
+import { apiJson, queryString } from "./api";
 import { formatCurrencyBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { Card } from "./renderer/design-system/components/Card";
@@ -7,11 +7,6 @@ import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { CoinsIcon, ReportIcon, WalletIcon } from "./renderer/design-system/components/Icons";
 import { companyColorClass } from "./companyColor";
-import type { AccountPayableStatus, ClientChargeStatus } from "./types";
-
-const OPEN_CHARGE_STATUSES: ClientChargeStatus[] = ["DRAFT", "PENDING_REVIEW", "ISSUED", "PARTIALLY_PAID", "OVERDUE"];
-const OPEN_PAYABLE_STATUSES: AccountPayableStatus[] = ["DRAFT", "SCHEDULED", "OPEN", "PARTIALLY_PAID", "OVERDUE", "CONTESTED"];
-const AGGREGATE_LIMIT = 3000;
 
 interface EntityBreakdown {
   name: string;
@@ -25,68 +20,23 @@ interface FinanceSummary {
   byEntity: EntityBreakdown[];
 }
 
-export function FinanceTab(): JSX.Element {
+export function FinanceTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const load = useCallback(async (): Promise<void> => {
+    setError(null);
+    setSummary(null);
+    try {
+      setSummary(await apiJson<FinanceSummary>(`/v1/viewer/finance?${queryString({ organizationId, legalEntityId })}`));
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Falha ao carregar a visão financeira.");
+    }
+  }, [organizationId, legalEntityId]);
+
   useEffect(() => {
     void load();
-  }, []);
-
-  async function load(): Promise<void> {
-    setError(null);
-    const [chargesResult, payablesResult] = await Promise.all([
-      supabase.from("client_charges").select("status, open_amount_cents, own_legal_entity:legal_entities(trade_name)").limit(AGGREGATE_LIMIT),
-      supabase.from("accounts_payable").select("status, open_amount_cents, own_legal_entity:legal_entities(trade_name)").limit(AGGREGATE_LIMIT)
-    ]);
-    const firstError = chargesResult.error?.message ?? payablesResult.error?.message;
-    if (firstError) {
-      setError(firstError);
-      return;
-    }
-
-    const byEntity = new Map<string, EntityBreakdown>();
-    function entityRow(name: string): EntityBreakdown {
-      const existing = byEntity.get(name);
-      if (existing) return existing;
-      const created: EntityBreakdown = { name, receivableCents: 0, payableCents: 0 };
-      byEntity.set(name, created);
-      return created;
-    }
-
-    const chargeRows = (chargesResult.data ?? []) as unknown as Array<{
-      status: ClientChargeStatus;
-      open_amount_cents: number;
-      own_legal_entity: { trade_name: string } | null;
-    }>;
-    const payableRows = (payablesResult.data ?? []) as unknown as Array<{
-      status: AccountPayableStatus;
-      open_amount_cents: number | null;
-      own_legal_entity: { trade_name: string } | null;
-    }>;
-
-    let totalReceivableCents = 0;
-    for (const row of chargeRows) {
-      if (!OPEN_CHARGE_STATUSES.includes(row.status)) continue;
-      const amount = row.open_amount_cents ?? 0;
-      totalReceivableCents += amount;
-      entityRow(row.own_legal_entity?.trade_name ?? "Empresa não identificada").receivableCents += amount;
-    }
-
-    let totalPayableCents = 0;
-    for (const row of payableRows) {
-      if (!OPEN_PAYABLE_STATUSES.includes(row.status)) continue;
-      const amount = row.open_amount_cents ?? 0;
-      totalPayableCents += amount;
-      entityRow(row.own_legal_entity?.trade_name ?? "Empresa não identificada").payableCents += amount;
-    }
-
-    setSummary({
-      totalReceivableCents,
-      totalPayableCents,
-      byEntity: Array.from(byEntity.values()).sort((a, b) => b.receivableCents + b.payableCents - (a.receivableCents + a.payableCents))
-    });
-  }
+  }, [load]);
 
   const netCents = summary ? summary.totalReceivableCents - summary.totalPayableCents : 0;
 

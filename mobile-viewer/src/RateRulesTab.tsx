@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { apiJson, queryString } from "./api";
 import { formatCurrencyBr, formatDateBr } from "./storage";
 import { PageHeader } from "./renderer/design-system/components/PageHeader";
 import { FilterBar } from "./renderer/design-system/components/FilterBar";
@@ -10,43 +10,35 @@ import { LoadingState } from "./renderer/design-system/components/LoadingState";
 import { Alert } from "./renderer/design-system/components/Alert";
 import type { RateRuleRow } from "./types";
 
-const PAGE_SIZE = 300;
-
 export interface RateRulesTabProps {
   table: "service_rate_rules" | "purchase_rate_rules";
   eyebrow: string;
   title: string;
   description: string;
+  organizationId: string;
+  legalEntityId?: string;
 }
 
-export function RateRulesTab({ table, eyebrow, title, description }: RateRulesTabProps): JSX.Element {
+export function RateRulesTab({ table, eyebrow, title, description, organizationId, legalEntityId }: RateRulesTabProps): JSX.Element {
   const [rules, setRules] = useState<RateRuleRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
+  const load = useCallback(async (): Promise<void> => {
+    setError(null);
+    setRules(null);
+    try {
+      const kind = table === "service_rate_rules" ? "SERVICE" : "PURCHASE";
+      setRules(await apiJson<RateRuleRow[]>(`/v1/viewer/rate-rules?${queryString({ organizationId, legalEntityId, kind })}`));
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Falha ao carregar regras.");
+    }
+  }, [table, organizationId, legalEntityId]);
+
   useEffect(() => {
     setRules(null);
     void load();
-  }, [table]);
-
-  async function load(): Promise<void> {
-    setError(null);
-    const { data, error: loadError } = await supabase
-      .from(table)
-      .select(
-        `id, rate_value_cents, effective_from, effective_to, priority, is_active,
-         business_partner:business_partners(display_name),
-         product:products(name)`
-      )
-      .eq("is_active", true)
-      .order("effective_from", { ascending: false })
-      .limit(PAGE_SIZE);
-    if (loadError) {
-      setError(loadError.message);
-      return;
-    }
-    setRules((data ?? []) as unknown as RateRuleRow[]);
-  }
+  }, [load]);
 
   const filtered = useMemo(() => {
     if (!rules) return [];
