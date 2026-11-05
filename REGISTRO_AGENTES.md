@@ -80,6 +80,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-05 14:56 - Codex
+- Pedido: listar o que ainda falta na conversão gradual do aplicativo para o site.
+- Feito: comparado o menu completo documentado do desktop com a navegação publicada em `graobase.com.br`. Já estão disponíveis, somente para consulta: Dashboard, Notas e operações, Cafés armazenados, Confirmações, Cobranças e Conta-corrente.
+- Diagnóstico: faltam telas de Comparativo, Assistente, cadastros comerciais, produtos, regras, reconhecimento de produtos, repasses, pagamentos de entrada, financeiro e administração. Também falta transformar os seis módulos existentes de somente leitura em fluxos de inclusão/edição/baixa/emissão. Coletor de pastas, certificados do Windows, backups e atualização do desktop continuam sendo recursos locais.
+- Publicado: nada; análise somente leitura.
+- Pendente: Gabriel escolher o próximo bloco. Recomendação: migrar primeiro Clientes e empresas, Produtos e Regras por saca, pois são a base para as operações de escrita posteriores.
+
 ### 2026-11-05 14:51 - Codex
 - Pedido: seguir para o próximo passo da conversão gradual do aplicativo para o site.
 - Feito: publicada a consulta web de Cafés armazenados. A tela usa a API central autenticada, respeita organização/CNPJ próprio e apresenta saldo por armazém e produto, totais em sacas e kg, armazéns com saldo, movimentos ativos, pendências e histórico de remessas, retornos, baixas simbólicas e ajustes manuais. A consolidação usa o CNPJ do armazém como identidade e preserva a nomenclatura canônica do ajuste manual, igual ao aplicativo.
