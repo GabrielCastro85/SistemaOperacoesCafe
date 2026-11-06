@@ -105,6 +105,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-06 - Claude
+- Pedido: "Os coletores não estão funcionando" (site novo).
+- Causa: Villa MG e Villa ES nunca tiveram coletor; o app do computador principal lê `C:\Vulpe\NFe\VILLA_COFFEE_MG` e `VILLA_COFFEE` direto. No servidor essas pastas não existem, então as fontes ficavam indisponíveis (e "Todas as empresas" também).
+- Feito (`9576b4e`): em `handlers.ts`, `vulpeDevSources` ganhou `collectorSourceCode: "VILLA_MG_ES"`; sem a pasta e com sessão central, a busca usa a fila do coletor `VILLA_MG_ES` (no PC principal nada muda). Railway em `9576b4e` às 19:59.
+- Pacote do coletor para este PC em `.codex-tmp/Coletor GraoBase - Villa MG e ES/` (exe 1.1.70, `sourceCode` VILLA_MG_ES, CNPJs 44963370000523 e 44963370000280, `xmlRoot` C:\Vulpe\NFe). Tem a credencial do coletor: não commitar `.codex-tmp`. Falta Gabriel rodar INSTALAR-COLETOR.cmd (pede administrador) e, depois, pedir pelo site o envio das notas antigas (BACKFILL), porque o coletor só manda o último mês.
+- Não verificado em produção: coletores da Grão e da Villa SP pelo site (precisa de login real). Depois de cada publicação no Railway o motor reinicia e é preciso entrar de novo no site.
+
+### 2026-11-06 - Claude
 - Pedido: no site novo o botão "Cancelar lançamento" da conta-corrente não funcionava.
 - Causa: a tela usava `window.prompt`, que não existe no Electron e é bloqueado por alguns navegadores. Trocado por `requestTextInput` (janela do próprio app) em `ClientLedgerPage.tsx` e em `WarehouseStockPage.tsx` (NF de remessa). Vale também para o app na próxima versão.
 - Testado na cópia local (motor + site): janela aparece e o lançamento fica Cancelado. Publicado `5bb3869`; Pages atualizado às 19:46.
