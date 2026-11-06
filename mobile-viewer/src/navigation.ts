@@ -1,5 +1,6 @@
 export type PageId =
   | "dashboard"
+  | "comparison"
   | "assistant"
   | "invoices"
   | "warehouses"
@@ -26,7 +27,7 @@ export interface NavigationGroup {
 }
 
 export const navigationGroups: NavigationGroup[] = [
-  { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard" }, { id: "assistant", label: "Assistente" }] },
+  { title: "Visão geral", items: [{ id: "dashboard", label: "Dashboard" }, { id: "comparison", label: "Comparativo" }, { id: "assistant", label: "Assistente" }] },
   { title: "Operações", items: [{ id: "invoices", label: "Notas e operações" }, { id: "warehouses", label: "Cafés armazenados" }] },
   { title: "Comercial", items: [
     { id: "partners", label: "Clientes e empresas" },
@@ -41,6 +42,7 @@ export const navigationGroups: NavigationGroup[] = [
 
 export const pageTitleById: Record<PageId, string> = {
   dashboard: "Dashboard",
+  comparison: "Comparativo",
   assistant: "Assistente",
   invoices: "Notas e operações",
   warehouses: "Cafés armazenados",

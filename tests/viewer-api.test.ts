@@ -190,6 +190,12 @@ describe("viewer API", () => {
     const reconciliations = await app.inject({ method: "GET", url: `/v1/viewer/transfer-reconciliations?${scope}`, headers: { authorization: "Bearer test" } });
     expect(reconciliations.json()).toEqual([expect.objectContaining({ id: "reconciliation", clientName: "Cliente Teste", invoiceCount: 1, paymentCount: 1, balanceCents: 40000000 })]);
 
+    const comparison = await app.inject({ method: "GET", url: `/v1/viewer/comparison?${scope}&firstStart=2026-08-01&firstEnd=2026-08-31&secondStart=2026-09-01&secondEnd=2026-09-30`, headers: { authorization: "Bearer test" } });
+    expect(comparison.json()).toMatchObject({
+      first: { operationCount: 0, sacks: 0, amountCents: 0 },
+      second: { operationCount: 1, sacks: 500, amountCents: 150000, clients: [expect.objectContaining({ name: "Cliente Teste" })] }
+    });
+
     const charges = await app.inject({ method: "GET", url: `/v1/viewer/charges?${query}&status=OPEN`, headers: { authorization: "Bearer test" } });
     expect(charges.statusCode).toBe(200);
     expect(charges.json()).toEqual([

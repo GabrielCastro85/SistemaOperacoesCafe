@@ -26,6 +26,10 @@ const rateRuleListSchema = scopeSchema.extend({
 const reportListSchema = scopeSchema.extend({
   year: z.coerce.number().int().min(2000).max(2200)
 });
+const comparisonSchema = scopeSchema.extend({
+  firstStart: z.string().date(), firstEnd: z.string().date(),
+  secondStart: z.string().date(), secondEnd: z.string().date()
+});
 
 const chargeListSchema = filterSchema.extend({
   clientId: z.string().min(1).optional(),
@@ -786,6 +790,43 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
         invoiceCount: invoiceCount.get(text(row.id)) ?? 0, paymentCount: paymentCount.get(text(row.id)) ?? 0
       }))
       .sort((left, right) => right.referenceDate.localeCompare(left.referenceDate));
+  });
+
+  app.get("/v1/viewer/comparison", async (request, reply) => {
+    const session = await requireSession(pool, request, reply);
+    if (!session) return;
+    const filters = comparisonSchema.parse(request.query);
+    if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
+    const [operations, partners, entities] = await Promise.all([
+      records(pool, "operations"), records(pool, "business_partners"), records(pool, "legal_entities")
+    ]);
+    const partnerMap = new Map(partners.map((row) => [text(row.id), text(row.display_name)]));
+    const entityMap = new Map(entities.map((row) => [text(row.id), nullableText(row.trade_name) ?? text(row.legal_name)]));
+    const summarize = (start: string, end: string) => {
+      const selected = operations.filter((row) => text(row.organization_id) === filters.organizationId
+        && (!filters.legalEntityId || text(row.own_legal_entity_id) === filters.legalEntityId)
+        && text(row.operation_type) === "SALE" && text(row.status) !== "CANCELED" && inPeriod(row.operation_date, start, end));
+      const clients = new Map<string, { name: string; sacks: number; amountCents: number }>();
+      const companies = new Map<string, { name: string; sacks: number; amountCents: number }>();
+      for (const row of selected) {
+        const sacks = numberValue(row.quantity_sacks_decimal);
+        const amountCents = numberValue(row.service_amount_cents);
+        const partnerId = text(row.responsible_partner_id);
+        const client = clients.get(partnerId) ?? { name: partnerMap.get(partnerId) ?? "Cliente", sacks: 0, amountCents: 0 };
+        client.sacks += sacks; client.amountCents += amountCents; clients.set(partnerId, client);
+        const entityId = text(row.own_legal_entity_id);
+        const company = companies.get(entityId) ?? { name: entityMap.get(entityId) ?? "Empresa", sacks: 0, amountCents: 0 };
+        company.sacks += sacks; company.amountCents += amountCents; companies.set(entityId, company);
+      }
+      return {
+        start, end, operationCount: selected.length,
+        sacks: selected.reduce((sum, row) => sum + numberValue(row.quantity_sacks_decimal), 0),
+        amountCents: selected.reduce((sum, row) => sum + numberValue(row.service_amount_cents), 0),
+        clients: [...clients.values()].sort((a, b) => b.sacks - a.sacks).slice(0, 10),
+        companies: [...companies.values()].sort((a, b) => b.sacks - a.sacks)
+      };
+    };
+    return { first: summarize(filters.firstStart, filters.firstEnd), second: summarize(filters.secondStart, filters.secondEnd) };
   });
 
   app.get("/v1/viewer/clients", async (request, reply) => {

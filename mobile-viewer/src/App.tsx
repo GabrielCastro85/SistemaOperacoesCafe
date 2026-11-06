@@ -16,6 +16,7 @@ import { FinanceTab } from "./FinanceTab";
 import { ReportsTab } from "./ReportsTab";
 import { AssistantTab } from "./AssistantTab";
 import { TransferReconciliationsTab } from "./TransferReconciliationsTab";
+import { ComparisonTab } from "./ComparisonTab";
 import { assetUrl } from "./assetUrl";
 import { selectDefaultLegalEntity, selectDefaultOrganization } from "./defaultCompany";
 import type { PageId } from "./navigation";
@@ -86,6 +87,7 @@ export function App(): JSX.Element {
     >
       <div className="content-section">
         {page === "dashboard" ? <DashboardTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
+        {page === "comparison" ? <ComparisonTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "assistant" ? <AssistantTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "invoices" ? <InvoicesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
         {page === "warehouses" ? <WarehousesTab organizationId={activeOrganizationId} legalEntityId={activeLegalEntityId || undefined} /> : null}
