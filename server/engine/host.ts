@@ -73,6 +73,8 @@ export function createEngine(options: { dataDir: string; version: string }) {
   // No servidor nao existe "criar o primeiro administrador": quem entra e do
   // servidor central e o login do app provisiona o usuario local.
   handlers.set(IPC_CHANNELS.authNeedsBootstrap, () => false);
+  // O servidor nao e um computador para autorizar: cada usuario entra com a propria senha do central.
+  handlers.set(IPC_CHANNELS.authCentralConnectionStatus, () => ({ configured: true }));
 
   const sessions = new Map<string, string | null>();
   // Empresa ativa de cada navegador. O app guarda uma so por computador
