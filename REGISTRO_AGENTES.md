@@ -106,7 +106,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: continuar a migração depois que os créditos do Codex acabaram no meio da importação por planilha.
 - Feito: revisão do `server/src/spreadsheetManagement.ts` do Codex (inspect/validate/import, limite web 1.000 linhas/15 MB, duplicidade por empresa+responsável+NF+série+data). Ajustes para ficar igual ao app: coluna Cliente escolhe o cadastro pelo nome exato em cada linha (erro se não for único ou sem o papel certo), linhas com aviso só entram com `importWarnings`, conflito de tarifa vira erro da linha. As tabelas `spreadsheet_import_jobs/rows` gravadas no central não sincronizam com os PCs e não têm chave estrangeira nas notas: conferido que não quebra a sincronização. Tela `mobile-viewer/src/SpreadsheetImport.tsx` (arquivo, aba, cabeçalho, colunas sugeridas, padrões, validação linha a linha, importar) e botão "Importar planilha" em `InvoicesTab.tsx`.
 - Testado: `tests/spreadsheet-management-api.test.ts` (3, com .xlsx real gerado pelo exceljs), suíte completa (352), typecheck, ESLint, build do site, simulação Docker. Tela conferida com o servidor de teste: 5 linhas, NF 101 agrupada (120,5 sacas), cliente inexistente com erro, linha de aviso fora por padrão.
-- Publicado: ver Situação atual / próxima entrada.
+- Publicado: commit `80a5a3d` na branch e na `master`. Railway em `80a5a3d` às 14:36 (`/ready` com banco conectado; rota da planilha devolve 401 sem sessão). GitHub Pages publicou `index-qrTS0Cn4.js` às 14:39.
 - Pendente: confirmações e documentos; resto da lista em "Em andamento".
 
 ### 2026-11-06 09:25 - Codex
