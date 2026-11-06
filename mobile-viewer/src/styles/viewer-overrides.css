@@ -317,6 +317,41 @@
   gap: var(--space-3);
 }
 
+.viewer-charge-issue-card {
+  margin-bottom: var(--space-4);
+  border-color: color-mix(in srgb, var(--color-accent, #15925f) 45%, var(--color-border));
+}
+
+.viewer-charge-issue-fields {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.55fr) minmax(240px, 1.45fr) auto;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.viewer-charge-issue-fields label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.viewer-open-note-select {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  cursor: pointer;
+}
+
+.viewer-open-note-select > span {
+  display: grid;
+  gap: 3px;
+}
+
+.viewer-open-note-select input {
+  margin-top: 0.2rem;
+}
+
 .viewer-charge-card__dates,
 .viewer-charge-card__values {
   display: grid;
@@ -437,6 +472,10 @@
   .viewer-charge-payment-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .viewer-charge-issue-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -91,6 +91,39 @@ describe("operational management API", () => {
     expect(state.audits.map((row) => row.action)).toEqual(["WEB_LEDGER_ENTRY_CREATED", "WEB_LEDGER_ENTRY_CANCELLED"]);
   });
 
+  it("emite cobranca com notas selecionadas e reserva as operacoes atomicamente", async () => {
+    const state = managementPool();
+    state.records.set("operations", new Map([["operation", {
+      id: "operation", organization_id: "org", own_legal_entity_id: "entity", responsible_partner_id: "client",
+      fiscal_document_id: "document", product_id: "product", operation_type: "SALE", operation_scope: "INTERNAL",
+      operation_date: "2026-11-05", quantity_sacks_decimal: "500", applied_rate_value_cents: 500,
+      service_amount_cents: 250000, status: "CONFIRMED", billing_status: "UNBILLED", client_charge_id: null
+    }]]));
+    state.records.set("fiscal_documents", new Map([["document", {
+      id: "document", status: "CONFIRMED", has_pending_issues: 0, issue_date: "2026-11-05", document_number: "2001", series: "1",
+      fiscal_snapshot_json: JSON.stringify({ issuer: { legalName: "Villa MG" }, recipient: { legalName: "Cliente Teste" } }),
+      freight_dae_amount_cents: 12000, freight_dae_reference: "DAE-1"
+    }]]));
+    state.records.set("products", new Map([["product", { id: "product", name: "Café Arábica" }]]));
+    const app = Fastify(); registerOperationalManagementRoutes(app, state.pool);
+    const headers = { authorization: "Bearer test", "content-type": "application/json" };
+    const response = await app.inject({ method: "POST", url: "/v1/manage/client-charges/issue", headers, payload: {
+      organizationId: "org", legalEntityId: "entity", clientPartnerId: "client", operationIds: ["operation"],
+      periodStart: "2026-11-01", periodEnd: "2026-11-06", dueDate: "2026-11-15"
+    } });
+    expect(response.statusCode).toBe(201);
+    const chargeId = response.json().id as string;
+    expect(response.json().finalAmountCents).toBe(262000);
+    expect(state.records.get("client_charges")?.get(chargeId)).toMatchObject({
+      status: "ISSUED", subtotal_services_cents: 250000, additions_cents: 12000, open_amount_cents: 262000
+    });
+    expect(state.records.get("operations")?.get("operation")).toMatchObject({ billing_status: "BILLED", client_charge_id: chargeId });
+    expect([...state.records.get("client_charge_operations")!.values()][0]).toMatchObject({
+      client_charge_id: chargeId, fiscal_document_number_snapshot: "2001", service_amount_cents_snapshot: 250000
+    });
+    expect(state.audits.map((row) => row.action)).toEqual(["WEB_CLIENT_CHARGE_ISSUED"]);
+  });
+
   it("registra e estorna pagamento atualizando o saldo da cobranca", async () => {
     const state = managementPool();
     state.records.set("client_charges", new Map([["charge", {

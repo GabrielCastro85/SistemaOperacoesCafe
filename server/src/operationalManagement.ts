@@ -57,6 +57,15 @@ const clientPaymentSchema = z.object({
 
 const cancelClientPaymentSchema = z.object({ reason: z.string().trim().min(3).max(2000) });
 
+const issueClientChargeSchema = scopeSchema.extend({
+  clientPartnerId: z.string().min(1),
+  operationIds: z.array(z.string().min(1)).min(1).max(500),
+  periodStart: z.string().date(),
+  periodEnd: z.string().date(),
+  dueDate: z.string().date().nullable().optional(),
+  notes: z.string().trim().max(2000).optional().default("")
+});
+
 const clean = (value: string): string | null => value.trim() || null;
 const digits = (value: unknown): string => String(value ?? "").replace(/\D/g, "");
 const numberValue = (value: unknown): number => {
@@ -73,6 +82,18 @@ function chargeStatus(charge: Record<string, unknown>, paidAmountCents: number, 
   if (paidAmountCents > 0) return "PARTIALLY_PAID";
   const dueDate = String(charge.due_date ?? "");
   return dueDate && dueDate < new Date().toISOString().slice(0, 10) ? "OVERDUE" : "ISSUED";
+}
+
+function jsonObject(value: unknown): Record<string, unknown> | null {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch { return null; }
+}
+
+function fiscalPartyName(document: Record<string, unknown>, key: "issuer" | "recipient"): string | null {
+  const party = jsonObject(jsonObject(document.fiscal_snapshot_json)?.[key]);
+  return clean(String(party?.legalName ?? party?.tradeName ?? ""));
 }
 
 function warehouseProductFamily(value: unknown): string | null {
@@ -122,6 +143,131 @@ function ledgerEffect(entryType: z.infer<typeof ledgerEntrySchema>["entryType"],
 }
 
 export function registerOperationalManagementRoutes(app: FastifyInstance, pool: pg.Pool): void {
+  app.post("/v1/manage/client-charges/issue", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const input = issueClientChargeSchema.parse(request.body);
+    if (!(await authorize(pool, session, reply, "billing.manage", input.organizationId, input.legalEntityId))) return;
+    if (input.periodEnd < input.periodStart) {
+      return reply.code(400).send({ error: "INVALID_PERIOD", message: "A data final deve ser posterior a data inicial." });
+    }
+    const [ownEntity, client, operations, documents, products, activeLinks] = await Promise.all([
+      centralRecord(pool, "legal_entities", input.legalEntityId), centralRecord(pool, "business_partners", input.clientPartnerId),
+      centralRecords(pool, "operations"), centralRecords(pool, "fiscal_documents"), centralRecords(pool, "products"),
+      centralRecords(pool, "client_charge_operations")
+    ]);
+    if (!ownEntity || ownEntity.organization_id !== input.organizationId) {
+      return reply.code(404).send({ error: "NOT_FOUND", message: "Empresa propria nao encontrada." });
+    }
+    if (!client || client.organization_id !== input.organizationId) {
+      return reply.code(404).send({ error: "NOT_FOUND", message: "Cliente nao encontrado." });
+    }
+    const operationMap = new Map(operations.map((row) => [String(row.id), row]));
+    const documentMap = new Map(documents.map((row) => [String(row.id), row]));
+    const productMap = new Map(products.map((row) => [String(row.id), row]));
+    const requested = input.operationIds.map((id) => operationMap.get(id));
+    if (requested.some((row) => !row)) {
+      return reply.code(404).send({ error: "NOT_FOUND", message: "Uma das operacoes selecionadas nao foi encontrada." });
+    }
+    const selected = requested as Record<string, unknown>[];
+    for (const operation of selected) {
+      const document = documentMap.get(String(operation.fiscal_document_id));
+      const alreadyLinked = activeLinks.some((row) => row.operation_id === operation.id && !row.released_at);
+      if (operation.organization_id !== input.organizationId || operation.own_legal_entity_id !== input.legalEntityId || operation.responsible_partner_id !== input.clientPartnerId) {
+        return reply.code(409).send({ error: "SCOPE_MISMATCH", message: "Todas as notas devem pertencer ao mesmo cliente e empresa." });
+      }
+      if (!document || !["DRAFT", "CONFIRMED"].includes(String(document.status)) || Boolean(document.has_pending_issues)) {
+        return reply.code(409).send({ error: "DOCUMENT_PENDING", message: "Revise notas pendentes ou canceladas antes de emitir a cobranca." });
+      }
+      if (!["DRAFT", "CONFIRMED"].includes(String(operation.status)) || operation.operation_type !== "SALE"
+        || operation.billing_status !== "UNBILLED" || alreadyLinked || cents(operation.applied_rate_value_cents) <= 0) {
+        return reply.code(409).send({ error: "OPERATION_UNAVAILABLE", message: "Uma das operacoes ja foi cobrada, esta pendente ou nao possui tarifa valida." });
+      }
+      if (Boolean(client.requires_contract) && !clean(String(document.contract_number ?? ""))) {
+        return reply.code(409).send({ error: "CONTRACT_REQUIRED", message: "Contrato obrigatorio ausente em uma das notas." });
+      }
+    }
+
+    const chargeId = randomUUID();
+    const ledgerId = randomUUID();
+    const statusHistoryId = randomUUID();
+    const now = new Date().toISOString();
+    const issueDate = now.slice(0, 10);
+    const ownName = String(ownEntity.legal_name ?? ownEntity.trade_name ?? "Empresa");
+    const changes: Array<{ table: string; key: string; operation: "UPSERT"; data: Record<string, unknown> }> = [];
+    let subtotal = 0;
+    let additions = 0;
+    const daeDocuments = new Set<string>();
+    const chargeOperations: Record<string, unknown>[] = [];
+    for (const operation of selected) {
+      const document = documentMap.get(String(operation.fiscal_document_id))!;
+      const amountCents = cents(operation.service_amount_cents);
+      subtotal += amountCents;
+      const linkId = randomUUID();
+      const link: Record<string, unknown> = {
+        id: linkId, client_charge_id: chargeId, operation_id: operation.id, third_party_operation_id: null,
+        own_legal_entity_id_snapshot: input.legalEntityId, own_legal_entity_name_snapshot: ownName,
+        operation_date_snapshot: document.issue_date ?? operation.operation_date,
+        fiscal_document_number_snapshot: document.document_number ?? null, fiscal_document_series_snapshot: document.series ?? null,
+        issuer_name_snapshot: fiscalPartyName(document, "issuer") ?? ownName,
+        destination_name_snapshot: fiscalPartyName(document, "recipient") ?? String(client.display_name ?? "Cliente"),
+        product_name_snapshot: productMap.get(String(operation.product_id))?.name ?? null,
+        operation_scope_snapshot: operation.operation_scope, quantity_sacks_decimal_snapshot: operation.quantity_sacks_decimal,
+        service_rate_cents_snapshot: cents(operation.applied_rate_value_cents), service_amount_cents_snapshot: amountCents,
+        released_at: null, created_at: now, contract_number_snapshot: document.contract_number ?? null,
+        billing_observations_snapshot: document.billing_observations ?? null
+      };
+      chargeOperations.push(link);
+      changes.push(
+        { table: "client_charge_operations", key: linkId, operation: "UPSERT", data: link },
+        { table: "operations", key: String(operation.id), operation: "UPSERT", data: { ...operation, billing_status: "BILLED", client_charge_id: chargeId, updated_at: now } }
+      );
+      const documentId = String(document.id);
+      const daeAmount = cents(document.freight_dae_amount_cents);
+      if (daeAmount > 0 && !daeDocuments.has(documentId)) {
+        daeDocuments.add(documentId); additions += daeAmount;
+        const adjustmentId = randomUUID();
+        const reference = clean(String(document.freight_dae_reference ?? ""));
+        changes.push({ table: "client_charge_adjustments", key: adjustmentId, operation: "UPSERT", data: {
+          id: adjustmentId, client_charge_id: chargeId, ledger_entry_id: null, source_fiscal_document_id: documentId,
+          adjustment_type: "SURCHARGE", effect: "INCREASE_RECEIVABLE",
+          description: `DAE de frete referente a NF ${String(document.document_number ?? "")}${reference ? ` - DAE ${reference}` : ""}`,
+          reason: `Valor de DAE de frete registrado na nota fiscal ${String(document.document_number ?? "")}.`,
+          amount_cents: daeAmount, sort_order: 40, created_at: now, updated_at: now
+        } });
+      }
+    }
+    const finalAmount = subtotal + additions;
+    const charge: Record<string, unknown> = {
+      id: chargeId, organization_id: input.organizationId, own_legal_entity_id: input.legalEntityId,
+      client_partner_id: input.clientPartnerId, billing_profile_id: null, charge_number: null, reference_code: null,
+      periodicity: "CUSTOM", period_start: input.periodStart, period_end: input.periodEnd, issue_date: issueDate,
+      due_date: input.dueDate ?? null, status: "ISSUED", subtotal_services_cents: subtotal, additions_cents: additions,
+      deductions_cents: 0, final_amount_cents: finalAmount, paid_amount_cents: 0, open_amount_cents: finalAmount,
+      notes: clean(input.notes), internal_notes: null, pdf_file_path: null, pdf_file_hash: null, excel_file_path: null,
+      image_file_path: null, snapshot_json: JSON.stringify({ operationCount: chargeOperations.length, issuedBy: "WEB" }),
+      created_at: now, updated_at: now, issued_at: now, cancelled_at: null, cancellation_reason: null, replaced_by_charge_id: null
+    };
+    const ledger: Record<string, unknown> = {
+      id: ledgerId, organization_id: input.organizationId, own_legal_entity_id: input.legalEntityId,
+      client_partner_id: input.clientPartnerId, client_charge_id: chargeId, entry_type: "SERVICE_CHARGE",
+      effect: "INCREASE_RECEIVABLE", amount_cents: finalAmount, entry_date: issueDate,
+      description: `Cobranca ${input.periodStart} a ${input.periodEnd}`, reference_number: null, notes: null,
+      attachment_path: null, status: "CONFIRMED", available_amount_cents: null, collection_due_date: null,
+      collected_at: null, created_at: now, updated_at: now, cancelled_at: null, cancellation_reason: null
+    };
+    changes.unshift({ table: "client_charges", key: chargeId, operation: "UPSERT", data: charge });
+    changes.push(
+      { table: "client_ledger_entries", key: ledgerId, operation: "UPSERT", data: ledger },
+      { table: "charge_status_history", key: statusHistoryId, operation: "UPSERT", data: {
+        id: statusHistoryId, client_charge_id: chargeId, previous_status: null, next_status: "ISSUED",
+        reason: "Cobranca criada e emitida pelo site", created_at: now
+      } }
+    );
+    const revision = await commitDomainChanges(pool, session, "WEB_CLIENT_CHARGE_ISSUED", "client_charge", chargeId, changes,
+      { organizationId: input.organizationId, legalEntityId: input.legalEntityId, clientPartnerId: input.clientPartnerId, operationCount: selected.length, finalAmountCents: finalAmount });
+    return reply.code(201).send({ id: chargeId, revision, finalAmountCents: finalAmount });
+  });
+
   app.post("/v1/manage/warehouse-adjustments", async (request, reply) => {
     const session = await requireWebSession(pool, request, reply); if (!session) return;
     const input = warehouseAdjustmentSchema.parse(request.body);

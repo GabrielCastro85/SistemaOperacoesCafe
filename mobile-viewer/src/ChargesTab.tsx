@@ -115,6 +115,11 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
   const [notes, setNotes] = useState<OpenNoteRow[] | null>(null);
   const [clientId, setClientId] = useState("");
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [dueDate, setDueDate] = useState("");
+  const [chargeNotes, setChargeNotes] = useState("");
+  const [issuing, setIssuing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadClients = useCallback(async (): Promise<void> => {
@@ -131,6 +136,7 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
 
   useEffect(() => { if (organizationId) void loadClients(); }, [organizationId, loadClients]);
   useEffect(() => { if (organizationId) void loadNotes(); }, [organizationId, loadNotes]);
+  useEffect(() => { setSelectedIds([]); }, [clientId, periodStart, periodEnd]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("pt-BR");
@@ -142,16 +148,46 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
   const totals = useMemo(() => filtered.reduce((result, note) => ({
     sacks: result.sacks + Number(note.quantitySacks || 0), amountCents: result.amountCents + note.serviceAmountCents
   }), { sacks: 0, amountCents: 0 }), [filtered]);
+  const selectedNotes = useMemo(() => (notes ?? []).filter((note) => selectedIds.includes(note.id)), [notes, selectedIds]);
+  const selectedAmount = selectedNotes.reduce((sum, note) => sum + note.serviceAmountCents, 0);
+
+  function toggleNote(id: string): void {
+    setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  async function issueCharge(): Promise<void> {
+    if (!legalEntityId || !clientId || !selectedIds.length) return;
+    setIssuing(true); setError(null); setMessage(null);
+    try {
+      await apiJson("/v1/manage/client-charges/issue", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, legalEntityId, clientPartnerId: clientId, operationIds: selectedIds, periodStart, periodEnd, dueDate: dueDate || null, notes: chargeNotes })
+      });
+      setMessage(`Cobrança de ${formatCurrencyBr(selectedAmount)} emitida para ${selectedClient?.displayName ?? "o cliente"}.`);
+      setSelectedIds([]); setDueDate(""); setChargeNotes("");
+      await loadNotes();
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao emitir cobrança."); }
+    finally { setIssuing(false); }
+  }
 
   return (
     <>
       <FilterBar activeCount={(clientId ? 1 : 0) + (search ? 1 : 0)} onClear={() => { setClientId(""); setSearch(""); }}>
-        <select className="ui-input" value={clientId} onChange={(event) => setClientId(event.target.value)}>
+        <select className="ui-input" value={clientId} onChange={(event) => { setClientId(event.target.value); setMessage(null); }}>
           <option value="">Todos os clientes</option>
           {(clients ?? []).map((client) => <option key={client.id} value={client.id}>{client.displayName}</option>)}
         </select>
         <input className="ui-input" type="search" placeholder="Buscar cliente, emitente, destino ou NF..." value={search} onChange={(event) => setSearch(event.target.value)} />
       </FilterBar>
+      {!clientId ? <Alert tone="info" title="Escolha um cliente para emitir">A seleção das notas é liberada depois que você escolhe o responsável pela cobrança.</Alert> : null}
+      {message ? <Alert tone="success" title="Cobrança emitida">{message}</Alert> : null}
+      {selectedIds.length ? <Card eyebrow="Nova cobrança" title={`${selectedIds.length} nota(s) selecionada(s) · ${formatCurrencyBr(selectedAmount)}`} className="viewer-charge-issue-card">
+        <div className="viewer-charge-issue-fields">
+          <label>Vencimento<input className="ui-input" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+          <label>Observação<input className="ui-input" value={chargeNotes} onChange={(event) => setChargeNotes(event.target.value)} placeholder="Opcional" /></label>
+          <Button loading={issuing} onClick={() => void issueCharge()}>Emitir cobrança</Button>
+        </div>
+      </Card> : null}
       {notes && filtered.length > 0 ? (
         <Card eyebrow={selectedClient ? "Total do cliente no período" : "Total do filtro atual"} title={selectedClient?.displayName ?? "Todos os clientes"} className="viewer-open-notes-summary">
           <div className="viewer-open-notes-summary__metrics">
@@ -169,7 +205,7 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
           <div className="viewer-open-note-list__head" role="row"><span>Nota</span><span>Cliente</span><span>Emissão</span><span>Operação</span><span>Valor</span><span>Status</span></div>
           {filtered.map((note) => (
             <div key={note.id} className={`viewer-open-note-row viewer-company-accent--${note.companyTone}`} role="row">
-              <span className="viewer-open-note-row__note" role="cell"><strong>NF {note.documentNumber}</strong><small>{formatDateBr(note.operationDate)}</small></span>
+              <span className="viewer-open-note-row__note" role="cell"><label className="viewer-open-note-select"><input type="checkbox" disabled={!clientId || note.hasPendingIssues} checked={selectedIds.includes(note.id)} onChange={() => toggleNote(note.id)} /><span><strong>NF {note.documentNumber}</strong><small>{formatDateBr(note.operationDate)}</small></span></label></span>
               <span role="cell"><strong>{note.clientName}</strong><small>{note.companyContext}</small></span>
               <span role="cell"><strong>{note.issuerName ?? "Emitente não identificado"}</strong><small>Destino: {note.destinationName ?? "Não identificado"}</small></span>
               <span role="cell"><strong>{note.operationScope === "INTERNAL" ? "Mesma UF" : "Outra UF"}</strong><small>{decimalBr(note.quantitySacks)} sacas · {formatCurrencyBr(note.rateCents)}/saca</small></span>
