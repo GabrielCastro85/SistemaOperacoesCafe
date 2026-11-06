@@ -89,6 +89,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-06 - Claude
+- Pedido: fazer o coletor da Grão & Grão enviar as notas de jan-jul/2026 para cadastrar no THADEU NOTAS.
+- Feito: comando remoto `BACKFILL` com período (coletor, servidor e botão "Enviar notas do periodo" no monitor), fila filtrada por período no servidor, busca resolvendo no servidor os XMLs já cadastrados. Correção do `server/Dockerfile` (faltava `xmlNfeService.ts`; o deploy de `8858b50` estava falhando).
+- Testado: suíte completa (330), typecheck do app e do servidor, testes novos de fila por período e comando com período; coletor real rodado contra servidor falso (varredura normal só outubro; período jun-jul enviou 215 XMLs só desses meses). Build do servidor simulado com os arquivos que o Dockerfile copia.
+- Publicado: release 1.1.71 (instalador, latest.yml, coletor e checksum); `master` e branch em `1180196`; Railway em `1180196`, `/ready` com banco conectado, migração 012 aplicada, manifesto do coletor anuncia 1.1.71.
+- Pendente: o Gabriel atualizar o programa, esperar o coletor da Grão chegar à 1.1.71, mandar "Enviar notas do periodo" de 01/01 a 31/07/2026, buscar Grão MG e SP no período e fechar o programa para o Claude importar só as vendas no THADEU NOTAS (script `tmp/importar-thadeu.mts`, adaptar a origem para `documents/invoices/xml-imports/collector-inbox`).
+
+### 2026-11-06 - Claude
 - Pedido: cadastrar no cliente THADEU NOTAS todas as notas de julho/2026 para trás.
 - Decisões do Gabriel: só vendas (CFOP 5102/6102); fora das cobranças; Villa agora e preparar a Grão & Grão.
 - Feito: 1.008 vendas da Villa MG (695) e Villa ES (313), de 15/01 a 31/07/2026, importadas pelo caminho da tela (`AppRepository` + `inspectXmlFile`) com o script `tmp/importar-thadeu.mts` (fora do Git), com o programa fechado. Excluídas: 50 vendas canceladas, 114 não-vendas (armazém, estornos, devoluções, complemento/acréscimo de valor). THADEU NOTAS não tem tarifa, então as operações têm valor de serviço zero e não entram em alertas nem cobranças.
