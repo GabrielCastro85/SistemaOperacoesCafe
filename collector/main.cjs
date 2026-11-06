@@ -255,6 +255,11 @@ function listCandidates(root) {
   return files;
 }
 
+// Chave de acesso: posicoes 3 a 6 trazem AAMM da emissao.
+function accessKeyYearMonth(date) {
+  return String(date).slice(2, 4) + String(date).slice(5, 7);
+}
+
 function oldestAcceptedModification(monthsBack) {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth() - monthsBack, 1).getTime();
@@ -408,6 +413,12 @@ async function finishRemoteCommand(config, id, status, message) {
   if (!response.ok) throw new Error(`Servidor ${response.status} ao concluir comando remoto.`);
 }
 
+// A varredura periodica pode comecar enquanto o comando ainda esta sendo
+// buscado no servidor; o comando espera ela terminar em vez de ser descartado.
+async function waitForScanToFinish() {
+  while (running) await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+}
+
 async function pollRemoteCommands(config) {
   if (pollingCommands || updateApplying || running) return;
   pollingCommands = true;
@@ -421,7 +432,22 @@ async function pollRemoteCommands(config) {
     const command = payload?.command;
     if (!command) return;
     log("Comando remoto recebido", { command: command.command, id: command.id });
+    if (command.command === "BACKFILL") {
+      const period = command.payload && typeof command.payload === "object" ? command.payload : {};
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(period.periodStart)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(period.periodEnd))) {
+        await finishRemoteCommand(config, command.id, "FAILED", "Periodo invalido.");
+        return;
+      }
+      await waitForScanToFinish();
+      const result = await scan({ periodStart: period.periodStart, periodEnd: period.periodEnd });
+      const summary = result
+        ? `Periodo ${period.periodStart} a ${period.periodEnd}: ${result.uploaded} XML(s) enviados, ${result.pendingUpload} aguardando novo envio.`
+        : "A varredura do periodo falhou; consulte os registros.";
+      await finishRemoteCommand(config, command.id, result && result.pendingUpload === 0 ? "COMPLETED" : "FAILED", summary);
+      return;
+    }
     if (command.command === "SCAN_NOW") {
+      await waitForScanToFinish();
       await scan();
       await finishRemoteCommand(config, command.id, "COMPLETED", "Varredura executada.");
       return;
@@ -446,8 +472,11 @@ async function pollRemoteCommands(config) {
   }
 }
 
-async function scan() {
-  if (running) return;
+// Sem periodo: varredura normal, so arquivos modificados nos ultimos meses.
+// Com periodo (comando BACKFILL): ignora a data do arquivo e filtra pelo mes
+// de emissao da chave de acesso, para recuperar notas antigas.
+async function scan(backfill = null) {
+  if (running) return null;
   running = true;
   let activeConfig = null;
   try {
@@ -459,10 +488,24 @@ async function scan() {
     let eligible = 0;
     let uploaded = 0;
     let pendingUpload = 0;
-    const minimumModifiedAt = oldestAcceptedModification(config.monthsBack);
+    const minimumModifiedAt = backfill ? 0 : oldestAcceptedModification(config.monthsBack);
+    const fromYearMonth = backfill ? accessKeyYearMonth(backfill.periodStart) : null;
+    const toYearMonth = backfill ? accessKeyYearMonth(backfill.periodEnd) : null;
+    const inPeriod = (accessKey) => !backfill || (accessKey.slice(2, 6) >= fromYearMonth && accessKey.slice(2, 6) <= toYearMonth);
     const candidates = listCandidates(config.xmlRoot);
+    let lastProgressAt = Date.now();
+    if (backfill) log("Envio de periodo iniciado", { ...backfill, candidates: candidates.length });
     for (const filePath of candidates) {
       inspected += 1;
+      // Um envio de periodo pode levar mais de dez minutos; sem renovar o
+      // status, a vigilancia interna reiniciaria o coletor no meio dele.
+      if (backfill && Date.now() - lastProgressAt > 60_000) {
+        lastProgressAt = Date.now();
+        writeStatus({ status: "BACKFILL", ...backfill, inspected, eligible, uploaded, pendingUpload, source: config.sourceLabel });
+        await reportHeartbeat(config, { status: "OK", inspected, eligible, uploaded, pendingUpload, error: `Enviando notas de ${backfill.periodStart} a ${backfill.periodEnd}: ${uploaded} enviadas ate agora.` });
+      }
+      const fileKey = basename(filePath).match(/^(\d{44})-nfe\.xml$/i)?.[1];
+      if (fileKey && !inPeriod(fileKey)) continue;
       const stats = statSync(filePath);
       if (stats.size <= 0 || stats.size > 1_500_000 || stats.mtimeMs < minimumModifiedAt) continue;
       const content = readFileSync(filePath);
@@ -471,7 +514,7 @@ async function scan() {
       let metadata;
       try { metadata = inspectXml(content.toString("utf8")); }
       catch { continue; }
-      if (!metadata) continue;
+      if (!metadata || !inPeriod(metadata.accessKey)) continue;
       const belongsToConfiguredCompany = config.emitterCnpjs.includes(metadata.emitterCnpj)
         || config.emitterCnpjs.includes(metadata.recipientCnpj);
       // Evento de cancelamento nao repete o destinatario. Para uma nota de
@@ -501,7 +544,8 @@ async function scan() {
       pendingUpload,
       error: lastUpdateError ? `Falha na atualizacao automatica: ${lastUpdateError}` : pendingUpload ? `${pendingUpload} arquivo(s) aguardando novo envio.` : null
     });
-    log("Varredura concluida", { inspected, eligible, uploaded, pendingUpload });
+    log(backfill ? "Envio de periodo concluido" : "Varredura concluida", { ...(backfill ?? {}), inspected, eligible, uploaded, pendingUpload });
+    return { inspected, eligible, uploaded, pendingUpload };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     writeStatus({ status: "ERROR", error: message });

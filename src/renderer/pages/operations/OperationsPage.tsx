@@ -121,6 +121,7 @@ function collectorCommandLabel(command: CollectorMonitorStatus["lastCommand"]): 
   if (command === "SCAN_NOW") return "Buscar notas";
   if (command === "UPDATE_NOW") return "Atualizar coletor";
   if (command === "RESTART") return "Reiniciar coletor";
+  if (command === "BACKFILL") return "Enviar notas do periodo";
   return "Nenhum comando enviado";
 }
 
@@ -265,16 +266,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const xmlResultRef = useRef<HTMLDivElement | null>(null);
   const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
 
-  const sendCollectorCommand = async (collector: CollectorMonitorStatus, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART") => {
+  const sendCollectorCommand = async (collector: CollectorMonitorStatus, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | "BACKFILL") => {
     const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
     setCollectorCommandBusy(key);
     try {
       await window.operationsCafe.sendCollectorCommand({
         sourceCode: collector.sourceCode,
         machineId: collector.machineId,
-        command
+        command,
+        ...(command === "BACKFILL" ? { periodStart: vulpePeriodStart, periodEnd: vulpePeriodEnd } : {})
       });
-      const action = collectorCommandLabel(command);
+      const action = command === "BACKFILL"
+        ? `Pedido de envio das notas de ${formatDateOnlyBr(vulpePeriodStart)} a ${formatDateOnlyBr(vulpePeriodEnd)}`
+        : collectorCommandLabel(command);
       setMessage(`${action} enviado ao coletor. ${collector.online ? "Ele deve executar em ate 30 segundos." : "O comando sera executado assim que o coletor voltar a conectar."}`);
       const status = await window.operationsCafe.getVulpeDevStatus();
       setCollectorStatuses(status.collectors);
@@ -1699,7 +1703,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                         ) : null}
                         {collector.lastError ? <p>{collector.lastError}</p> : null}
                         <div className="collector-monitor__actions">
-                          {(["SCAN_NOW", "UPDATE_NOW", "RESTART"] as const).map((command) => {
+                          {(["SCAN_NOW", "BACKFILL", "UPDATE_NOW", "RESTART"] as const).map((command) => {
                             const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
                             return (
                               <button type="button" key={command} disabled={collectorCommandBusy !== null} onClick={() => void sendCollectorCommand(collector, command)}>

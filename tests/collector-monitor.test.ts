@@ -39,6 +39,82 @@ describe("monitor remoto do coletor", () => {
     await app.close();
   });
 
+  it("filtra a fila pelo mes de emissao da chave quando recebe um periodo", async () => {
+    let inboxParams: unknown[] = [];
+    const pool = {
+      async query(sql: string, params: unknown[] = []) {
+        if (sql.includes("FROM api_sessions")) {
+          return { rows: [{ sessionId: "session", userId: "user", username: "gabriel", displayName: "Gabriel", deviceId: "device" }] };
+        }
+        if (sql.includes("UPDATE api_sessions")) return { rows: [] };
+        if (sql.includes("FROM collector_inbox_files WHERE")) {
+          inboxParams = params;
+          return { rows: [] };
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+      }
+    } as unknown as pg.Pool;
+    const app = Fastify();
+    registerCollectorRoutes(app, pool, config);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/collector/inbox?source=GRAO_GRAO&limit=10000&periodStart=2026-01-01&periodEnd=2026-07-31",
+      headers: { authorization: "Bearer sessao" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(inboxParams).toEqual(["GRAO_GRAO", 10000, "2601", "2607"]);
+    await app.close();
+  });
+
+  it("exige periodo no pedido de envio de notas antigas e o entrega ao coletor", async () => {
+    let insertedParams: unknown[] = [];
+    const pool = {
+      async query(sql: string, params: unknown[] = []) {
+        if (sql.includes("FROM api_sessions")) {
+          return { rows: [{ sessionId: "session", userId: "11111111-1111-4111-8111-111111111111", username: "gabriel", displayName: "Gabriel", deviceId: "device" }] };
+        }
+        if (sql.includes("UPDATE api_sessions")) return { rows: [] };
+        if (sql.includes("FROM collector_status WHERE")) return { rows: [{}], rowCount: 1 };
+        if (sql.includes("INSERT INTO collector_commands")) {
+          insertedParams = params;
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes("RETURNING id, command, payload")) {
+          return { rows: [{ id: insertedParams[0], command: "BACKFILL", payload: JSON.parse(String(insertedParams[5])), requestedAt: "2026-11-06T12:00:00.000Z" }], rowCount: 1 };
+        }
+        throw new Error(`SQL inesperado: ${sql}`);
+      }
+    } as unknown as pg.Pool;
+    const app = Fastify();
+    registerCollectorRoutes(app, pool, config);
+
+    const withoutPeriod = await app.inject({
+      method: "POST",
+      url: "/v1/collector/commands",
+      headers: { authorization: "Bearer sessao" },
+      payload: { sourceCode: "GRAO_GRAO", machineId: "pc-grao-principal", command: "BACKFILL" }
+    });
+    expect(withoutPeriod.statusCode).toBe(400);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/collector/commands",
+      headers: { authorization: "Bearer sessao" },
+      payload: { sourceCode: "GRAO_GRAO", machineId: "pc-grao-principal", command: "BACKFILL", periodStart: "2026-01-01", periodEnd: "2026-07-31" }
+    });
+    expect(created.statusCode).toBe(201);
+
+    const delivered = await app.inject({
+      method: "GET",
+      url: "/v1/collector/commands?sourceCode=GRAO_GRAO&machineId=pc-grao-principal",
+      headers: { authorization: `Bearer ${collectorSecret}` }
+    });
+    expect(delivered.json().command).toMatchObject({ command: "BACKFILL", payload: { periodStart: "2026-01-01", periodEnd: "2026-07-31" } });
+    await app.close();
+  });
+
   it("recebe o sinal de vida autenticado com as empresas atendidas", async () => {
     let heartbeatParams: unknown[] | null = null;
     const pool = {

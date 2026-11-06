@@ -96,7 +96,7 @@ export interface CollectorMonitorStatus {
   lastUpdateCheckAt: string | null;
   recentLogs: string | null;
   startupConfigured: boolean;
-  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | null;
+  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | "BACKFILL" | null;
   lastCommandStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | null;
   lastCommandRequestedAt: string | null;
   lastCommandResult: string | null;
@@ -195,8 +195,11 @@ export class CentralSyncService {
     return this.token !== null;
   }
 
-  async listCollectorInbox(sourceCode: string): Promise<CollectorInboxFile[]> {
-    const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?source=${encodeURIComponent(sourceCode)}&limit=1000`);
+  async listCollectorInbox(sourceCode: string, periodStart?: string, periodEnd?: string): Promise<CollectorInboxFile[]> {
+    const query = new URLSearchParams({ source: sourceCode, limit: periodStart ? "10000" : "1000" });
+    if (periodStart) query.set("periodStart", periodStart);
+    if (periodEnd) query.set("periodEnd", periodEnd);
+    const response = await this.request<{ files: CollectorInboxFile[] }>(`/v1/collector/inbox?${query}`);
     return response.files;
   }
 
@@ -205,10 +208,10 @@ export class CentralSyncService {
     return response.collectors;
   }
 
-  async sendCollectorCommand(sourceCode: string, machineId: string, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART"): Promise<{ id: string; status: "PENDING"; command: string }> {
+  async sendCollectorCommand(sourceCode: string, machineId: string, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | "BACKFILL", period: { periodStart: string; periodEnd: string } | null = null): Promise<{ id: string; status: "PENDING"; command: string }> {
     return this.request("/v1/collector/commands", {
       method: "POST",
-      body: JSON.stringify({ sourceCode, machineId, command })
+      body: JSON.stringify({ sourceCode, machineId, command, ...(period ?? {}) })
     });
   }
 

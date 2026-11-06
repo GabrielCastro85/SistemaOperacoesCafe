@@ -767,10 +767,16 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const data = z.object({
       sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
       machineId: z.string().trim().min(4).max(200),
-      command: z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART"])
+      command: z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART", "BACKFILL"]),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
     }).parse(payload);
     if (!centralSync.hasSession()) throw new Error("Entre no servidor central para controlar o coletor.");
-    return centralSync.sendCollectorCommand(data.sourceCode, data.machineId, data.command);
+    if (data.command === "BACKFILL" && (!data.periodStart || !data.periodEnd || data.periodStart > data.periodEnd)) {
+      throw new Error("Escolha um periodo valido para enviar as notas antigas.");
+    }
+    const period = data.command === "BACKFILL" ? { periodStart: data.periodStart as string, periodEnd: data.periodEnd as string } : null;
+    return centralSync.sendCollectorCommand(data.sourceCode, data.machineId, data.command, period);
   });
   handle(IPC_CHANNELS.askAssistant, async (_event, payload: unknown) => {
     const data = z.object({
@@ -897,6 +903,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     let cancellationEvents = 0;
     let cancellationsAlreadyApplied = 0;
     let canceledInvoicesHidden = 0;
+    // XMLs da fila do servidor que ja estao resolvidos neste banco (importados
+    // antes, ignorados pelo usuario ou cancelamento ja aplicado). Sem marcar no
+    // servidor, voltariam em toda busca e ocupariam o limite da fila.
+    const settledRemote: Array<{ id: string; status: "IMPORTED" | "IGNORED"; note: string }> = [];
 
     const inspectCandidate = (filePath: string, remoteId: string | null): void => {
       const inspection = inspectXmlFile(filePath, randomUUID());
@@ -934,8 +944,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
           String(extracted?.sequenceNumber ?? "1"),
           protocolNumber
         );
-        if (existing) cancellationsAlreadyApplied += 1;
-        else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "CANCELLATION" });
+        if (existing) {
+          cancellationsAlreadyApplied += 1;
+          if (remoteId) settledRemote.push({ id: remoteId, status: "IMPORTED", note: "Cancelamento ja aplicado no Operacoes Cafe" });
+        } else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "CANCELLATION" });
         return;
       }
       if (inspection.xmlType !== "NFE_PROC" && inspection.xmlType !== "NFE") {
@@ -950,8 +962,13 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       }
       authorized += 1;
       if (hasAcceptedCancellation.get(inspection.accessKey)) canceledInvoicesHidden += 1;
-      else if (wasIgnoredByUser.get(inspection.accessKey)) ignoredByUser += 1;
-      else if (hasAccessKey.get(inspection.accessKey, inspection.accessKey)) alreadyImported += 1;
+      else if (wasIgnoredByUser.get(inspection.accessKey)) {
+        ignoredByUser += 1;
+        if (remoteId) settledRemote.push({ id: remoteId, status: "IGNORED", note: "Marcado como nao cadastrar" });
+      } else if (hasAccessKey.get(inspection.accessKey, inspection.accessKey)) {
+        alreadyImported += 1;
+        if (remoteId) settledRemote.push({ id: remoteId, status: "IMPORTED", note: "Nota ja cadastrada no Operacoes Cafe" });
+      }
       else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "NFE" });
     };
 
@@ -977,7 +994,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
 
     if (selectedCollectorSources.length > 0) {
       const sourceCodes = [...new Set(selectedCollectorSources.map((key) => remoteCollectorSources[key].sourceCode))];
-      const remoteFiles = (await Promise.all(sourceCodes.map((sourceCode) => centralSync.listCollectorInbox(sourceCode)))).flat();
+      const remoteFiles = (await Promise.all(sourceCodes.map((sourceCode) => centralSync.listCollectorInbox(sourceCode, data.periodStart, data.periodEnd)))).flat();
       const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
       mkdirSync(downloadDir, { recursive: true });
       const allowedYearMonths = new Set(brazilYearMonthsBetween(data.periodStart, data.periodEnd).map((period) => period.slice(2)));
@@ -995,6 +1012,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         }));
         downloaded.forEach(({ targetPath, remoteId }) => inspectCandidate(targetPath, remoteId));
       }
+    }
+
+    for (let offset = 0; offset < settledRemote.length; offset += 12) {
+      await Promise.allSettled(settledRemote.slice(offset, offset + 12)
+        .map((item) => centralSync.resolveCollectorInboxFile(item.id, item.status, item.note)));
     }
 
     const visiblePending = pending.filter((candidate) => {

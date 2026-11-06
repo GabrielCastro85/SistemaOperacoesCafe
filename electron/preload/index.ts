@@ -502,7 +502,7 @@ export interface CollectorMonitorStatus {
   lastUpdateCheckAt: string | null;
   recentLogs: string | null;
   startupConfigured: boolean;
-  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | null;
+  lastCommand: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | "BACKFILL" | null;
   lastCommandStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | null;
   lastCommandRequestedAt: string | null;
   lastCommandResult: string | null;
@@ -695,7 +695,7 @@ export interface OperationsCafeApi {
   selectXmlFiles: () => Promise<Array<{ token: string; fileName: string; sizeBytes: number }>>;
   selectXmlFolder: (includeSubfolders?: boolean) => Promise<{ folder: string | null; files: Array<{ token: string; fileName: string; sizeBytes: number }> }>;
   getVulpeDevStatus: () => Promise<{ available: boolean; sources: Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>; collectors: CollectorMonitorStatus[]; collectorMonitorError: string | null }>;
-  sendCollectorCommand: (input: { sourceCode: string; machineId: string; command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" }) => Promise<{ id: string; status: "PENDING"; command: string }>;
+  sendCollectorCommand: (input: { sourceCode: string; machineId: string; command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | "BACKFILL"; periodStart?: string; periodEnd?: string }) => Promise<{ id: string; status: "PENDING"; command: string }>;
   scanVulpeDevXml: (input: { source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; direction: "INBOUND" | "OUTBOUND"; periodStart: string; periodEnd: string }) => Promise<{
     source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL";
     label: string;

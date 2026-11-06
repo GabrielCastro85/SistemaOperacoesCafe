@@ -51,7 +51,13 @@ const heartbeatSchema = z.object({
   startupConfigured: z.boolean().optional()
 });
 
-const collectorCommandSchema = z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART"]);
+const collectorCommandSchema = z.enum(["SCAN_NOW", "UPDATE_NOW", "RESTART", "BACKFILL"]);
+const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+// Chave de acesso: posicoes 3 a 6 trazem AAMM da emissao.
+function accessKeyYearMonth(date: string): string {
+  return date.slice(2, 4) + date.slice(5, 7);
+}
 
 function collectorAuthorized(config: ServerConfig, request: FastifyRequest): boolean {
   const supplied = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : "";
@@ -146,7 +152,7 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
         ORDER BY CASE WHEN machine_id = $2 THEN 0 ELSE 1 END, requested_at LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, command, requested_at AS "requestedAt"
+      RETURNING id, command, payload, requested_at AS "requestedAt"
     `, [query.sourceCode, query.machineId]);
     return { command: result.rows[0] ?? null };
   });
@@ -169,15 +175,24 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
     const input = z.object({
       sourceCode: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
       machineId: z.string().trim().min(4).max(200),
-      command: collectorCommandSchema
+      command: collectorCommandSchema,
+      periodStart: isoDateSchema.optional(),
+      periodEnd: isoDateSchema.optional()
     }).parse(request.body);
+    let payload: { periodStart: string; periodEnd: string } | null = null;
+    if (input.command === "BACKFILL") {
+      if (!input.periodStart || !input.periodEnd || input.periodStart > input.periodEnd) {
+        return reply.code(400).send({ error: "COLLECTOR_BACKFILL_PERIOD_REQUIRED" });
+      }
+      payload = { periodStart: input.periodStart, periodEnd: input.periodEnd };
+    }
     const collector = await pool.query("SELECT 1 FROM collector_status WHERE source_code = $1 AND machine_id = $2", [input.sourceCode, input.machineId]);
     if (!collector.rowCount) return reply.code(404).send({ error: "COLLECTOR_NOT_FOUND" });
     const id = randomUUID();
     await pool.query(`
-      INSERT INTO collector_commands(id, source_code, machine_id, command, requested_by_user_id)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [id, input.sourceCode, input.machineId, input.command, session.userId]);
+      INSERT INTO collector_commands(id, source_code, machine_id, command, requested_by_user_id, payload)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `, [id, input.sourceCode, input.machineId, input.command, session.userId, payload ? JSON.stringify(payload) : null]);
     return reply.code(201).send({ id, status: "PENDING", command: input.command });
   });
 
@@ -206,13 +221,24 @@ export function registerCollectorRoutes(app: FastifyInstance, pool: pg.Pool, con
   app.get("/v1/collector/inbox", async (request, reply) => {
     const session = await resolveSession(pool, request);
     if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
-    const query = z.object({ source: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/), limit: z.coerce.number().int().min(1).max(1000).default(500) }).parse(request.query);
+    const query = z.object({
+      source: z.string().trim().regex(/^[A-Z0-9_-]{2,60}$/),
+      limit: z.coerce.number().int().min(1).max(10_000).default(500),
+      periodStart: isoDateSchema.optional(),
+      periodEnd: isoDateSchema.optional()
+    }).parse(request.query);
+    // Sem periodo, a fila inteira pode passar do limite e esconder notas
+    // antigas; com periodo, o filtro pelo mes da chave vem do servidor.
+    const fromYearMonth = query.periodStart ? accessKeyYearMonth(query.periodStart) : null;
+    const toYearMonth = query.periodEnd ? accessKeyYearMonth(query.periodEnd) : null;
     const rows = await pool.query(`
       SELECT id, source_code AS "sourceCode", source_label AS "sourceLabel", original_file_name AS "originalFileName",
         file_hash AS "fileHash", file_size AS "fileSize", access_key AS "accessKey", xml_type AS "xmlType", received_at AS "receivedAt"
       FROM collector_inbox_files WHERE source_code = $1 AND status = 'PENDING'
+        AND ($3::text IS NULL OR substring(access_key from 3 for 4) >= $3)
+        AND ($4::text IS NULL OR substring(access_key from 3 for 4) <= $4)
       ORDER BY received_at DESC, id DESC LIMIT $2
-    `, [query.source, query.limit]);
+    `, [query.source, query.limit, fromYearMonth, toYearMonth]);
     return { files: rows.rows };
   });
 
