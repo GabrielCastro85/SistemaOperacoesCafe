@@ -1428,3 +1428,13 @@
 .viewer-text-danger {
   color: var(--color-danger, #a33a2b);
 }
+
+.viewer-confirmation-card-open {
+  cursor: pointer;
+  border-radius: 14px;
+}
+
+.viewer-confirmation-card-open:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand-secondary) 55%, transparent);
+  outline-offset: 2px;
+}

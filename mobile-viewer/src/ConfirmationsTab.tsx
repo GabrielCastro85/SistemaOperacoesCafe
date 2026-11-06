@@ -105,18 +105,21 @@ export function ConfirmationsTab({ organizationId, legalEntityId }: { organizati
       {confirmations && filtered.length > 0 ? (
         <div className="viewer-card-grid">
           {filtered.map((confirmation) => (
+            <div key={confirmation.id} role="button" tabIndex={0} className="viewer-confirmation-card-open"
+              aria-label={`Abrir ${confirmation.confirmationNumber ?? confirmation.temporaryReference}`}
+              onClick={() => { setSelectedId(confirmation.id); setSuccess(null); }}
+              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(confirmation.id); setSuccess(null); } }}>
             <Card
-              key={confirmation.id}
               title={confirmation.confirmationNumber ?? confirmation.temporaryReference}
               actions={<StatusBadge status={confirmation.status} />}
               className={`viewer-confirmation-card ${companyColorClass(confirmation.ownLegalEntityName)}`}
             >
-              <button type="button" className="viewer-confirmation-card__open" aria-label={`Abrir ${confirmation.confirmationNumber ?? confirmation.temporaryReference}`} onClick={() => { setSelectedId(confirmation.id); setSuccess(null); }} />
               <p className="viewer-card-line"><strong>{confirmation.counterpartyName}</strong></p>
               <p className="viewer-card-line viewer-card-line--muted">{confirmation.ownLegalEntityName} · {formatDateBr(confirmation.confirmationDate)}</p>
               <p className="viewer-card-line">{Number(confirmation.totalQuantitySacks).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} sacas</p>
               <p className="viewer-card-line"><strong>{formatCurrencyBr(confirmation.totalCommercialAmountCents)}</strong></p>
             </Card>
+            </div>
           ))}
         </div>
       ) : null}
