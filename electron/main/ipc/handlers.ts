@@ -30,9 +30,11 @@ const xmlTokens = new Map<string, string>();
 const collectorInboxTokens = new Map<string, string>();
 const payableAttachmentTokens = new Map<string, string>();
 const signedDealPdfTokens = new Map<string, string>();
+// Villa MG/ES: o computador principal le as pastas da Vulpe direto. Onde elas
+// nao existem (site, outros computadores), as notas vem do coletor VILLA_MG_ES.
 const vulpeDevSources = {
-  VILLA_MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO", cnpj: "44963370000523" },
-  VILLA_ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO", cnpj: "44963370000280" }
+  VILLA_MG: { label: "Villa MG", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE_MG\\EMITIDO", cnpj: "44963370000523", collectorSourceCode: "VILLA_MG_ES" },
+  VILLA_ES: { label: "Villa ES", root: "C:\\Vulpe\\NFe\\VILLA_COFFEE\\EMITIDO", cnpj: "44963370000280", collectorSourceCode: "VILLA_MG_ES" }
 } as const;
 const remoteCollectorSources = {
   GRAO_MG: { label: "Grao & Grao MG", cnpj: "16594876000224", sourceCode: "GRAO_GRAO" },
@@ -741,7 +743,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     const localSources = Object.entries(vulpeDevSources).map(([source, config]) => ({
       source: source as keyof typeof vulpeDevSources,
       label: config.label,
-      available: existsSync(config.root)
+      available: existsSync(config.root) || collectorAvailable
     }));
     const collectorSources = Object.entries(remoteCollectorSources).map(([source, config]) => ({
       source: source as keyof typeof remoteCollectorSources,
@@ -972,9 +974,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       else pending.push({ filePath, remoteId, accessKey: inspection.accessKey, xmlType: "NFE" });
     };
 
+    const fallbackCollectorCodes = new Set<string>();
     for (const localSource of selectedLocalSources) {
       const config = vulpeDevSources[localSource];
       if (!existsSync(config.root)) {
+        if (centralSync.hasSession()) { fallbackCollectorCodes.add(config.collectorSourceCode); continue; }
         if (source !== "ALL") throw new Error(`Pasta da ${config.label} nao encontrada neste computador.`);
         continue;
       }
@@ -992,8 +996,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       }
     }
 
-    if (selectedCollectorSources.length > 0) {
-      const sourceCodes = [...new Set(selectedCollectorSources.map((key) => remoteCollectorSources[key].sourceCode))];
+    if (selectedCollectorSources.length > 0 || fallbackCollectorCodes.size > 0) {
+      const sourceCodes = [...new Set([...selectedCollectorSources.map((key) => remoteCollectorSources[key].sourceCode), ...fallbackCollectorCodes])];
       const remoteFiles = (await Promise.all(sourceCodes.map((sourceCode) => centralSync.listCollectorInbox(sourceCode, data.periodStart, data.periodEnd)))).flat();
       const downloadDir = join(context.directories.xmlImportsDir, "collector-inbox");
       mkdirSync(downloadDir, { recursive: true });
