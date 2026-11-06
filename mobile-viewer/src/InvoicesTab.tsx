@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson, queryString } from "./api";
 import { companyColorClass } from "./companyColor";
+import { InvoiceDetailDrawer, ManualInvoiceDrawer } from "./InvoiceEditor";
 import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { Badge, StatusBadge } from "./renderer/design-system/components/Badge";
@@ -111,6 +112,8 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
   const [itemProducts, setItemProducts] = useState<Record<string, string>>({});
   const [importBusy, setImportBusy] = useState<"preview" | "import" | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     if (!organizationId) return;
@@ -220,9 +223,18 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
 
   return (
     <>
-      <PageHeader eyebrow="Operações" title="Notas e operações" description="Consulte entradas e saídas e importe novas NF-e por XML diretamente no sistema." actions={
-        <Button variant={showImporter ? "secondary" : "primary"} onClick={() => { setShowImporter((current) => !current); resetImporter(); }}>{showImporter ? "Fechar importação" : "Importar XML"}</Button>
+      <PageHeader eyebrow="Operações" title="Notas e operações" description="Consulte, lance, importe e corrija entradas e saídas. Clique numa nota para editar, confirmar, cancelar ou excluir." actions={
+        <>
+          <Button onClick={() => { setShowManual(true); setSuccess(null); }}>Lançar nota</Button>
+          <Button variant={showImporter ? "secondary" : "primary"} onClick={() => { setShowImporter((current) => !current); resetImporter(); }}>{showImporter ? "Fechar importação" : "Importar XML"}</Button>
+        </>
       } />
+      <ManualInvoiceDrawer open={showManual} organizationId={organizationId} legalEntityId={legalEntityId}
+        onClose={() => setShowManual(false)}
+        onSaved={(message) => { setShowManual(false); setSuccess(message); void load(); }} />
+      <InvoiceDetailDrawer invoiceId={selectedInvoiceId} organizationId={organizationId} legalEntityId={legalEntityId}
+        onClose={() => setSelectedInvoiceId(null)}
+        onChanged={(message) => { setSuccess(message); void load(); }} />
       {success ? <Alert tone="success" title="Nota atualizada">{success}</Alert> : null}
       {showImporter ? (
         <Card className="viewer-xml-importer" eyebrow="Nova nota" title="Importar NF-e por XML" actions={<Badge tone="info">Leitura segura</Badge>}>
@@ -326,7 +338,10 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
             <span>Nota / emissão</span><span>Sentido / empresa</span><span>Contraparte / responsável</span><span>Produto / sacas</span><span>Valor fiscal</span><span>Situação</span>
           </div>
           {filtered.map((document) => (
-            <article key={document.id} className={`viewer-invoice-row ${companyColorClass(document.ownLegalEntityName)}`}>
+            <article key={document.id} className={`viewer-invoice-row viewer-invoice-row--clickable ${companyColorClass(document.ownLegalEntityName)}`}
+              role="button" tabIndex={0} aria-label={`Abrir NF ${document.documentNumber}`}
+              onClick={() => { setSelectedInvoiceId(document.id); setSuccess(null); }}
+              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedInvoiceId(document.id); setSuccess(null); } }}>
               <span className="viewer-invoice-row__note"><strong>NF {document.documentNumber}{document.series ? `/${document.series}` : ""}</strong><small>{formatDateBr(document.issueDate)}</small></span>
               <span><Badge tone={document.direction === "INBOUND" ? "info" : document.direction === "OUTBOUND" ? "success" : "neutral"}>{document.direction === "INBOUND" ? "Entrada" : document.direction === "OUTBOUND" ? "Saída" : "Não identificada"}</Badge><small>{document.ownLegalEntityName}</small></span>
               <span><strong>{document.counterpartyName}</strong><small>{document.responsiblePartnerName ? `Responsável: ${document.responsiblePartnerName}` : "Sem responsável comercial"}</small></span>

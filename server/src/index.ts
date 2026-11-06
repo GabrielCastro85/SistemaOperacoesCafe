@@ -13,6 +13,7 @@ import { registerCollectorRoutes } from "./collector.js";
 import { registerAssistantRoutes } from "./assistant.js";
 import { registerCommercialManagementRoutes } from "./commercialManagement.js";
 import { registerOperationalManagementRoutes } from "./operationalManagement.js";
+import { registerInvoiceManagementRoutes } from "./invoiceManagement.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -53,6 +54,7 @@ registerCollectorRoutes(app, pool, config);
 registerAssistantRoutes(app, pool, config);
 registerCommercialManagementRoutes(app, pool);
 registerOperationalManagementRoutes(app, pool);
+registerInvoiceManagementRoutes(app, pool);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });

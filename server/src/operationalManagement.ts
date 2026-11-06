@@ -192,9 +192,9 @@ function sacksForItem(item: Record<string, unknown>, product: Record<string, unk
   return 0;
 }
 
-type ResolvedRate = { status: "found" | "missing" | "conflict"; rule: Record<string, unknown> | null; rateCents: number };
+export type ResolvedRate = { status: "found" | "missing" | "conflict"; rule: Record<string, unknown> | null; rateCents: number };
 
-function resolveRate(
+export function resolveRate(
   rules: Record<string, unknown>[], kind: "SALE" | "PURCHASE", organizationId: string,
   partnerId: string, ownEntityId: string, counterpartyEntityId: string | null,
   productId: string, scope: "INTERNAL" | "EXTERNAL", date: string, hasFinancialService: boolean
