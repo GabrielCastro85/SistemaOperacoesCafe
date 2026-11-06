@@ -4,11 +4,14 @@ O Gabriel alterna entre o Claude Code e o Codex neste projeto, geralmente quando
 
 ## Regras
 
-1. **Ao começar:** leia "Situação atual" e as últimas entradas do histórico, depois rode `git status` e `git log -5`. O que está no Git e no disco vale mais do que este arquivo; se discordarem, corrija o registro.
+1. **Ao começar:** leia "Recados", "Em andamento", "Situação atual" e as últimas entradas do histórico, depois rode `git status` e `git log -5`. O que está no Git e no disco vale mais do que este arquivo; se discordarem, corrija o registro.
 2. **Ao terminar uma tarefa, e antes de parar por falta de créditos:** atualize "Situação atual" e acrescente uma entrada no topo do histórico.
 3. **Não apague nem refaça o trabalho do outro** sem o Gabriel pedir. Alterações não commitadas de outra origem devem ser mantidas.
 4. **Não registre segredos:** senhas, tokens e strings de conexão ficam fora deste arquivo.
 5. **Escreva o que o Git não mostra:** o que falta, decisões do Gabriel, testes feitos e não feitos, o que já foi publicado.
+6. **Em andamento, desde o primeiro passo:** ao receber um pedido, anote-o em "Em andamento" antes de mexer no código e atualize a cada passo importante (antes de publicar, ao esperar deploy, ao parar no meio). Os créditos podem acabar sem aviso; o outro agente continua a partir daqui. Ao concluir, mova o resumo para o histórico e deixe a seção como "Nada em andamento.".
+7. **Recados:** para pedir algo ao outro agente ou avisar de algo que ele precisa saber (um problema achado no trabalho dele, um passo que ficou para ele), escreva em "Recados" com data e autor. Quem ler e resolver apaga o recado e registra no histórico o que fez.
+8. **Pedidos e respostas do Gabriel:** anote o pedido com as palavras dele e as decisões que ele tomar, para o outro agente não precisar perguntar de novo.
 
 Modelo de entrada:
 
@@ -20,6 +23,17 @@ Modelo de entrada:
 - Publicado:
 - Pendente:
 ```
+
+## Recados
+
+Nenhum recado pendente.
+
+## Em andamento
+
+- **Agente:** Claude, 2026-11-06.
+- **Pedidos abertos do Gabriel:**
+  1. Importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS (como foi feito com a Villa). Aguardando o coletor da Grão chegar à 1.1.71 (estava na 1.1.38 às 10:52, com "Atualizar coletor" pendente). Depois: Gabriel clica "Enviar notas do periodo" (01/01 a 31/07/2026), busca Grão MG e SP no período sem importar pela tela, fecha o programa, e o agente roda `tmp/importar-thadeu.mts` adaptado para a pasta `documents/invoices/xml-imports/collector-inbox` (só vendas 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco antes e fazer backup).
+  2. Migração do aplicativo para o site: a importação de XML do Codex (`8858b50`) está no ar (Railway e graobase.com.br conferidos às 11h), mas ainda não foi testada logada com uma nota real. Próximo bloco proposto ao Gabriel, aguardando o "pode começar": lançar, editar, confirmar, cancelar e excluir notas no site; depois devoluções, DAE, terceiros, XMLs especiais e planilha.
 
 ## Situação atual
 
