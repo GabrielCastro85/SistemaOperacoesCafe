@@ -83,6 +83,22 @@ export async function downloadChargePdf(chargeId: string, suggestedName: string)
   URL.revokeObjectURL(url);
 }
 
+export async function downloadConfirmationPdf(confirmationId: string, suggestedName: string): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const response = await fetch(`${API_URL}/v1/manage/confirmations/${encodeURIComponent(confirmationId)}/pdf`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  if (!response.ok) throw await responseError(response);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = suggestedName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function queryString(values: Record<string, string | undefined>): string {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); });

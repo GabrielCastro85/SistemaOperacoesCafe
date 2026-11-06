@@ -8,6 +8,8 @@ COPY electron/main/services/chargeDocuments.ts ./electron/main/services/chargeDo
 COPY electron/main/services/generatedDocumentBranding.ts ./electron/main/services/generatedDocumentBranding.ts
 COPY electron/main/services/xmlNfeService.ts ./electron/main/services/xmlNfeService.ts
 COPY electron/main/services/deterministicId.ts ./electron/main/services/deterministicId.ts
+COPY electron/main/services/dealConfirmationFiles.ts ./electron/main/services/dealConfirmationFiles.ts
+COPY electron/main/database/mappers.ts ./electron/main/database/mappers.ts
 COPY src/shared ./src/shared
 RUN npm run build:server
 

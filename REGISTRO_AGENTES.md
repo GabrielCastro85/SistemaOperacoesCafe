@@ -33,7 +33,7 @@ Modelo de entrada:
 - **Agentes:** Claude e Codex trabalhando ao mesmo tempo, 2026-11-06 à tarde.
 - **Pedidos abertos do Gabriel:**
   1. **Pausado pelo Gabriel em 2026-11-06 ("vamos deixar isso pra depois"):** vendas da Grão & Grão de 01/01/2024 a 31/07/2026 no THADEU NOTAS (mesmas regras da Villa, sem transferências entre empresas próprias). Script pronto e testado numa cópia: `tmp/importar-thadeu-grao.mts` (lê `documents/invoices/xml-imports/collector-inbox`). Os `.rar` de Downloads só têm notas recebidas (subpasta `Down`). A busca do Gabriel às 14:20 só trouxe chaves de jul/2026 em diante: o coletor da Grão ainda não enviou o período antigo (monitor mostra versão antiga; se for 1.1.38, o comando "Enviar notas do período" falha). Já disponíveis: 5 vendas de jul/2026 da Grão SP. Gravação exige o programa fechado.
-  2. **Claude (assumiu do Codex em 2026-11-06, créditos do Codex acabaram):** migração do aplicativo para o site. Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Bloco 1e (importação por planilha) publicado em 2026-11-06, encerrando o bloco de notas. Próximo: confirmações, depois completar cobranças e conta-corrente, repasses e acertos de entrada, contas a pagar e financeiro, administração.
+  2. **Claude (assumiu do Codex em 2026-11-06, créditos do Codex acabaram):** migração do aplicativo para o site. Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Bloco 1e (importação por planilha) publicado em 2026-11-06, encerrando o bloco de notas. Gabriel pediu em 2026-11-06: "Pode começar as confirmações". Bloco 2a (confirmações: criar, editar, emitir, PDF, assinatura, cancelar, substituir, duplicar, excluir) publicado em 2026-11-06. Falta do bloco 2: importar PDF assinado (precisa guardar arquivo no servidor), cadastro de modelos de confirmação e de cláusulas, numeração (piso manual) e relatórios de confirmações. Depois do bloco 2: depois completar cobranças e conta-corrente, repasses e acertos de entrada, contas a pagar e financeiro, administração.
 
 ## Situação atual
 
@@ -101,6 +101,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 - Claude
+- Pedido: "Pode começar as confirmações".
+- Feito: `server/src/confirmationManagement.ts`. Cada ação carrega a confirmação inteira (`DealWork`), aplica a regra do `AppRepository` em memória e grava só a diferença. Rotas em `/v1/manage/confirmations`: criar (em branco ou a partir de notas, com itens oficiais da NF, contas e condições padrão da empresa e modelo padrão), editar cabeçalho, itens, partes (empresa, cliente ou manual, com retrato do cadastro), cláusulas (com modelos), parcelas (soma 100% quando há percentual), assinantes (status agregado), conferência, emitir (pendências críticas bloqueiam; número com o prefixo da empresa, piso de `document_sequences` e reaproveitamento de buracos, igual ao app), enviada/assinada, cancelar, substituir, duplicar, excluir rascunho sem número, GET `/:id/pdf` com o mesmo `buildConfirmationPdf` do app. Diferenças: o site não grava `deal_confirmation_document_versions` (arquivos locais de cada PC); a prévia do rascunho não reserva número. `server/Dockerfile` copia `dealConfirmationFiles.ts` e `electron/main/database/mappers.ts`. Tela: `mobile-viewer/src/ConfirmationEditor.tsx` (nova confirmação e editor), cards clicáveis em `ConfirmationsTab.tsx`, `downloadConfirmationPdf` em `api.ts`.
+- Testado: `tests/confirmation-management-api.test.ts` (6, inclui PDF real), suíte completa (358), typecheck, ESLint, build do site, simulação Docker. Tela conferida com `tmp/fake-confirmation-api.mts` (ids UUID): criada a partir da NF 1203, comprador e vendedor incluídos, cláusula de modelo, emitida como VCMG 0001, PDF aberto e conferido.
+- Observação: no PDF o título "Clausulas" encosta no texto da primeira cláusula; vem do gerador do app (`dealConfirmationFiles.ts`), igual nos dois.
+- Publicado: ver próxima entrada.
+- Pendente: PDF assinado, modelos de confirmação/cláusula, piso da numeração e relatórios; depois completar cobranças e conta-corrente.
 
 ### 2026-11-06 - Claude (continuando o Codex)
 - Pedido: continuar a migração depois que os créditos do Codex acabaram no meio da importação por planilha.

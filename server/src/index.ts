@@ -16,6 +16,7 @@ import { registerOperationalManagementRoutes } from "./operationalManagement.js"
 import { registerInvoiceManagementRoutes } from "./invoiceManagement.js";
 import { registerSpreadsheetManagementRoutes } from "./spreadsheetManagement.js";
 import { registerSpecialXmlRoutes } from "./specialXml.js";
+import { registerConfirmationManagementRoutes } from "./confirmationManagement.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -59,6 +60,7 @@ registerOperationalManagementRoutes(app, pool);
 registerInvoiceManagementRoutes(app, pool);
 registerSpreadsheetManagementRoutes(app, pool);
 registerSpecialXmlRoutes(app, pool);
+registerConfirmationManagementRoutes(app, pool);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });

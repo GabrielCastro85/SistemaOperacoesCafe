@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson, queryString } from "./api";
 import { companyColorClass } from "./companyColor";
+import { ConfirmationDrawer, NewConfirmationDrawer } from "./ConfirmationEditor";
 import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { StatusBadge } from "./renderer/design-system/components/Badge";
@@ -46,6 +47,9 @@ export function ConfirmationsTab({ organizationId, legalEntityId }: { organizati
   const [search, setSearch] = useState("");
   const [confirmations, setConfirmations] = useState<ConfirmationRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     if (!organizationId) return;
@@ -75,7 +79,14 @@ export function ConfirmationsTab({ organizationId, legalEntityId }: { organizati
 
   return (
     <>
-      <PageHeader eyebrow="Comercial" title="Confirmações" description="Consulte no navegador os fechamentos que chegaram ao servidor central." />
+      <PageHeader eyebrow="Comercial" title="Confirmações" description="Crie, edite, emita e acompanhe as confirmações de negócio. Clique numa confirmação para abrir." actions={
+        <Button variant="primary" onClick={() => { setCreating(true); setSuccess(null); }}>Nova confirmação</Button>
+      } />
+      {success ? <Alert tone="success" title="Confirmação atualizada">{success}</Alert> : null}
+      <NewConfirmationDrawer open={creating} organizationId={organizationId} legalEntityId={legalEntityId} onClose={() => setCreating(false)}
+        onCreated={(id) => { setCreating(false); setSuccess("Rascunho criado. Inclua comprador e vendedor e revise antes de emitir."); setSelectedId(id); void load(); }} />
+      <ConfirmationDrawer confirmationId={selectedId} organizationId={organizationId} legalEntityId={legalEntityId} onClose={() => setSelectedId(null)}
+        onChanged={(message) => { setSuccess(message); void load(); }} onOpen={(id) => { setSelectedId(id); void load(); }} />
       <FilterBar activeCount={(filter !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)} onClear={() => { setFilter("ALL"); setSearch(""); }}>
         <div className="viewer-period-filter viewer-period-filter--inline">
           <label>Início<input className="ui-input" type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
@@ -98,8 +109,9 @@ export function ConfirmationsTab({ organizationId, legalEntityId }: { organizati
               key={confirmation.id}
               title={confirmation.confirmationNumber ?? confirmation.temporaryReference}
               actions={<StatusBadge status={confirmation.status} />}
-              className={companyColorClass(confirmation.ownLegalEntityName)}
+              className={`viewer-confirmation-card ${companyColorClass(confirmation.ownLegalEntityName)}`}
             >
+              <button type="button" className="viewer-confirmation-card__open" aria-label={`Abrir ${confirmation.confirmationNumber ?? confirmation.temporaryReference}`} onClick={() => { setSelectedId(confirmation.id); setSuccess(null); }} />
               <p className="viewer-card-line"><strong>{confirmation.counterpartyName}</strong></p>
               <p className="viewer-card-line viewer-card-line--muted">{confirmation.ownLegalEntityName} · {formatDateBr(confirmation.confirmationDate)}</p>
               <p className="viewer-card-line">{Number(confirmation.totalQuantitySacks).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} sacas</p>
