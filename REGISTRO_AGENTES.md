@@ -106,7 +106,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: "Pode continuar com as operações de terceiros".
 - Feito: `server/src/thirdPartyEntities.ts` cria ou reaproveita a empresa TERC-XML pelo CNPJ com o mesmo `deterministicUuid("thirdPartyLegalEntity", cnpj)` do app (conferido: 9 das 16 empresas atuais têm esse id; as 7 de 28/07 são anteriores e são reaproveitadas pelo CNPJ). `server/Dockerfile` copia `deterministicId.ts`. Lançamento manual aceita `issuerPartnerLegalEntityId` (empresas sem cliente vinculado, GET `/v1/manage/third-party-issuers`), como `resolveIssuerLegalEntityFromPartner`. Importação de XML do Codex (`operationalManagement.ts`): empresas TERC-XML deixam de contar como próprias; nota sem CNPJ próprio vira terceirizada (venda sob a TERC-XML do emitente, observação "Nota terceirizada..."); emitente que é fornecedor cadastrado (triangulada) é recusado com aviso para usar o app. Permissão de nota terceirizada vale pela organização. Tela: emissora própria/terceirizada no lançamento, aviso na prévia do XML, etiqueta "Terceirizada" no painel.
 - Testado: 2 testes novos (manual com id determinístico e reaproveitamento; XML terceirizado e triangulado recusado), suíte completa (345), typecheck, ESLint, build do site, simulação do build Docker. Tela conferida com o servidor de teste local.
-- Publicado: ver próxima entrada de publicação.
+- Publicado: commit `9989a0e` na branch e na `master`. Railway em `9989a0e` às 12:11 (`/ready` com banco conectado; rota de emissoras devolve 401 sem sessão). GitHub Pages publicou `index-whUTenIg.js` às 12:13.
 - Pendente: XMLs especiais (armazém, eventos de cancelamento, triangulação) e planilha.
 
 ### 2026-11-06 - Claude
