@@ -33,7 +33,7 @@ Modelo de entrada:
 - **Agente:** Claude, 2026-11-06.
 - **Pedidos abertos do Gabriel:**
   1. Importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS (como foi feito com a Villa). Aguardando o coletor da Grão chegar à 1.1.71 (estava na 1.1.38 às 10:52, com "Atualizar coletor" pendente). Depois: Gabriel clica "Enviar notas do periodo" (01/01 a 31/07/2026), busca Grão MG e SP no período sem importar pela tela, fecha o programa, e o agente roda `tmp/importar-thadeu.mts` adaptado para a pasta `documents/invoices/xml-imports/collector-inbox` (só vendas 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco antes e fazer backup).
-  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Bloco 1b (devoluções e DAE de frete) publicado em 2026-11-06. Bloco 1c (notas terceirizadas) publicado em 2026-11-06. Bloco 1d (XMLs especiais) enviado para publicação em 2026-11-06 (deploy não conferido: créditos acabaram). Próximo, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
+  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Próximo: importação por planilha; depois confirmações, repasses, contas a pagar e administração.
 
 ## Situação atual
 
@@ -43,7 +43,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.72. **Não publique sem o Gabriel pedir.**
-- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente, importação de NF-e comercial por XML, emissão de cobranças e recebimentos/estornos, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam confirmações, repasses, contas a pagar, administração web e os casos especiais de XML (armazém, cancelamento e triangulação).
+- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente, notas manuais, NF-e comercial e especial por XML (armazém, cancelamento e triangulação), emissão de cobranças e recebimentos/estornos, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam importação por planilha, confirmações, repasses, contas a pagar e administração web.
 
 ### Publicado na 1.1.71
 
@@ -102,12 +102,19 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-06 09:25 - Codex
+- Pedido: manter o trabalho do Codex e do Claude coordenado pelo `REGISTRO_AGENTES.md`, sem repetir alterações.
+- Feito: reli Recados, Em andamento, Situação atual, Git e código depois dos commits simultâneos do Claude. Não refiz nenhuma implementação. Confirmei que os blocos posteriores do Claude contêm e ampliam o importador XML iniciado no commit `8858b50` e atualizei o estado compartilhado: XMLs especiais estão concluídos; o próximo bloco é planilha.
+- Testado: Railway `/health` no commit `e70ec03` e `/ready` com banco conectado; `graobase.com.br` serve o bundle `index-DhUaSF-9.js`, contendo as rotas `/xml/inspect`, `/xml/warehouse` e `/xml/triangulated`.
+- Publicado: código já havia sido enviado pelo Claude; esta entrada somente registra a verificação da produção.
+- Pendente: importação por planilha; depois confirmações, repasses, contas a pagar e administração. Recado do endereço de empresas terceirizadas no app permanece para uma próxima versão do desktop.
+
 ### 2026-11-06 - Claude
 - Pedido: "Pode continuar com os XMLs especiais".
 - Feito: `server/src/specialXml.ts` com POST `/v1/manage/invoices/xml/inspect` (classifica INVOICE/EVENT/WAREHOUSE/TRIANGULATED), `/xml/event` (registra evento; cancelamento aceito cancela nota e movimentos de armazém, mesmo nota cobrada, como o app), `/xml/warehouse` (movimentos com `deterministicUuid("warehouseMovement", chave, item)`, nomes canônicos dos ajustes manuais, referência da remessa, simbólica sem referência fica PENDING_REVIEW) e `/xml/triangulated` (compra do fornecedor + venda ao cliente por item, contrapartes como no app). `server/src/fiscalEvents.ts`: evento recebido antes da nota faz a nota entrar cancelada (usado também na importação do Codex). Tela: `mobile-viewer/src/SpecialXmlImport.tsx`; `InvoicesTab.tsx` chama /inspect antes da prévia normal.
 - Testado: `tests/special-xml-api.test.ts` (4), suíte completa (349), typecheck, ESLint, build do site, simulação do build Docker. Tela conferida com servidor de teste (triangulada e armazém); painel de evento não aberto no navegador.
-- Publicado: commit enviado à branch e à `master`; deploy do Railway e do Pages NÃO conferido.
-- Pendente: conferir `/health` com o commit novo e o bundle do site; importação por planilha; recado do endereço das terceirizadas no app.
+- Publicado: commit `e70ec03` enviado à branch e à `master`; Railway e Pages conferidos depois pelo Codex (ver entrada acima).
+- Pendente: importação por planilha; recado do endereço das terceirizadas no app.
 
 ### 2026-11-06 - Claude
 - Pedido: "Pode continuar com as operações de terceiros".
@@ -150,8 +157,8 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Conferido: documentação funcional completa, navegação e telas atuais do `mobile-viewer`, APIs web de consulta e mutação e histórico das últimas publicações.
 - Feito: primeiro bloco da paridade de Notas e operações. O site agora lê e mostra a prévia do XML autorizado antes de gravar, identifica entrada/saída e o CNPJ próprio, localiza a empresa da contraparte por CNPJ, permite escolher responsável, escopo e produto de cada item, resolve tarifa de venda/compra com a mesma precedência do desktop e grava nota, itens e operações na revisão central auditada. Importações incompletas ficam pendentes em vez de contaminar os indicadores. XML duplicado, inválido e CNPJ próprio desconhecido são bloqueados. Notas de armazém ainda são encaminhadas ao desktop para não alterar o estoque incorretamente.
 - Testado: builds do servidor e do site, `git diff --check`, teste novo de XML de entrada com regra de compra e suíte completa com 58 arquivos e 328 testes aprovados.
-- Publicado: pendente nesta entrada.
-- Pendente: confirmações, repasses, contas a pagar, administração e casos especiais de XML (armazém, eventos/cancelamento e triangulação). Coletor, certificados do Windows, backups/restauração locais e atualizador continuarão num agente local.
+- Publicado: commit `8858b50`; a implementação foi ampliada pelos commits posteriores do Claude e está em produção no commit `e70ec03`.
+- Pendente: importação por planilha, confirmações, repasses, contas a pagar e administração. Coletor, certificados do Windows, backups/restauração locais e atualizador continuarão num agente local.
 
 ### 2026-11-06 08:52 - Codex
 - Pedido: continuar tudo que fosse necessário para transformar integralmente o aplicativo em site.
