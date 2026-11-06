@@ -84,7 +84,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: transformar integralmente o aplicativo em site, em vez de manter `graobase.com.br` somente para consultas.
 - Feito: criada a base de mutações web autenticadas e auditadas sobre `central_records`/`central_change_log`, fazendo as alterações entrarem na mesma revisão que sincroniza os computadores. Clientes/fornecedores/empresas, produtos/apelidos e regras de serviço/entrada ganharam inclusão e edição no navegador. As operações validam escopo, CNPJ, dados e permissão de gestão comercial; a interface foi adaptada para desktop e celular.
 - Testado: builds do servidor e do site, typecheck, ESLint direcionado, `git diff --check`, testes específicos da API e suíte completa com 57 arquivos e 323 testes aprovados.
-- Publicado: pendente nesta entrada; publicar a branch e a `master`, validar Railway e GitHub Pages antes de encerrar.
+- Publicado: commit `f0e677d` enviado à branch e à `master`. Railway implantou esse commit com `/health` e `/ready` saudáveis e banco conectado. GitHub Pages `42141966508` concluiu com sucesso; `graobase.com.br` serve o bundle com as três APIs de escrita. Uma tentativa sem sessão devolve 401, como esperado. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
 - Pendente: migrar os fluxos de notas/XML, cafés armazenados, confirmações, cobranças, conta-corrente, repasses, financeiro e administração para escrita web. Recursos dependentes do Windows (coletor, certificados instalados, backups locais e atualizador) continuam auxiliares locais, mas não impedem o uso principal pelo site.
 
 ### 2026-11-05 21:45 - Codex
