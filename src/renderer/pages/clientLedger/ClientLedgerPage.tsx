@@ -7,6 +7,7 @@ import { SelectField, TextField } from "../../components/forms/LegacyFields";
 import { PartnerQuickSearch } from "../../components/forms/PartnerQuickSearch";
 import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives";
 import { ClientLedgerTable } from "./components/ClientLedgerTable";
+import { requestTextInput } from "../../utils/dialogs";
 
 function localDateInputValue(date: Date): string {
   const year = date.getFullYear();
@@ -240,7 +241,8 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
           entries={entries}
           onMarkLoanCollected={async (id) => { await window.operationsCafe.markLoanCollected(id); await load(); }}
           onCancel={async (id) => {
-            const reason = window.prompt("Informe o motivo do cancelamento:", "Lançamento incorreto");
+            // window.prompt nao existe no Electron e alguns navegadores bloqueiam; usa a janela do proprio app.
+            const reason = await requestTextInput({ title: "Cancelar lançamento", label: "Informe o motivo do cancelamento", initialValue: "Lançamento incorreto" });
             if (!reason?.trim()) return;
             try {
               await window.operationsCafe.cancelLedgerEntry(id, reason.trim());

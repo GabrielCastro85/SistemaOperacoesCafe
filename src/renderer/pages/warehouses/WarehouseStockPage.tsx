@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BootstrapData, WarehouseMovement, WarehouseSummary } from "../../../shared/types/domain";
 import { formatCnpj, formatDateOnlyBr } from "../../../shared/utils/format";
 import { Card, DateInput, PageHeader } from "../../design-system";
+import { requestTextInput } from "../../utils/dialogs";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const yearStart = (): string => `${new Date().getFullYear()}-01-01`;
@@ -60,7 +61,7 @@ export function WarehouseStockPage({ data }: { data: BootstrapData }): JSX.Eleme
   useEffect(() => { void load(); }, [load]);
 
   const reviewMovement = async (row: WarehouseMovement): Promise<void> => {
-    const reference = window.prompt(`Informe o número da NF de remessa original vinculada à NF ${row.documentNumber}:`, row.referencedDocumentNumber ?? "");
+    const reference = await requestTextInput({ title: "NF de remessa original", label: `Informe o número da NF de remessa original vinculada à NF ${row.documentNumber}`, initialValue: row.referencedDocumentNumber ?? "" });
     if (!reference?.trim()) return;
     setLoading(true);
     setMessage(null);
