@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.71
+
+- O monitor do coletor ganhou o botão "Enviar notas do periodo": o coletor procura nas pastas da Vulpe as notas do periodo escolhido nos campos de data, mesmo as antigas, e as envia ao servidor. Antes ele só enviava o último mês.
+- A busca das notas do coletor filtra o período no servidor, sem o limite de 1.000 arquivos que escondia notas antigas.
+- XMLs da fila que já estão no programa (importados, ignorados ou cancelamentos aplicados) são marcados como resolvidos no servidor e deixam de voltar em toda busca.
+- O coletor espera a varredura em andamento terminar antes de executar "Buscar notas" ou o envio de período, em vez de descartar o pedido.
+
 ## 1.1.70
 
 - A conta-corrente permite cancelar lançamentos extras informados incorretamente, exigindo um motivo e preservando o registro no histórico para auditoria.

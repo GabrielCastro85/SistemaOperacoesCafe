@@ -23,13 +23,20 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-11-06, pelo Codex.
+- **Atualizado em:** 2026-11-06, pelo Claude.
 - **Branch:** `codex/central-server-neon`.
-- **Última versão publicada:** 1.1.70, em 2026-11-05.
+- **Última versão publicada:** 1.1.71, em 2026-11-06.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
-- **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
+- **Próxima versão:** 1.1.72. **Não publique sem o Gabriel pedir.**
 - **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente, importação de NF-e comercial por XML, emissão de cobranças e recebimentos/estornos, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam confirmações, repasses, contas a pagar, administração web e os casos especiais de XML (armazém, cancelamento e triangulação).
+
+### Publicado na 1.1.71
+
+- Coletor: comando remoto `BACKFILL` com período (migração do servidor `012_collector_backfill.sql`, coluna `payload` em `collector_commands`). O coletor ignora a data do arquivo e filtra pelo mês da chave de acesso; renova o status a cada minuto para a vigilância não reiniciá-lo; comandos esperam a varredura em andamento. Testado com o coletor real contra um servidor falso.
+- Fila do coletor (`/v1/collector/inbox`) aceita `periodStart`/`periodEnd` (filtro pelo AAMM da chave) e até 10.000 itens; o programa pede só o período da busca.
+- A busca resolve no servidor os XMLs da fila já cadastrados, ignorados ou com cancelamento aplicado.
+- Botão "Enviar notas do periodo" no monitor do coletor, usando as datas da busca.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +86,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 - Claude
+- Pedido: cadastrar no cliente THADEU NOTAS todas as notas de julho/2026 para trás.
+- Decisões do Gabriel: só vendas (CFOP 5102/6102); fora das cobranças; Villa agora e preparar a Grão & Grão.
+- Feito: 1.008 vendas da Villa MG (695) e Villa ES (313), de 15/01 a 31/07/2026, importadas pelo caminho da tela (`AppRepository` + `inspectXmlFile`) com o script `tmp/importar-thadeu.mts` (fora do Git), com o programa fechado. Excluídas: 50 vendas canceladas, 114 não-vendas (armazém, estornos, devoluções, complemento/acréscimo de valor). THADEU NOTAS não tem tarifa, então as operações têm valor de serviço zero e não entram em alertas nem cobranças.
+- Testado: execução completa numa cópia do banco antes; no banco real, integridade e chaves estrangeiras ok, contagens conferidas. Backup: `database/operations-before-thadeu-jan-jul-20261106.sqlite`.
+- Publicado: nada (dados locais; a sincronização envia ao abrir o programa). Envio aos outros PCs não confirmado.
+- Pendente: Grão & Grão jan-jul. XMLs só no PC remoto; precisa `monthsBack: 10` no `coletor-config.json` de lá e filtro por período na inbox do servidor (hoje `/v1/collector/inbox` devolve no máximo 1.000).
 
 ### 2026-11-06 09:05 - Codex
 - Pedido: informar o que ainda falta para o site ficar 100% equivalente ao aplicativo e iniciar a execução.
