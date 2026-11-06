@@ -23,13 +23,13 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-11-05, pelo Codex.
+- **Atualizado em:** 2026-11-06, pelo Codex.
 - **Branch:** `codex/central-server-neon`.
 - **Última versão publicada:** 1.1.70, em 2026-11-05.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. A primeira etapa de escrita web está preparada para Clientes/fornecedores/empresas, Produtos e Regras por saca/entrada, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam os fluxos operacionais, financeiros e administrativos descritos no histórico.
+- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente e recebimentos/estornos de cobranças, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam emissão de cobranças, notas/XML, confirmações, repasses, contas a pagar e administração web.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 08:35 - Codex
+- Pedido: continuar tudo que fosse necessário para transformar integralmente o aplicativo em site.
+- Feito: a tela web de Cobranças passou a registrar pagamentos parciais ou integrais, validar o saldo aberto, atualizar a situação da cobrança e lançar o recebimento na conta-corrente na mesma revisão central. Os pagamentos ativos aparecem dentro de cada cobrança e podem ser estornados mediante motivo; o estorno preserva o pagamento e a alocação cancelados, cria o lançamento reverso e reabre o saldo da cobrança. Todos os eventos exigem permissão de cobrança e ficam na auditoria central.
+- Testado: builds do servidor e do site, typecheck, ESLint direcionado, `git diff --check`, testes específicos da API/viewer e suíte completa com 58 arquivos e 326 testes aprovados.
+- Publicado: pendente no momento deste registro; publicar o commit desta etapa na branch e na `master`, validar Railway, GitHub Pages, `/health` e `/ready`. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
+- Pendente: migrar criação/emissão/ajustes de cobranças e os demais fluxos operacionais, financeiros e administrativos até o site substituir 100% do desktop.
 
 ### 2026-11-05 22:10 - Codex
 - Pedido: transformar integralmente o aplicativo em site, em vez de manter `graobase.com.br` somente para consultas.

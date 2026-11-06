@@ -44,6 +44,14 @@ interface ChargeRow {
   finalAmountCents: number;
   paidAmountCents: number;
   openAmountCents: number;
+  payments: Array<{
+    id: string;
+    paymentDate: string;
+    amountCents: number;
+    paymentMethod: string;
+    transactionReference: string | null;
+    notes: string | null;
+  }>;
 }
 
 type ChargeView = "OPEN_NOTES" | "ISSUED_CHARGES";
@@ -65,6 +73,14 @@ function decimalBr(value: string): string {
 
 function safeFilePart(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+function currencyInputToCents(value: string): number {
+  const cleaned = value.trim().replace(/\s/g, "").replace(/R\$/gi, "");
+  if (!cleaned) return 0;
+  const normalized = cleaned.includes(",") ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
 }
 
 export function ChargesTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
@@ -174,6 +190,14 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
   const [status, setStatus] = useState<ChargeStatusFilter>("OPEN");
   const [search, setSearch] = useState("");
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [paymentChargeId, setPaymentChargeId] = useState<string | null>(null);
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("PIX");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentNotes, setPaymentNotes] = useState("");
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadClients = useCallback(async (): Promise<void> => {
@@ -214,6 +238,46 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
     } finally { setDownloadingId(null); }
   }
 
+  function openPayment(charge: ChargeRow): void {
+    setPaymentChargeId(charge.id);
+    setPaymentDate(new Date().toISOString().slice(0, 10));
+    setPaymentAmount((charge.openAmountCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    setPaymentMethod("PIX");
+    setPaymentReference("");
+    setPaymentNotes("");
+    setError(null);
+    setMessage(null);
+  }
+
+  async function savePayment(charge: ChargeRow): Promise<void> {
+    const amountCents = currencyInputToCents(paymentAmount);
+    if (!amountCents) { setError("Informe um valor de pagamento maior que zero."); return; }
+    setSavingPayment(true); setError(null); setMessage(null);
+    try {
+      await apiJson("/v1/manage/client-payments", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chargeId: charge.id, paymentDate, amountCents, paymentMethod, transactionReference: paymentReference, notes: paymentNotes })
+      });
+      setPaymentChargeId(null);
+      setMessage(`Pagamento de ${formatCurrencyBr(amountCents)} registrado em ${charge.clientName}.`);
+      await loadCharges();
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao registrar pagamento."); }
+    finally { setSavingPayment(false); }
+  }
+
+  async function cancelPayment(paymentId: string): Promise<void> {
+    const reason = window.prompt("Informe o motivo do estorno deste pagamento:")?.trim();
+    if (!reason) return;
+    setError(null); setMessage(null);
+    try {
+      await apiJson(`/v1/manage/client-payments/${encodeURIComponent(paymentId)}/cancel`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason })
+      });
+      setMessage("Pagamento estornado. A cobrança voltou ao saldo em aberto.");
+      await loadCharges();
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao estornar pagamento."); }
+  }
+
   return (
     <>
       <FilterBar activeCount={(clientId ? 1 : 0) + (status !== "ALL" ? 1 : 0) + (search ? 1 : 0)} onClear={() => { setClientId(""); setStatus("ALL"); setSearch(""); }}>
@@ -237,7 +301,8 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
           </div>
         </Card>
       ) : null}
-      {error ? <Alert tone="danger" title="Falha ao carregar cobranças">{error}</Alert> : null}
+      {message ? <Alert tone="success" title="Cobrança atualizada">{message}</Alert> : null}
+      {error ? <Alert tone="danger" title="Não foi possível concluir">{error}</Alert> : null}
       {!error && !charges ? <LoadingState label="Carregando cobranças..." /> : null}
       {charges && filtered.length === 0 ? <EmptyState title="Nenhuma cobrança encontrada" description="Ajuste o período, o cliente ou a situação." /> : null}
       {filtered.length > 0 ? (
@@ -255,7 +320,29 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
                 <span><small>Pago</small><strong>{formatCurrencyBr(charge.paidAmountCents)}</strong></span>
                 <span><small>Em aberto</small><strong>{formatCurrencyBr(charge.openAmountCents)}</strong></span>
               </div>
-              <Button className="viewer-charge-card__download" loading={downloadingId === charge.id} onClick={() => void download(charge)}>Baixar PDF</Button>
+              {charge.payments.length ? <div className="viewer-charge-payments">
+                <strong>Pagamentos registrados</strong>
+                {charge.payments.map((payment) => <div key={payment.id} className="viewer-charge-payment-row">
+                  <span>{formatDateBr(payment.paymentDate)} · {formatCurrencyBr(payment.amountCents)} · {payment.paymentMethod.replaceAll("_", " ")}</span>
+                  <Button variant="secondary" onClick={() => void cancelPayment(payment.id)}>Estornar</Button>
+                </div>)}
+              </div> : null}
+              {paymentChargeId === charge.id ? <div className="viewer-charge-payment-form">
+                <label>Data<input className="ui-input" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} /></label>
+                <label>Valor recebido<input className="ui-input" inputMode="decimal" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} /></label>
+                <label>Forma<select className="ui-input" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                  <option value="PIX">PIX</option><option value="BANK_TRANSFER">Transferência bancária</option><option value="CASH">Dinheiro</option>
+                  <option value="CHECK">Cheque</option><option value="OFFSET">Compensação</option><option value="OTHER">Outra</option>
+                </select></label>
+                <label>Referência<input className="ui-input" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Opcional" /></label>
+                <label className="viewer-charge-payment-form__notes">Observação<input className="ui-input" value={paymentNotes} onChange={(event) => setPaymentNotes(event.target.value)} placeholder="Opcional" /></label>
+                <div className="viewer-charge-payment-form__actions"><Button variant="secondary" onClick={() => setPaymentChargeId(null)}>Cancelar</Button><Button loading={savingPayment} onClick={() => void savePayment(charge)}>Confirmar pagamento</Button></div>
+              </div> : null}
+              <div className="viewer-charge-card__actions">
+                <Button className="viewer-charge-card__download" loading={downloadingId === charge.id} onClick={() => void download(charge)}>Baixar PDF</Button>
+                {charge.openAmountCents > 0 && ["ISSUED", "PARTIALLY_PAID", "OVERDUE"].includes(charge.status)
+                  ? <Button onClick={() => openPayment(charge)}>Registrar pagamento</Button> : null}
+              </div>
             </Card>
           ))}
         </div>

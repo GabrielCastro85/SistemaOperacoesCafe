@@ -90,4 +90,33 @@ describe("operational management API", () => {
     expect(state.getRevision()).toBe(22);
     expect(state.audits.map((row) => row.action)).toEqual(["WEB_LEDGER_ENTRY_CREATED", "WEB_LEDGER_ENTRY_CANCELLED"]);
   });
+
+  it("registra e estorna pagamento atualizando o saldo da cobranca", async () => {
+    const state = managementPool();
+    state.records.set("client_charges", new Map([["charge", {
+      id: "charge", organization_id: "org", own_legal_entity_id: "entity", client_partner_id: "client",
+      status: "ISSUED", final_amount_cents: 250000, paid_amount_cents: 0, open_amount_cents: 250000,
+      due_date: "2026-11-10", updated_at: "2026-11-01T12:00:00.000Z"
+    }]]));
+    const app = Fastify(); registerOperationalManagementRoutes(app, state.pool);
+    const headers = { authorization: "Bearer test", "content-type": "application/json" };
+    const created = await app.inject({ method: "POST", url: "/v1/manage/client-payments", headers, payload: {
+      chargeId: "charge", paymentDate: "2026-11-06", amountCents: 100000, paymentMethod: "PIX",
+      transactionReference: "PIX-123", notes: "Primeira parcela"
+    } });
+    expect(created.statusCode).toBe(201);
+    const paymentId = created.json().id as string;
+    expect(state.records.get("client_charges")?.get("charge")).toMatchObject({
+      status: "PARTIALLY_PAID", paid_amount_cents: 100000, open_amount_cents: 150000
+    });
+    expect(state.records.get("client_payments")?.get(paymentId)).toMatchObject({ status: "CONFIRMED", amount_cents: 100000 });
+    expect([...state.records.get("client_ledger_entries")!.values()][0]).toMatchObject({ entry_type: "PAYMENT_RECEIVED", effect: "REDUCE_RECEIVABLE" });
+
+    const cancelled = await app.inject({ method: "POST", url: `/v1/manage/client-payments/${paymentId}/cancel`, headers, payload: { reason: "Pagamento lançado no cliente errado" } });
+    expect(cancelled.statusCode).toBe(200);
+    expect(state.records.get("client_payments")?.get(paymentId)).toMatchObject({ status: "CANCELLED", cancellation_reason: "Pagamento lançado no cliente errado" });
+    expect(state.records.get("client_charges")?.get("charge")).toMatchObject({ status: "ISSUED", paid_amount_cents: 0, open_amount_cents: 250000 });
+    expect([...state.records.get("client_ledger_entries")!.values()].some((row) => row.entry_type === "REVERSAL")).toBe(true);
+    expect(state.audits.map((row) => row.action)).toEqual(["WEB_CLIENT_PAYMENT_CREATED", "WEB_CLIENT_PAYMENT_CANCELLED"]);
+  });
 });

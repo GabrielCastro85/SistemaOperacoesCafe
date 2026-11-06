@@ -45,6 +45,18 @@ const ledgerEntrySchema = scopeSchema.extend({
 
 const cancelLedgerEntrySchema = z.object({ reason: z.string().trim().min(3).max(2000) });
 
+const clientPaymentSchema = z.object({
+  chargeId: z.string().min(1),
+  paymentDate: z.string().date(),
+  amountCents: z.number().int().positive(),
+  paymentMethod: z.enum(["PIX", "BANK_TRANSFER", "CASH", "CHECK", "OFFSET", "OTHER"]),
+  bankAccountDescription: z.string().trim().max(240).optional().default(""),
+  transactionReference: z.string().trim().max(120).optional().default(""),
+  notes: z.string().trim().max(2000).optional().default("")
+});
+
+const cancelClientPaymentSchema = z.object({ reason: z.string().trim().min(3).max(2000) });
+
 const clean = (value: string): string | null => value.trim() || null;
 const digits = (value: unknown): string => String(value ?? "").replace(/\D/g, "");
 const numberValue = (value: unknown): number => {
@@ -54,6 +66,14 @@ const numberValue = (value: unknown): number => {
 const normalized = (value: unknown): string => String(value ?? "")
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim().replace(/\s+/g, " ");
 const decimal = (value: number): string => Number(value.toFixed(6)).toString();
+const cents = (value: unknown): number => Math.max(0, Math.round(numberValue(value)));
+
+function chargeStatus(charge: Record<string, unknown>, paidAmountCents: number, openAmountCents: number): string {
+  if (openAmountCents === 0) return "PAID";
+  if (paidAmountCents > 0) return "PARTIALLY_PAID";
+  const dueDate = String(charge.due_date ?? "");
+  return dueDate && dueDate < new Date().toISOString().slice(0, 10) ? "OVERDUE" : "ISSUED";
+}
 
 function warehouseProductFamily(value: unknown): string | null {
   const description = normalized(value);
@@ -220,6 +240,113 @@ export function registerOperationalManagementRoutes(app: FastifyInstance, pool: 
     const revision = await commitDomainChanges(pool, session, "WEB_LEDGER_ENTRY_CANCELLED", "client_ledger_entry", id,
       [{ table: "client_ledger_entries", key: id, operation: "UPSERT", data }],
       { organizationId, legalEntityId, reason });
+    return { id, revision };
+  });
+
+  app.post("/v1/manage/client-payments", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const input = clientPaymentSchema.parse(request.body);
+    const charge = await centralRecord(pool, "client_charges", input.chargeId);
+    if (!charge) return reply.code(404).send({ error: "NOT_FOUND", message: "Cobranca nao encontrada." });
+    const organizationId = String(charge.organization_id ?? "");
+    const legalEntityId = String(charge.own_legal_entity_id ?? "");
+    if (!(await authorize(pool, session, reply, "billing.manage", organizationId, legalEntityId))) return;
+    if (!["ISSUED", "PARTIALLY_PAID", "OVERDUE"].includes(String(charge.status ?? ""))) {
+      return reply.code(409).send({ error: "INVALID_STATUS", message: "Somente cobrancas emitidas e em aberto aceitam pagamento." });
+    }
+    const openAmountCents = cents(charge.open_amount_cents);
+    if (input.amountCents > openAmountCents) {
+      return reply.code(409).send({ error: "AMOUNT_EXCEEDS_OPEN", message: "O valor informado e maior que o saldo em aberto." });
+    }
+    const paymentId = randomUUID();
+    const allocationId = randomUUID();
+    const ledgerId = randomUUID();
+    const now = new Date().toISOString();
+    const paidAmountCents = cents(charge.paid_amount_cents) + input.amountCents;
+    const remainingCents = Math.max(0, cents(charge.final_amount_cents) - paidAmountCents);
+    const payment: Record<string, unknown> = {
+      id: paymentId, organization_id: organizationId, own_legal_entity_id: legalEntityId,
+      client_partner_id: charge.client_partner_id, payment_date: input.paymentDate,
+      amount_cents: input.amountCents, payment_method: input.paymentMethod,
+      bank_account_description: clean(input.bankAccountDescription), transaction_reference: clean(input.transactionReference),
+      notes: clean(input.notes), attachment_path: null, status: "CONFIRMED", created_at: now, updated_at: now,
+      cancelled_at: null, cancellation_reason: null, receipt_pdf_file_path: null, receipt_image_file_path: null
+    };
+    const allocation: Record<string, unknown> = {
+      id: allocationId, client_payment_id: paymentId, client_charge_id: input.chargeId,
+      amount_cents: input.amountCents, allocated_at: now, cancelled_at: null, cancellation_reason: null
+    };
+    const ledger: Record<string, unknown> = {
+      id: ledgerId, organization_id: organizationId, own_legal_entity_id: legalEntityId,
+      client_partner_id: charge.client_partner_id, client_charge_id: input.chargeId,
+      entry_type: "PAYMENT_RECEIVED", effect: "REDUCE_RECEIVABLE", amount_cents: input.amountCents,
+      entry_date: input.paymentDate, description: "Pagamento recebido", reference_number: clean(input.transactionReference),
+      notes: clean(input.notes), attachment_path: null, status: "CONFIRMED", available_amount_cents: null,
+      collection_due_date: null, collected_at: null, created_at: now, updated_at: now,
+      cancelled_at: null, cancellation_reason: null
+    };
+    const updatedCharge = {
+      ...charge, paid_amount_cents: paidAmountCents, open_amount_cents: remainingCents,
+      status: chargeStatus(charge, paidAmountCents, remainingCents), updated_at: now
+    };
+    const revision = await commitDomainChanges(pool, session, "WEB_CLIENT_PAYMENT_CREATED", "client_payment", paymentId, [
+      { table: "client_payments", key: paymentId, operation: "UPSERT", data: payment },
+      { table: "client_payment_allocations", key: allocationId, operation: "UPSERT", data: allocation },
+      { table: "client_ledger_entries", key: ledgerId, operation: "UPSERT", data: ledger },
+      { table: "client_charges", key: input.chargeId, operation: "UPSERT", data: updatedCharge }
+    ], { organizationId, legalEntityId, chargeId: input.chargeId, amountCents: input.amountCents });
+    return reply.code(201).send({ id: paymentId, revision, chargeStatus: updatedCharge.status, openAmountCents: remainingCents });
+  });
+
+  app.post("/v1/manage/client-payments/:id/cancel", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const { reason } = cancelClientPaymentSchema.parse(request.body);
+    const payment = await centralRecord(pool, "client_payments", id);
+    if (!payment) return reply.code(404).send({ error: "NOT_FOUND", message: "Pagamento nao encontrado." });
+    const organizationId = String(payment.organization_id ?? "");
+    const legalEntityId = String(payment.own_legal_entity_id ?? "");
+    if (!(await authorize(pool, session, reply, "billing.manage", organizationId, legalEntityId))) return;
+    if (payment.status === "CANCELLED") return { id, alreadyCancelled: true };
+    const allocations = (await centralRecords(pool, "client_payment_allocations"))
+      .filter((row) => row.client_payment_id === id && !row.cancelled_at);
+    if (!allocations.length) {
+      return reply.code(409).send({ error: "NO_ACTIVE_ALLOCATION", message: "Este pagamento nao possui baixa ativa para estornar." });
+    }
+    const now = new Date().toISOString();
+    const changes: Array<{ table: string; key: string; operation: "UPSERT"; data: Record<string, unknown> }> = [{
+      table: "client_payments", key: id, operation: "UPSERT",
+      data: { ...payment, status: "CANCELLED", cancelled_at: now, cancellation_reason: reason, updated_at: now }
+    }];
+    for (const allocation of allocations) {
+      const chargeId = String(allocation.client_charge_id ?? "");
+      const charge = await centralRecord(pool, "client_charges", chargeId);
+      if (!charge || charge.organization_id !== organizationId || charge.own_legal_entity_id !== legalEntityId || charge.client_partner_id !== payment.client_partner_id) {
+        return reply.code(409).send({ error: "SCOPE_MISMATCH", message: "A baixa esta fora do escopo do pagamento." });
+      }
+      const amountCents = cents(allocation.amount_cents);
+      const paidAmountCents = Math.max(0, cents(charge.paid_amount_cents) - amountCents);
+      const openAmountCents = Math.max(0, cents(charge.final_amount_cents) - paidAmountCents);
+      const reversalId = randomUUID();
+      changes.push(
+        { table: "client_payment_allocations", key: String(allocation.id), operation: "UPSERT", data: { ...allocation, cancelled_at: now, cancellation_reason: reason } },
+        { table: "client_ledger_entries", key: reversalId, operation: "UPSERT", data: {
+          id: reversalId, organization_id: organizationId, own_legal_entity_id: legalEntityId,
+          client_partner_id: payment.client_partner_id, client_charge_id: chargeId,
+          entry_type: "REVERSAL", effect: "INCREASE_RECEIVABLE", amount_cents: amountCents,
+          entry_date: now.slice(0, 10), description: "Estorno de pagamento recebido",
+          reference_number: payment.transaction_reference ?? null, notes: `Pagamento estornado: ${reason}`,
+          attachment_path: null, status: "CONFIRMED", available_amount_cents: null, collection_due_date: null,
+          collected_at: null, created_at: now, updated_at: now, cancelled_at: null, cancellation_reason: null
+        } },
+        { table: "client_charges", key: chargeId, operation: "UPSERT", data: {
+          ...charge, paid_amount_cents: paidAmountCents, open_amount_cents: openAmountCents,
+          status: chargeStatus(charge, paidAmountCents, openAmountCents), updated_at: now
+        } }
+      );
+    }
+    const revision = await commitDomainChanges(pool, session, "WEB_CLIENT_PAYMENT_CANCELLED", "client_payment", id, changes,
+      { organizationId, legalEntityId, reason, allocationCount: allocations.length });
     return { id, revision };
   });
 }

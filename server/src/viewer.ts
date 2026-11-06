@@ -1010,9 +1010,13 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     if (!session) return;
     const filters = chargeListSchema.parse(request.query);
     if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
-    const [charges, partners, entities] = await Promise.all([records(pool, "client_charges"), records(pool, "business_partners"), records(pool, "legal_entities")]);
+    const [charges, partners, entities, payments, allocations] = await Promise.all([
+      records(pool, "client_charges"), records(pool, "business_partners"), records(pool, "legal_entities"),
+      records(pool, "client_payments"), records(pool, "client_payment_allocations")
+    ]);
     const partnerMap = new Map(partners.map((row) => [text(row.id), text(row.display_name)]));
     const entityMap = new Map(entities.map((row) => [text(row.id), text(row.trade_name)]));
+    const paymentMap = new Map(payments.map((row) => [text(row.id), row]));
     const today = new Date().toISOString().slice(0, 10);
     return charges.filter((row) => inScope(row, filters) && text(row.status) !== "CANCELLED" && inPeriod(row.period_start, filters.periodStart, filters.periodEnd))
       .filter((row) => !filters.clientId || text(row.client_partner_id) === filters.clientId)
@@ -1026,12 +1030,23 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
           && Boolean(dueDate && dueDate < today)
           ? "OVERDUE"
           : storedStatus;
+        const chargePayments = allocations.filter((allocation) => text(allocation.client_charge_id) === text(row.id) && !allocation.cancelled_at)
+          .flatMap((allocation) => {
+            const payment = paymentMap.get(text(allocation.client_payment_id));
+            if (!payment || text(payment.status) === "CANCELLED") return [];
+            return [{
+              id: text(payment.id), paymentDate: text(payment.payment_date), amountCents: numberValue(allocation.amount_cents),
+              paymentMethod: text(payment.payment_method), transactionReference: nullableText(payment.transaction_reference),
+              notes: nullableText(payment.notes)
+            }];
+          })
+          .sort((left, right) => right.paymentDate.localeCompare(left.paymentDate));
         return {
           id: text(row.id), chargeNumber: nullableText(row.charge_number), referenceCode: nullableText(row.reference_code),
           clientId: text(row.client_partner_id), clientName: partnerMap.get(text(row.client_partner_id)) ?? "Cliente",
           legalEntityName: entityMap.get(text(row.own_legal_entity_id)) ?? "", periodStart: text(row.period_start), periodEnd: text(row.period_end),
           issueDate: nullableText(row.issue_date), dueDate, status, finalAmountCents: numberValue(row.final_amount_cents),
-          paidAmountCents: numberValue(row.paid_amount_cents), openAmountCents
+          paidAmountCents: numberValue(row.paid_amount_cents), openAmountCents, payments: chargePayments
         };
       })
       .sort((a, b) => b.periodStart.localeCompare(a.periodStart) || a.clientName.localeCompare(b.clientName, "pt-BR"));
