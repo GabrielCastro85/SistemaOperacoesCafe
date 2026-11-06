@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiJson, queryString } from "./api";
 import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
@@ -42,6 +42,19 @@ interface LedgerResponse {
   entries: LedgerEntry[];
 }
 
+type EditableEntryType = "ADVANCE_RECEIVED" | "DISCOUNT" | "CREDIT" | "SURCHARGE" | "REIMBURSEMENT" | "PREVIOUS_BALANCE" | "MANUAL_ADJUSTMENT" | "LOAN" | "OTHER";
+interface LedgerForm {
+  entryType: EditableEntryType;
+  effect: EntryEffect;
+  amount: string;
+  entryDate: string;
+  description: string;
+  referenceNumber: string;
+  notes: string;
+  collectionDueDate: string;
+  applyNow: boolean;
+}
+
 const ENTRY_TYPE_LABELS: Record<string, string> = {
   SERVICE_CHARGE: "Cobrança de serviço", ADVANCE_RECEIVED: "Adiantamento", PAYMENT_RECEIVED: "Pagamento",
   DISCOUNT: "Desconto", CREDIT: "Crédito", SURCHARGE: "Acréscimo", REIMBURSEMENT: "Reembolso",
@@ -56,6 +69,18 @@ function currentMonthToTodayRange(): { start: string; end: string } {
   return { start: `${today.getFullYear()}-${month}-01`, end: `${today.getFullYear()}-${month}-${day}` };
 }
 
+function moneyToCents(value: string): number {
+  const normalized = value.trim().replace(/\s/g, "").replace(/R\$/gi, "");
+  const decimal = normalized.includes(",") ? normalized.replace(/\./g, "").replace(",", ".") : normalized;
+  const parsed = Number(decimal);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+}
+
+const fixedEffects: Partial<Record<EditableEntryType, EntryEffect>> = {
+  ADVANCE_RECEIVED: "REDUCE_RECEIVABLE", DISCOUNT: "REDUCE_RECEIVABLE", CREDIT: "REDUCE_RECEIVABLE",
+  SURCHARGE: "INCREASE_RECEIVABLE", LOAN: "INCREASE_RECEIVABLE"
+};
+
 export function LedgerTab({ organizationId, legalEntityId }: { organizationId: string; legalEntityId?: string }): JSX.Element {
   const initial = currentMonthToTodayRange();
   const [periodStart, setPeriodStart] = useState(initial.start);
@@ -66,6 +91,14 @@ export function LedgerTab({ organizationId, legalEntityId }: { organizationId: s
   const [filter, setFilter] = useState<FilterMode>("ALL");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const emptyForm = useCallback((): LedgerForm => ({
+    entryType: "ADVANCE_RECEIVED", effect: "REDUCE_RECEIVABLE", amount: "", entryDate: new Date().toISOString().slice(0, 10),
+    description: "Adiantamento recebido", referenceNumber: "", notes: "", collectionDueDate: "", applyNow: true
+  }), []);
+  const [form, setForm] = useState<LedgerForm>(() => emptyForm());
 
   const loadClients = useCallback(async (): Promise<void> => {
     if (!organizationId) return;
@@ -88,6 +121,47 @@ export function LedgerTab({ organizationId, legalEntityId }: { organizationId: s
   useEffect(() => { void loadClients(); }, [loadClients]);
   useEffect(() => { void loadLedger(); }, [loadLedger]);
 
+  const selectEntryType = (entryType: EditableEntryType): void => {
+    const labels: Record<EditableEntryType, string> = {
+      ADVANCE_RECEIVED: "Adiantamento recebido", DISCOUNT: "Desconto", CREDIT: "Crédito", SURCHARGE: "Acréscimo",
+      REIMBURSEMENT: "Reembolso", PREVIOUS_BALANCE: "Saldo anterior", MANUAL_ADJUSTMENT: "Ajuste manual", LOAN: "Empréstimo", OTHER: "Outro lançamento"
+    };
+    setForm((current) => ({ ...current, entryType, effect: fixedEffects[entryType] ?? current.effect, description: labels[entryType] }));
+  };
+
+  const saveEntry = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!legalEntityId || !clientId) { setError("Selecione a empresa e o cliente antes de lançar."); return; }
+    const amountCents = moneyToCents(form.amount);
+    if (amountCents <= 0) { setError("Informe um valor maior que zero."); return; }
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      await apiJson("/v1/manage/ledger-entries", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          organizationId, legalEntityId, clientPartnerId: clientId, entryType: form.entryType,
+          effect: fixedEffects[form.entryType] ?? form.effect, amountCents, entryDate: form.entryDate,
+          description: form.description, referenceNumber: form.referenceNumber, notes: form.notes,
+          collectionDueDate: form.collectionDueDate || null, applyNow: form.applyNow
+        })
+      });
+      setNotice("Lançamento salvo e enviado para a sincronização dos computadores.");
+      setShowEditor(false); setForm(emptyForm()); await loadLedger();
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao salvar o lançamento."); }
+    finally { setSaving(false); }
+  };
+
+  const cancelEntry = async (entry: LedgerEntry): Promise<void> => {
+    const reason = window.prompt("Informe o motivo do cancelamento deste lançamento:")?.trim();
+    if (!reason) return;
+    setError(null); setNotice(null);
+    try {
+      await apiJson(`/v1/manage/ledger-entries/${encodeURIComponent(entry.id)}/cancel`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason })
+      });
+      setNotice("Lançamento cancelado. O histórico foi preservado para auditoria."); await loadLedger();
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao cancelar o lançamento."); }
+  };
+
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("pt-BR");
     return (data?.entries ?? []).filter((entry) => {
@@ -100,7 +174,33 @@ export function LedgerTab({ organizationId, legalEntityId }: { organizationId: s
 
   return (
     <>
-      <PageHeader eyebrow="Recebimentos" title="Conta-corrente" description="Consulte saldos, adiantamentos, créditos, pagamentos e demais lançamentos dos clientes." />
+      <PageHeader eyebrow="Recebimentos" title="Conta-corrente" description="Consulte e registre adiantamentos, créditos, acréscimos e demais lançamentos dos clientes."
+        actions={<Button variant="primary" disabled={!clientId || !legalEntityId} onClick={() => setShowEditor((current) => !current)}>{showEditor ? "Fechar lançamento" : "Novo lançamento"}</Button>} />
+      {showEditor && clientId && legalEntityId ? (
+        <Card eyebrow="Conta-corrente" title="Novo lançamento" className="viewer-editor-card">
+          <form onSubmit={(event) => void saveEntry(event)}>
+            <div className="viewer-form-grid">
+              <label>Tipo<select className="ui-input" value={form.entryType} onChange={(event) => selectEntryType(event.target.value as EditableEntryType)}>
+                <option value="ADVANCE_RECEIVED">Adiantamento</option><option value="CREDIT">Crédito</option><option value="DISCOUNT">Desconto</option>
+                <option value="SURCHARGE">Acréscimo</option><option value="LOAN">Empréstimo</option><option value="REIMBURSEMENT">Reembolso</option>
+                <option value="PREVIOUS_BALANCE">Saldo anterior</option><option value="MANUAL_ADJUSTMENT">Ajuste manual</option><option value="OTHER">Outro</option>
+              </select></label>
+              {!fixedEffects[form.entryType] ? <label>Efeito<select className="ui-input" value={form.effect} onChange={(event) => setForm({ ...form, effect: event.target.value as EntryEffect })}>
+                <option value="INCREASE_RECEIVABLE">Aumenta o saldo a receber</option><option value="REDUCE_RECEIVABLE">Reduz o saldo a receber</option>
+              </select></label> : null}
+              <label>Valor (R$)<input className="ui-input" required inputMode="decimal" placeholder="0,00" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label>
+              <label>Data<input className="ui-input" type="date" required value={form.entryDate} onChange={(event) => setForm({ ...form, entryDate: event.target.value })} /></label>
+              <label>Descrição<input className="ui-input" required value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+              <label>Referência<input className="ui-input" value={form.referenceNumber} onChange={(event) => setForm({ ...form, referenceNumber: event.target.value })} /></label>
+              <label>Vencimento da cobrança<input className="ui-input" type="date" value={form.collectionDueDate} onChange={(event) => setForm({ ...form, collectionDueDate: event.target.value })} /></label>
+            </div>
+            <label>Observações<textarea className="ui-input" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
+            <label className="viewer-checkbox"><input type="checkbox" checked={form.applyNow} onChange={(event) => setForm({ ...form, applyNow: event.target.checked })} /> Aplicar ao saldo agora</label>
+            <div className="viewer-form-actions"><Button onClick={() => setShowEditor(false)}>Cancelar</Button><Button type="submit" variant="primary" loading={saving}>Salvar lançamento</Button></div>
+          </form>
+        </Card>
+      ) : null}
+      {notice ? <Alert tone="success" title="Alteração concluída">{notice}</Alert> : null}
       <FilterBar activeCount={(clientId ? 1 : 0) + (filter !== "ALL" ? 1 : 0) + (search ? 1 : 0) + 2} onClear={() => { setClientId(""); setFilter("ALL"); setSearch(""); const range = currentMonthToTodayRange(); setPeriodStart(range.start); setPeriodEnd(range.end); }}>
         <select className="ui-input" value={clientId} onChange={(event) => setClientId(event.target.value)}>
           <option value="">Selecione um cliente</option>
@@ -133,7 +233,7 @@ export function LedgerTab({ organizationId, legalEntityId }: { organizationId: s
           </Card>
           {filtered.length === 0 ? <EmptyState title="Nenhum lançamento encontrado" description="Ajuste o período, a busca ou o tipo de movimento." /> : (
             <div className="viewer-ledger-list" role="table" aria-label="Histórico da conta-corrente">
-              <div className="viewer-ledger-list__head" role="row"><span>Data</span><span>Tipo</span><span>Descrição</span><span>Valor</span><span>Status</span></div>
+              <div className="viewer-ledger-list__head" role="row"><span>Data</span><span>Tipo</span><span>Descrição</span><span>Valor</span><span>Status</span><span>Ação</span></div>
               {filtered.map((entry) => (
                 <div key={entry.id} className={`viewer-ledger-row viewer-ledger-row--${entry.effect === "INCREASE_RECEIVABLE" ? "increase" : "reduce"}`} role="row">
                   <span role="cell">{formatDateBr(entry.entryDate)}</span>
@@ -141,6 +241,8 @@ export function LedgerTab({ organizationId, legalEntityId }: { organizationId: s
                   <span role="cell"><strong>{entry.description}</strong><small>{entry.cancellationReason ? `Cancelado: ${entry.cancellationReason}` : entry.notes ?? ""}</small></span>
                   <span className="viewer-ledger-row__amount" role="cell"><strong>{entry.effect === "INCREASE_RECEIVABLE" ? "+" : "−"} {formatCurrencyBr(entry.amountCents)}</strong></span>
                   <span role="cell"><StatusBadge status={entry.status} /></span>
+                  <span role="cell">{entry.status !== "CANCELLED" && !["SERVICE_CHARGE", "PAYMENT_RECEIVED", "REVERSAL"].includes(entry.entryType)
+                    ? <Button variant="danger" onClick={() => void cancelEntry(entry)}>Cancelar</Button> : null}</span>
                 </div>
               ))}
             </div>

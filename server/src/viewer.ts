@@ -839,12 +839,17 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     if (!session) return;
     const filters = filterSchema.parse(request.query);
     if (!(await assertScope(pool, session, reply, filters.organizationId, filters.legalEntityId))) return;
-    const [partners, operations, charges, payments, ledgerEntries, entities] = await Promise.all([
-      records(pool, "business_partners"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments"), records(pool, "client_ledger_entries"), records(pool, "legal_entities")
+    const [partners, operations, charges, payments, ledgerEntries, entities, partnerRoles] = await Promise.all([
+      records(pool, "business_partners"), records(pool, "operations"), records(pool, "client_charges"), records(pool, "client_payments"), records(pool, "client_ledger_entries"), records(pool, "legal_entities"), records(pool, "business_partner_roles")
     ]);
     const partnerMap = new Map(partners.map((row) => [text(row.id), text(row.display_name)]));
     const entityMap = new Map(entities.map((row) => [text(row.id), row]));
     const ids = new Set<string>();
+    partnerRoles
+      .filter((row) => text(row.role) === "CLIENT")
+      .map((row) => text(row.business_partner_id))
+      .filter((id) => partners.some((partner) => text(partner.id) === id && text(partner.organization_id) === filters.organizationId && isActive(partner)))
+      .forEach((id) => ids.add(id));
     const scopedOperations = operations.filter((row) => text(row.organization_id) === filters.organizationId
       && (!filters.legalEntityId || text(row.own_legal_entity_id) === filters.legalEntityId || isThirdPartyEntity(entityMap.get(text(row.own_legal_entity_id))))
       && text(row.status) !== "CANCELED" && text(row.operation_type) !== "PURCHASE" && inPeriod(row.operation_date, filters.periodStart, filters.periodEnd));
