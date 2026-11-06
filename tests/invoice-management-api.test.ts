@@ -180,6 +180,51 @@ describe("lancamento e manutencao de notas pelo site", () => {
     expect((await state.call("PUT", `/v1/manage/operations/${String(operation.id)}/rate`, { manualRateValueCents: 400, reason: "Outro acordo" })).statusCode).toBe(409);
   });
 
+  it("guarda o DAE de frete no lancamento e na edicao e descarta a referencia sem valor", async () => {
+    const state = invoicePool();
+    const id = (await state.call("POST", "/v1/manage/invoices", { ...saleInput, freightDaeAmountCents: 15_000, freightDaeReference: "DAE 123" })).json().id as string;
+    expect(state.table("fiscal_documents").get(id)).toMatchObject({ freight_dae_amount_cents: 15_000, freight_dae_reference: "DAE 123" });
+    const base = { responsiblePartnerId: "client", documentNumber: "9001", series: "1", issueDate: "2026-11-06", totalAmountCents: 1_500_000, hasFinancialService: false };
+    await state.call("PUT", `/v1/manage/invoices/${id}`, { ...base, freightDaeAmountCents: 20_000 });
+    expect(state.table("fiscal_documents").get(id)).toMatchObject({ freight_dae_amount_cents: 20_000, freight_dae_reference: "DAE 123" });
+    await state.call("PUT", `/v1/manage/invoices/${id}`, { ...base, freightDaeAmountCents: 0, freightDaeReference: "DAE 123" });
+    expect(state.table("fiscal_documents").get(id)).toMatchObject({ freight_dae_amount_cents: 0, freight_dae_reference: null });
+    expect((await state.call("GET", `/v1/manage/invoices/${id}`)).json().document).toMatchObject({ freightDaeAmountCents: 0, freightDaeReference: null });
+  });
+
+  it("abate a devolucao das sacas da venda e desfaz ao excluir", async () => {
+    const state = invoicePool();
+    const id = (await state.call("POST", "/v1/manage/invoices", { ...saleInput, confirm: true })).json().id as string;
+    const added = await state.call("POST", `/v1/manage/invoices/${id}/returns`, { returnDate: "2026-11-07", inputUnit: "KG", inputQuantity: "600", reason: "Cafe fora do padrao" });
+    expect(added.statusCode).toBe(201);
+    expect(added.json().quantitySacks).toBe("10");
+    expect([...state.table("operations").values()][0]).toMatchObject({ quantity_sacks_decimal: "90", gross_quantity_sacks_decimal: "100", service_amount_cents: 45_000 });
+    expect((await state.call("POST", `/v1/manage/invoices/${id}/returns`, { returnDate: "2026-11-07", inputUnit: "SACKS", inputQuantity: "91", reason: "Excesso" })).json().error).toBe("RETURN_EXCEEDS");
+    const detail = (await state.call("GET", `/v1/manage/invoices/${id}`)).json();
+    expect(detail.returns).toEqual([expect.objectContaining({ quantitySacks: "10", reason: "Cafe fora do padrao" })]);
+    expect(detail.permissions.canReturn).toBe(true);
+    expect((await state.call("DELETE", `/v1/manage/invoice-returns/${added.json().id as string}`)).statusCode).toBe(200);
+    expect([...state.table("operations").values()][0]).toMatchObject({ quantity_sacks_decimal: "100", service_amount_cents: 50_000 });
+    expect(state.table("fiscal_document_returns").size).toBe(0);
+  });
+
+  it("atualiza a cobranca em aberto com a devolucao e bloqueia depois de pagamento", async () => {
+    const state = invoicePool();
+    const id = (await state.call("POST", "/v1/manage/invoices", { ...saleInput, confirm: true })).json().id as string;
+    const [operation] = [...state.table("operations").values()];
+    state.table("operations").set(String(operation.id), { ...operation, billing_status: "BILLED", client_charge_id: "charge" });
+    state.table("client_charges").set("charge", { id: "charge", status: "ISSUED", due_date: "2099-01-01", subtotal_services_cents: 50_000, final_amount_cents: 51_500, paid_amount_cents: 0, open_amount_cents: 51_500 });
+    state.table("client_charge_operations").set("link", { id: "link", client_charge_id: "charge", operation_id: operation.id, quantity_sacks_decimal_snapshot: "100", service_amount_cents_snapshot: 50_000, released_at: null });
+    state.table("client_charge_adjustments").set("dae", { id: "dae", client_charge_id: "charge", effect: "INCREASE_RECEIVABLE", amount_cents: 1_500 });
+    state.table("client_ledger_entries").set("entry", { id: "entry", client_charge_id: "charge", entry_type: "SERVICE_CHARGE", amount_cents: 51_500 });
+    expect((await state.call("POST", `/v1/manage/invoices/${id}/returns`, { returnDate: "2026-11-07", inputUnit: "SACKS", inputQuantity: "10", reason: "Devolucao parcial" })).statusCode).toBe(201);
+    expect(state.table("client_charge_operations").get("link")).toMatchObject({ quantity_sacks_decimal_snapshot: "90", service_amount_cents_snapshot: 45_000 });
+    expect(state.table("client_charges").get("charge")).toMatchObject({ subtotal_services_cents: 45_000, additions_cents: 1_500, final_amount_cents: 46_500, open_amount_cents: 46_500, status: "ISSUED" });
+    expect(state.table("client_ledger_entries").get("entry")).toMatchObject({ amount_cents: 46_500 });
+    state.table("client_charges").set("charge", { ...state.table("client_charges").get("charge"), paid_amount_cents: 10_000, status: "PARTIALLY_PAID" });
+    expect((await state.call("POST", `/v1/manage/invoices/${id}/returns`, { returnDate: "2026-11-08", inputUnit: "SACKS", inputQuantity: "5", reason: "Outra" })).json().error).toBe("CHARGE_PAID");
+  });
+
   it("mostra a nota com acoes permitidas", async () => {
     const state = invoicePool();
     const id = (await state.call("POST", "/v1/manage/invoices", saleInput)).json().id as string;

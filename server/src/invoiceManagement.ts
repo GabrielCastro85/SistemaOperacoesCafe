@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type pg from "pg";
 import { z } from "zod";
-import { multiplyDecimalByCents, normalizeDecimalText } from "../../src/shared/utils/decimal.js";
+import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, normalizeDecimalText } from "../../src/shared/utils/decimal.js";
 import { isPackagingDocument, PACKAGING_OVERRIDE_PREFIX } from "../../src/shared/utils/packagingBilling.js";
 import {
   centralRecord,
@@ -56,6 +56,8 @@ const createSchema = z.object({
   hasFinancialService: z.boolean().default(false),
   contractNumber: z.string().trim().max(200).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
+  freightDaeReference: z.string().trim().max(120).nullable().optional(),
+  freightDaeAmountCents: z.number().int().min(0).default(0),
   items: z.array(itemSchema).min(1).max(50),
   confirm: z.boolean().default(false)
 });
@@ -72,7 +74,16 @@ const updateSchema = z.object({
   contractNumber: z.string().trim().max(200).nullable().optional(),
   billingObservations: z.string().trim().max(500).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
+  freightDaeReference: z.string().trim().max(120).nullable().optional(),
+  freightDaeAmountCents: z.number().int().min(0).optional(),
   resolvePendingIssues: z.boolean().default(false)
+});
+
+const returnSchema = z.object({
+  returnDate: z.string().date(),
+  inputUnit: z.enum(["SACKS", "KG"]),
+  inputQuantity: decimalText.refine((value) => Number(value) > 0, "Quantidade deve ser maior que zero."),
+  reason: z.string().trim().min(2).max(500)
 });
 
 const reasonSchema = z.object({ reason: z.string().trim().min(3).max(2000) });
@@ -185,6 +196,94 @@ function rateHistory(operation: Row, newRuleId: unknown, newRate: number, newAmo
   };
 }
 
+const DECIMAL_SCALE = 1_000_000n;
+function scaledToText(value: bigint): string {
+  const whole = value / DECIMAL_SCALE;
+  const fraction = (value % DECIMAL_SCALE).toString().padStart(6, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+const activeSales = (operations: Row[]): Row[] => operations
+  .filter((row) => text(row.operation_type) === "SALE" && text(row.status) !== "CANCELED")
+  .sort((left, right) => text(left.created_at).localeCompare(text(right.created_at)) || text(left.id).localeCompare(text(right.id)));
+
+const grossSacks = (operation: Row): string => text(operation.gross_quantity_sacks_decimal) || text(operation.quantity_sacks_decimal) || "0";
+
+// Como assertReturnCanChangeBilling: depois que a cobranca recebeu pagamento,
+// a devolucao nao pode mais mudar o valor dela.
+async function assertReturnCanChangeBilling(pool: pg.Pool, operations: Row[]): Promise<void> {
+  for (const operation of operations) {
+    if (!operation.client_charge_id) continue;
+    const charge = await centralRecord(pool, "client_charges", text(operation.client_charge_id));
+    if (charge && (numberValue(charge.paid_amount_cents) > 0 || text(charge.status) === "PAID")) {
+      throw new HttpError(409, "CHARGE_PAID", "Nao e possivel alterar devolucoes depois que a cobranca recebeu pagamento.");
+    }
+  }
+}
+
+// Espelha recalculateDocumentReturnQuantities e recalculateClientCharge: abate
+// as sacas devolvidas das vendas na ordem de criacao e, se a operacao ja esta
+// numa cobranca, atualiza o retrato da operacao, os totais e o lancamento de
+// servico na conta-corrente.
+async function returnRecalculationChanges(pool: pg.Pool, operations: Row[], returns: Row[], now: string): Promise<DomainChange[]> {
+  const changes: DomainChange[] = [];
+  let remaining = returns.reduce((sum, row) => sum + decimalTextToScaled(text(row.quantity_sacks_decimal) || "0"), 0n);
+  const linkUpdates = new Map<string, Row>();
+  const changedCharges = new Set<string>();
+  for (const operation of activeSales(operations)) {
+    const gross = decimalTextToScaled(grossSacks(operation));
+    const deducted = remaining > gross ? gross : remaining;
+    remaining -= deducted;
+    const net = scaledToText(gross - deducted);
+    const amount = multiplyDecimalByCents(net, numberValue(operation.applied_rate_value_cents));
+    changes.push({ table: "operations", key: text(operation.id), operation: "UPSERT", data: { ...operation, quantity_sacks_decimal: net, service_amount_cents: amount, updated_at: now } });
+    if (!operation.client_charge_id) continue;
+    const chargeId = text(operation.client_charge_id);
+    for (const link of await recordsWhere(pool, "client_charge_operations", "operation_id", [text(operation.id)])) {
+      if (text(link.client_charge_id) !== chargeId || link.released_at) continue;
+      linkUpdates.set(text(link.id), { ...link, quantity_sacks_decimal_snapshot: net, service_amount_cents_snapshot: amount });
+    }
+    changedCharges.add(chargeId);
+  }
+  for (const [key, data] of linkUpdates) changes.push({ table: "client_charge_operations", key, operation: "UPSERT", data });
+  for (const chargeId of changedCharges) {
+    const charge = await centralRecord(pool, "client_charges", chargeId);
+    if (!charge) continue;
+    const [links, adjustments, allocations, ledger] = await Promise.all([
+      recordsWhere(pool, "client_charge_operations", "client_charge_id", [chargeId]),
+      recordsWhere(pool, "client_charge_adjustments", "client_charge_id", [chargeId]),
+      recordsWhere(pool, "client_payment_allocations", "client_charge_id", [chargeId]),
+      recordsWhere(pool, "client_ledger_entries", "client_charge_id", [chargeId])
+    ]);
+    const subtotal = links.filter((row) => !row.released_at)
+      .reduce((sum, row) => sum + numberValue((linkUpdates.get(text(row.id)) ?? row).service_amount_cents_snapshot), 0);
+    const additions = adjustments.filter((row) => text(row.effect) === "INCREASE_RECEIVABLE").reduce((sum, row) => sum + numberValue(row.amount_cents), 0);
+    const deductions = adjustments.filter((row) => text(row.effect) === "REDUCE_RECEIVABLE").reduce((sum, row) => sum + numberValue(row.amount_cents), 0);
+    const finalAmount = Math.max(0, subtotal + additions - deductions);
+    const paid = allocations.filter((row) => !row.cancelled_at).reduce((sum, row) => sum + numberValue(row.amount_cents), 0);
+    const open = Math.max(0, finalAmount - paid);
+    let status = text(charge.status);
+    if (!["DRAFT", "PENDING_REVIEW", "CANCELLED", "REPLACED"].includes(status)) {
+      status = open === 0 ? "PAID" : paid > 0 ? "PARTIALLY_PAID" : "ISSUED";
+      if (status === "ISSUED" && charge.due_date && text(charge.due_date) < now.slice(0, 10)) status = "OVERDUE";
+    }
+    changes.push({
+      table: "client_charges", key: chargeId, operation: "UPSERT", data: {
+        ...charge, subtotal_services_cents: subtotal, additions_cents: additions, deductions_cents: deductions,
+        final_amount_cents: finalAmount, paid_amount_cents: paid, open_amount_cents: open, status, updated_at: now
+      }
+    });
+    for (const entry of ledger.filter((row) => text(row.entry_type) === "SERVICE_CHARGE")) {
+      changes.push({ table: "client_ledger_entries", key: text(entry.id), operation: "UPSERT", data: { ...entry, amount_cents: finalAmount, updated_at: now } });
+    }
+  }
+  return changes;
+}
+
+function daeFields(amountCents: number, reference: string | null | undefined): { freight_dae_amount_cents: number; freight_dae_reference: string | null } {
+  return { freight_dae_amount_cents: amountCents, freight_dae_reference: amountCents > 0 ? blank(reference) : null };
+}
+
 export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.Pool): void {
   app.get("/v1/manage/invoices/:id", async (request, reply) => {
     const session = await requireWebSession(pool, request, reply); if (!session) return;
@@ -194,6 +293,7 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
       if (!(await authorize(pool, session, reply, document))) return;
       const productIds = [...new Set([...items, ...operations].map((row) => text(row.product_id)).filter(Boolean))];
       const partnerIds = [...new Set([document.responsible_partner_id, document.secondary_responsible_partner_id, ...operations.map((row) => row.responsible_partner_id)].map(text).filter(Boolean))];
+      const returns = await recordsWhere(pool, "fiscal_document_returns", "fiscal_document_id", [id]);
       const [products, partners, ownEntity, partnerEntity] = await Promise.all([
         recordsWhere(pool, "products", "id", productIds), recordsWhere(pool, "business_partners", "id", partnerIds),
         centralRecord(pool, "legal_entities", text(document.own_legal_entity_id)),
@@ -215,8 +315,13 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
           source: text(document.source), hasPendingIssues: Boolean(document.has_pending_issues), pendingNotes: document.pending_notes ?? null,
           duplicateWarning: document.duplicate_warning ?? null, notes: document.notes ?? null, contractNumber: document.contract_number ?? null,
           billingObservations: document.billing_observations ?? null, hasFinancialService: Boolean(document.has_financial_service),
-          cancelReason: document.cancel_reason ?? null, confirmedAt: document.confirmed_at ?? null, canceledAt: document.canceled_at ?? null
+          cancelReason: document.cancel_reason ?? null, confirmedAt: document.confirmed_at ?? null, canceledAt: document.canceled_at ?? null,
+          freightDaeReference: document.freight_dae_reference ?? null, freightDaeAmountCents: numberValue(document.freight_dae_amount_cents)
         },
+        returns: returns.sort((left, right) => text(left.return_date).localeCompare(text(right.return_date))).map((row) => ({
+          id: text(row.id), returnDate: text(row.return_date), inputUnit: text(row.input_unit), inputQuantity: text(row.input_quantity_decimal),
+          quantitySacks: text(row.quantity_sacks_decimal), reason: text(row.reason)
+        })),
         items: items.map((row) => ({
           id: text(row.id), productId: row.product_id ?? null, productName: productName.get(text(row.product_id)) ?? null,
           description: text(row.description), quantity: text(row.quantity_decimal), unit: text(row.unit),
@@ -225,7 +330,7 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
         operations: operations.map((row) => ({
           id: text(row.id), operationType: text(row.operation_type), operationScope: text(row.operation_scope), status: text(row.status),
           productName: productName.get(text(row.product_id)) ?? null, responsiblePartnerName: partnerName.get(text(row.responsible_partner_id)) ?? null,
-          quantitySacks: text(row.quantity_sacks_decimal), rateCents: numberValue(row.applied_rate_value_cents),
+          quantitySacks: text(row.quantity_sacks_decimal), grossQuantitySacks: grossSacks(row), rateCents: numberValue(row.applied_rate_value_cents),
           amountCents: numberValue(row.service_amount_cents), manualRate: Boolean(row.rate_was_manually_overridden),
           manualReason: row.manual_override_reason ?? null, billingStatus: text(row.billing_status),
           settlementStatus: text(row.purchase_settlement_status || "UNSETTLED")
@@ -235,6 +340,7 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
           canConfirm: status !== "CANCELED" && status !== "CONFIRMED",
           canCancel: status !== "CANCELED" && !linked,
           canDelete: !linked && !deal,
+          canReturn: status !== "CANCELED" && activeSales(operations).length > 0,
           lockedReason: linked ? "Nota vinculada a cobranca ou acerto de entrada." : deal ? "Nota vinculada a confirmacao de negocio ativa." : null
         }
       };
@@ -325,7 +431,7 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
           import_job_id: null, import_row_id: null, xml_file_path: null, xml_file_hash: null, protocol_number: null, protocol_date: null,
           authorization_status_code: null, authorization_status_message: null, xml_import_job_id: null, merged_from_source: null, merged_at: null,
           direction: input.operationType === "PURCHASE" ? "INBOUND" : "OUTBOUND", fiscal_snapshot_json: null,
-          contract_number: blank(input.contractNumber), billing_observations: null, freight_dae_reference: null, freight_dae_amount_cents: 0,
+          contract_number: blank(input.contractNumber), billing_observations: null, ...daeFields(input.freightDaeAmountCents, input.freightDaeReference),
           has_financial_service: input.operationType === "SALE" && input.hasFinancialService ? 1 : 0, created_at: now, updated_at: now
         }
       });
@@ -409,6 +515,10 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
           total_amount_cents: input.totalAmountCents, contract_number: input.contractNumber === undefined ? document.contract_number ?? null : blank(input.contractNumber),
           billing_observations: input.billingObservations === undefined ? document.billing_observations ?? null : blank(input.billingObservations),
           notes: input.notes === undefined ? document.notes ?? null : blank(input.notes), has_financial_service: hasFinancialService ? 1 : 0,
+          ...daeFields(
+            input.freightDaeAmountCents ?? numberValue(document.freight_dae_amount_cents),
+            input.freightDaeReference === undefined ? text(document.freight_dae_reference) || null : input.freightDaeReference
+          ),
           has_pending_issues: resolvePending ? 0 : document.has_pending_issues ?? 0, pending_notes: resolvePending ? null : document.pending_notes ?? null,
           status: reopen ? "DRAFT" : resolvePending && text(document.status) === "PENDING" ? "DRAFT" : document.status,
           confirmed_at: reopen ? null : document.confirmed_at ?? null, updated_at: now
@@ -519,6 +629,67 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
       const revision = await commitDomainChanges(pool, session, "WEB_INVOICE_DELETED", "fiscal_document", id, changes, {
         organizationId: text(document.organization_id), legalEntityId: text(document.own_legal_entity_id),
         documentNumber: text(document.document_number), accessKey: document.access_key ?? null
+      });
+      return { id, revision, deleted: true };
+    });
+  });
+
+  app.post("/v1/manage/invoices/:id/returns", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const input = returnSchema.parse(request.body);
+    return send(reply, async () => {
+      const { document, operations } = await loadDocument(pool, id);
+      if (!(await authorize(pool, session, reply, document))) return;
+      if (text(document.status) === "CANCELED") throw new HttpError(409, "DOCUMENT_CANCELED", "Nota cancelada nao aceita devolucao.");
+      if (isPackagingDocument({ documentNotes: text(document.notes) || null, overrideReasons: operations.map((row) => text(row.manual_override_reason) || null) })) {
+        throw new HttpError(409, "PACKAGING_DOCUMENT", "Remessa de sacaria nao tem sacas de cafe para devolver.");
+      }
+      const sales = activeSales(operations);
+      if (!sales.length) throw new HttpError(409, "NO_SALE", "Esta nota nao possui operacao de venda para ajustar na cobranca.");
+      await assertReturnCanChangeBilling(pool, sales);
+      const quantitySacks = input.inputUnit === "KG" ? divideDecimalText(input.inputQuantity, "60") : input.inputQuantity;
+      const existing = await recordsWhere(pool, "fiscal_document_returns", "fiscal_document_id", [id]);
+      const gross = sales.reduce((sum, row) => sum + decimalTextToScaled(grossSacks(row)), 0n);
+      const returned = existing.reduce((sum, row) => sum + decimalTextToScaled(text(row.quantity_sacks_decimal) || "0"), 0n);
+      if (returned + decimalTextToScaled(quantitySacks) > gross) {
+        throw new HttpError(409, "RETURN_EXCEEDS", "A devolucao informada ultrapassa a quantidade original da nota.");
+      }
+      const now = new Date().toISOString();
+      const returnId = randomUUID();
+      const returnRow: Row = {
+        id: returnId, fiscal_document_id: id, return_date: input.returnDate, input_unit: input.inputUnit,
+        input_quantity_decimal: input.inputQuantity, quantity_sacks_decimal: quantitySacks, reason: input.reason, created_at: now, updated_at: now
+      };
+      const changes: DomainChange[] = [
+        { table: "fiscal_document_returns", key: returnId, operation: "UPSERT", data: returnRow },
+        ...await returnRecalculationChanges(pool, operations, [...existing, returnRow], now)
+      ];
+      const revision = await commitDomainChanges(pool, session, "WEB_INVOICE_RETURN_ADDED", "fiscal_document", id, changes, {
+        organizationId: text(document.organization_id), legalEntityId: text(document.own_legal_entity_id), quantitySacks
+      });
+      return reply.code(201).send({ id: returnId, revision, quantitySacks });
+    });
+  });
+
+  app.delete("/v1/manage/invoice-returns/:id", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    return send(reply, async () => {
+      const row = await centralRecord(pool, "fiscal_document_returns", id);
+      if (!row) throw new HttpError(404, "NOT_FOUND", "Devolucao nao encontrada.");
+      const documentId = text(row.fiscal_document_id);
+      const { document, operations } = await loadDocument(pool, documentId);
+      if (!(await authorize(pool, session, reply, document))) return;
+      await assertReturnCanChangeBilling(pool, activeSales(operations));
+      const now = new Date().toISOString();
+      const remaining = (await recordsWhere(pool, "fiscal_document_returns", "fiscal_document_id", [documentId])).filter((item) => item.id !== id);
+      const changes: DomainChange[] = [
+        { table: "fiscal_document_returns", key: id, operation: "DELETE" },
+        ...await returnRecalculationChanges(pool, operations, remaining, now)
+      ];
+      const revision = await commitDomainChanges(pool, session, "WEB_INVOICE_RETURN_DELETED", "fiscal_document", documentId, changes, {
+        organizationId: text(document.organization_id), legalEntityId: text(document.own_legal_entity_id)
       });
       return { id, revision, deleted: true };
     });

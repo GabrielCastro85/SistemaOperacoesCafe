@@ -1351,3 +1351,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.viewer-invoice-editor__inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px;
+  gap: 8px;
+}

@@ -33,7 +33,7 @@ Nenhum recado pendente.
 - **Agente:** Claude, 2026-11-06.
 - **Pedidos abertos do Gabriel:**
   1. Importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS (como foi feito com a Villa). Aguardando o coletor da Grão chegar à 1.1.71 (estava na 1.1.38 às 10:52, com "Atualizar coletor" pendente). Depois: Gabriel clica "Enviar notas do periodo" (01/01 a 31/07/2026), busca Grão MG e SP no período sem importar pela tela, fecha o programa, e o agente roda `tmp/importar-thadeu.mts` adaptado para a pasta `documents/invoices/xml-imports/collector-inbox` (só vendas 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco antes e fazer backup).
-  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Próximo: devoluções, DAE de frete, operações de terceiros, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
+  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Bloco 1b (devoluções e DAE de frete) publicado em 2026-11-06. Próximo: operações de terceiros, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
 
 ## Situação atual
 
@@ -101,6 +101,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 - Claude
+- Pedido: "Pode continuar com as devoluções e o DAE".
+- Feito: em `server/src/invoiceManagement.ts`, POST `/v1/manage/invoices/:id/returns` e DELETE `/v1/manage/invoice-returns/:id`, espelhando `addFiscalDocumentReturn`/`recalculateDocumentReturnQuantities`/`recalculateClientCharge`: kg ÷ 60, abate na ordem das vendas, limite das sacas brutas, bloqueio depois de pagamento na cobrança, sacaria bloqueada; se a operação está numa cobrança em aberto, atualiza o retrato em `client_charge_operations`, os totais de `client_charges` e o lançamento `SERVICE_CHARGE` da conta-corrente. DAE de frete (valor e referência) no lançamento e na edição; a referência é descartada quando o valor é zero, como no app. Tela: seção Devoluções no painel da nota, sacas brutas x líquidas na operação, campos de DAE nos formulários.
+- Testado: 3 testes novos (DAE, devolução e exclusão, cobrança em aberto com DAE e bloqueio após pagamento), suíte completa (343), typecheck, ESLint e build do site. Tela conferida com o servidor de teste local: devolução de 600 kg virou 10 sacas e baixou o serviço de R$ 2.200 para R$ 2.150, remoção restaurou, DAE aparece no resumo e no formulário.
+- Publicado: ver entrada de publicação logo acima, quando houver.
+- Pendente: operações de terceiros, XMLs especiais e planilha; o Gabriel testar logado em produção.
 
 ### 2026-11-06 - Claude
 - Pedido: "Pode começar a migração das notas no site".

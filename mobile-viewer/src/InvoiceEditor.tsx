@@ -28,13 +28,16 @@ interface InvoiceDetail {
     documentNumber: string; series: string | null; issueDate: string; accessKey: string | null; totalAmountCents: number; status: string;
     source: string; hasPendingIssues: boolean; pendingNotes: string | null; duplicateWarning: string | null; notes: string | null;
     contractNumber: string | null; billingObservations: string | null; hasFinancialService: boolean; cancelReason: string | null;
+    freightDaeReference: string | null; freightDaeAmountCents: number;
   };
+  returns: Array<{ id: string; returnDate: string; inputUnit: string; inputQuantity: string; quantitySacks: string; reason: string }>;
   items: Array<{ id: string; productName: string | null; description: string; quantity: string; unit: string; totalAmountCents: number; sacks: string | null }>;
   operations: Array<{
     id: string; operationType: string; operationScope: string; status: string; productName: string | null; responsiblePartnerName: string | null;
-    quantitySacks: string; rateCents: number; amountCents: number; manualRate: boolean; manualReason: string | null; billingStatus: string; settlementStatus: string;
+    quantitySacks: string; grossQuantitySacks: string; rateCents: number; amountCents: number; manualRate: boolean; manualReason: string | null;
+    billingStatus: string; settlementStatus: string;
   }>;
-  permissions: { canEdit: boolean; canConfirm: boolean; canCancel: boolean; canDelete: boolean; lockedReason: string | null };
+  permissions: { canEdit: boolean; canConfirm: boolean; canCancel: boolean; canDelete: boolean; canReturn: boolean; lockedReason: string | null };
 }
 
 const UNIT_LABELS: Record<string, string> = { SACK: "sacas", KG: "kg", TON: "t", UNIT: "unid." };
@@ -102,6 +105,8 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
   const [contractNumber, setContractNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [hasFinancialService, setHasFinancialService] = useState(false);
+  const [daeAmount, setDaeAmount] = useState("");
+  const [daeReference, setDaeReference] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [items, setItems] = useState<ItemDraft[]>([emptyItem()]);
   const [busy, setBusy] = useState(false);
@@ -111,7 +116,8 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
     if (!open) return;
     setOwnLegalEntityId(legalEntityId ?? ""); setOperationType("SALE"); setResponsiblePartnerId(""); setPartnerLegalEntityId("");
     setOperationScope("INTERNAL"); setDocumentNumber(""); setSeries(""); setIssueDate(new Date().toISOString().slice(0, 10)); setAccessKey("");
-    setTotal(""); setContractNumber(""); setNotes(""); setHasFinancialService(false); setConfirm(false); setItems([emptyItem()]); setError(null);
+    setTotal(""); setContractNumber(""); setNotes(""); setHasFinancialService(false); setDaeAmount(""); setDaeReference("");
+    setConfirm(false); setItems([emptyItem()]); setError(null);
   }, [open, legalEntityId]);
 
   const responsibleOptions = partnersForRole(options.partners, operationType === "SALE" ? "CLIENT" : "SUPPLIER");
@@ -121,8 +127,9 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
 
   const updateItem = (index: number, patch: Partial<ItemDraft>): void => setItems((current) => current.map((item, position) => position === index ? { ...item, ...patch } : item));
   const totalCents = moneyToCents(total);
+  const daeCents = operationType === "SALE" ? moneyToCents(daeAmount || "0") : 0;
   const itemsValid = items.every((item) => item.productId && Number(item.quantity.replace(",", ".")) > 0 && (item.unit !== "UNIT" || item.sacks) && !Number.isNaN(moneyToCents(item.amount || "0")));
-  const canSave = Boolean(ownLegalEntityId && responsiblePartnerId && documentNumber.trim() && issueDate && !Number.isNaN(totalCents) && itemsValid)
+  const canSave = Boolean(ownLegalEntityId && responsiblePartnerId && documentNumber.trim() && issueDate && !Number.isNaN(totalCents) && !Number.isNaN(daeCents) && itemsValid)
     && (!accessKey || /^\d{44}$/.test(accessKey.replace(/\D/g, "")));
 
   const save = async (): Promise<void> => {
@@ -132,7 +139,7 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
         organizationId, ownLegalEntityId, operationType, operationScope, responsiblePartnerId, partnerLegalEntityId: partnerLegalEntityId || null,
         documentNumber: documentNumber.trim(), series: series.trim() || null, issueDate, accessKey: accessKey.replace(/\D/g, "") || null,
         totalAmountCents: totalCents, hasFinancialService: operationType === "SALE" && hasFinancialService, contractNumber: contractNumber.trim() || null,
-        notes: notes.trim() || null, confirm,
+        notes: notes.trim() || null, confirm, freightDaeAmountCents: daeCents, freightDaeReference: daeReference.trim() || null,
         items: items.map((item) => ({
           productId: item.productId, quantity: item.quantity.replace(",", "."), unit: item.unit,
           totalAmountCents: moneyToCents(item.amount || "0"), sacks: item.sacks ? item.sacks.replace(",", ".") : null
@@ -183,6 +190,12 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
             </select>
           </label>
           <label>Contrato<input className="ui-input" value={contractNumber} onChange={(event) => setContractNumber(event.target.value)} /></label>
+          {operationType === "SALE" ? (
+            <>
+              <label>DAE de frete (R$)<input className="ui-input" inputMode="decimal" placeholder="0,00" value={daeAmount} onChange={(event) => setDaeAmount(event.target.value)} /></label>
+              <label>Referência do DAE<input className="ui-input" value={daeReference} onChange={(event) => setDaeReference(event.target.value)} /></label>
+            </>
+          ) : null}
           <label className="viewer-invoice-editor__wide">Chave de acesso (opcional)<input className="ui-input" inputMode="numeric" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} /></label>
           <label className="viewer-invoice-editor__wide">Observações<textarea className="ui-input" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
         </div>
@@ -229,10 +242,11 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [rateEditing, setRateEditing] = useState<{ id: string; value: string; reason: string } | null>(null);
+  const [returnForm, setReturnForm] = useState<{ returnDate: string; inputUnit: "SACKS" | "KG"; quantity: string; reason: string } | null>(null);
   const options = useCommercialOptions(organizationId, legalEntityId, editing);
   const [form, setForm] = useState({
     responsiblePartnerId: "", documentNumber: "", series: "", issueDate: "", accessKey: "", total: "",
-    contractNumber: "", notes: "", hasFinancialService: false, resolvePendingIssues: false
+    contractNumber: "", notes: "", hasFinancialService: false, resolvePendingIssues: false, daeAmount: "", daeReference: ""
   });
 
   const load = async (id: string): Promise<void> => {
@@ -242,7 +256,7 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
   };
 
   useEffect(() => {
-    setDetail(null); setEditing(false); setPendingAction(null); setRateEditing(null); setCancelReason("");
+    setDetail(null); setEditing(false); setPendingAction(null); setRateEditing(null); setReturnForm(null); setCancelReason("");
     if (invoiceId) void load(invoiceId);
   }, [invoiceId]);
 
@@ -252,7 +266,8 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
     setForm({
       responsiblePartnerId: document.responsiblePartnerId, documentNumber: document.documentNumber, series: document.series ?? "",
       issueDate: document.issueDate, accessKey: document.accessKey ?? "", total: centsToInput(document.totalAmountCents),
-      contractNumber: document.contractNumber ?? "", notes: document.notes ?? "", hasFinancialService: document.hasFinancialService, resolvePendingIssues: false
+      contractNumber: document.contractNumber ?? "", notes: document.notes ?? "", hasFinancialService: document.hasFinancialService, resolvePendingIssues: false,
+      daeAmount: document.freightDaeAmountCents > 0 ? centsToInput(document.freightDaeAmountCents) : "", daeReference: document.freightDaeReference ?? ""
     });
     setEditing(true); setError(null);
   };
@@ -279,6 +294,8 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
   const isSale = document?.direction !== "INBOUND";
   const responsibleOptions = partnersForRole(options.partners, isSale ? "CLIENT" : "SUPPLIER");
   const formTotal = moneyToCents(form.total);
+  const formDae = isSale ? moneyToCents(form.daeAmount || "0") : 0;
+  const returnedSacks = detail?.returns.reduce((sum, item) => sum + Number(item.quantitySacks), 0) ?? 0;
 
   return (
     <Drawer open title={label} onClose={onClose}>
@@ -306,6 +323,11 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
                 <div><dt>Emissão</dt><dd>{formatDateBr(document.issueDate)}</dd></div>
                 <div><dt>Valor da nota</dt><dd>{formatCurrencyBr(document.totalAmountCents)}</dd></div>
                 <div><dt>Contrato</dt><dd>{document.contractNumber ?? "—"}</dd></div>
+                {isSale ? (
+                  <div><dt>DAE de frete</dt><dd>{document.freightDaeAmountCents > 0
+                    ? `${formatCurrencyBr(document.freightDaeAmountCents)}${document.freightDaeReference ? ` · ${document.freightDaeReference}` : ""}`
+                    : "—"}</dd></div>
+                ) : null}
                 <div className="viewer-invoice-editor__wide"><dt>Chave de acesso</dt><dd>{document.accessKey ?? "—"}</dd></div>
                 {document.notes ? <div className="viewer-invoice-editor__wide"><dt>Observações</dt><dd>{document.notes}</dd></div> : null}
               </dl>
@@ -323,6 +345,12 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
                 <label>Emissão<input className="ui-input" type="date" value={form.issueDate} onChange={(event) => setForm({ ...form, issueDate: event.target.value })} /></label>
                 <label>Valor da nota (R$)<input className="ui-input" inputMode="decimal" value={form.total} onChange={(event) => setForm({ ...form, total: event.target.value })} /></label>
                 <label>Contrato<input className="ui-input" value={form.contractNumber} onChange={(event) => setForm({ ...form, contractNumber: event.target.value })} /></label>
+                {isSale ? (
+                  <>
+                    <label>DAE de frete (R$)<input className="ui-input" inputMode="decimal" placeholder="0,00" value={form.daeAmount} onChange={(event) => setForm({ ...form, daeAmount: event.target.value })} /></label>
+                    <label>Referência do DAE<input className="ui-input" value={form.daeReference} onChange={(event) => setForm({ ...form, daeReference: event.target.value })} /></label>
+                  </>
+                ) : null}
                 <label className="viewer-invoice-editor__wide">Chave de acesso<input className="ui-input" inputMode="numeric" value={form.accessKey} onChange={(event) => setForm({ ...form, accessKey: event.target.value })} /></label>
                 <label className="viewer-invoice-editor__wide">Observações<textarea className="ui-input" rows={2} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
                 <div className="viewer-xml-importer__options viewer-invoice-editor__wide">
@@ -332,12 +360,13 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
                 <small className="viewer-invoice-editor__wide">Trocar o cliente recalcula a tarifa das operações. Faça a troca separadamente da data. Mudar o financeiro volta a nota para rascunho.</small>
                 <footer className="viewer-invoice-editor__footer viewer-invoice-editor__wide">
                   <Button onClick={() => setEditing(false)}>Descartar</Button>
-                  <Button variant="primary" loading={busy} disabled={!form.documentNumber.trim() || !form.issueDate || Number.isNaN(formTotal)} onClick={() => void run(async () => {
+                  <Button variant="primary" loading={busy} disabled={!form.documentNumber.trim() || !form.issueDate || Number.isNaN(formTotal) || Number.isNaN(formDae)} onClick={() => void run(async () => {
                     const result = await apiJson<{ reopened: boolean }>(`/v1/manage/invoices/${encodeURIComponent(invoiceId)}`, jsonInit("PUT", {
                       responsiblePartnerId: form.responsiblePartnerId, documentNumber: form.documentNumber.trim(), series: form.series.trim() || null,
                       issueDate: form.issueDate, accessKey: form.accessKey.replace(/\D/g, "") || null, totalAmountCents: formTotal,
                       hasFinancialService: isSale && form.hasFinancialService, contractNumber: form.contractNumber.trim() || null,
-                      notes: form.notes.trim() || null, resolvePendingIssues: form.resolvePendingIssues
+                      notes: form.notes.trim() || null, resolvePendingIssues: form.resolvePendingIssues,
+                      freightDaeAmountCents: formDae, freightDaeReference: form.daeReference.trim() || null
                     }));
                     setEditing(false);
                     return reload(result.reopened ? `${label} alterada e devolvida para rascunho. Confirme novamente.` : `${label} alterada.`);
@@ -362,7 +391,10 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
               {detail.operations.map((operation) => (
                 <div className="viewer-invoice-editor__line" key={operation.id}>
                   <span><strong>{operation.responsiblePartnerName ?? "—"}</strong><small>{operation.productName ?? "Produto"} · {operation.operationScope === "EXTERNAL" ? "Outra UF" : "Mesma UF"} · {BILLING_LABELS[operation.billingStatus] ?? operation.billingStatus}</small></span>
-                  <span>{formatSacks(operation.quantitySacks)} sacas × {formatCurrencyBr(operation.rateCents)}<small>{operation.manualRate ? `Manual: ${operation.manualReason ?? ""}` : "Pela regra"}</small></span>
+                  <span>{formatSacks(operation.quantitySacks)} sacas × {formatCurrencyBr(operation.rateCents)}<small>
+                    {Number(operation.grossQuantitySacks) !== Number(operation.quantitySacks) ? `${formatSacks(operation.grossQuantitySacks)} na nota, menos devoluções · ` : ""}
+                    {operation.manualRate ? `Manual: ${operation.manualReason ?? ""}` : "Pela regra"}
+                  </small></span>
                   <span>{formatCurrencyBr(operation.amountCents)}
                     {detail.permissions.canEdit && operation.status !== "CANCELED" ? (
                       <Button variant="ghost" onClick={() => setRateEditing({ id: operation.id, value: centsToInput(operation.rateCents), reason: "" })}>Alterar tarifa</Button>
@@ -385,6 +417,50 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
                 </div>
               ))}
             </div>
+
+            {detail.returns.length > 0 || detail.permissions.canReturn ? (
+              <div className="viewer-invoice-editor__section">
+                <strong>Devoluções{returnedSacks > 0 ? ` · ${formatSacks(String(returnedSacks))} sacas devolvidas` : ""}</strong>
+                {detail.returns.map((item) => (
+                  <div className="viewer-invoice-editor__line" key={item.id}>
+                    <span><strong>{formatDateBr(item.returnDate)}</strong><small>{item.reason}</small></span>
+                    <span>{formatSacks(item.quantitySacks)} sacas<small>{item.inputUnit === "KG" ? `${Number(item.inputQuantity).toLocaleString("pt-BR")} kg informados` : "Informado em sacas"}</small></span>
+                    <span><Button variant="ghost" loading={busy} onClick={() => void run(async () => {
+                      await apiJson(`/v1/manage/invoice-returns/${encodeURIComponent(item.id)}`, jsonInit("DELETE"));
+                      return reload(`Devolução removida da ${label}.`);
+                    })}>Remover</Button></span>
+                  </div>
+                ))}
+                {detail.permissions.canReturn && !returnForm ? (
+                  <Button onClick={() => setReturnForm({ returnDate: new Date().toISOString().slice(0, 10), inputUnit: "SACKS", quantity: "", reason: "" })}>Registrar devolução</Button>
+                ) : null}
+                {returnForm ? (
+                  <div className="viewer-invoice-editor__grid">
+                    <label>Data<input className="ui-input" type="date" value={returnForm.returnDate} onChange={(event) => setReturnForm({ ...returnForm, returnDate: event.target.value })} /></label>
+                    <label>Quantidade
+                      <span className="viewer-invoice-editor__inline">
+                        <input className="ui-input" inputMode="decimal" value={returnForm.quantity} onChange={(event) => setReturnForm({ ...returnForm, quantity: event.target.value })} />
+                        <select className="ui-select" value={returnForm.inputUnit} onChange={(event) => setReturnForm({ ...returnForm, inputUnit: event.target.value as "SACKS" | "KG" })}>
+                          <option value="SACKS">sacas</option><option value="KG">kg</option>
+                        </select>
+                      </span>
+                    </label>
+                    <label className="viewer-invoice-editor__wide">Motivo<input className="ui-input" value={returnForm.reason} onChange={(event) => setReturnForm({ ...returnForm, reason: event.target.value })} /></label>
+                    <small className="viewer-invoice-editor__wide">A devolução abate sacas e valor das operações de venda. Se a nota já está numa cobrança sem pagamento, a cobrança é recalculada.</small>
+                    <footer className="viewer-invoice-editor__footer viewer-invoice-editor__wide">
+                      <Button onClick={() => setReturnForm(null)}>Cancelar</Button>
+                      <Button variant="primary" loading={busy} disabled={!(Number(returnForm.quantity.replace(",", ".")) > 0) || returnForm.reason.trim().length < 2 || !returnForm.returnDate} onClick={() => void run(async () => {
+                        const result = await apiJson<{ quantitySacks: string }>(`/v1/manage/invoices/${encodeURIComponent(invoiceId)}/returns`, jsonInit("POST", {
+                          returnDate: returnForm.returnDate, inputUnit: returnForm.inputUnit, inputQuantity: returnForm.quantity.replace(",", "."), reason: returnForm.reason.trim()
+                        }));
+                        setReturnForm(null);
+                        return reload(`Devolução de ${formatSacks(result.quantitySacks)} sacas registrada na ${label}.`);
+                      })}>Registrar</Button>
+                    </footer>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {!editing ? (
               <footer className="viewer-invoice-editor__footer">
