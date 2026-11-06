@@ -6,6 +6,7 @@ COPY tsconfig.server.json ./
 COPY server ./server
 COPY electron/main/services/chargeDocuments.ts ./electron/main/services/chargeDocuments.ts
 COPY electron/main/services/generatedDocumentBranding.ts ./electron/main/services/generatedDocumentBranding.ts
+COPY electron/main/services/xmlNfeService.ts ./electron/main/services/xmlNfeService.ts
 COPY src/shared ./src/shared
 RUN npm run build:server
 

@@ -37,6 +37,7 @@ Modelo de entrada:
 - Fila do coletor (`/v1/collector/inbox`) aceita `periodStart`/`periodEnd` (filtro pelo AAMM da chave) e até 10.000 itens; o programa pede só o período da busca.
 - A busca resolve no servidor os XMLs da fila já cadastrados, ignorados ou com cancelamento aplicado.
 - Botão "Enviar notas do periodo" no monitor do coletor, usando as datas da busca.
+- Servidor: `server/Dockerfile` passou a copiar `electron/main/services/xmlNfeService.ts`. O commit `8858b50` (importar XML pelo site) importa esse arquivo no servidor, e o build Docker falhava; o Railway ficou em `d25cbf6` até esta correção.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
