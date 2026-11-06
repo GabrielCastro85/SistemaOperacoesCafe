@@ -84,7 +84,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: continuar tudo que fosse necessário para transformar integralmente o aplicativo em site.
 - Feito: a tela web de Cobranças passou a registrar pagamentos parciais ou integrais, validar o saldo aberto, atualizar a situação da cobrança e lançar o recebimento na conta-corrente na mesma revisão central. Os pagamentos ativos aparecem dentro de cada cobrança e podem ser estornados mediante motivo; o estorno preserva o pagamento e a alocação cancelados, cria o lançamento reverso e reabre o saldo da cobrança. Todos os eventos exigem permissão de cobrança e ficam na auditoria central.
 - Testado: builds do servidor e do site, typecheck, ESLint direcionado, `git diff --check`, testes específicos da API/viewer e suíte completa com 58 arquivos e 326 testes aprovados.
-- Publicado: pendente no momento deste registro; publicar o commit desta etapa na branch e na `master`, validar Railway, GitHub Pages, `/health` e `/ready`. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
+- Publicado: commit `52cd95a` enviado à branch e à `master`. Railway implantou o commit, `/health` e `/ready` estão saudáveis e o banco está conectado. GitHub Pages concluiu com sucesso; `graobase.com.br` serve o bundle com registro e estorno de pagamentos. Uma tentativa sem sessão devolve 401, como esperado. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
 - Pendente: migrar criação/emissão/ajustes de cobranças e os demais fluxos operacionais, financeiros e administrativos até o site substituir 100% do desktop.
 
 ### 2026-11-05 22:10 - Codex
