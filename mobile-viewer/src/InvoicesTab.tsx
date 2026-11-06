@@ -71,6 +71,7 @@ interface XmlPreview {
   counterpartyCnpj: string;
   counterpartyName: string;
   warnings: string[];
+  thirdParty?: boolean;
 }
 
 const DIRECTION_LABELS: Record<DirectionFilter, string> = { ALL: "Entradas e saídas", INBOUND: "Entradas", OUTBOUND: "Saídas" };
@@ -257,9 +258,12 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
               <div className="viewer-xml-preview__summary">
                 <span><small>Nota</small><strong>NF {preview.number}{preview.series ? `/${preview.series}` : ""}</strong></span>
                 <span><small>Sentido</small><strong>{preview.direction === "INBOUND" ? "Entrada / compra" : "Saída / venda"}</strong></span>
-                <span><small>Empresa própria</small><strong>{preview.ownLegalEntityName}</strong></span>
+                <span><small>{preview.thirdParty ? "Emissora terceirizada" : "Empresa própria"}</small><strong>{preview.ownLegalEntityName}</strong></span>
                 <span><small>Contraparte</small><strong>{preview.counterpartyName}</strong><small>{preview.counterpartyCnpj}</small></span>
               </div>
+              {preview.thirdParty ? (
+                <Alert tone="info" title="Nota terceirizada">Nenhum CNPJ da nota é empresa própria. Ela será lançada sob a emissora e entra apenas em cobranças, não em fechamento de negócio.</Alert>
+              ) : null}
               <div className="viewer-xml-importer__fields">
                 <label>Responsável comercial
                   <select className="ui-select" value={responsiblePartnerId} onChange={(event) => setResponsiblePartnerId(event.target.value)}>

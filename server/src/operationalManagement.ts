@@ -9,8 +9,10 @@ import {
   commitDomainChanges,
   requirePermission,
   requireWebSession,
+  type DomainChange,
   type WebSession
 } from "./domainMutations.js";
+import { isThirdPartyEntity, resolveThirdPartyEntity, THIRD_PARTY_NOTE } from "./thirdPartyEntities.js";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
@@ -166,7 +168,7 @@ function ownEntityForXml(entities: Record<string, unknown>[], organizationId: st
   const recipient = objectValue(extracted.recipient);
   const issuerCnpj = digits(issuer.cnpjCpf);
   const recipientCnpj = digits(recipient.cnpjCpf);
-  const candidates = entities.filter((row) => row.organization_id === organizationId && row.is_active !== 0 && row.is_active !== false);
+  const candidates = entities.filter((row) => row.organization_id === organizationId && row.is_active !== 0 && row.is_active !== false && !isThirdPartyEntity(row));
   const outbound = candidates.find((row) => digits(row.cnpj) === issuerCnpj);
   if (outbound) return { entity: outbound, direction: "OUTBOUND" as const, counterparty: recipient };
   const inbound = candidates.find((row) => digits(row.cnpj) === recipientCnpj);
@@ -219,7 +221,34 @@ export function resolveRate(
   return { status: "found", rule: best.row, rateCents };
 }
 
-function xmlPreviewPayload(parsed: ReturnType<typeof parseXmlContent>, match: ReturnType<typeof ownEntityForXml>, partnerEntity: Record<string, unknown> | null) {
+type XmlMatch = { entity: Record<string, unknown>; direction: "OUTBOUND" | "INBOUND"; counterparty: Record<string, unknown>; thirdParty?: boolean; entityChange?: DomainChange | null };
+
+// Como resolveOwnLegalEntityForXml no aplicativo: sem CNPJ proprio na nota, ela
+// e' terceirizada (venda sob a empresa TERC-XML do emitente). Quando o emitente
+// e' fornecedor cadastrado, o aplicativo trata como compra/triangulacao; esse
+// caso continua pelo aplicativo por enquanto.
+async function resolveXmlMatch(pool: pg.Pool, entities: Record<string, unknown>[], organizationId: string, extracted: Record<string, unknown>): Promise<XmlMatch> {
+  const own = ownEntityForXml(entities, organizationId, extracted);
+  if (own) return own;
+  const issuer = objectValue(extracted.issuer);
+  const recipient = objectValue(extracted.recipient);
+  const issuerCnpj = digits(issuer.cnpjCpf);
+  const [partnerEntities, roles] = await Promise.all([centralRecords(pool, "partner_legal_entities"), centralRecords(pool, "business_partner_roles")]);
+  const supplierIds = new Set(roles.filter((row) => row.role === "SUPPLIER").map((row) => String(row.business_partner_id)));
+  if (issuerCnpj && partnerEntities.some((row) => digits(row.cnpj) === issuerCnpj && supplierIds.has(String(row.business_partner_id ?? "")))) {
+    throw Object.assign(new Error("O emitente e fornecedor cadastrado e a nota nao passa pelas nossas empresas (nota triangulada). Lance-a pelo aplicativo por enquanto."), { statusCode: 409, code: "TRIANGULATED_XML" });
+  }
+  const resolved = await resolveThirdPartyEntity(pool, organizationId, {
+    cnpj: issuerCnpj, legalName: String(issuer.legalName ?? ""), tradeName: String(issuer.tradeName ?? ""),
+    // Campos de partySnapshot (xmlNfeService): street, number, complement, cep.
+    stateRegistration: String(issuer.stateRegistration ?? ""), addressLine: String(issuer.street ?? ""), addressNumber: String(issuer.number ?? ""),
+    addressComplement: String(issuer.complement ?? ""), district: String(issuer.district ?? ""), city: String(issuer.city ?? ""),
+    state: String(issuer.state ?? ""), postalCode: String(issuer.cep ?? ""), phone: String(issuer.phone ?? ""), email: String(issuer.email ?? "")
+  });
+  return { entity: resolved.entity, direction: "OUTBOUND", counterparty: recipient, thirdParty: true, entityChange: resolved.change };
+}
+
+function xmlPreviewPayload(parsed: ReturnType<typeof parseXmlContent>, match: XmlMatch | null, partnerEntity: Record<string, unknown> | null) {
   const extracted = objectValue(parsed.extractedData);
   return {
     accessKey: parsed.accessKey, xmlType: parsed.xmlType, warnings: parsed.warnings,
@@ -228,7 +257,8 @@ function xmlPreviewPayload(parsed: ReturnType<typeof parseXmlContent>, match: Re
     totals: objectValue(extracted.totals), items: arrayValue(extracted.items),
     ownLegalEntityId: String(match?.entity.id ?? ""), ownLegalEntityName: String(match?.entity.trade_name ?? match?.entity.legal_name ?? ""),
     direction: match?.direction ?? "UNKNOWN", counterpartyPartnerLegalEntityId: partnerEntity ? String(partnerEntity.id) : null,
-    counterpartyCnpj: digits(match?.counterparty.cnpjCpf), counterpartyName: String(match?.counterparty.legalName ?? match?.counterparty.tradeName ?? "")
+    counterpartyCnpj: digits(match?.counterparty.cnpjCpf), counterpartyName: String(match?.counterparty.legalName ?? match?.counterparty.tradeName ?? ""),
+    thirdParty: Boolean(match?.thirdParty)
   };
 }
 
@@ -251,11 +281,14 @@ export function registerOperationalManagementRoutes(app: FastifyInstance, pool: 
     }
     const extracted = objectValue(parsed.extractedData);
     const entities = await centralRecords(pool, "legal_entities");
-    const match = ownEntityForXml(entities, input.organizationId, extracted);
-    if (!match) {
-      return reply.code(409).send({ error: "OWN_ENTITY_NOT_FOUND", message: "O CNPJ emitente ou destinatario do XML nao corresponde a uma empresa propria cadastrada nesta organizacao." });
+    let match: XmlMatch;
+    try { match = await resolveXmlMatch(pool, entities, input.organizationId, extracted); }
+    catch (error) {
+      const failure = error as { statusCode?: number; code?: string; message?: string };
+      if (failure.statusCode) return reply.code(failure.statusCode).send({ error: failure.code, message: failure.message });
+      throw error;
     }
-    if (!(await authorize(pool, session, reply, "imports.manage", input.organizationId, String(match.entity.id)))) return;
+    if (!(await requirePermission(pool, session, reply, "imports.manage", input.organizationId, match.thirdParty ? null : String(match.entity.id)))) return;
     const partnerEntities = await centralRecords(pool, "partner_legal_entities");
     const counterpartyCnpj = digits(match.counterparty.cnpjCpf);
     const partnerEntity = partnerEntities.find((row) => row.organization_id === input.organizationId && digits(row.cnpj) === counterpartyCnpj) ?? null;
@@ -274,10 +307,15 @@ export function registerOperationalManagementRoutes(app: FastifyInstance, pool: 
       centralRecords(pool, "legal_entities"), centralRecords(pool, "partner_legal_entities"), centralRecords(pool, "business_partners"),
       centralRecords(pool, "products"), centralRecords(pool, "fiscal_documents"), centralRecords(pool, "service_rate_rules"), centralRecords(pool, "purchase_rate_rules")
     ]);
-    const match = ownEntityForXml(entities, input.organizationId, extracted);
-    if (!match) return reply.code(409).send({ error: "OWN_ENTITY_NOT_FOUND", message: "Empresa propria nao identificada pelo CNPJ do XML." });
+    let match: XmlMatch;
+    try { match = await resolveXmlMatch(pool, entities, input.organizationId, extracted); }
+    catch (error) {
+      const failure = error as { statusCode?: number; code?: string; message?: string };
+      if (failure.statusCode) return reply.code(failure.statusCode).send({ error: failure.code, message: failure.message });
+      throw error;
+    }
     const ownEntityId = String(match.entity.id);
-    if (!(await authorize(pool, session, reply, "imports.manage", input.organizationId, ownEntityId))) return;
+    if (!(await requirePermission(pool, session, reply, "imports.manage", input.organizationId, match.thirdParty ? null : ownEntityId))) return;
     if (documents.some((row) => row.access_key === parsed.accessKey)) {
       return reply.code(409).send({ error: "DUPLICATE_ACCESS_KEY", message: "Esta NF-e ja esta cadastrada no sistema." });
     }
@@ -362,7 +400,8 @@ export function registerOperationalManagementRoutes(app: FastifyInstance, pool: 
       issue_date: issueDate, total_amount_cents: cents(objectValue(extracted.totals).invoiceAmountCents),
       status: pending ? "PENDING" : "CONFIRMED", has_pending_issues: pending ? 1 : 0,
       pending_notes: pending ? [...pendingReasons].join("; ") || "Importada como rascunho" : null,
-      duplicate_warning: null, notes: null, confirmed_at: pending ? null : now, canceled_at: null, cancel_reason: null,
+      duplicate_warning: null, notes: match.thirdParty ? [String(extracted.nature ?? ""), THIRD_PARTY_NOTE].filter(Boolean).join(" | ") : null,
+      confirmed_at: pending ? null : now, canceled_at: null, cancel_reason: null,
       source: "XML", import_job_id: null, import_row_id: null, xml_file_path: null,
       xml_file_hash: createHash("sha256").update(input.xml).digest("hex"), protocol_number: objectValue(extracted.protocol).number ?? null,
       protocol_date: objectValue(extracted.protocol).receivedAt ?? null, authorization_status_code: objectValue(extracted.protocol).statusCode ?? null,
@@ -373,6 +412,7 @@ export function registerOperationalManagementRoutes(app: FastifyInstance, pool: 
       created_at: now, updated_at: now
     };
     changes.unshift({ table: "fiscal_documents", key: documentId, operation: "UPSERT", data: documentRow });
+    if (match.entityChange) changes.unshift(match.entityChange as (typeof changes)[number]);
     const revision = await commitDomainChanges(pool, session, "WEB_XML_INVOICE_IMPORTED", "fiscal_document", documentId, changes, {
       organizationId: input.organizationId, legalEntityId: ownEntityId, direction: match.direction,
       accessKey: parsed.accessKey, itemCount: itemRows.length, operationCount: operationRows.length, pending

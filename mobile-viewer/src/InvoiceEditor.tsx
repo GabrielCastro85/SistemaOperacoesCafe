@@ -23,7 +23,7 @@ interface OwnEntity { id: string; organizationId: string; tradeName: string }
 
 interface InvoiceDetail {
   document: {
-    id: string; organizationId: string; ownLegalEntityId: string; ownLegalEntityName: string; direction: string;
+    id: string; organizationId: string; ownLegalEntityId: string; ownLegalEntityName: string; direction: string; thirdParty: boolean;
     responsiblePartnerId: string; responsiblePartnerName: string | null; partnerLegalEntityId: string | null; partnerLegalEntityName: string | null;
     documentNumber: string; series: string | null; issueDate: string; accessKey: string | null; totalAmountCents: number; status: string;
     source: string; hasPendingIssues: boolean; pendingNotes: string | null; duplicateWarning: string | null; notes: string | null;
@@ -93,6 +93,9 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
 }): JSX.Element | null {
   const options = useCommercialOptions(organizationId, legalEntityId, open);
   const [ownLegalEntityId, setOwnLegalEntityId] = useState(legalEntityId ?? "");
+  const [issuerMode, setIssuerMode] = useState<"OWN" | "THIRD_PARTY">("OWN");
+  const [issuerPartnerLegalEntityId, setIssuerPartnerLegalEntityId] = useState("");
+  const [issuers, setIssuers] = useState<Array<{ id: string; legalName: string; cnpj: string }>>([]);
   const [operationType, setOperationType] = useState<"SALE" | "PURCHASE">("SALE");
   const [responsiblePartnerId, setResponsiblePartnerId] = useState("");
   const [partnerLegalEntityId, setPartnerLegalEntityId] = useState("");
@@ -114,11 +117,17 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
 
   useEffect(() => {
     if (!open) return;
-    setOwnLegalEntityId(legalEntityId ?? ""); setOperationType("SALE"); setResponsiblePartnerId(""); setPartnerLegalEntityId("");
+    setOwnLegalEntityId(legalEntityId ?? ""); setIssuerMode("OWN"); setIssuerPartnerLegalEntityId(""); setOperationType("SALE"); setResponsiblePartnerId(""); setPartnerLegalEntityId("");
     setOperationScope("INTERNAL"); setDocumentNumber(""); setSeries(""); setIssueDate(new Date().toISOString().slice(0, 10)); setAccessKey("");
     setTotal(""); setContractNumber(""); setNotes(""); setHasFinancialService(false); setDaeAmount(""); setDaeReference("");
     setConfirm(false); setItems([emptyItem()]); setError(null);
   }, [open, legalEntityId]);
+
+  useEffect(() => {
+    if (!open || issuerMode !== "THIRD_PARTY" || issuers.length) return;
+    void apiJson<Array<{ id: string; legalName: string; cnpj: string }>>(`/v1/manage/third-party-issuers?${queryString({ organizationId })}`)
+      .then(setIssuers).catch((value) => setError(value instanceof Error ? value.message : "Falha ao carregar as emissoras."));
+  }, [open, issuerMode, issuers.length, organizationId]);
 
   const responsibleOptions = partnersForRole(options.partners, operationType === "SALE" ? "CLIENT" : "SUPPLIER");
   const counterpartyOptions = useMemo(() => options.partners.flatMap((partner) => partner.legal_entities.map((entity) => ({
@@ -129,14 +138,17 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
   const totalCents = moneyToCents(total);
   const daeCents = operationType === "SALE" ? moneyToCents(daeAmount || "0") : 0;
   const itemsValid = items.every((item) => item.productId && Number(item.quantity.replace(",", ".")) > 0 && (item.unit !== "UNIT" || item.sacks) && !Number.isNaN(moneyToCents(item.amount || "0")));
-  const canSave = Boolean(ownLegalEntityId && responsiblePartnerId && documentNumber.trim() && issueDate && !Number.isNaN(totalCents) && !Number.isNaN(daeCents) && itemsValid)
+  const canSave = Boolean((issuerMode === "OWN" ? ownLegalEntityId : issuerPartnerLegalEntityId) && responsiblePartnerId && documentNumber.trim() && issueDate && !Number.isNaN(totalCents) && !Number.isNaN(daeCents) && itemsValid)
     && (!accessKey || /^\d{44}$/.test(accessKey.replace(/\D/g, "")));
 
   const save = async (): Promise<void> => {
     setBusy(true); setError(null);
     try {
       const result = await apiJson<{ status: string; pendingNotes: string | null; duplicateWarning: string | null }>("/v1/manage/invoices", jsonInit("POST", {
-        organizationId, ownLegalEntityId, operationType, operationScope, responsiblePartnerId, partnerLegalEntityId: partnerLegalEntityId || null,
+        organizationId, operationType, operationScope, responsiblePartnerId,
+        ...(issuerMode === "OWN"
+          ? { ownLegalEntityId, partnerLegalEntityId: partnerLegalEntityId || null }
+          : { issuerPartnerLegalEntityId, partnerLegalEntityId: null }),
         documentNumber: documentNumber.trim(), series: series.trim() || null, issueDate, accessKey: accessKey.replace(/\D/g, "") || null,
         totalAmountCents: totalCents, hasFinancialService: operationType === "SALE" && hasFinancialService, contractNumber: contractNumber.trim() || null,
         notes: notes.trim() || null, confirm, freightDaeAmountCents: daeCents, freightDaeReference: daeReference.trim() || null,
@@ -160,11 +172,27 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
         {options.error ? <Alert tone="danger" title="Cadastros indisponíveis">{options.error}</Alert> : null}
         {error ? <Alert tone="danger" title="Não foi possível lançar">{error}</Alert> : null}
         <div className="viewer-invoice-editor__grid">
-          <label>Empresa própria
-            <select className="ui-select" value={ownLegalEntityId} onChange={(event) => setOwnLegalEntityId(event.target.value)}>
-              <option value="">Selecione</option>{options.entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}
+          <label>Emissora da nota
+            <select className="ui-select" value={issuerMode} onChange={(event) => setIssuerMode(event.target.value as "OWN" | "THIRD_PARTY")}>
+              <option value="OWN">Empresa própria</option><option value="THIRD_PARTY">Terceirizada (outra empresa)</option>
             </select>
           </label>
+          {issuerMode === "OWN" ? (
+            <label>Empresa própria
+              <select className="ui-select" value={ownLegalEntityId} onChange={(event) => setOwnLegalEntityId(event.target.value)}>
+                <option value="">Selecione</option>{options.entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName}</option>)}
+              </select>
+            </label>
+          ) : (
+            <label>Empresa emissora
+              <select className="ui-select" value={issuerPartnerLegalEntityId} onChange={(event) => setIssuerPartnerLegalEntityId(event.target.value)}>
+                <option value="">Selecione</option>{issuers.map((issuer) => <option key={issuer.id} value={issuer.id}>{issuer.legalName} · {issuer.cnpj}</option>)}
+              </select>
+            </label>
+          )}
+          {issuerMode === "THIRD_PARTY" ? (
+            <small className="viewer-invoice-editor__wide">Nota terceirizada: nem a emissora nem a destinatária são empresas próprias. Ela entra apenas em cobranças, não em fechamento de negócio. A lista mostra empresas cadastradas sem cliente vinculado.</small>
+          ) : null}
           <label>Tipo
             <select className="ui-select" value={operationType} onChange={(event) => { setOperationType(event.target.value as "SALE" | "PURCHASE"); setResponsiblePartnerId(""); }}>
               <option value="SALE">Saída / venda</option><option value="PURCHASE">Entrada / compra</option>
@@ -175,11 +203,13 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
               <option value="">Selecione</option>{responsibleOptions.map((partner) => <option key={partner.id} value={partner.id}>{partner.display_name}</option>)}
             </select>
           </label>
-          <label>Empresa da contraparte (opcional)
-            <select className="ui-select" value={partnerLegalEntityId} onChange={(event) => setPartnerLegalEntityId(event.target.value)}>
-              <option value="">Não informada</option>{counterpartyOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.label}</option>)}
-            </select>
-          </label>
+          {issuerMode === "OWN" ? (
+            <label>Empresa da contraparte (opcional)
+              <select className="ui-select" value={partnerLegalEntityId} onChange={(event) => setPartnerLegalEntityId(event.target.value)}>
+                <option value="">Não informada</option>{counterpartyOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.label}</option>)}
+              </select>
+            </label>
+          ) : null}
           <label>Número<input className="ui-input" value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} /></label>
           <label>Série<input className="ui-input" value={series} onChange={(event) => setSeries(event.target.value)} /></label>
           <label>Emissão<input className="ui-input" type="date" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} /></label>
@@ -309,6 +339,7 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
               <Badge tone={isSale ? "success" : "info"}>{isSale ? "Saída / venda" : "Entrada / compra"}</Badge>
               {document.hasPendingIssues ? <Badge tone="warning">Pendência</Badge> : null}
               {document.hasFinancialService ? <Badge tone="neutral">Com financeiro</Badge> : null}
+              {document.thirdParty ? <Badge tone="info">Terceirizada</Badge> : null}
             </div>
             {document.pendingNotes ? <Alert tone="warning" title="Pendência">{document.pendingNotes}</Alert> : null}
             {document.duplicateWarning ? <Alert tone="warning" title="Possível duplicidade">{document.duplicateWarning}</Alert> : null}
@@ -317,7 +348,7 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
 
             {!editing ? (
               <dl className="viewer-invoice-editor__facts">
-                <div><dt>Empresa própria</dt><dd>{document.ownLegalEntityName}</dd></div>
+                <div><dt>{document.thirdParty ? "Emissora terceirizada" : "Empresa própria"}</dt><dd>{document.ownLegalEntityName}</dd></div>
                 <div><dt>{isSale ? "Cliente / corretor" : "Fornecedor"}</dt><dd>{document.responsiblePartnerName ?? "Não informado"}</dd></div>
                 <div><dt>Contraparte</dt><dd>{document.partnerLegalEntityName ?? "Não informada"}</dd></div>
                 <div><dt>Emissão</dt><dd>{formatDateBr(document.issueDate)}</dd></div>

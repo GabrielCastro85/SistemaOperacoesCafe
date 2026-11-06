@@ -14,6 +14,7 @@ import {
   type WebSession
 } from "./domainMutations.js";
 import { resolveRate } from "./operationalManagement.js";
+import { isThirdPartyEntity, resolveThirdPartyEntity, THIRD_PARTY_NOTE } from "./thirdPartyEntities.js";
 
 // Lancamento, edicao, confirmacao, cancelamento e exclusao de notas pelo site.
 // As regras espelham AppRepository (createFiscalDocument, updateFiscalDocument,
@@ -43,7 +44,9 @@ const itemSchema = z.object({
 
 const createSchema = z.object({
   organizationId: z.string().min(1),
-  ownLegalEntityId: z.string().min(1),
+  // Vazio quando a nota e' terceirizada: a emissora vem de issuerPartnerLegalEntityId.
+  ownLegalEntityId: z.string().min(1).nullable().optional(),
+  issuerPartnerLegalEntityId: z.string().min(1).nullable().optional(),
   operationType: z.enum(["SALE", "PURCHASE"]),
   operationScope: z.enum(["INTERNAL", "EXTERNAL"]),
   responsiblePartnerId: z.string().min(1),
@@ -169,8 +172,11 @@ function requiresContract(...partners: Array<Row | null>): boolean {
   return partners.some((partner) => Boolean(partner) && (partner!.requires_contract === 1 || partner!.requires_contract === true));
 }
 
+// Nota terceirizada nao pertence a um CNPJ proprio: a permissao vale pela organizacao.
 async function authorize(pool: pg.Pool, session: WebSession, reply: FastifyReply, document: Row): Promise<boolean> {
-  return requirePermission(pool, session, reply, "operations.manage", text(document.organization_id), text(document.own_legal_entity_id));
+  const own = await centralRecord(pool, "legal_entities", text(document.own_legal_entity_id));
+  const legalEntityId = isThirdPartyEntity(own) ? null : text(document.own_legal_entity_id);
+  return requirePermission(pool, session, reply, "operations.manage", text(document.organization_id), legalEntityId);
 }
 
 async function send(reply: FastifyReply, action: () => Promise<unknown>): Promise<unknown> {
@@ -308,6 +314,7 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
         document: {
           id, organizationId: text(document.organization_id), ownLegalEntityId: text(document.own_legal_entity_id),
           ownLegalEntityName: text(ownEntity?.trade_name ?? ownEntity?.legal_name), direction: text(document.direction),
+          thirdParty: isThirdPartyEntity(ownEntity),
           responsiblePartnerId: text(document.responsible_partner_id), responsiblePartnerName: partnerName.get(text(document.responsible_partner_id)) ?? null,
           partnerLegalEntityId: document.partner_legal_entity_id ?? null, partnerLegalEntityName: partnerEntity ? text(partnerEntity.legal_name) : null,
           documentNumber: text(document.document_number), series: document.series ?? null, issueDate: text(document.issue_date),
@@ -347,17 +354,55 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
     });
   });
 
+  // Como listUnlinkedPartnerLegalEntities: empresas cadastradas sem cliente ou
+  // fornecedor dono, que podem ser a emissora de uma nota terceirizada.
+  app.get("/v1/manage/third-party-issuers", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const { organizationId } = z.object({ organizationId: z.string().min(1) }).parse(request.query);
+    if (!(await requirePermission(pool, session, reply, "operations.manage", organizationId, null))) return;
+    const rows = await centralRecords(pool, "partner_legal_entities");
+    return rows
+      .filter((row) => !row.business_partner_id && active(row) && (!row.organization_id || row.organization_id === organizationId))
+      .filter((row) => text(row.cnpj).replace(/\D/g, "").length === 14)
+      .map((row) => ({ id: text(row.id), legalName: text(row.legal_name), tradeName: row.trade_name ?? null, cnpj: text(row.cnpj), state: row.state ?? null }))
+      .sort((left, right) => left.legalName.localeCompare(right.legalName, "pt-BR"));
+  });
+
   app.post("/v1/manage/invoices", async (request, reply) => {
     const session = await requireWebSession(pool, request, reply); if (!session) return;
     const input = createSchema.parse(request.body);
     return send(reply, async () => {
-      if (!(await requirePermission(pool, session, reply, "operations.manage", input.organizationId, input.ownLegalEntityId))) return;
-      const ownEntity = await centralRecord(pool, "legal_entities", input.ownLegalEntityId);
-      if (!ownEntity || !active(ownEntity) || text(ownEntity.organization_id) !== input.organizationId) {
-        throw new HttpError(404, "OWN_ENTITY_NOT_FOUND", "Empresa propria nao encontrada nesta organizacao.");
+      // Terceirizada (como resolveIssuerLegalEntityFromPartner): a emissora e'
+      // uma empresa cadastrada sem ser CNPJ proprio; a nota fica sob a empresa
+      // TERC-XML do CNPJ dela e entra apenas em cobrancas.
+      const thirdParty = Boolean(input.issuerPartnerLegalEntityId);
+      const preChanges: DomainChange[] = [];
+      let ownLegalEntityId: string;
+      if (input.issuerPartnerLegalEntityId) {
+        if (!(await requirePermission(pool, session, reply, "operations.manage", input.organizationId, null))) return;
+        const issuer = await centralRecord(pool, "partner_legal_entities", input.issuerPartnerLegalEntityId);
+        if (!issuer || !active(issuer)) throw new HttpError(404, "ISSUER_NOT_FOUND", "Empresa emissora nao encontrada.");
+        if (text(issuer.cnpj).replace(/\D/g, "").length !== 14) throw new HttpError(409, "THIRD_PARTY_CNPJ", "Empresa emissora sem CNPJ valido cadastrado.");
+        const resolvedIssuer = await resolveThirdPartyEntity(pool, input.organizationId, {
+          cnpj: text(issuer.cnpj), legalName: text(issuer.legal_name), tradeName: text(issuer.trade_name), stateRegistration: text(issuer.state_registration),
+          municipalRegistration: text(issuer.municipal_registration), email: text(issuer.email), phone: text(issuer.phone),
+          addressLine: text(issuer.address_line), addressNumber: text(issuer.address_number), addressComplement: text(issuer.address_complement),
+          district: text(issuer.district), city: text(issuer.city), state: text(issuer.state), postalCode: text(issuer.postal_code)
+        });
+        ownLegalEntityId = text(resolvedIssuer.entity.id);
+        if (resolvedIssuer.change) preChanges.push(resolvedIssuer.change);
+      } else {
+        if (!input.ownLegalEntityId) throw new HttpError(400, "OWN_ENTITY_REQUIRED", "Selecione a empresa propria ou a emissora terceirizada.");
+        if (!(await requirePermission(pool, session, reply, "operations.manage", input.organizationId, input.ownLegalEntityId))) return;
+        const ownEntity = await centralRecord(pool, "legal_entities", input.ownLegalEntityId);
+        if (!ownEntity || !active(ownEntity) || text(ownEntity.organization_id) !== input.organizationId || isThirdPartyEntity(ownEntity)) {
+          throw new HttpError(404, "OWN_ENTITY_NOT_FOUND", "Empresa propria nao encontrada nesta organizacao.");
+        }
+        ownLegalEntityId = input.ownLegalEntityId;
       }
+      const partnerLegalEntityId = thirdParty ? null : input.partnerLegalEntityId ?? null;
       const partner = await assertResponsible(pool, input.responsiblePartnerId, input.operationType);
-      if (input.partnerLegalEntityId && !(await centralRecord(pool, "partner_legal_entities", input.partnerLegalEntityId))) {
+      if (partnerLegalEntityId && !(await centralRecord(pool, "partner_legal_entities", partnerLegalEntityId))) {
         throw new HttpError(404, "COUNTERPARTY_NOT_FOUND", "Empresa da contraparte nao encontrada.");
       }
       if (input.accessKey && (await recordsWhere(pool, "fiscal_documents", "access_key", [input.accessKey])).length) {
@@ -387,8 +432,8 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
         const operationId = randomUUID();
         const sacks = itemSacks(item, product);
         if (!sacks || numberValue(sacks) <= 0) pendingReasons.push(`Informe as sacas do item ${index + 1}`);
-        const resolved = resolveRate(rules, input.operationType, input.organizationId, input.responsiblePartnerId, input.ownLegalEntityId,
-          input.partnerLegalEntityId ?? null, item.productId, input.operationScope, input.issueDate, input.operationType === "SALE" && input.hasFinancialService);
+        const resolved = resolveRate(rules, input.operationType, input.organizationId, input.responsiblePartnerId, ownLegalEntityId,
+          partnerLegalEntityId, item.productId, input.operationScope, input.issueDate, input.operationType === "SALE" && input.hasFinancialService);
         if (resolved.status === "conflict") throw new HttpError(409, "RATE_CONFLICT", input.operationType === "SALE" ? "Conflito ao resolver regra por saca." : "Conflito ao resolver preco de compra por saca.");
         if (resolved.status === "missing") pendingReasons.push(`Sem tarifa para o item ${index + 1}`);
         const quantitySacks = sacks ?? "0";
@@ -401,7 +446,7 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
         });
         const operationRow: Row = {
           id: operationId, fiscal_document_id: documentId, fiscal_document_item_id: itemId, organization_id: input.organizationId,
-          own_legal_entity_id: input.ownLegalEntityId, responsible_partner_id: input.responsiblePartnerId, product_id: item.productId,
+          own_legal_entity_id: ownLegalEntityId, responsible_partner_id: input.responsiblePartnerId, product_id: item.productId,
           operation_type: input.operationType, operation_scope: input.operationScope, operation_date: input.issueDate,
           quantity_sacks_decimal: quantitySacks, gross_quantity_sacks_decimal: quantitySacks,
           service_rate_rule_id: input.operationType === "SALE" ? resolved.rule?.id ?? null : null,
@@ -421,12 +466,13 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
       if (input.confirm) for (const row of operationRows) row.status = "CONFIRMED";
       changes.unshift({
         table: "fiscal_documents", key: documentId, operation: "UPSERT", data: {
-          id: documentId, organization_id: input.organizationId, own_legal_entity_id: input.ownLegalEntityId,
-          responsible_partner_id: input.responsiblePartnerId, partner_legal_entity_id: input.partnerLegalEntityId ?? null,
+          id: documentId, organization_id: input.organizationId, own_legal_entity_id: ownLegalEntityId,
+          responsible_partner_id: input.responsiblePartnerId, partner_legal_entity_id: partnerLegalEntityId,
           secondary_responsible_partner_id: null, secondary_operation_type: null, document_type: "MANUAL_INVOICE",
           access_key: input.accessKey ?? null, document_number: input.documentNumber, series: blank(input.series),
           issue_date: input.issueDate, total_amount_cents: input.totalAmountCents, status, has_pending_issues: pending ? 1 : 0,
-          pending_notes: pending ? pendingReasons.join("; ") : null, duplicate_warning: duplicateWarning, notes: blank(input.notes),
+          pending_notes: pending ? pendingReasons.join("; ") : null, duplicate_warning: duplicateWarning,
+          notes: thirdParty ? [THIRD_PARTY_NOTE, blank(input.notes)].filter(Boolean).join(" | ") : blank(input.notes),
           confirmed_at: input.confirm ? now : null, canceled_at: null, cancel_reason: null, source: "MANUAL",
           import_job_id: null, import_row_id: null, xml_file_path: null, xml_file_hash: null, protocol_number: null, protocol_date: null,
           authorization_status_code: null, authorization_status_message: null, xml_import_job_id: null, merged_from_source: null, merged_at: null,
@@ -435,8 +481,8 @@ export function registerInvoiceManagementRoutes(app: FastifyInstance, pool: pg.P
           has_financial_service: input.operationType === "SALE" && input.hasFinancialService ? 1 : 0, created_at: now, updated_at: now
         }
       });
-      const revision = await commitDomainChanges(pool, session, "WEB_INVOICE_CREATED", "fiscal_document", documentId, changes, {
-        organizationId: input.organizationId, legalEntityId: input.ownLegalEntityId, itemCount: input.items.length, status
+      const revision = await commitDomainChanges(pool, session, "WEB_INVOICE_CREATED", "fiscal_document", documentId, [...preChanges, ...changes], {
+        organizationId: input.organizationId, legalEntityId: ownLegalEntityId, itemCount: input.items.length, status, thirdParty
       });
       return reply.code(201).send({ id: documentId, revision, status, pendingNotes: pending ? pendingReasons.join("; ") : null, duplicateWarning });
     });

@@ -26,14 +26,14 @@ Modelo de entrada:
 
 ## Recados
 
-Nenhum recado pendente.
+- **2026-11-06, Claude → quem mexer no app:** `getOrCreateThirdPartyLegalEntityFromXml` (`appRepository.ts`) lê `party.addressLine`, `addressNumber` e `postalCode`, mas `partySnapshot` (`xmlNfeService.ts`) entrega `street`, `number`, `complement` e `cep`. Por isso as empresas terceirizadas criadas pelo app ficam com "Endereco nao informado" e o CEP da empresa própria. O site já usa os nomes certos. Corrigir no app numa próxima versão (não muda ids nem notas).
 
 ## Em andamento
 
 - **Agente:** Claude, 2026-11-06.
 - **Pedidos abertos do Gabriel:**
   1. Importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS (como foi feito com a Villa). Aguardando o coletor da Grão chegar à 1.1.71 (estava na 1.1.38 às 10:52, com "Atualizar coletor" pendente). Depois: Gabriel clica "Enviar notas do periodo" (01/01 a 31/07/2026), busca Grão MG e SP no período sem importar pela tela, fecha o programa, e o agente roda `tmp/importar-thadeu.mts` adaptado para a pasta `documents/invoices/xml-imports/collector-inbox` (só vendas 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco antes e fazer backup).
-  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Bloco 1b (devoluções e DAE de frete) publicado em 2026-11-06. Próximo: operações de terceiros, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
+  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Bloco 1b (devoluções e DAE de frete) publicado em 2026-11-06. Bloco 1c (notas terceirizadas) publicado em 2026-11-06. Próximo, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
 
 ## Situação atual
 
@@ -101,6 +101,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 - Claude
+- Pedido: "Pode continuar com as operações de terceiros".
+- Feito: `server/src/thirdPartyEntities.ts` cria ou reaproveita a empresa TERC-XML pelo CNPJ com o mesmo `deterministicUuid("thirdPartyLegalEntity", cnpj)` do app (conferido: 9 das 16 empresas atuais têm esse id; as 7 de 28/07 são anteriores e são reaproveitadas pelo CNPJ). `server/Dockerfile` copia `deterministicId.ts`. Lançamento manual aceita `issuerPartnerLegalEntityId` (empresas sem cliente vinculado, GET `/v1/manage/third-party-issuers`), como `resolveIssuerLegalEntityFromPartner`. Importação de XML do Codex (`operationalManagement.ts`): empresas TERC-XML deixam de contar como próprias; nota sem CNPJ próprio vira terceirizada (venda sob a TERC-XML do emitente, observação "Nota terceirizada..."); emitente que é fornecedor cadastrado (triangulada) é recusado com aviso para usar o app. Permissão de nota terceirizada vale pela organização. Tela: emissora própria/terceirizada no lançamento, aviso na prévia do XML, etiqueta "Terceirizada" no painel.
+- Testado: 2 testes novos (manual com id determinístico e reaproveitamento; XML terceirizado e triangulado recusado), suíte completa (345), typecheck, ESLint, build do site, simulação do build Docker. Tela conferida com o servidor de teste local.
+- Publicado: ver próxima entrada de publicação.
+- Pendente: XMLs especiais (armazém, eventos de cancelamento, triangulação) e planilha.
 
 ### 2026-11-06 - Claude
 - Pedido: "Pode continuar com as devoluções e o DAE".

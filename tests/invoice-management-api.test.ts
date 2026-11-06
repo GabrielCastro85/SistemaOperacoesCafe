@@ -2,6 +2,8 @@ import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import type pg from "pg";
 import { registerInvoiceManagementRoutes } from "../server/src/invoiceManagement.js";
+import { registerOperationalManagementRoutes } from "../server/src/operationalManagement.js";
+import { deterministicUuid } from "../electron/main/services/deterministicId.js";
 
 type Row = Record<string, unknown>;
 
@@ -59,6 +61,7 @@ function invoicePool() {
   const pool = { query, async connect() { return { query, release() {} }; } } as unknown as pg.Pool;
   const app = Fastify();
   registerInvoiceManagementRoutes(app, pool);
+  registerOperationalManagementRoutes(app, pool);
   const call = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, payload?: unknown) => app.inject({
     method, url,
     headers: payload ? { authorization: "Bearer test", "content-type": "application/json" } : { authorization: "Bearer test" },
@@ -223,6 +226,54 @@ describe("lancamento e manutencao de notas pelo site", () => {
     expect(state.table("client_ledger_entries").get("entry")).toMatchObject({ amount_cents: 46_500 });
     state.table("client_charges").set("charge", { ...state.table("client_charges").get("charge"), paid_amount_cents: 10_000, status: "PARTIALLY_PAID" });
     expect((await state.call("POST", `/v1/manage/invoices/${id}/returns`, { returnDate: "2026-11-08", inputUnit: "SACKS", inputQuantity: "5", reason: "Outra" })).json().error).toBe("CHARGE_PAID");
+  });
+
+  it("lanca nota terceirizada pela emissora cadastrada, com o mesmo id de empresa do aplicativo", async () => {
+    const state = invoicePool();
+    state.table("legal_entities").set("entity", { ...state.table("legal_entities").get("entity"), city: "Manhuacu", state: "MG", postal_code: "36900000" });
+    state.table("partner_legal_entities").set("prime", { id: "prime", organization_id: "org", business_partner_id: null, legal_name: "PRIME COFFEE LTDA", cnpj: "38.136.546/0002-28", state: "MG", is_active: 1 });
+    state.table("partner_legal_entities").set("linked", { id: "linked", organization_id: "org", business_partner_id: "client", legal_name: "Empresa do IF", cnpj: "11222333000144", is_active: 1 });
+    expect((await state.call("GET", "/v1/manage/third-party-issuers?organizationId=org")).json()).toEqual([expect.objectContaining({ id: "prime", cnpj: "38.136.546/0002-28" })]);
+    const { ownLegalEntityId: _own, ...thirdPartyInput } = saleInput;
+    void _own;
+    const created = await state.call("POST", "/v1/manage/invoices", { ...thirdPartyInput, issuerPartnerLegalEntityId: "prime", partnerLegalEntityId: "linked" });
+    expect(created.statusCode).toBe(201);
+    const entityId = deterministicUuid("thirdPartyLegalEntity", "38136546000228");
+    expect(state.table("legal_entities").get(entityId)).toMatchObject({ document_prefix: "TERC-XML", cnpj: "38136546000228", city: "Manhuacu", is_draft: 1 });
+    expect(state.table("fiscal_documents").get(created.json().id as string)).toMatchObject({
+      own_legal_entity_id: entityId, partner_legal_entity_id: null, direction: "OUTBOUND", notes: expect.stringContaining("Nota terceirizada")
+    });
+    expect([...state.table("operations").values()][0]).toMatchObject({ own_legal_entity_id: entityId, applied_rate_value_cents: 500 });
+    expect((await state.call("GET", `/v1/manage/invoices/${created.json().id as string}`)).json().document.thirdParty).toBe(true);
+    await state.call("POST", "/v1/manage/invoices", { ...thirdPartyInput, documentNumber: "9002", issuerPartnerLegalEntityId: "prime" });
+    expect([...state.table("legal_entities").values()].filter((row) => row.document_prefix === "TERC-XML")).toHaveLength(1);
+  });
+
+  it("importa XML sem CNPJ proprio como terceirizada e deixa a triangulada para o aplicativo", async () => {
+    const state = invoicePool();
+    const xml = (issuerCnpj: string) => `<?xml version="1.0" encoding="UTF-8"?>
+      <NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe31261138136546000228550010000077771532100313" versao="4.00">
+        <ide><cUF>31</cUF><natOp>VENDA</natOp><mod>55</mod><serie>1</serie><nNF>7777</nNF><dhEmi>2026-11-05T10:00:00-03:00</dhEmi></ide>
+        <emit><CNPJ>${issuerCnpj}</CNPJ><xNome>PRIME COFFEE LTDA</xNome><enderEmit><xMun>Monte Santo de Minas</xMun><UF>MG</UF><CEP>37968000</CEP></enderEmit></emit>
+        <dest><CNPJ>11222333000144</CNPJ><xNome>COMPRADOR FINAL LTDA</xNome><enderDest><UF>SP</UF></enderDest></dest>
+        <det nItem="1"><prod><cProd>A</cProd><xProd>CAFE ARABICA</xProd><NCM>09011110</NCM><CFOP>6102</CFOP><uCom>SC</uCom><qCom>50</qCom><vUnCom>1200</vUnCom><vProd>60000</vProd><uTrib>SC</uTrib><qTrib>50</qTrib><vUnTrib>1200</vUnTrib></prod></det>
+        <total><ICMSTot><vProd>60000</vProd><vNF>60000</vNF></ICMSTot></total>
+      </infNFe></NFe>`;
+    const preview = await state.call("POST", "/v1/manage/invoices/xml/preview", { organizationId: "org", xml: xml("38136546000228") });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({ thirdParty: true, direction: "OUTBOUND" });
+    const imported = await state.call("POST", "/v1/manage/invoices/xml/import", {
+      organizationId: "org", xml: xml("38136546000228"), responsiblePartnerId: "client", operationScope: "EXTERNAL", itemProducts: [{ itemNumber: "1", productId: "arabica" }]
+    });
+    expect(imported.statusCode).toBe(201);
+    const document = state.table("fiscal_documents").get(imported.json().id as string);
+    expect(document).toMatchObject({ own_legal_entity_id: deterministicUuid("thirdPartyLegalEntity", "38136546000228"), notes: expect.stringContaining("Nota terceirizada") });
+    expect(state.table("legal_entities").get(deterministicUuid("thirdPartyLegalEntity", "38136546000228"))).toMatchObject({ city: "Monte Santo de Minas", postal_code: "37968000" });
+
+    state.table("partner_legal_entities").set("supplier-entity", { id: "supplier-entity", organization_id: "org", business_partner_id: "supplier", cnpj: "04164419000130", is_active: 1 });
+    const triangulated = await state.call("POST", "/v1/manage/invoices/xml/preview", { organizationId: "org", xml: xml("04164419000130") });
+    expect(triangulated.statusCode).toBe(409);
+    expect(triangulated.json().error).toBe("TRIANGULATED_XML");
   });
 
   it("mostra a nota com acoes permitidas", async () => {
