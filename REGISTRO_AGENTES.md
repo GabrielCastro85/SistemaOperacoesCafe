@@ -106,7 +106,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: "Pode continuar com as devoluções e o DAE".
 - Feito: em `server/src/invoiceManagement.ts`, POST `/v1/manage/invoices/:id/returns` e DELETE `/v1/manage/invoice-returns/:id`, espelhando `addFiscalDocumentReturn`/`recalculateDocumentReturnQuantities`/`recalculateClientCharge`: kg ÷ 60, abate na ordem das vendas, limite das sacas brutas, bloqueio depois de pagamento na cobrança, sacaria bloqueada; se a operação está numa cobrança em aberto, atualiza o retrato em `client_charge_operations`, os totais de `client_charges` e o lançamento `SERVICE_CHARGE` da conta-corrente. DAE de frete (valor e referência) no lançamento e na edição; a referência é descartada quando o valor é zero, como no app. Tela: seção Devoluções no painel da nota, sacas brutas x líquidas na operação, campos de DAE nos formulários.
 - Testado: 3 testes novos (DAE, devolução e exclusão, cobrança em aberto com DAE e bloqueio após pagamento), suíte completa (343), typecheck, ESLint e build do site. Tela conferida com o servidor de teste local: devolução de 600 kg virou 10 sacas e baixou o serviço de R$ 2.200 para R$ 2.150, remoção restaurou, DAE aparece no resumo e no formulário.
-- Publicado: ver entrada de publicação logo acima, quando houver.
+- Publicado: commit `2f13c61` na branch e na `master`. Railway em `2f13c61` às 11:53 (`/ready` com banco conectado; rota de devolução devolve 401 sem sessão). GitHub Pages publicou `index-DJsZw3Jo.js` às 12:01, com devoluções e DAE.
 - Pendente: operações de terceiros, XMLs especiais e planilha; o Gabriel testar logado em produção.
 
 ### 2026-11-06 - Claude
