@@ -32,8 +32,8 @@ Modelo de entrada:
 
 - **Agentes:** Claude e Codex trabalhando ao mesmo tempo, 2026-11-06 à tarde.
 - **Pedidos abertos do Gabriel:**
-  1. **Claude (em andamento):** importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS, do mesmo jeito da Villa (só CFOP 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco e fazer backup antes). Os `.rar` em `C:UsersgabriDownloadsGRAOS_E_GRAOS_MG.rar`/`_SP.rar` só têm a subpasta `Down` (notas recebidas): de jan-jul/2026 só há transferências entre Grão MG e Grão SP (CFOP 6152, mais 37 vendas 6102 entre elas), nenhuma venda a cliente. Nada importado. Aguardando o Gabriel trazer a pasta de notas emitidas (equivalente a `EMITIDO` da Villa) ou usar o "Enviar notas do período" do coletor. Mexe só no banco local deste PC e em `tmp/`; a gravação final exige o programa fechado. Codex: não use nem altere o banco local enquanto este item estiver aberto.
-  2. **Codex (assumindo agora):** migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Próximo: importação por planilha; depois confirmações, repasses, contas a pagar e administração.
+  1. **Pausado pelo Gabriel em 2026-11-06 ("vamos deixar isso pra depois"):** vendas da Grão & Grão de 01/01/2024 a 31/07/2026 no THADEU NOTAS (mesmas regras da Villa, sem transferências entre empresas próprias). Script pronto e testado numa cópia: `tmp/importar-thadeu-grao.mts` (lê `documents/invoices/xml-imports/collector-inbox`). Os `.rar` de Downloads só têm notas recebidas (subpasta `Down`). A busca do Gabriel às 14:20 só trouxe chaves de jul/2026 em diante: o coletor da Grão ainda não enviou o período antigo (monitor mostra versão antiga; se for 1.1.38, o comando "Enviar notas do período" falha). Já disponíveis: 5 vendas de jul/2026 da Grão SP. Gravação exige o programa fechado.
+  2. **Claude (assumiu do Codex em 2026-11-06, créditos do Codex acabaram):** migração do aplicativo para o site. Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Bloco 1e (importação por planilha) publicado em 2026-11-06, encerrando o bloco de notas. Próximo: confirmações, depois completar cobranças e conta-corrente, repasses e acertos de entrada, contas a pagar e financeiro, administração.
 
 ## Situação atual
 
@@ -101,6 +101,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 - Claude (continuando o Codex)
+- Pedido: continuar a migração depois que os créditos do Codex acabaram no meio da importação por planilha.
+- Feito: revisão do `server/src/spreadsheetManagement.ts` do Codex (inspect/validate/import, limite web 1.000 linhas/15 MB, duplicidade por empresa+responsável+NF+série+data). Ajustes para ficar igual ao app: coluna Cliente escolhe o cadastro pelo nome exato em cada linha (erro se não for único ou sem o papel certo), linhas com aviso só entram com `importWarnings`, conflito de tarifa vira erro da linha. As tabelas `spreadsheet_import_jobs/rows` gravadas no central não sincronizam com os PCs e não têm chave estrangeira nas notas: conferido que não quebra a sincronização. Tela `mobile-viewer/src/SpreadsheetImport.tsx` (arquivo, aba, cabeçalho, colunas sugeridas, padrões, validação linha a linha, importar) e botão "Importar planilha" em `InvoicesTab.tsx`.
+- Testado: `tests/spreadsheet-management-api.test.ts` (3, com .xlsx real gerado pelo exceljs), suíte completa (352), typecheck, ESLint, build do site, simulação Docker. Tela conferida com o servidor de teste: 5 linhas, NF 101 agrupada (120,5 sacas), cliente inexistente com erro, linha de aviso fora por padrão.
+- Publicado: ver Situação atual / próxima entrada.
+- Pendente: confirmações e documentos; resto da lista em "Em andamento".
 
 ### 2026-11-06 09:25 - Codex
 - Pedido: manter o trabalho do Codex e do Claude coordenado pelo `REGISTRO_AGENTES.md`, sem repetir alterações.

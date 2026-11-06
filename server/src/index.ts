@@ -14,6 +14,7 @@ import { registerAssistantRoutes } from "./assistant.js";
 import { registerCommercialManagementRoutes } from "./commercialManagement.js";
 import { registerOperationalManagementRoutes } from "./operationalManagement.js";
 import { registerInvoiceManagementRoutes } from "./invoiceManagement.js";
+import { registerSpreadsheetManagementRoutes } from "./spreadsheetManagement.js";
 import { registerSpecialXmlRoutes } from "./specialXml.js";
 
 const config = loadConfig();
@@ -56,6 +57,7 @@ registerAssistantRoutes(app, pool, config);
 registerCommercialManagementRoutes(app, pool);
 registerOperationalManagementRoutes(app, pool);
 registerInvoiceManagementRoutes(app, pool);
+registerSpreadsheetManagementRoutes(app, pool);
 registerSpecialXmlRoutes(app, pool);
 
 app.setErrorHandler((error, _request, reply) => {

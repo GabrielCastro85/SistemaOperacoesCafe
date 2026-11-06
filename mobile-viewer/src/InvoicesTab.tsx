@@ -3,6 +3,7 @@ import { apiJson, queryString } from "./api";
 import { companyColorClass } from "./companyColor";
 import { InvoiceDetailDrawer, ManualInvoiceDrawer } from "./InvoiceEditor";
 import { SpecialXmlPanel, type XmlInspection } from "./SpecialXmlImport";
+import { SpreadsheetImportCard } from "./SpreadsheetImport";
 import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { Badge, StatusBadge } from "./renderer/design-system/components/Badge";
@@ -117,6 +118,7 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
   const [importError, setImportError] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
+  const [showSpreadsheet, setShowSpreadsheet] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     if (!organizationId) return;
@@ -234,6 +236,7 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
       <PageHeader eyebrow="Operações" title="Notas e operações" description="Consulte, lance, importe e corrija entradas e saídas. Clique numa nota para editar, confirmar, cancelar ou excluir." actions={
         <>
           <Button onClick={() => { setShowManual(true); setSuccess(null); }}>Lançar nota</Button>
+          <Button onClick={() => { setShowSpreadsheet((current) => !current); setShowImporter(false); setSuccess(null); }}>{showSpreadsheet ? "Fechar planilha" : "Importar planilha"}</Button>
           <Button variant={showImporter ? "secondary" : "primary"} onClick={() => { setShowImporter((current) => !current); resetImporter(); }}>{showImporter ? "Fechar importação" : "Importar XML"}</Button>
         </>
       } />
@@ -244,6 +247,10 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
         onClose={() => setSelectedInvoiceId(null)}
         onChanged={(message) => { setSuccess(message); void load(); }} />
       {success ? <Alert tone="success" title="Nota atualizada">{success}</Alert> : null}
+      {showSpreadsheet ? (
+        <SpreadsheetImportCard organizationId={organizationId} legalEntityId={legalEntityId} onClose={() => setShowSpreadsheet(false)}
+          onImported={(message) => { setShowSpreadsheet(false); setSuccess(message); void load(); }} />
+      ) : null}
       {showImporter ? (
         <Card className="viewer-xml-importer" eyebrow="Nova nota" title="Importar XML (NF-e, armazém ou evento)" actions={<Badge tone="info">Leitura segura</Badge>}>
           <div className="viewer-xml-importer__intro">

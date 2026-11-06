@@ -1357,3 +1357,10 @@
   grid-template-columns: minmax(0, 1fr) 90px;
   gap: 8px;
 }
+
+.viewer-spreadsheet-rows {
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+}
