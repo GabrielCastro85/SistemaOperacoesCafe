@@ -104,3 +104,34 @@ export function queryString(values: Record<string, string | undefined>): string 
   Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); });
   return params.toString();
 }
+
+// Baixa um arquivo gerado pela API (GET ou POST com JSON).
+export async function downloadApiFile(path: string, suggestedName: string, body?: unknown): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(`${API_URL}${path}`, body === undefined ? { headers } : { method: "POST", headers, body: JSON.stringify(body) });
+  if (!response.ok) throw await responseError(response);
+  saveBlob(await response.blob(), suggestedName);
+}
+
+// Busca HTML pronto para imprimir (ex.: controle de cobrancas).
+export async function fetchApiText(path: string, body: unknown): Promise<string> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body)
+  });
+  if (!response.ok) throw await responseError(response);
+  return response.text();
+}
+
+export function saveBlob(blob: Blob, suggestedName: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = suggestedName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

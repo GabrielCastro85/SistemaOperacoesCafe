@@ -314,7 +314,7 @@ function operationPartyLabels(
   return { issuer, destination: recipientName ?? issuerName };
 }
 
-function refreshedOperationSnapshots(
+export function refreshedOperationSnapshots(
   row: JsonRecord,
   sourceOperations: Map<string, JsonRecord>,
   documents: Map<string, JsonRecord>,

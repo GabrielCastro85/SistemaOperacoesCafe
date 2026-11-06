@@ -1393,3 +1393,24 @@
 .viewer-confirmation-pick {
   cursor: pointer;
 }
+
+/* Cobrancas: totais, campos curtos em linha e acoes da conta-corrente. */
+.viewer-charge-totals {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.viewer-charge-inline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.viewer-charge-inline .ui-input {
+  max-width: 120px;
+}
+
+.viewer-ledger-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

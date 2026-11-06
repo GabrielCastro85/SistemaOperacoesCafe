@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson, downloadChargePdf, queryString } from "./api";
+import { ChargeDrawer, downloadChargeControl, printChargeControl, ReceivePaymentDrawer } from "./ChargeEditor";
 import { companyColorClass } from "./companyColor";
 import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
@@ -32,6 +33,7 @@ interface OpenNoteRow {
 
 interface ChargeRow {
   id: string;
+  clientId: string;
   chargeNumber: string | null;
   referenceCode: string | null;
   clientName: string;
@@ -88,29 +90,36 @@ export function ChargesTab({ organizationId, legalEntityId }: { organizationId: 
   const [view, setView] = useState<ChargeView>("OPEN_NOTES");
   const [periodStart, setPeriodStart] = useState(initial.start);
   const [periodEnd, setPeriodEnd] = useState(initial.end);
+  const [openChargeId, setOpenChargeId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
 
   return (
     <>
-      <PageHeader eyebrow="Recebimentos" title="Cobranças" description="Consulte notas ainda não cobradas e cobranças já emitidas pelo aplicativo." />
+      <PageHeader eyebrow="Recebimentos" title="Cobranças" description="Gere, confira, ajuste e emita cobranças, e registre os recebimentos." />
       <Tabs
         items={[{ id: "OPEN_NOTES", label: "Notas em aberto" }, { id: "ISSUED_CHARGES", label: "Cobranças emitidas" }]}
         active={view}
-        onChange={setView}
+        onChange={(next) => { setView(next); setNotice(null); }}
       />
       <div className="viewer-period-filter viewer-charge-period">
         <label>Início<input className="ui-input" type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
         <label>Fim<input className="ui-input" type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
       </div>
+      {notice ? <Alert tone="success" title="Cobrança atualizada">{notice}</Alert> : null}
       {view === "OPEN_NOTES"
-        ? <OpenNotesPanel organizationId={organizationId} legalEntityId={legalEntityId} periodStart={periodStart} periodEnd={periodEnd} />
-        : <IssuedChargesPanel organizationId={organizationId} legalEntityId={legalEntityId} periodStart={periodStart} periodEnd={periodEnd} />}
+        ? <OpenNotesPanel key={refreshKey} organizationId={organizationId} legalEntityId={legalEntityId} periodStart={periodStart} periodEnd={periodEnd} onOpenCharge={setOpenChargeId} />
+        : <IssuedChargesPanel key={refreshKey} organizationId={organizationId} legalEntityId={legalEntityId} periodStart={periodStart} periodEnd={periodEnd} onOpenCharge={setOpenChargeId} />}
+      <ChargeDrawer chargeId={openChargeId} organizationId={organizationId}
+        onClose={() => { setOpenChargeId(null); setRefreshKey((current) => current + 1); }}
+        onChanged={(message) => setNotice(message)} />
     </>
   );
 }
 
-interface PanelProps { organizationId: string; legalEntityId?: string; periodStart: string; periodEnd: string; }
+interface PanelProps { organizationId: string; legalEntityId?: string; periodStart: string; periodEnd: string; onOpenCharge: (id: string) => void; }
 
-function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd }: PanelProps): JSX.Element {
+function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd, onOpenCharge }: PanelProps): JSX.Element {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [notes, setNotes] = useState<OpenNoteRow[] | null>(null);
   const [clientId, setClientId] = useState("");
@@ -170,6 +179,21 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
     finally { setIssuing(false); }
   }
 
+  async function createDraft(): Promise<void> {
+    if (!legalEntityId || !clientId || !selectedIds.length) return;
+    setIssuing(true); setError(null); setMessage(null);
+    try {
+      const created = await apiJson<{ id: string }>("/v1/manage/client-charges/drafts", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationId, legalEntityId, clientPartnerId: clientId, operationIds: selectedIds, periodStart, periodEnd, dueDate: dueDate || null, notes: chargeNotes })
+      });
+      setSelectedIds([]); setDueDate(""); setChargeNotes("");
+      onOpenCharge(created.id);
+      await loadNotes();
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao gerar o rascunho."); }
+    finally { setIssuing(false); }
+  }
+
   return (
     <>
       <FilterBar activeCount={(clientId ? 1 : 0) + (search ? 1 : 0)} onClear={() => { setClientId(""); setSearch(""); }}>
@@ -182,10 +206,12 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
       {!clientId ? <Alert tone="info" title="Escolha um cliente para emitir">A seleção das notas é liberada depois que você escolhe o responsável pela cobrança.</Alert> : null}
       {message ? <Alert tone="success" title="Cobrança emitida">{message}</Alert> : null}
       {selectedIds.length ? <Card eyebrow="Nova cobrança" title={`${selectedIds.length} nota(s) selecionada(s) · ${formatCurrencyBr(selectedAmount)}`} className="viewer-charge-issue-card">
+        <small>No rascunho dá para conferir, aplicar desconto, acréscimo, CT-e e créditos antes de emitir.</small>
         <div className="viewer-charge-issue-fields">
           <label>Vencimento<input className="ui-input" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
           <label>Observação<input className="ui-input" value={chargeNotes} onChange={(event) => setChargeNotes(event.target.value)} placeholder="Opcional" /></label>
-          <Button loading={issuing} onClick={() => void issueCharge()}>Emitir cobrança</Button>
+          <Button loading={issuing} onClick={() => void createDraft()}>Gerar rascunho</Button>
+          <Button variant="primary" loading={issuing} onClick={() => void issueCharge()}>Emitir direto</Button>
         </div>
       </Card> : null}
       {notes && filtered.length > 0 ? (
@@ -219,7 +245,7 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd 
   );
 }
 
-function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, periodEnd }: PanelProps): JSX.Element {
+function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, periodEnd, onOpenCharge }: PanelProps): JSX.Element {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [charges, setCharges] = useState<ChargeRow[] | null>(null);
   const [clientId, setClientId] = useState("");
@@ -235,6 +261,8 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
   const [savingPayment, setSavingPayment] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [receiving, setReceiving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const loadClients = useCallback(async (): Promise<void> => {
     try { setClients(await apiJson(`/v1/viewer/clients?${queryString({ organizationId, legalEntityId, periodStart, periodEnd })}`)); }
@@ -314,6 +342,17 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
     } catch (value) { setError(value instanceof Error ? value.message : "Falha ao estornar pagamento."); }
   }
 
+  const selectedClientName = clients?.find((client) => client.id === clientId)?.displayName ?? "cliente";
+  const controlDescription = `${clientId ? selectedClientName : "Todos os clientes"} · ${formatDateBr(periodStart)} a ${formatDateBr(periodEnd)}`;
+  async function exportControl(kind: "xlsx" | "print"): Promise<void> {
+    setExporting(true); setError(null);
+    try {
+      const ids = filtered.map((charge) => charge.id);
+      if (kind === "xlsx") await downloadChargeControl(ids, controlDescription); else await printChargeControl(ids, controlDescription);
+    } catch (value) { setError(value instanceof Error ? value.message : "Falha ao gerar o controle."); }
+    finally { setExporting(false); }
+  }
+
   return (
     <>
       <FilterBar activeCount={(clientId ? 1 : 0) + (status !== "ALL" ? 1 : 0) + (search ? 1 : 0)} onClear={() => { setClientId(""); setStatus("ALL"); setSearch(""); }}>
@@ -334,6 +373,11 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
             <span><small>Valor total</small><strong>{formatCurrencyBr(totals.finalCents)}</strong></span>
             <span><small>Valor pago</small><strong>{formatCurrencyBr(totals.paidCents)}</strong></span>
             <span><small>Saldo em aberto</small><strong>{formatCurrencyBr(totals.openCents)}</strong></span>
+          </div>
+          <div className="viewer-charge-card__actions">
+            <Button loading={exporting} onClick={() => void exportControl("xlsx")}>Controle em Excel</Button>
+            <Button loading={exporting} onClick={() => void exportControl("print")}>Imprimir controle</Button>
+            {clientId && legalEntityId ? <Button variant="primary" onClick={() => setReceiving(true)}>Receber e distribuir</Button> : null}
           </div>
         </Card>
       ) : null}
@@ -375,6 +419,7 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
                 <div className="viewer-charge-payment-form__actions"><Button variant="secondary" onClick={() => setPaymentChargeId(null)}>Cancelar</Button><Button loading={savingPayment} onClick={() => void savePayment(charge)}>Confirmar pagamento</Button></div>
               </div> : null}
               <div className="viewer-charge-card__actions">
+                <Button variant="primary" onClick={() => onOpenCharge(charge.id)}>Abrir</Button>
                 <Button className="viewer-charge-card__download" loading={downloadingId === charge.id} onClick={() => void download(charge)}>Baixar PDF</Button>
                 {charge.openAmountCents > 0 && ["ISSUED", "PARTIALLY_PAID", "OVERDUE"].includes(charge.status)
                   ? <Button onClick={() => openPayment(charge)}>Registrar pagamento</Button> : null}
@@ -383,6 +428,9 @@ function IssuedChargesPanel({ organizationId, legalEntityId, periodStart, period
           ))}
         </div>
       ) : null}
+      {legalEntityId && clientId ? <ReceivePaymentDrawer open={receiving} organizationId={organizationId} legalEntityId={legalEntityId} clientId={clientId} clientName={selectedClientName}
+        charges={(charges ?? []).filter((charge) => charge.clientId === clientId)} onClose={() => setReceiving(false)}
+        onDone={(text) => { setReceiving(false); setMessage(text); void loadCharges(); }} /> : null}
     </>
   );
 }

@@ -225,6 +225,11 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
 
 async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput): Promise<void> {
   mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, await buildChargeWorkbook(input));
+}
+
+// Planilha da cobranca em memoria: o app grava em arquivo; o site envia para download.
+export async function buildChargeWorkbook(input: ChargeDocumentsInput): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Grãonex";
   const charge = input.detail.charge;
@@ -265,7 +270,7 @@ async function writeChargeWorkbook(filePath: string, input: ChargeDocumentsInput
     sheet.headerFooter.oddFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
     sheet.headerFooter.evenFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
   });
-  await workbook.xlsx.writeFile(filePath);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
 function drawSectionTitle(page: PDFPage, title: string, x: number, topY: number, bold: PDFFont, ink: PdfColor, green: PdfColor): void {
@@ -691,6 +696,11 @@ function summaryImageHeight(input: ChargeDocumentsInput): number {
   const sections = summaryImageSections(input);
   const visualRows = sections.reduce((sum, section) => sum + 2 + section.rows.length + section.rows.reduce((count, row) => count + contractLines(row.operation.contractNumberSnapshot, row.operation.billingObservationsSnapshot).length, 0), 0);
   return Math.max(620, 370 + Math.max(visualRows, 1) * 27 + 150);
+}
+
+// Resumo em SVG (o app converte em PNG pela janela do Electron; o site, pelo navegador).
+export function buildChargeSummarySvg(input: ChargeDocumentsInput): { svg: string; width: number; height: number } {
+  return { svg: buildSummarySvg(input), width: SUMMARY_IMAGE_WIDTH, height: summaryImageHeight(input) };
 }
 
 function buildSummarySvg(input: ChargeDocumentsInput): string {
