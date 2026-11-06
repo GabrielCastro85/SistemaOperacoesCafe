@@ -2,10 +2,10 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
-// Site completo (mesmas telas do app) publicado em graobase.com.br/app/.
+// Site completo (mesmas telas do app), pagina principal de graobase.com.br.
 export default defineConfig({
   root: resolve(__dirname, "web"),
-  base: "/app/",
+  base: "/",
   envDir: resolve(__dirname, "web"),
   publicDir: resolve(__dirname, "public"),
   plugins: [react()],

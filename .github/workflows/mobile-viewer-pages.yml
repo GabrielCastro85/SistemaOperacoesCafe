@@ -35,9 +35,10 @@ jobs:
           cache-dependency-path: mobile-viewer/package-lock.json
       - run: npm ci
         working-directory: mobile-viewer
-      - run: npm run build
+      # Site antigo (consulta, melhor no celular) em /consulta/.
+      - run: npx tsc -b && npx vite build --base=/consulta/
         working-directory: mobile-viewer
-      # Site completo (mesmas telas do app) em /app/.
+      # Site completo (mesmas telas do app) na raiz.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -46,13 +47,20 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npx vite build --config vite.web.config.ts
-      - run: cp -r dist-web mobile-viewer/dist/app
+      - name: Montar o site
+        run: |
+          mkdir -p site
+          cp -r dist-web/. site/
+          cp mobile-viewer/public/favicon.ico mobile-viewer/public/icon-*.png site/
+          cp -r mobile-viewer/dist site/consulta
+          mkdir -p site/app
+          printf "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=\"0; url=/\"><script>location.replace(\"/\" + location.hash)</script>" > site/app/index.html
       - uses: actions/configure-pages@v5
         with:
           enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: mobile-viewer/dist
+          path: site
 
   deploy:
     needs: build
