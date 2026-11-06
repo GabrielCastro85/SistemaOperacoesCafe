@@ -14,8 +14,8 @@ function managementPool() {
     records.set(name, current);
     return current;
   };
-  table("legal_entities").set("entity", { id: "entity", organization_id: "org", trade_name: "Villa MG" });
-  table("business_partners").set("client", { id: "client", organization_id: "org", display_name: "Cliente" });
+  table("legal_entities").set("entity", { id: "entity", organization_id: "org", trade_name: "Villa MG", legal_name: "Villa Coffee Minas Gerais", cnpj: "44963370000523", is_active: 1 });
+  table("business_partners").set("client", { id: "client", organization_id: "org", display_name: "Cliente", is_active: 1 });
   const query = async (sql: string, params: unknown[] = []) => {
     if (sql.includes("FROM api_sessions")) return { rows: [{ sessionId: "session", userId: "user", username: "gabriel", displayName: "Gabriel", deviceId: "device" }] };
     if (sql.includes("UPDATE api_sessions")) return { rows: [] };
@@ -43,6 +43,51 @@ function managementPool() {
 }
 
 describe("operational management API", () => {
+  it("le e importa XML recebido aplicando a regra de compra", async () => {
+    const state = managementPool();
+    state.records.set("business_partners", new Map([["supplier", {
+      id: "supplier", organization_id: "org", display_name: "Santa Fé Armazéns", is_active: 1
+    }]]));
+    state.records.set("partner_legal_entities", new Map([["supplier-entity", {
+      id: "supplier-entity", organization_id: "org", business_partner_id: "supplier", legal_name: "SANTA FE ARMAZENS GERAIS EIRELI",
+      cnpj: "04164419000130", is_active: 1
+    }]]));
+    state.records.set("products", new Map([["arabica", {
+      id: "arabica", organization_id: "org", name: "Café Arábica", default_sack_weight_kg: 60, is_active: 1
+    }]]));
+    state.records.set("purchase_rate_rules", new Map([["purchase-rule", {
+      id: "purchase-rule", organization_id: "org", business_partner_id: "supplier", own_legal_entity_id: "entity",
+      counterparty_partner_legal_entity_id: "supplier-entity", product_id: "arabica", operation_scope: "INTERNAL",
+      rate_value_cents: 700, effective_from: "2026-01-01", effective_to: null, priority: 10, is_active: 1
+    }]]));
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+      <NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe31261004164419000130550010000021641532100313" versao="4.00">
+        <ide><cUF>31</cUF><natOp>VENDA DE CAFE</natOp><mod>55</mod><serie>1</serie><nNF>2164</nNF><dhEmi>2026-11-05T10:00:00-03:00</dhEmi></ide>
+        <emit><CNPJ>04164419000130</CNPJ><xNome>SANTA FE ARMAZENS GERAIS EIRELI</xNome><enderEmit><UF>MG</UF></enderEmit></emit>
+        <dest><CNPJ>44963370000523</CNPJ><xNome>VILLA COFFEE MINAS GERAIS</xNome><enderDest><UF>MG</UF></enderDest></dest>
+        <det nItem="1"><prod><cProd>ARABICA</cProd><xProd>CAFE ARABICA</xProd><NCM>09011110</NCM><CFOP>5102</CFOP><uCom>SC</uCom><qCom>500</qCom><vUnCom>1250</vUnCom><vProd>625000</vProd><uTrib>SC</uTrib><qTrib>500</qTrib><vUnTrib>1250</vUnTrib></prod></det>
+        <total><ICMSTot><vProd>625000</vProd><vNF>625000</vNF></ICMSTot></total>
+      </infNFe></NFe>`;
+    const app = Fastify(); registerOperationalManagementRoutes(app, state.pool);
+    const headers = { authorization: "Bearer test", "content-type": "application/json" };
+    const preview = await app.inject({ method: "POST", url: "/v1/manage/invoices/xml/preview", headers, payload: { organizationId: "org", xml } });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({ number: "2164", direction: "INBOUND", ownLegalEntityId: "entity", counterpartyPartnerLegalEntityId: "supplier-entity" });
+
+    const imported = await app.inject({ method: "POST", url: "/v1/manage/invoices/xml/import", headers, payload: {
+      organizationId: "org", xml, responsiblePartnerId: "supplier", operationScope: "INTERNAL", itemProducts: [{ itemNumber: "1", productId: "arabica" }], confirmOperations: true
+    } });
+    expect(imported.statusCode).toBe(201);
+    expect(imported.json()).toMatchObject({ status: "CONFIRMED", pendingNotes: null });
+    const document = [...state.records.get("fiscal_documents")!.values()][0];
+    expect(document).toMatchObject({ document_number: "2164", direction: "INBOUND", partner_legal_entity_id: "supplier-entity", status: "CONFIRMED" });
+    expect([...state.records.get("operations")!.values()][0]).toMatchObject({
+      operation_type: "PURCHASE", quantity_sacks_decimal: "500", applied_rate_value_cents: 700,
+      service_amount_cents: 350000, purchase_rate_rule_id: "purchase-rule", status: "CONFIRMED"
+    });
+    expect(state.audits.map((row) => row.action)).toEqual(["WEB_XML_INVOICE_IMPORTED"]);
+  });
+
   it("registra ajuste de armazem usando o saldo central e impede saldo negativo", async () => {
     const state = managementPool();
     state.records.set("warehouse_movements", new Map([["existing", {

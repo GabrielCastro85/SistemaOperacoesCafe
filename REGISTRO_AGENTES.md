@@ -29,7 +29,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente, emissão de cobranças e recebimentos/estornos, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam notas/XML, confirmações, repasses, contas a pagar e administração web.
+- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente, importação de NF-e comercial por XML, emissão de cobranças e recebimentos/estornos, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam confirmações, repasses, contas a pagar, administração web e os casos especiais de XML (armazém, cancelamento e triangulação).
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 09:05 - Codex
+- Pedido: informar o que ainda falta para o site ficar 100% equivalente ao aplicativo e iniciar a execução.
+- Conferido: documentação funcional completa, navegação e telas atuais do `mobile-viewer`, APIs web de consulta e mutação e histórico das últimas publicações.
+- Feito: primeiro bloco da paridade de Notas e operações. O site agora lê e mostra a prévia do XML autorizado antes de gravar, identifica entrada/saída e o CNPJ próprio, localiza a empresa da contraparte por CNPJ, permite escolher responsável, escopo e produto de cada item, resolve tarifa de venda/compra com a mesma precedência do desktop e grava nota, itens e operações na revisão central auditada. Importações incompletas ficam pendentes em vez de contaminar os indicadores. XML duplicado, inválido e CNPJ próprio desconhecido são bloqueados. Notas de armazém ainda são encaminhadas ao desktop para não alterar o estoque incorretamente.
+- Testado: builds do servidor e do site, `git diff --check`, teste novo de XML de entrada com regra de compra e suíte completa com 58 arquivos e 328 testes aprovados.
+- Publicado: pendente nesta entrada.
+- Pendente: confirmações, repasses, contas a pagar, administração e casos especiais de XML (armazém, eventos/cancelamento e triangulação). Coletor, certificados do Windows, backups/restauração locais e atualizador continuarão num agente local.
 
 ### 2026-11-06 08:52 - Codex
 - Pedido: continuar tudo que fosse necessário para transformar integralmente o aplicativo em site.

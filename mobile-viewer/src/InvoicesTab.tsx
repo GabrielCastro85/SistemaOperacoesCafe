@@ -35,6 +35,43 @@ interface InvoiceRow {
   pendingNotes: string | null;
 }
 
+interface PartnerOption {
+  id: string;
+  display_name: string;
+  roles: Array<{ role: string }>;
+  legal_entities: Array<{ cnpj: string | null; legal_name: string }>;
+}
+
+interface ProductOption { id: string; name: string; code: string | null }
+
+interface XmlParty { legalName?: string; tradeName?: string; cnpjCpf?: string; state?: string }
+interface XmlItem {
+  itemNumber: string;
+  productCode?: string;
+  description?: string;
+  cfop?: string;
+  commercialUnit?: string;
+  commercialQuantity?: number;
+  totalAmountCents?: number;
+}
+interface XmlPreview {
+  accessKey: string;
+  number: string;
+  series: string;
+  issueDate: string;
+  nature: string;
+  issuer: XmlParty;
+  recipient: XmlParty;
+  items: XmlItem[];
+  ownLegalEntityId: string;
+  ownLegalEntityName: string;
+  direction: "INBOUND" | "OUTBOUND";
+  counterpartyPartnerLegalEntityId: string | null;
+  counterpartyCnpj: string;
+  counterpartyName: string;
+  warnings: string[];
+}
+
 const DIRECTION_LABELS: Record<DirectionFilter, string> = { ALL: "Entradas e saídas", INBOUND: "Entradas", OUTBOUND: "Saídas" };
 const STATUS_LABELS: Record<StatusFilter, string> = { ACTIVE: "Ativas", PENDING: "Com pendência", CANCELED: "Canceladas", ALL: "Todas" };
 const SOURCE_LABELS: Record<string, string> = { XML: "XML", MANUAL: "Manual", SPREADSHEET: "Planilha", SEFAZ: "SEFAZ" };
@@ -60,6 +97,20 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
   const [search, setSearch] = useState("");
   const [documents, setDocuments] = useState<InvoiceRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [showImporter, setShowImporter] = useState(false);
+  const [xmlText, setXmlText] = useState("");
+  const [xmlFileName, setXmlFileName] = useState("");
+  const [preview, setPreview] = useState<XmlPreview | null>(null);
+  const [partners, setPartners] = useState<PartnerOption[]>([]);
+  const [products, setProducts] = useState<ProductOption[]>([]);
+  const [responsiblePartnerId, setResponsiblePartnerId] = useState("");
+  const [operationScope, setOperationScope] = useState<"INTERNAL" | "EXTERNAL">("INTERNAL");
+  const [hasFinancialService, setHasFinancialService] = useState(false);
+  const [confirmOperations, setConfirmOperations] = useState(true);
+  const [itemProducts, setItemProducts] = useState<Record<string, string>>({});
+  const [importBusy, setImportBusy] = useState<"preview" | "import" | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const load = useCallback(async (): Promise<void> => {
     if (!organizationId) return;
@@ -75,6 +126,81 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
   }, [organizationId, legalEntityId, periodStart, periodEnd, direction, status]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!showImporter || !organizationId) return;
+    void Promise.all([
+      apiJson<PartnerOption[]>(`/v1/viewer/partners?${queryString({ organizationId, legalEntityId })}`),
+      apiJson<ProductOption[]>(`/v1/viewer/products?${queryString({ organizationId, legalEntityId })}`)
+    ]).then(([partnerRows, productRows]) => {
+      setPartners(partnerRows);
+      setProducts(productRows);
+    }).catch((value) => setImportError(value instanceof Error ? value.message : "Falha ao carregar os cadastros comerciais."));
+  }, [showImporter, organizationId, legalEntityId]);
+
+  useEffect(() => {
+    if (!preview) return;
+    if (!responsiblePartnerId) {
+      const matched = partners.find((partner) => partner.legal_entities.some((entity) => (entity.cnpj ?? "").replace(/\D/g, "") === preview.counterpartyCnpj));
+      if (matched) setResponsiblePartnerId(matched.id);
+    }
+    setItemProducts((current) => {
+      const next = { ...current };
+      for (const item of preview.items) {
+        if (next[item.itemNumber]) continue;
+        const sourceCode = (item.productCode ?? "").trim().toLocaleLowerCase("pt-BR");
+        const sourceDescription = (item.description ?? "").trim().toLocaleLowerCase("pt-BR");
+        const matched = products.find((product) => {
+          const code = (product.code ?? "").trim().toLocaleLowerCase("pt-BR");
+          const name = product.name.trim().toLocaleLowerCase("pt-BR");
+          return Boolean(sourceCode && code === sourceCode) || Boolean(sourceDescription && (name === sourceDescription || name.includes(sourceDescription) || sourceDescription.includes(name)));
+        });
+        if (matched) next[item.itemNumber] = matched.id;
+      }
+      return next;
+    });
+  }, [preview, partners, products, responsiblePartnerId]);
+
+  const resetImporter = (): void => {
+    setXmlText(""); setXmlFileName(""); setPreview(null); setResponsiblePartnerId("");
+    setOperationScope("INTERNAL"); setHasFinancialService(false); setConfirmOperations(true);
+    setItemProducts({}); setImportError(null); setImportBusy(null);
+  };
+
+  const previewXml = async (content = xmlText): Promise<void> => {
+    if (!content) return;
+    setImportBusy("preview"); setImportError(null); setPreview(null);
+    try {
+      const result = await apiJson<XmlPreview>("/v1/manage/invoices/xml/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, xml: content })
+      });
+      setPreview(result);
+      setOperationScope(result.issuer.state && result.recipient.state && result.issuer.state !== result.recipient.state ? "EXTERNAL" : "INTERNAL");
+      setResponsiblePartnerId("");
+      setItemProducts(Object.fromEntries(result.items.map((item) => [item.itemNumber, ""])));
+    } catch (value) {
+      setImportError(value instanceof Error ? value.message : "Não foi possível ler o XML.");
+    } finally { setImportBusy(null); }
+  };
+
+  const importXml = async (): Promise<void> => {
+    if (!preview) return;
+    setImportBusy("import"); setImportError(null);
+    try {
+      const result = await apiJson<{ status: string; pendingNotes: string | null }>("/v1/manage/invoices/xml/import", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          organizationId, xml: xmlText, responsiblePartnerId, operationScope, hasFinancialService,
+          confirmOperations, itemProducts: preview.items.map((item) => ({ itemNumber: item.itemNumber, productId: itemProducts[item.itemNumber] }))
+        })
+      });
+      setSuccess(result.status === "CONFIRMED" ? `NF ${preview.number} importada e confirmada.` : `NF ${preview.number} importada com pendência para revisão.`);
+      setShowImporter(false); resetImporter(); await load();
+    } catch (value) {
+      setImportError(value instanceof Error ? value.message : "Não foi possível importar a nota.");
+    } finally { setImportBusy(null); }
+  };
+
+  const allItemsMapped = Boolean(preview?.items.length) && preview!.items.every((item) => Boolean(itemProducts[item.itemNumber]));
 
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("pt-BR");
@@ -94,7 +220,71 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
 
   return (
     <>
-      <PageHeader eyebrow="Operações" title="Notas e operações" description="Consulte entradas e saídas que já chegaram ao servidor central, sem alterar os lançamentos do aplicativo." />
+      <PageHeader eyebrow="Operações" title="Notas e operações" description="Consulte entradas e saídas e importe novas NF-e por XML diretamente no sistema." actions={
+        <Button variant={showImporter ? "secondary" : "primary"} onClick={() => { setShowImporter((current) => !current); resetImporter(); }}>{showImporter ? "Fechar importação" : "Importar XML"}</Button>
+      } />
+      {success ? <Alert tone="success" title="Nota atualizada">{success}</Alert> : null}
+      {showImporter ? (
+        <Card className="viewer-xml-importer" eyebrow="Nova nota" title="Importar NF-e por XML" actions={<Badge tone="info">Leitura segura</Badge>}>
+          <div className="viewer-xml-importer__intro">
+            <label className="viewer-xml-file">
+              <strong>{xmlFileName || "Selecione o XML autorizado da NF-e"}</strong>
+              <small>O arquivo é analisado antes de qualquer gravação. Limite de 10 MB.</small>
+              <input type="file" accept=".xml,text/xml,application/xml" onChange={(event) => {
+                const file = event.target.files?.[0]; if (!file) return;
+                if (file.size > 10 * 1024 * 1024) { setImportError("O XML ultrapassa o limite de 10 MB."); return; }
+                setXmlFileName(file.name); setPreview(null); setImportError(null);
+                void file.text().then((content) => { setXmlText(content); void previewXml(content); });
+              }} />
+            </label>
+            <Button variant="secondary" loading={importBusy === "preview"} disabled={!xmlText} onClick={() => void previewXml()}>Ler novamente</Button>
+          </div>
+          {importError ? <Alert tone="danger" title="Não foi possível concluir">{importError}</Alert> : null}
+          {preview ? (
+            <div className="viewer-xml-preview">
+              <div className="viewer-xml-preview__summary">
+                <span><small>Nota</small><strong>NF {preview.number}{preview.series ? `/${preview.series}` : ""}</strong></span>
+                <span><small>Sentido</small><strong>{preview.direction === "INBOUND" ? "Entrada / compra" : "Saída / venda"}</strong></span>
+                <span><small>Empresa própria</small><strong>{preview.ownLegalEntityName}</strong></span>
+                <span><small>Contraparte</small><strong>{preview.counterpartyName}</strong><small>{preview.counterpartyCnpj}</small></span>
+              </div>
+              <div className="viewer-xml-importer__fields">
+                <label>Responsável comercial
+                  <select className="ui-select" value={responsiblePartnerId} onChange={(event) => setResponsiblePartnerId(event.target.value)}>
+                    <option value="">Selecione cliente, corretor ou fornecedor</option>
+                    {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.display_name} · {partner.roles.map((role) => role.role).join("/") || "sem papel"}</option>)}
+                  </select>
+                </label>
+                <label>Escopo da operação
+                  <select className="ui-select" value={operationScope} onChange={(event) => setOperationScope(event.target.value as "INTERNAL" | "EXTERNAL")}>
+                    <option value="INTERNAL">Mesma UF</option><option value="EXTERNAL">Outra UF</option>
+                  </select>
+                </label>
+              </div>
+              <div className="viewer-xml-items">
+                <div className="viewer-xml-items__head"><span>Item do XML</span><span>CFOP / quantidade</span><span>Produto no sistema</span></div>
+                {preview.items.map((item) => (
+                  <div className="viewer-xml-item" key={item.itemNumber}>
+                    <span><strong>{item.description || `Item ${item.itemNumber}`}</strong><small>Código {item.productCode || "não informado"}</small></span>
+                    <span><strong>{item.cfop || "Sem CFOP"}</strong><small>{Number(item.commercialQuantity ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 4 })} {item.commercialUnit}</small></span>
+                    <select className="ui-select" value={itemProducts[item.itemNumber] ?? ""} onChange={(event) => setItemProducts((current) => ({ ...current, [item.itemNumber]: event.target.value }))}>
+                      <option value="">Selecione o produto</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}{product.code ? ` · ${product.code}` : ""}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div className="viewer-xml-importer__options">
+                {preview.direction === "OUTBOUND" ? <label><input type="checkbox" checked={hasFinancialService} onChange={(event) => setHasFinancialService(event.target.checked)} /> Esta nota possui financeiro</label> : null}
+                <label><input type="checkbox" checked={confirmOperations} onChange={(event) => setConfirmOperations(event.target.checked)} /> Aplicar tarifas e confirmar as operações agora</label>
+              </div>
+              <div className="viewer-xml-importer__footer">
+                <small>{preview.nature || "Natureza da operação não informada"}</small>
+                <Button variant="primary" loading={importBusy === "import"} disabled={!responsiblePartnerId || !allItemsMapped} onClick={() => void importXml()}>Importar {preview.items.length} item(ns)</Button>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
       <FilterBar
         activeCount={(direction !== "ALL" ? 1 : 0) + (status !== "ALL" ? 1 : 0) + (search.trim() ? 1 : 0)}
         onClear={() => { setDirection("ALL"); setStatus("ALL"); setSearch(""); }}

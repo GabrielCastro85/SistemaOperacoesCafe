@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type pg from "pg";
 import { z } from "zod";
+import { parseXmlContent } from "../../electron/main/services/xmlNfeService.js";
 import {
   centralRecord,
   centralRecords,
@@ -64,6 +65,16 @@ const issueClientChargeSchema = scopeSchema.extend({
   periodEnd: z.string().date(),
   dueDate: z.string().date().nullable().optional(),
   notes: z.string().trim().max(2000).optional().default("")
+});
+
+const xmlTextSchema = z.string().min(1).max(10 * 1024 * 1024);
+const xmlPreviewSchema = z.object({ organizationId: z.string().min(1), xml: xmlTextSchema });
+const xmlImportSchema = xmlPreviewSchema.extend({
+  responsiblePartnerId: z.string().min(1),
+  operationScope: z.enum(["INTERNAL", "EXTERNAL"]),
+  hasFinancialService: z.boolean().default(false),
+  itemProducts: z.array(z.object({ itemNumber: z.string().min(1), productId: z.string().min(1) })).min(1),
+  confirmOperations: z.boolean().default(true)
 });
 
 const clean = (value: string): string | null => value.trim() || null;
@@ -142,7 +153,233 @@ function ledgerEffect(entryType: z.infer<typeof ledgerEntrySchema>["entryType"],
   return requested;
 }
 
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function arrayValue(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(objectValue) : [];
+}
+
+function ownEntityForXml(entities: Record<string, unknown>[], organizationId: string, extracted: Record<string, unknown>) {
+  const issuer = objectValue(extracted.issuer);
+  const recipient = objectValue(extracted.recipient);
+  const issuerCnpj = digits(issuer.cnpjCpf);
+  const recipientCnpj = digits(recipient.cnpjCpf);
+  const candidates = entities.filter((row) => row.organization_id === organizationId && row.is_active !== 0 && row.is_active !== false);
+  const outbound = candidates.find((row) => digits(row.cnpj) === issuerCnpj);
+  if (outbound) return { entity: outbound, direction: "OUTBOUND" as const, counterparty: recipient };
+  const inbound = candidates.find((row) => digits(row.cnpj) === recipientCnpj);
+  if (inbound) return { entity: inbound, direction: "INBOUND" as const, counterparty: issuer };
+  return null;
+}
+
+function canonicalUnit(value: unknown): "SACK" | "KG" | "TON" | "UNIT" {
+  const unit = normalized(value);
+  if (["SC", "SACA", "SACAS"].includes(unit)) return "SACK";
+  if (["KG", "KILO", "QUILO", "QUILOS"].includes(unit)) return "KG";
+  if (["TON", "T", "TONELADA", "TONELADAS"].includes(unit)) return "TON";
+  return "UNIT";
+}
+
+function sacksForItem(item: Record<string, unknown>, product: Record<string, unknown>): number {
+  const quantity = numberValue(item.commercialQuantity);
+  const unit = canonicalUnit(item.commercialUnit);
+  const weight = numberValue(product.default_sack_weight_kg) || 60;
+  if (unit === "SACK") return quantity;
+  if (unit === "KG") return quantity / weight;
+  if (unit === "TON") return quantity * 1000 / weight;
+  return 0;
+}
+
+type ResolvedRate = { status: "found" | "missing" | "conflict"; rule: Record<string, unknown> | null; rateCents: number };
+
+function resolveRate(
+  rules: Record<string, unknown>[], kind: "SALE" | "PURCHASE", organizationId: string,
+  partnerId: string, ownEntityId: string, counterpartyEntityId: string | null,
+  productId: string, scope: "INTERNAL" | "EXTERNAL", date: string, hasFinancialService: boolean
+): ResolvedRate {
+  const applicable = rules.filter((row) => row.organization_id === organizationId && row.business_partner_id === partnerId)
+    .filter((row) => row.is_active !== 0 && row.is_active !== false)
+    .filter((row) => !row.own_legal_entity_id || row.own_legal_entity_id === ownEntityId)
+    .filter((row) => !row.counterparty_partner_legal_entity_id || row.counterparty_partner_legal_entity_id === counterpartyEntityId)
+    .filter((row) => !row.product_id || row.product_id === productId)
+    .filter((row) => row.operation_scope === "ALL" || row.operation_scope === scope)
+    .filter((row) => String(row.effective_from ?? "") <= date && (!row.effective_to || String(row.effective_to) >= date))
+    .map((row) => ({ row, specificity: Number(Boolean(row.counterparty_partner_legal_entity_id)) * 8
+      + Number(Boolean(row.own_legal_entity_id)) * 4 + Number(Boolean(row.product_id)) * 2
+      + Number(row.operation_scope !== "ALL"), priority: numberValue(row.priority) }))
+    .sort((left, right) => right.specificity - left.specificity || right.priority - left.priority);
+  if (!applicable.length) return { status: "missing", rule: null, rateCents: 0 };
+  const best = applicable[0];
+  const tied = applicable.filter((candidate) => candidate.specificity === best.specificity && candidate.priority === best.priority);
+  if (tied.length > 1) return { status: "conflict", rule: null, rateCents: 0 };
+  const rateCents = kind === "SALE" && hasFinancialService && best.row.financial_rate_value_cents != null
+    ? cents(best.row.financial_rate_value_cents) : cents(best.row.rate_value_cents);
+  return { status: "found", rule: best.row, rateCents };
+}
+
+function xmlPreviewPayload(parsed: ReturnType<typeof parseXmlContent>, match: ReturnType<typeof ownEntityForXml>, partnerEntity: Record<string, unknown> | null) {
+  const extracted = objectValue(parsed.extractedData);
+  return {
+    accessKey: parsed.accessKey, xmlType: parsed.xmlType, warnings: parsed.warnings,
+    number: String(extracted.number ?? ""), series: String(extracted.series ?? ""), issueDate: String(extracted.issuedAt ?? ""),
+    nature: String(extracted.nature ?? ""), issuer: objectValue(extracted.issuer), recipient: objectValue(extracted.recipient),
+    totals: objectValue(extracted.totals), items: arrayValue(extracted.items),
+    ownLegalEntityId: String(match?.entity.id ?? ""), ownLegalEntityName: String(match?.entity.trade_name ?? match?.entity.legal_name ?? ""),
+    direction: match?.direction ?? "UNKNOWN", counterpartyPartnerLegalEntityId: partnerEntity ? String(partnerEntity.id) : null,
+    counterpartyCnpj: digits(match?.counterparty.cnpjCpf), counterpartyName: String(match?.counterparty.legalName ?? match?.counterparty.tradeName ?? "")
+  };
+}
+
+function readInvoiceXml(xml: string): ReturnType<typeof parseXmlContent> {
+  try {
+    return parseXmlContent(xml);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "XML inválido.";
+    throw Object.assign(new Error(message), { statusCode: 400, code: "INVALID_XML" });
+  }
+}
+
 export function registerOperationalManagementRoutes(app: FastifyInstance, pool: pg.Pool): void {
+  app.post("/v1/manage/invoices/xml/preview", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const input = xmlPreviewSchema.parse(request.body);
+    const parsed = readInvoiceXml(input.xml);
+    if (!["NFE", "NFE_PROC"].includes(parsed.xmlType) || !parsed.extractedData) {
+      return reply.code(400).send({ error: "UNSUPPORTED_XML", message: "Selecione o XML autorizado de uma NF-e. Eventos de cancelamento e carta de correcao ainda nao entram por esta tela." });
+    }
+    const extracted = objectValue(parsed.extractedData);
+    const entities = await centralRecords(pool, "legal_entities");
+    const match = ownEntityForXml(entities, input.organizationId, extracted);
+    if (!match) {
+      return reply.code(409).send({ error: "OWN_ENTITY_NOT_FOUND", message: "O CNPJ emitente ou destinatario do XML nao corresponde a uma empresa propria cadastrada nesta organizacao." });
+    }
+    if (!(await authorize(pool, session, reply, "imports.manage", input.organizationId, String(match.entity.id)))) return;
+    const partnerEntities = await centralRecords(pool, "partner_legal_entities");
+    const counterpartyCnpj = digits(match.counterparty.cnpjCpf);
+    const partnerEntity = partnerEntities.find((row) => row.organization_id === input.organizationId && digits(row.cnpj) === counterpartyCnpj) ?? null;
+    return xmlPreviewPayload(parsed, match, partnerEntity);
+  });
+
+  app.post("/v1/manage/invoices/xml/import", async (request, reply) => {
+    const session = await requireWebSession(pool, request, reply); if (!session) return;
+    const input = xmlImportSchema.parse(request.body);
+    const parsed = readInvoiceXml(input.xml);
+    if (!["NFE", "NFE_PROC"].includes(parsed.xmlType) || !parsed.extractedData || !parsed.accessKey) {
+      return reply.code(400).send({ error: "UNSUPPORTED_XML", message: "O arquivo precisa ser uma NF-e com chave de acesso valida." });
+    }
+    const extracted = objectValue(parsed.extractedData);
+    const [entities, partnerEntities, partners, products, documents, serviceRules, purchaseRules] = await Promise.all([
+      centralRecords(pool, "legal_entities"), centralRecords(pool, "partner_legal_entities"), centralRecords(pool, "business_partners"),
+      centralRecords(pool, "products"), centralRecords(pool, "fiscal_documents"), centralRecords(pool, "service_rate_rules"), centralRecords(pool, "purchase_rate_rules")
+    ]);
+    const match = ownEntityForXml(entities, input.organizationId, extracted);
+    if (!match) return reply.code(409).send({ error: "OWN_ENTITY_NOT_FOUND", message: "Empresa propria nao identificada pelo CNPJ do XML." });
+    const ownEntityId = String(match.entity.id);
+    if (!(await authorize(pool, session, reply, "imports.manage", input.organizationId, ownEntityId))) return;
+    if (documents.some((row) => row.access_key === parsed.accessKey)) {
+      return reply.code(409).send({ error: "DUPLICATE_ACCESS_KEY", message: "Esta NF-e ja esta cadastrada no sistema." });
+    }
+    const partner = partners.find((row) => row.id === input.responsiblePartnerId && row.organization_id === input.organizationId && row.is_active !== 0 && row.is_active !== false);
+    if (!partner) return reply.code(404).send({ error: "PARTNER_NOT_FOUND", message: "Cliente ou fornecedor responsavel nao encontrado." });
+    const counterpartyCnpj = digits(match.counterparty.cnpjCpf);
+    const partnerEntity = partnerEntities.find((row) => row.organization_id === input.organizationId && digits(row.cnpj) === counterpartyCnpj) ?? null;
+    const xmlItems = arrayValue(extracted.items);
+    const productByItem = new Map(input.itemProducts.map((row) => [row.itemNumber, row.productId]));
+    if (xmlItems.length === 0 || xmlItems.some((item) => !productByItem.has(String(item.itemNumber ?? "")))) {
+      return reply.code(400).send({ error: "PRODUCT_REQUIRED", message: "Selecione o produto correspondente para todos os itens da nota." });
+    }
+    const selectedProducts = new Map<string, Record<string, unknown>>();
+    for (const productId of new Set(productByItem.values())) {
+      const product = products.find((row) => row.id === productId && row.organization_id === input.organizationId && row.is_active !== 0 && row.is_active !== false);
+      if (!product) return reply.code(404).send({ error: "PRODUCT_NOT_FOUND", message: "Um dos produtos selecionados nao foi encontrado." });
+      selectedProducts.set(productId, product);
+    }
+    const warehouseCfops = new Set(["5905", "6905", "5906", "6906", "5907", "6907", "5934", "6934", "1905", "2905", "1906", "2906", "1907", "2907", "1934", "2934"]);
+    if (xmlItems.some((item) => warehouseCfops.has(digits(item.cfop)))) {
+      return reply.code(409).send({ error: "WAREHOUSE_XML", message: "Esta e uma nota de armazem. Continue lancando-a pelo aplicativo enquanto o fluxo web de cafes armazenados e finalizado." });
+    }
+
+    const documentId = randomUUID();
+    const now = new Date().toISOString();
+    const issueDate = String(extracted.issuedAt ?? "");
+    const operationType = match.direction === "OUTBOUND" ? "SALE" as const : "PURCHASE" as const;
+    const hasFinancialService = operationType === "SALE" && input.hasFinancialService;
+    const changes: Array<{ table: string; key: string; operation: "UPSERT"; data: Record<string, unknown> }> = [];
+    const pendingReasons = new Set<string>();
+    const itemRows: Record<string, unknown>[] = [];
+    const operationRows: Record<string, unknown>[] = [];
+    for (const item of xmlItems) {
+      const itemNumber = String(item.itemNumber ?? "");
+      const productId = productByItem.get(itemNumber)!;
+      const product = selectedProducts.get(productId)!;
+      const itemId = randomUUID();
+      const operationId = randomUUID();
+      const sacks = sacksForItem(item, product);
+      if (sacks <= 0) pendingReasons.add(`Conferir unidade do item ${itemNumber}`);
+      const resolved = resolveRate(operationType === "SALE" ? serviceRules : purchaseRules, operationType, input.organizationId,
+        input.responsiblePartnerId, ownEntityId, partnerEntity ? String(partnerEntity.id) : null,
+        productId, input.operationScope, issueDate, hasFinancialService);
+      if (resolved.status === "missing") pendingReasons.add(`Sem tarifa para o item ${itemNumber}`);
+      if (resolved.status === "conflict") pendingReasons.add(`Tarifas conflitantes no item ${itemNumber}`);
+      const itemStatus = input.confirmOperations && sacks > 0 && resolved.status === "found" ? "CONFIRMED" : "PENDING";
+      const amountCents = Math.round(sacks * resolved.rateCents);
+      const itemRow: Record<string, unknown> = {
+        id: itemId, fiscal_document_id: documentId, product_id: productId,
+        description: String(item.description ?? product.name ?? "Produto"), quantity_decimal: decimal(numberValue(item.commercialQuantity)),
+        unit: canonicalUnit(item.commercialUnit), unit_price_decimal: decimal(numberValue(item.commercialUnitValue)),
+        total_amount_cents: cents(item.totalAmountCents), sacks_quantity_decimal: decimal(sacks), created_at: now, updated_at: now
+      };
+      const operationRow: Record<string, unknown> = {
+        id: operationId, fiscal_document_id: documentId, fiscal_document_item_id: itemId,
+        organization_id: input.organizationId, own_legal_entity_id: ownEntityId, responsible_partner_id: input.responsiblePartnerId,
+        product_id: productId, operation_type: operationType, operation_scope: input.operationScope, operation_date: issueDate,
+        quantity_sacks_decimal: decimal(sacks), gross_quantity_sacks_decimal: decimal(sacks),
+        service_rate_rule_id: operationType === "SALE" ? resolved.rule?.id ?? null : null,
+        purchase_rate_rule_id: operationType === "PURCHASE" ? resolved.rule?.id ?? null : null,
+        applied_rate_value_cents: resolved.rateCents, service_amount_cents: amountCents,
+        rate_was_manually_overridden: 0, manual_rate_value_cents: null, manual_override_reason: null,
+        notes: null, status: itemStatus, source: "XML", import_job_id: null, import_row_id: null, xml_import_job_id: null,
+        classification_rule_id: null, billing_status: "UNBILLED", client_charge_id: null,
+        purchase_settlement_status: "UNSETTLED", account_payable_id: null, created_at: now, updated_at: now
+      };
+      itemRows.push(itemRow); operationRows.push(operationRow);
+      changes.push(
+        { table: "fiscal_document_items", key: itemId, operation: "UPSERT", data: itemRow },
+        { table: "operations", key: operationId, operation: "UPSERT", data: operationRow }
+      );
+    }
+    const pending = pendingReasons.size > 0 || !input.confirmOperations;
+    if (pending) {
+      for (const row of operationRows) row.status = "PENDING";
+    }
+    const documentRow: Record<string, unknown> = {
+      id: documentId, organization_id: input.organizationId, own_legal_entity_id: ownEntityId,
+      responsible_partner_id: input.responsiblePartnerId, partner_legal_entity_id: partnerEntity?.id ?? null,
+      secondary_responsible_partner_id: null, secondary_operation_type: null, document_type: "MANUAL_INVOICE",
+      access_key: parsed.accessKey, document_number: String(extracted.number ?? ""), series: clean(String(extracted.series ?? "")),
+      issue_date: issueDate, total_amount_cents: cents(objectValue(extracted.totals).invoiceAmountCents),
+      status: pending ? "PENDING" : "CONFIRMED", has_pending_issues: pending ? 1 : 0,
+      pending_notes: pending ? [...pendingReasons].join("; ") || "Importada como rascunho" : null,
+      duplicate_warning: null, notes: null, confirmed_at: pending ? null : now, canceled_at: null, cancel_reason: null,
+      source: "XML", import_job_id: null, import_row_id: null, xml_file_path: null,
+      xml_file_hash: createHash("sha256").update(input.xml).digest("hex"), protocol_number: objectValue(extracted.protocol).number ?? null,
+      protocol_date: objectValue(extracted.protocol).receivedAt ?? null, authorization_status_code: objectValue(extracted.protocol).statusCode ?? null,
+      authorization_status_message: objectValue(extracted.protocol).statusMessage ?? null, xml_import_job_id: null,
+      merged_from_source: null, merged_at: null, direction: match.direction, fiscal_snapshot_json: JSON.stringify(extracted),
+      contract_number: extracted.contractNumber ?? null, billing_observations: null, freight_dae_reference: null,
+      freight_dae_amount_cents: 0, has_financial_service: hasFinancialService ? 1 : 0,
+      created_at: now, updated_at: now
+    };
+    changes.unshift({ table: "fiscal_documents", key: documentId, operation: "UPSERT", data: documentRow });
+    const revision = await commitDomainChanges(pool, session, "WEB_XML_INVOICE_IMPORTED", "fiscal_document", documentId, changes, {
+      organizationId: input.organizationId, legalEntityId: ownEntityId, direction: match.direction,
+      accessKey: parsed.accessKey, itemCount: itemRows.length, operationCount: operationRows.length, pending
+    });
+    return reply.code(201).send({ id: documentId, revision, status: documentRow.status, pendingNotes: documentRow.pending_notes });
+  });
+
   app.post("/v1/manage/client-charges/issue", async (request, reply) => {
     const session = await requireWebSession(pool, request, reply); if (!session) return;
     const input = issueClientChargeSchema.parse(request.body);

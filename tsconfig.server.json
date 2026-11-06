@@ -13,8 +13,10 @@
   "include": [
     "server/**/*.ts",
     "electron/main/services/chargeDocuments.ts",
+    "electron/main/services/xmlNfeService.ts",
     "src/shared/types/domain.ts",
     "src/shared/utils/chargeLabel.ts",
+    "src/shared/utils/decimal.ts",
     "src/shared/utils/operationLabels.ts"
   ]
 }
