@@ -41,7 +41,7 @@ export async function login(username: string, password: string): Promise<void> {
     body: JSON.stringify({
       username,
       password,
-      device: { installationId: `web-${deviceId()}`, displayName: "Consulta Web", platform: navigator.platform, appVersion: "web" }
+      device: { installationId: `web-${deviceId()}`, displayName: "Operações Café Web", platform: navigator.platform, appVersion: "web" }
     })
   });
   if (!response.ok) throw await responseError(response);

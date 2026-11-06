@@ -920,3 +920,54 @@
 .viewer-assistant-answer p {
   margin: 0 0 0.5rem;
 }
+.viewer-editor-card {
+  margin-bottom: 1rem;
+  border-color: color-mix(in srgb, var(--color-accent, #15925f) 38%, var(--ui-border));
+}
+
+.viewer-editor-card form,
+.viewer-editor-card label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.viewer-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 0.9rem;
+}
+
+.viewer-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.viewer-editor-section {
+  margin: 0.4rem 0 0.9rem;
+}
+
+.viewer-details {
+  margin-top: 0.9rem;
+  padding: 0.8rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+}
+
+.viewer-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 0.8rem;
+}
+
+.viewer-editor-card textarea.ui-input {
+  min-height: 78px;
+  resize: vertical;
+}
+
+@media (max-width: 640px) {
+  .viewer-form-grid { grid-template-columns: 1fr; }
+  .viewer-form-actions { position: sticky; bottom: 0; padding: 0.75rem 0; background: var(--ui-surface); }
+}

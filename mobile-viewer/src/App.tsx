@@ -134,7 +134,7 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }): JSX.Element {
           <img src={assetUrl("assets/branding/grao/logo.svg")} alt="Grão e Grão" />
         </div>
         <span className="auth-eyebrow">Sistema de Operações de Café</span>
-        <h1>Consulta</h1>
+        <h1>Entrar</h1>
         <label>Usuário<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} required autoComplete="username" /></label>
         <label>
           Senha

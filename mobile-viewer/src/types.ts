@@ -90,6 +90,7 @@ export type BusinessPartnerRole = "CLIENT" | "SUPPLIER" | "SELLER" | "BUYER" | "
 export interface BusinessPartnerRow {
   id: string;
   display_name: string;
+  notes: string | null;
   document_number: string | null;
   email: string | null;
   phone: string | null;
@@ -97,6 +98,12 @@ export interface BusinessPartnerRow {
   state: string | null;
   is_active: boolean;
   roles: Array<{ role: BusinessPartnerRole }>;
+  legal_entities: Array<{
+    id: string; legal_name: string; trade_name: string | null; cnpj: string | null;
+    state_registration: string | null; email: string | null; phone: string | null;
+    address_line: string | null; address_number: string | null; address_complement: string | null;
+    district: string | null; city: string | null; state: string | null; postal_code: string | null;
+  }>;
 }
 
 export type ProductCategory = "COFFEE_ARABICA" | "COFFEE_CONILON" | "COFFEE_OTHER" | "OTHER";
@@ -106,6 +113,7 @@ export interface ProductRow {
   id: string;
   name: string;
   code: string | null;
+  description?: string | null;
   category: ProductCategory;
   default_unit: ProductUnit;
   default_sack_weight_kg: number | null;
@@ -114,11 +122,16 @@ export interface ProductRow {
 
 export interface RateRuleRow {
   id: string;
+  business_partner_id: string;
+  product_id: string | null;
+  own_legal_entity_id: string | null;
   rate_value_cents: number;
+  financial_rate_value_cents?: number | null;
   effective_from: string;
   effective_to: string | null;
   priority: number;
   is_active: boolean;
+  operation_scope?: "INTERNAL" | "EXTERNAL" | "ALL" | null;
   business_partner: { display_name: string } | null;
   product: { name: string } | null;
 }

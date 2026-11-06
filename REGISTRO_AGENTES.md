@@ -29,7 +29,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Além dos módulos anteriores, já estão publicados Comparativo, Assistente, Clientes e empresas, Produtos, Regras por saca, Conferência de repasses, Regras de entrada, Acertos de entrada, Visão financeira e Relatórios. Tudo continua em modo de consulta; o desktop segue como sistema principal para inclusões, alterações, emissões e baixas e não deve ser desativado durante a migração.
+- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. A primeira etapa de escrita web está preparada para Clientes/fornecedores/empresas, Produtos e Regras por saca/entrada, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam os fluxos operacionais, financeiros e administrativos descritos no histórico.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,19 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 22:10 - Codex
+- Pedido: transformar integralmente o aplicativo em site, em vez de manter `graobase.com.br` somente para consultas.
+- Feito: criada a base de mutações web autenticadas e auditadas sobre `central_records`/`central_change_log`, fazendo as alterações entrarem na mesma revisão que sincroniza os computadores. Clientes/fornecedores/empresas, produtos/apelidos e regras de serviço/entrada ganharam inclusão e edição no navegador. As operações validam escopo, CNPJ, dados e permissão de gestão comercial; a interface foi adaptada para desktop e celular.
+- Testado: builds do servidor e do site, typecheck, ESLint direcionado, `git diff --check`, testes específicos da API e suíte completa com 57 arquivos e 323 testes aprovados.
+- Publicado: pendente nesta entrada; publicar a branch e a `master`, validar Railway e GitHub Pages antes de encerrar.
+- Pendente: migrar os fluxos de notas/XML, cafés armazenados, confirmações, cobranças, conta-corrente, repasses, financeiro e administração para escrita web. Recursos dependentes do Windows (coletor, certificados instalados, backups locais e atualizador) continuam auxiliares locais, mas não impedem o uso principal pelo site.
+
+### 2026-11-05 21:45 - Codex
+- Pedido: confirmar se ainda falta algo na conversão gradual do Operações Café para o site.
+- Conferido: os módulos operacionais e gerenciais previstos para consulta já estão publicados em `graobase.com.br`; o desktop continua sendo o sistema principal para inclusões, alterações, emissões, baixas e cancelamentos.
+- Pendente: implementar operações de escrita no site por endpoints de domínio com validação, permissões e auditoria; depois migrar a administração web (usuários, perfis, permissões, auditoria e configurações). Coletor, certificados do Windows, backups/restauração e atualização do aplicativo devem permanecer locais.
+- Publicado: nada; conferência somente leitura.
 
 ### 2026-11-05 21:32 - Codex
 - Pedido: continuar e fazer o restante da conversão gradual do aplicativo para o site.

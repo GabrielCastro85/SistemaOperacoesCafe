@@ -621,12 +621,15 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     return partners
       .filter((row) => text(row.organization_id) === filters.organizationId && isActive(row))
       .map((row) => ({
-        id: text(row.id), display_name: text(row.display_name), document_number: nullableText(row.document_number),
+        id: text(row.id), display_name: text(row.display_name), notes: nullableText(row.notes), document_number: nullableText(row.document_number),
         email: nullableText(row.email), phone: nullableText(row.phone), city: nullableText(row.city), state: nullableText(row.state),
         is_active: isActive(row), roles: (rolesByPartner.get(text(row.id)) ?? []).map((role) => ({ role })),
         legal_entities: (entitiesByPartner.get(text(row.id)) ?? []).filter(isActive).map((entity) => ({
           id: text(entity.id), legal_name: text(entity.legal_name), trade_name: nullableText(entity.trade_name),
-          cnpj: nullableText(entity.cnpj), city: nullableText(entity.city), state: nullableText(entity.state)
+          cnpj: nullableText(entity.cnpj), state_registration: nullableText(entity.state_registration), email: nullableText(entity.email),
+          phone: nullableText(entity.phone), address_line: nullableText(entity.address_line), address_number: nullableText(entity.address_number),
+          address_complement: nullableText(entity.address_complement), district: nullableText(entity.district), city: nullableText(entity.city),
+          state: nullableText(entity.state), postal_code: nullableText(entity.postal_code)
         }))
       }))
       .sort((left, right) => left.display_name.localeCompare(right.display_name, "pt-BR"));
@@ -641,12 +644,13 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
     const aliasesByProduct = new Map<string, string[]>();
     for (const alias of aliases.filter((row) => text(row.organization_id) === filters.organizationId || !row.organization_id)) {
       const productId = text(alias.product_id);
-      aliasesByProduct.set(productId, [...(aliasesByProduct.get(productId) ?? []), text(alias.alias)]);
+      const description = text(alias.source_description) || text(alias.alias);
+      if (description) aliasesByProduct.set(productId, [...(aliasesByProduct.get(productId) ?? []), description]);
     }
     return products
       .filter((row) => text(row.organization_id) === filters.organizationId && isActive(row))
       .map((row) => ({
-        id: text(row.id), name: text(row.name), code: nullableText(row.code), category: text(row.category),
+        id: text(row.id), name: text(row.name), code: nullableText(row.code), description: nullableText(row.description), category: text(row.category),
         default_unit: text(row.default_unit), default_sack_weight_kg: row.default_sack_weight_kg == null ? null : numberValue(row.default_sack_weight_kg),
         is_active: isActive(row), aliases: aliasesByProduct.get(text(row.id)) ?? []
       }))
@@ -671,7 +675,8 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
       .filter((row) => text(row.organization_id) === filters.organizationId && isActive(row))
       .filter((row) => !filters.legalEntityId || !row.own_legal_entity_id || text(row.own_legal_entity_id) === filters.legalEntityId)
       .map((row) => ({
-        id: text(row.id), rate_value_cents: numberValue(row.rate_value_cents),
+        id: text(row.id), business_partner_id: text(row.business_partner_id), product_id: nullableText(row.product_id),
+        own_legal_entity_id: nullableText(row.own_legal_entity_id), rate_value_cents: numberValue(row.rate_value_cents),
         financial_rate_value_cents: row.financial_rate_value_cents == null ? null : numberValue(row.financial_rate_value_cents),
         effective_from: text(row.effective_from), effective_to: nullableText(row.effective_to), priority: numberValue(row.priority),
         is_active: isActive(row), operation_scope: nullableText(row.operation_scope), state: nullableText(row.state),
