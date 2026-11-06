@@ -29,7 +29,7 @@ Modelo de entrada:
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.71. **Não publique sem o Gabriel pedir.**
-- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Dashboard, Notas e operações, Cafés armazenados, Confirmações, Cobranças e Conta-corrente foram publicados em modo somente leitura. Cafés armazenados replica o saldo por CNPJ do armazém, produto e empresa própria, com histórico de remessas, retornos, baixas simbólicas, ajustes manuais e pendências. O desktop continua sendo o sistema principal e não deve ser desativado durante a migração.
+- **Migração web gradual:** `graobase.com.br` hospeda no GitHub Pages a consulta web do Operações Café. Além dos módulos anteriores, já estão publicados Comparativo, Assistente, Clientes e empresas, Produtos, Regras por saca, Conferência de repasses, Regras de entrada, Acertos de entrada, Visão financeira e Relatórios. Tudo continua em modo de consulta; o desktop segue como sistema principal para inclusões, alterações, emissões e baixas e não deve ser desativado durante a migração.
 
 ### Publicado na 1.1.69 (commits `32191c7` e `6d7c92b`)
 
@@ -79,6 +79,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-05 21:32 - Codex
+- Pedido: continuar e fazer o restante da conversão gradual do aplicativo para o site.
+- Feito: publicados no site os cadastros comerciais (clientes/fornecedores e CNPJs vinculados), produtos com apelidos de reconhecimento, regras de serviço e de entrada, acertos de entrada, visão financeira, relatórios mensais, Assistente com IA, Conferência de repasses e Comparativo entre dois períodos. Todos os dados passam pela API central autenticada e respeitam a organização/CNPJ permitido ao usuário; foram removidas dessas telas as consultas diretas antigas ao Supabase.
+- Testado: builds do servidor e do `mobile-viewer`, typecheck, ESLint dos arquivos alterados, `git diff --check` e `tests/viewer-api.test.ts`. O teste cobre os novos endpoints e o isolamento de escopo. GitHub Pages concluiu com sucesso no commit `d9983a5`; `graobase.com.br` serve o bundle com os novos módulos. Railway também está em `d9983a5`, com `/health` e `/ready` saudáveis e banco conectado.
+- Publicado: commits `1732e0e`, `f49b219` e `d9983a5` na branch e na `master`. Nenhuma versão nova do desktop foi gerada e nada da Grãonex foi alterado.
+- Pendente: migrar operações de escrita (cadastros, lançamentos, emissões, pagamentos, baixas e cancelamentos) por endpoints de domínio com validação e auditoria; migrar a administração web com controle de permissão. Coletor, certificados do Windows, backups/restauração e atualização do aplicativo permanecem locais por dependerem do computador.
 
 ### 2026-11-05 14:56 - Codex
 - Pedido: listar o que ainda falta na conversão gradual do aplicativo para o site.
