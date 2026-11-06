@@ -8,7 +8,9 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "server/**/*.ts",
@@ -18,5 +20,8 @@
     "src/shared/utils/chargeLabel.ts",
     "src/shared/utils/decimal.ts",
     "src/shared/utils/operationLabels.ts"
+  ],
+  "exclude": [
+    "server/engine/**"
   ]
 }

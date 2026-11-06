@@ -6,6 +6,12 @@ on:
     paths:
       - "mobile-viewer/**"
       - ".github/workflows/mobile-viewer-pages.yml"
+      - "web/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "electron/preload/**"
+      - "vite.web.config.ts"
+      - "public/**"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +37,16 @@ jobs:
         working-directory: mobile-viewer
       - run: npm run build
         working-directory: mobile-viewer
+      # Site completo (mesmas telas do app) em /app/.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npx vite build --config vite.web.config.ts
+      - run: cp -r dist-web mobile-viewer/dist/app
       - uses: actions/configure-pages@v5
         with:
           enablement: true

@@ -192,6 +192,11 @@ export class AuthService {
     })();
   }
 
+  // O site usa um unico motor para varios usuarios: antes de cada chamada o
+  // servidor aponta a sessao do usuario que fez o pedido.
+  getCurrentSessionId(): string | null { return this.currentSessionId; }
+  useSession(sessionId: string | null): void { this.currentSessionId = sessionId; }
+
   getCurrentSession(): AuthSession | null {
     if (!this.currentSessionId) return null;
     return this.sessionFromId(this.currentSessionId);

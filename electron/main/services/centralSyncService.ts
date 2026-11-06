@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 
-const API_URL = "https://mindful-peace-production.up.railway.app";
+// O motor do site (server/engine) aponta para o proprio servidor por variavel de ambiente.
+const API_URL = process.env.OPERACOES_CAFE_CENTRAL_URL ?? "https://mindful-peace-production.up.railway.app";
 const SYNC_INTERVAL_MS = 30_000;
 const MUTATION_SYNC_DELAY_MS = 750;
 // A sincronizacao incremental consulta o servidor a cada 30 segundos, mas

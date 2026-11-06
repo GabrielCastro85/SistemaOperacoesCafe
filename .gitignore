@@ -19,3 +19,6 @@ tmp/
 *.sqlite-wal
 scripts/supabase/dumps/
 .claude/settings.local.json
+dist-engine/
+dist-web/
+web/.env.local

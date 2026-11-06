@@ -99,8 +99,8 @@ export function createDiagnostics(context: AppContext, repository: AppRepository
   };
 }
 
-export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository, centralSync: CentralSyncService): void {
-  const auth = new AuthService(context.db);
+export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repository: AppRepository, centralSync: CentralSyncService, options: { auth?: AuthService } = {}): void {
+  const auth = options.auth ?? new AuthService(context.db);
   const backups = new BackupService(context, auth);
   const centralCredentials = new CentralCredentialStore(context.directories.settingsDir);
 

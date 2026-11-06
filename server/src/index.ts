@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import { ZodError } from "zod";
+import { existsSync } from "node:fs";
 import { loadConfig } from "./config.js";
 import { createPool, runCentralMigrations } from "./database.js";
 import { registerAuthRoutes } from "./auth.js";
@@ -19,6 +20,7 @@ import { registerSpecialXmlRoutes } from "./specialXml.js";
 import { registerConfirmationManagementRoutes } from "./confirmationManagement.js";
 import { registerChargeManagementRoutes } from "./chargeManagement.js";
 import { registerSettlementManagementRoutes } from "./settlementManagement.js";
+import { registerAppEngineRoutes, type Engine } from "./appEngineRoutes.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -65,6 +67,23 @@ registerSpecialXmlRoutes(app, pool);
 registerConfirmationManagementRoutes(app, pool);
 registerChargeManagementRoutes(app, pool);
 registerSettlementManagementRoutes(app, pool);
+
+// Site completo (mesmas telas do app): o motor do app (dist-engine/host.mjs,
+// montado por scripts/engine/build-engine.mjs) so e carregado no primeiro uso.
+// Ele sincroniza com este proprio servidor como se fosse mais um computador.
+let enginePromise: Promise<Engine> | null = null;
+const loadEngine = (): Promise<Engine> => {
+  enginePromise ??= (async () => {
+    process.env.OPERACOES_CAFE_CENTRAL_URL ??= `http://127.0.0.1:${config.PORT}`;
+    const dataDir = process.env.ENGINE_DATA_DIR ?? (existsSync("/data") ? "/data/engine" : "/tmp/operacoes-cafe-engine");
+    const modulePath = new URL("../../../dist-engine/host.mjs", import.meta.url).href;
+    const { createEngine } = await import(modulePath) as { createEngine(options: { dataDir: string; version: string }): Engine };
+    app.log.info({ dataDir }, "Motor do app carregado para o site");
+    return createEngine({ dataDir, version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) ?? "web" });
+  })().catch((error: unknown) => { enginePromise = null; throw error; });
+  return enginePromise;
+};
+registerAppEngineRoutes(app, loadEngine);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });

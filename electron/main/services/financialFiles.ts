@@ -313,7 +313,8 @@ function resolveBrandingLogoBytes(organization: Organization): { bytes: Buffer; 
   if (!variant) return null;
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const appRoot = join(moduleDir, "..", "..", "..", "..");
-  const candidates = [join(appRoot, "dist", "assets", "branding", variant, "logo.png"), join(appRoot, "public", "assets", "branding", variant, "logo.png")];
+  // process.cwd(): no servidor (site) o motor roda empacotado em dist-engine.
+  const candidates = [join(appRoot, "dist", "assets", "branding", variant, "logo.png"), join(appRoot, "public", "assets", "branding", variant, "logo.png"), join(process.cwd(), "public", "assets", "branding", variant, "logo.png")];
   const found = candidates.find((candidate) => existsSync(candidate));
   return found ? { bytes: readFileSync(found), ext: "png" } : null;
 }
