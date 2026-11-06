@@ -706,7 +706,7 @@ export function registerViewerRoutes(app: FastifyInstance, pool: pg.Pool): void 
         const storedStatus = text(row.status);
         const status = ["SCHEDULED", "OPEN", "PARTIALLY_PAID"].includes(storedStatus) && openAmount > 0 && text(row.due_date) < today ? "OVERDUE" : storedStatus;
         return {
-          id: text(row.id), payee_name_snapshot: text(row.payee_name_snapshot), description: text(row.description),
+          id: text(row.id), payee_name_snapshot: text(row.payee_name_snapshot), description: text(row.description), source: text(row.source),
           document_number: nullableText(row.document_number), due_date: text(row.due_date), final_amount_cents: numberValue(row.final_amount_cents),
           paid_amount_cents: numberValue(row.paid_amount_cents), open_amount_cents: openAmount, status,
           supplier: partnerMap.has(text(row.supplier_partner_id)) ? { display_name: text(partnerMap.get(text(row.supplier_partner_id))?.display_name) } : null,

@@ -191,6 +191,7 @@ export interface AccountPayableRow {
   status: AccountPayableStatus;
   supplier: { display_name: string } | null;
   own_legal_entity?: { trade_name: string } | null;
+  source?: string;
 }
 
 export interface MonthlyOperationSummary {
