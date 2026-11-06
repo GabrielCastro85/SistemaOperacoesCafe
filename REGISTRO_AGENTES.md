@@ -105,6 +105,11 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-06 - Claude
+- Pedido: no site novo o botão "Cancelar lançamento" da conta-corrente não funcionava.
+- Causa: a tela usava `window.prompt`, que não existe no Electron e é bloqueado por alguns navegadores. Trocado por `requestTextInput` (janela do próprio app) em `ClientLedgerPage.tsx` e em `WarehouseStockPage.tsx` (NF de remessa). Vale também para o app na próxima versão.
+- Testado na cópia local (motor + site): janela aparece e o lançamento fica Cancelado. Publicado `5bb3869`; Pages atualizado às 19:46.
+
+### 2026-11-06 - Claude
 - Pedido: site 100% igual ao app (visual e funções), "tipo copia e cola", para parar de usar o app. Gabriel escolheu o caminho "motor do programa".
 - Corrigido antes: cartões de confirmação vazios no site atual (`2f03641`; o botão invisível que abria o cartão recebia o fundo do estilo global de botões).
 - Feito: `server/engine/`: `host.ts` cria o mesmo `AppRepository`, `CentralSyncService` e `registerIpcHandlers` do app sobre um SQLite próprio (`ENGINE_DATA_DIR`, padrão `/data/engine` se existir, senão `/tmp/operacoes-cafe-engine`). `electronShim.ts` troca o Electron: `showSaveDialog` devolve um caminho temporário e o que o app gravar ali vira download; `shell.openPath` vira download; `showOpenDialog` pede arquivo ao navegador (`needsUpload`), que envia por `/v1/app/upload` e repete a chamada; impressão e área de transferência vão para o navegador. `scripts/engine/build-engine.mjs` (esbuild) monta `dist-engine/host.mjs`. Uma chamada por vez; antes de cada uma o motor aponta a sessão (`AuthService.useSession`) e a empresa ativa (`installation_profiles`) do navegador que pediu. Bloqueados no site: criar primeiro administrador, restaurar/backup/reset e atualização do instalador; caminhos de arquivo vindos do navegador só podem apontar para os uploads/temporários do motor. `authNeedsBootstrap` é sempre falso e `authCentralConnectionStatus` diz configurado, porque o login do app provisiona o usuário a partir do central.
