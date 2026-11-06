@@ -84,7 +84,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: continuar tudo que fosse necessário para transformar integralmente o aplicativo em site.
 - Feito: a tela web de Cobranças passou a selecionar notas/serviços em aberto de um cliente e emitir a cobrança definitiva. A API valida empresa, cliente, escopo, situação das operações, tarifa e contrato obrigatório; grava cobrança, vínculos e retratos das operações, adicionais DAE por nota, lançamento de conta-corrente e histórico na mesma revisão central auditada. As operações ficam faturadas atomicamente, evitando cobrança duplicada. O vencimento e uma observação opcional podem ser informados no navegador.
 - Testado: builds do servidor e do site, typecheck, ESLint direcionado, `git diff --check`, testes específicos da API/viewer e suíte completa com 58 arquivos e 327 testes aprovados.
-- Publicado: pendente nesta entrada; será atualizado após a confirmação do Railway e do GitHub Pages. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
+- Publicado: commit `cb865cb` enviado à branch e à `master`. Railway implantou o commit, `/health` e `/ready` estão saudáveis e o banco está conectado. GitHub Pages concluiu com sucesso; `graobase.com.br` serve o bundle com a rota de emissão de cobrança. Uma tentativa sem sessão devolve 401, como esperado. Nenhuma versão do desktop foi gerada e nada da Grãonex foi alterado.
 - Pendente: migrar notas/XML, confirmações, repasses, contas a pagar e administração web, além dos ajustes avançados de cobranças, até o site substituir 100% do desktop.
 
 ### 2026-11-06 08:35 - Codex
