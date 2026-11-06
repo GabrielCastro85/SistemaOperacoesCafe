@@ -30,10 +30,10 @@ Modelo de entrada:
 
 ## Em andamento
 
-- **Agente:** Claude, 2026-11-06.
+- **Agentes:** Claude e Codex trabalhando ao mesmo tempo, 2026-11-06 à tarde.
 - **Pedidos abertos do Gabriel:**
-  1. Importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS (como foi feito com a Villa). Aguardando o coletor da Grão chegar à 1.1.71 (estava na 1.1.38 às 10:52, com "Atualizar coletor" pendente). Depois: Gabriel clica "Enviar notas do periodo" (01/01 a 31/07/2026), busca Grão MG e SP no período sem importar pela tela, fecha o programa, e o agente roda `tmp/importar-thadeu.mts` adaptado para a pasta `documents/invoices/xml-imports/collector-inbox` (só vendas 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco antes e fazer backup).
-  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Próximo: importação por planilha; depois confirmações, repasses, contas a pagar e administração.
+  1. **Claude (em andamento):** importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS, do mesmo jeito da Villa (só CFOP 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco e fazer backup antes). Origem: `C:UsersgabriDownloadsGRAOS_E_GRAOS_MG.rar` e `GRAOS_E_GRAOS_SP.rar` (pastas da Vulpe trazidas pelo Gabriel), não o coletor. Mexe só no banco local deste PC e em `tmp/`; a gravação final exige o programa fechado. Codex: não use nem altere o banco local enquanto este item estiver aberto.
+  2. **Codex (assumindo agora):** migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Blocos de notas publicados: 1a (`f5faccb`, lançar/editar/confirmar/cancelar/excluir e tarifa), 1b (devoluções e DAE), 1c (terceiros) e 1d (`e70ec03`, XMLs especiais de armazém, cancelamento e triangulação; produção conferida pelo Codex). Próximo: importação por planilha; depois confirmações, repasses, contas a pagar e administração.
 
 ## Situação atual
 
