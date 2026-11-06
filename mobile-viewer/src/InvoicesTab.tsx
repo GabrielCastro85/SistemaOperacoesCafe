@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiJson, queryString } from "./api";
 import { companyColorClass } from "./companyColor";
 import { InvoiceDetailDrawer, ManualInvoiceDrawer } from "./InvoiceEditor";
+import { SpecialXmlPanel, type XmlInspection } from "./SpecialXmlImport";
 import { formatCurrencyBr, formatDateBr } from "./viewerFormat";
 import { Alert } from "./renderer/design-system/components/Alert";
 import { Badge, StatusBadge } from "./renderer/design-system/components/Badge";
@@ -104,6 +105,7 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
   const [xmlText, setXmlText] = useState("");
   const [xmlFileName, setXmlFileName] = useState("");
   const [preview, setPreview] = useState<XmlPreview | null>(null);
+  const [special, setSpecial] = useState<Exclude<XmlInspection, { kind: "INVOICE" }> | null>(null);
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [responsiblePartnerId, setResponsiblePartnerId] = useState("");
@@ -166,15 +168,20 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
   }, [preview, partners, products, responsiblePartnerId]);
 
   const resetImporter = (): void => {
-    setXmlText(""); setXmlFileName(""); setPreview(null); setResponsiblePartnerId("");
+    setXmlText(""); setXmlFileName(""); setPreview(null); setSpecial(null); setResponsiblePartnerId("");
     setOperationScope("INTERNAL"); setHasFinancialService(false); setConfirmOperations(true);
     setItemProducts({}); setImportError(null); setImportBusy(null);
   };
 
   const previewXml = async (content = xmlText): Promise<void> => {
     if (!content) return;
-    setImportBusy("preview"); setImportError(null); setPreview(null);
+    setImportBusy("preview"); setImportError(null); setPreview(null); setSpecial(null);
     try {
+      // Evento, armazem e triangulada tem fluxo proprio (SpecialXmlImport.tsx).
+      const inspection = await apiJson<XmlInspection>("/v1/manage/invoices/xml/inspect", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, xml: content })
+      });
+      if (inspection.kind !== "INVOICE") { setSpecial(inspection); return; }
       const result = await apiJson<XmlPreview>("/v1/manage/invoices/xml/preview", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organizationId, xml: content })
       });
@@ -238,7 +245,7 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
         onChanged={(message) => { setSuccess(message); void load(); }} />
       {success ? <Alert tone="success" title="Nota atualizada">{success}</Alert> : null}
       {showImporter ? (
-        <Card className="viewer-xml-importer" eyebrow="Nova nota" title="Importar NF-e por XML" actions={<Badge tone="info">Leitura segura</Badge>}>
+        <Card className="viewer-xml-importer" eyebrow="Nova nota" title="Importar XML (NF-e, armazém ou evento)" actions={<Badge tone="info">Leitura segura</Badge>}>
           <div className="viewer-xml-importer__intro">
             <label className="viewer-xml-file">
               <strong>{xmlFileName || "Selecione o XML autorizado da NF-e"}</strong>
@@ -253,6 +260,10 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
             <Button variant="secondary" loading={importBusy === "preview"} disabled={!xmlText} onClick={() => void previewXml()}>Ler novamente</Button>
           </div>
           {importError ? <Alert tone="danger" title="Não foi possível concluir">{importError}</Alert> : null}
+          {special ? (
+            <SpecialXmlPanel inspection={special} xml={xmlText} organizationId={organizationId} legalEntityId={legalEntityId}
+              onDone={(message) => { setSuccess(message); setShowImporter(false); resetImporter(); void load(); }} />
+          ) : null}
           {preview ? (
             <div className="viewer-xml-preview">
               <div className="viewer-xml-preview__summary">

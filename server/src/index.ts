@@ -14,6 +14,7 @@ import { registerAssistantRoutes } from "./assistant.js";
 import { registerCommercialManagementRoutes } from "./commercialManagement.js";
 import { registerOperationalManagementRoutes } from "./operationalManagement.js";
 import { registerInvoiceManagementRoutes } from "./invoiceManagement.js";
+import { registerSpecialXmlRoutes } from "./specialXml.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -55,6 +56,7 @@ registerAssistantRoutes(app, pool, config);
 registerCommercialManagementRoutes(app, pool);
 registerOperationalManagementRoutes(app, pool);
 registerInvoiceManagementRoutes(app, pool);
+registerSpecialXmlRoutes(app, pool);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) return reply.code(400).send({ error: "INVALID_REQUEST", issues: error.issues });

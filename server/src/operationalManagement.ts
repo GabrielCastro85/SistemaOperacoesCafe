@@ -13,6 +13,7 @@ import {
   type WebSession
 } from "./domainMutations.js";
 import { isThirdPartyEntity, resolveThirdPartyEntity, THIRD_PARTY_NOTE } from "./thirdPartyEntities.js";
+import { pendingEventChanges } from "./fiscalEvents.js";
 
 const scopeSchema = z.object({
   organizationId: z.string().min(1),
@@ -176,7 +177,7 @@ function ownEntityForXml(entities: Record<string, unknown>[], organizationId: st
   return null;
 }
 
-function canonicalUnit(value: unknown): "SACK" | "KG" | "TON" | "UNIT" {
+export function canonicalUnit(value: unknown): "SACK" | "KG" | "TON" | "UNIT" {
   const unit = normalized(value);
   if (["SC", "SACA", "SACAS"].includes(unit)) return "SACK";
   if (["KG", "KILO", "QUILO", "QUILOS"].includes(unit)) return "KG";
@@ -184,7 +185,7 @@ function canonicalUnit(value: unknown): "SACK" | "KG" | "TON" | "UNIT" {
   return "UNIT";
 }
 
-function sacksForItem(item: Record<string, unknown>, product: Record<string, unknown>): number {
+export function sacksForItem(item: Record<string, unknown>, product: Record<string, unknown>): number {
   const quantity = numberValue(item.commercialQuantity);
   const unit = canonicalUnit(item.commercialUnit);
   const weight = numberValue(product.default_sack_weight_kg) || 60;
@@ -262,7 +263,7 @@ function xmlPreviewPayload(parsed: ReturnType<typeof parseXmlContent>, match: Xm
   };
 }
 
-function readInvoiceXml(xml: string): ReturnType<typeof parseXmlContent> {
+export function readInvoiceXml(xml: string): ReturnType<typeof parseXmlContent> {
   try {
     return parseXmlContent(xml);
   } catch (error) {
@@ -413,6 +414,8 @@ export function registerOperationalManagementRoutes(app: FastifyInstance, pool: 
     };
     changes.unshift({ table: "fiscal_documents", key: documentId, operation: "UPSERT", data: documentRow });
     if (match.entityChange) changes.unshift(match.entityChange as (typeof changes)[number]);
+    // Evento de cancelamento recebido antes da nota: ela ja entra cancelada.
+    changes.push(...(await pendingEventChanges(pool, parsed.accessKey, documentRow, operationRows, now) as typeof changes));
     const revision = await commitDomainChanges(pool, session, "WEB_XML_INVOICE_IMPORTED", "fiscal_document", documentId, changes, {
       organizationId: input.organizationId, legalEntityId: ownEntityId, direction: match.direction,
       accessKey: parsed.accessKey, itemCount: itemRows.length, operationCount: operationRows.length, pending

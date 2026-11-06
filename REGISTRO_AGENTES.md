@@ -33,7 +33,7 @@ Modelo de entrada:
 - **Agente:** Claude, 2026-11-06.
 - **Pedidos abertos do Gabriel:**
   1. Importar as vendas da Grão & Grão de jan-jul/2026 no cliente THADEU NOTAS (como foi feito com a Villa). Aguardando o coletor da Grão chegar à 1.1.71 (estava na 1.1.38 às 10:52, com "Atualizar coletor" pendente). Depois: Gabriel clica "Enviar notas do periodo" (01/01 a 31/07/2026), busca Grão MG e SP no período sem importar pela tela, fecha o programa, e o agente roda `tmp/importar-thadeu.mts` adaptado para a pasta `documents/invoices/xml-imports/collector-inbox` (só vendas 5102/6102, sem canceladas nem acréscimo/complemento de valor; testar numa cópia do banco antes e fazer backup).
-  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Bloco 1b (devoluções e DAE de frete) publicado em 2026-11-06. Bloco 1c (notas terceirizadas) publicado em 2026-11-06. Próximo, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
+  2. Migração do aplicativo para o site (Gabriel autorizou em 2026-11-06: "Pode começar a migração das notas no site"). Bloco 1a publicado em 2026-11-06 (`f5faccb`): lançar, editar, confirmar, cancelar e excluir notas e alterar tarifa no site (ver histórico). Bloco 1b (devoluções e DAE de frete) publicado em 2026-11-06. Bloco 1c (notas terceirizadas) publicado em 2026-11-06. Bloco 1d (XMLs especiais) enviado para publicação em 2026-11-06 (deploy não conferido: créditos acabaram). Próximo, XMLs especiais (armazém, cancelamento, triangulação) e importação por planilha.
 
 ## Situação atual
 
@@ -101,6 +101,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-06 - Claude
+- Pedido: "Pode continuar com os XMLs especiais".
+- Feito: `server/src/specialXml.ts` com POST `/v1/manage/invoices/xml/inspect` (classifica INVOICE/EVENT/WAREHOUSE/TRIANGULATED), `/xml/event` (registra evento; cancelamento aceito cancela nota e movimentos de armazém, mesmo nota cobrada, como o app), `/xml/warehouse` (movimentos com `deterministicUuid("warehouseMovement", chave, item)`, nomes canônicos dos ajustes manuais, referência da remessa, simbólica sem referência fica PENDING_REVIEW) e `/xml/triangulated` (compra do fornecedor + venda ao cliente por item, contrapartes como no app). `server/src/fiscalEvents.ts`: evento recebido antes da nota faz a nota entrar cancelada (usado também na importação do Codex). Tela: `mobile-viewer/src/SpecialXmlImport.tsx`; `InvoicesTab.tsx` chama /inspect antes da prévia normal.
+- Testado: `tests/special-xml-api.test.ts` (4), suíte completa (349), typecheck, ESLint, build do site, simulação do build Docker. Tela conferida com servidor de teste (triangulada e armazém); painel de evento não aberto no navegador.
+- Publicado: commit enviado à branch e à `master`; deploy do Railway e do Pages NÃO conferido.
+- Pendente: conferir `/health` com o commit novo e o bundle do site; importação por planilha; recado do endereço das terceirizadas no app.
 
 ### 2026-11-06 - Claude
 - Pedido: "Pode continuar com as operações de terceiros".
