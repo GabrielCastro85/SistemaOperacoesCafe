@@ -593,7 +593,8 @@ html.site .warehouse-table-wrap {
   border-radius: var(--site-radius) !important;
   background: var(--site-surface) !important;
   box-shadow: none !important;
-  overflow: hidden;
+  /* clip (e nao hidden): mantem o canto arredondado sem impedir o cabecalho fixo */
+  overflow: clip;
 }
 
 html.site table thead th,
@@ -998,4 +999,178 @@ html.site :is(.admin-block, .ui-page-section) > :is(.actions, .toolbar, .inline-
   background: rgb(255 255 255 / 95%);
   backdrop-filter: blur(4px);
   box-shadow: 0 -6px 16px rgb(28 26 23 / 5%);
+}
+
+/* ---------- Tabelas: cabecalho fixo, total e acoes da linha ---------- */
+html.site { --site-sticky-top: 0px; }
+html.site.site-has-section-nav { --site-sticky-top: 44px; }
+
+html.site .table > .table-head,
+html.site .content-section table thead th {
+  position: sticky !important;
+  top: var(--site-sticky-top) !important;
+  z-index: 4;
+  background: var(--site-surface-2) !important;
+  box-shadow: 0 1px 0 var(--site-line);
+}
+
+html.site .table > .site-table-total,
+html.site table tfoot.site-table-total td {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  border-top: 2px solid var(--site-line-strong) !important;
+  background: color-mix(in srgb, var(--site-gold) 10%, #fff) !important;
+  color: var(--site-ink) !important;
+  font-weight: 700 !important;
+}
+
+html.site .table > .site-table-total > span:first-child,
+html.site table tfoot.site-table-total td:first-child {
+  color: var(--site-muted) !important;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Acoes da linha discretas ate passar o mouse (no celular ficam sempre visiveis). */
+@media (hover: hover) {
+  html.site .table-row :is(.actions, .row-actions) > button,
+  html.site table tbody tr :is(.actions, .row-actions) > button {
+    opacity: 0.55;
+    transition: opacity 120ms ease;
+  }
+
+  html.site .table-row:hover :is(.actions, .row-actions) > button,
+  html.site table tbody tr:hover :is(.actions, .row-actions) > button,
+  html.site :is(.actions, .row-actions) > button:focus-visible {
+    opacity: 1;
+  }
+}
+
+/* ---------- Menu lateral ---------- */
+html.site .app-sidebar__nav {
+  display: flex !important;
+  flex-direction: column;
+}
+
+/* "Mostrar administracao" vai para o fim do menu, separado das telas do dia a dia. */
+html.site .app-sidebar__nav > button:first-child {
+  order: 99;
+  margin-top: 14px !important;
+  padding-top: 10px !important;
+  border-top: 1px solid rgb(255 255 255 / 10%) !important;
+  border-radius: 0 !important;
+  color: rgb(255 250 240 / 60%) !important;
+  font-size: 0.85rem !important;
+}
+
+html.site button.site-command-trigger {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: calc(100% - 16px) !important;
+  min-height: 36px !important;
+  margin: 10px 8px 4px !important;
+  padding: 6px 10px !important;
+  border: 1px solid rgb(255 255 255 / 16%) !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: rgb(255 255 255 / 6%) !important;
+  color: rgb(255 250 240 / 75%) !important;
+  box-shadow: none !important;
+  font-weight: 600 !important;
+}
+
+html.site button.site-command-trigger:hover {
+  background: rgb(255 255 255 / 12%) !important;
+  color: #fffaf0 !important;
+}
+
+html.site .site-command-trigger kbd {
+  padding: 1px 6px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 4px;
+  font: 600 0.7rem/1.4 "Karla Text", system-ui, sans-serif;
+}
+
+html.site .is-collapsed .site-command-trigger span,
+html.site .is-collapsed .site-command-trigger kbd {
+  display: none;
+}
+
+/* Janela "Ir para..." */
+.site-command {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  padding-top: 12vh;
+  background: rgb(28 26 23 / 38%);
+  backdrop-filter: blur(2px);
+}
+
+.site-command__panel {
+  width: min(560px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid #e3ddd2;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgb(28 26 23 / 30%);
+}
+
+html.site .site-command__panel input {
+  width: 100%;
+  min-height: 54px;
+  padding: 0 18px;
+  border: 0 !important;
+  border-bottom: 1px solid #e3ddd2 !important;
+  border-radius: 0 !important;
+  font: 500 1.05rem "Karla Text", system-ui, sans-serif;
+  box-shadow: none !important;
+}
+
+.site-command__list {
+  max-height: 52vh;
+  overflow: auto;
+  padding: 6px;
+}
+
+html.site button.site-command__item {
+  display: flex !important;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 42px !important;
+  padding: 8px 12px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  text-align: left;
+}
+
+html.site button.site-command__item.is-active {
+  background: color-mix(in srgb, #b8863b 14%, #fff) !important;
+}
+
+.site-command__item strong {
+  color: #1c1a17;
+  font-size: 0.95rem;
+}
+
+.site-command__item small {
+  color: #7a7366;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.site-command__empty {
+  margin: 0;
+  padding: 18px;
+  color: #7a7366;
 }

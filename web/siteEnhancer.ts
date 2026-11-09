@@ -10,7 +10,7 @@ const PRIMARY = /^(\+\s*)?(salvar|emitir|gerar|confirmar|registrar|concluir|impo
 const DANGER = /^(excluir|estornar|remover|apagar|descartar|desvincular|inativar|desativar|bloquear cobran|cancelar\s+\S+|reverter)/i;
 const ACCENT = /^(selecionar|escolher|anexar|buscar|pesquisar|consultar|filtrar|atualizar|sugerir|carregar|ver |abrir|visualizar|pr[eé]via|conferir|calcular)/i;
 const QUIET = /^(cancelar|fechar|voltar|limpar|n[aã]o|agora n[aã]o|ocultar|esconder|mostrar menos)$/i;
-const SKIP = ".app-sidebar__nav button, .org-picker-card, .company-switcher button, .settings-tabs button, .ui-tabs button, .sidebar-collapse, .company-choice, .auth-password-toggle, .partner-modal__close, .ui-icon-button, .alert-item, .xml-batch-row, .xml-queue-list button";
+const SKIP = ".app-sidebar__nav button, .org-picker-card, .company-switcher button, .site-command button, .site-command-trigger, .site-section-nav button, .site-toast button, .settings-tabs button, .ui-tabs button, .sidebar-collapse, .company-choice, .auth-password-toggle, .partner-modal__close, .ui-icon-button, .alert-item, .xml-batch-row, .xml-queue-list button";
 const ALREADY = /(^|\s)(primary|danger|danger-action|ui-button--(primary|danger|ghost))(\s|$)|--primary|--danger/;
 
 function label(button: HTMLButtonElement): string {

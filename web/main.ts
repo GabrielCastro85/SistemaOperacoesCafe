@@ -6,8 +6,10 @@ import "./siteFlag";
 import "../electron/preload/index.ts";
 import "../src/renderer/App.tsx";
 import "./site-theme.css";
+import { startSiteCommand } from "./siteCommand";
 import { startSiteEnhancer } from "./siteEnhancer";
 import { startSitePage } from "./sitePage";
+import { startSiteTables } from "./siteTables";
 import { startSiteText } from "./siteText";
 import { startSiteToasts } from "./siteToasts";
 
@@ -15,3 +17,5 @@ startSiteEnhancer();
 startSiteText();
 startSiteToasts();
 startSitePage();
+startSiteTables();
+startSiteCommand();
