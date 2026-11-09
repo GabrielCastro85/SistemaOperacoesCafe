@@ -1,0 +1,394 @@
+/*
+ * Layout do site (web/siteLayout.ts): entrada com a marca Graonex e versao
+ * para celular/tablet (menu em gaveta, topo compacto, grades em uma coluna,
+ * tabelas que rolam para o lado). So vale no navegador (html.site).
+ */
+
+/* ---------- Entrada (login e escolha de empresa) ---------- */
+html.site .auth-shell {
+  display: grid !important;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  align-items: stretch !important;
+  justify-content: stretch !important;
+  justify-items: stretch !important;
+  gap: 0 !important;
+  min-height: 100vh;
+  padding: 0 !important;
+  background: var(--site-bg) !important;
+}
+
+html.site .auth-shell::before,
+html.site .auth-shell::after {
+  display: none !important;
+}
+
+.site-auth-brand {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: 56px 56px 48px;
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 0% 0%, #0f4a32 0%, #0a3424 45%, #06231a 100%);
+  color: #f6efe1;
+}
+
+.site-auth-brand::after {
+  content: "";
+  position: absolute;
+  right: -120px;
+  bottom: -120px;
+  width: 420px;
+  height: 420px;
+  background: url("/assets/branding/graonex/icon.png") center / contain no-repeat;
+  /* multiply some com o fundo branco da imagem e deixa so o desenho do grao */
+  mix-blend-mode: multiply;
+  opacity: 0.45;
+}
+
+.site-auth-brand img {
+  width: 88px;
+  height: 88px;
+  padding: 8px;
+  border-radius: 22px;
+  background: #fbf7ee;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 30%);
+}
+
+.site-auth-brand__word {
+  font: 700 2.6rem/1 "Karla Text", system-ui, sans-serif;
+  letter-spacing: 0.06em;
+}
+
+.site-auth-brand__word span {
+  color: #d4a24c;
+}
+
+.site-auth-brand p {
+  max-width: 380px;
+  margin: 0;
+  color: rgb(246 239 225 / 82%);
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.site-auth-brand small {
+  margin-top: 12px;
+  color: #d4a24c;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+html.site .auth-panel,
+html.site .org-picker-panel {
+  align-self: center !important;
+  justify-self: center !important;
+  width: min(560px, calc(100% - 48px)) !important;
+  margin: 40px auto !important;
+  padding: 32px 34px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: 20px !important;
+  background: #fff !important;
+  box-shadow: 0 24px 60px rgb(28 26 23 / 10%) !important;
+}
+
+html.site .auth-panel h1,
+html.site .org-picker-panel h1 {
+  color: var(--site-ink) !important;
+}
+
+html.site .auth-panel button.primary,
+html.site .org-picker-panel button.primary {
+  width: 100%;
+  min-height: 46px !important;
+  border-color: #0a3424 !important;
+  background: #0a3424 !important;
+  color: #fff !important;
+  font-size: 1rem !important;
+}
+
+html.site .auth-panel button.primary:hover:not(:disabled),
+html.site .org-picker-panel button.primary:hover:not(:disabled) {
+  border-color: #0f4a32 !important;
+  background: #0f4a32 !important;
+}
+
+/* No site nao existe "computador autorizado": cada um entra com a propria senha. */
+html.site .auth-central-connected {
+  display: none !important;
+}
+
+/* ---------- Celular e tablet ---------- */
+html.site .site-menu-toggle,
+.site-menu-backdrop {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  html.site body {
+    overflow: auto !important;
+  }
+
+  html.site .app-shell {
+    display: block !important;
+    height: 100dvh;
+  }
+
+  html.site .app-sidebar {
+    position: fixed !important;
+    inset: 0 auto 0 0;
+    z-index: 300;
+    width: min(300px, 86vw) !important;
+    height: 100dvh !important;
+    transform: translateX(-102%);
+    transition: transform 200ms ease;
+    box-shadow: 8px 0 30px rgb(0 0 0 / 30%) !important;
+  }
+
+  html.site.site-menu-open .app-sidebar {
+    transform: none;
+  }
+
+  /* O app esconde os nomes das telas em telas estreitas; na gaveta eles aparecem. */
+  html.site .app-sidebar .nav-label,
+  html.site .app-sidebar .nav-group-title {
+    display: block !important;
+  }
+
+  html.site .app-sidebar__nav button {
+    justify-content: start !important;
+    text-align: left;
+  }
+
+  html.site .sidebar-collapse {
+    display: none !important;
+  }
+
+  .site-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 290;
+    background: rgb(28 26 23 / 45%);
+  }
+
+  html.site.site-menu-open .site-menu-backdrop {
+    display: block;
+  }
+
+  html.site .main-area {
+    display: flex !important;
+    flex-direction: column;
+    width: 100% !important;
+    height: 100dvh;
+  }
+
+  html.site button.site-menu-toggle {
+    display: inline-grid !important;
+    flex: 0 0 auto;
+    place-content: center;
+    gap: 4px;
+    width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    border-radius: 10px !important;
+  }
+
+  html.site .site-menu-toggle span {
+    display: block !important;
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--site-ink) !important;
+  }
+
+  html.site .app-topbar {
+    position: sticky !important;
+    top: 0;
+    z-index: 50;
+    /* nao encolhe: o seletor de empresa ocupa a segunda linha do topo */
+    flex: 0 0 auto !important;
+    height: auto !important;
+    flex-wrap: wrap;
+    gap: 8px !important;
+    padding: 8px 12px !important;
+  }
+
+  html.site .app-topbar__brandline {
+    flex: 1 1 0 !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    min-width: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  html.site .app-topbar__brandline img,
+  html.site .page-context > span,
+  html.site .page-context small,
+  html.site .context-pill--user,
+  html.site .topbar-actions button:not(:last-child) {
+    display: none !important;
+  }
+
+  html.site .page-context strong {
+    overflow: hidden;
+    font-size: 1.1rem !important;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  html.site .company-switcher {
+    order: 10;
+    flex: 1 1 100%;
+  }
+
+  html.site button.company-switcher__current {
+    width: 100%;
+    min-height: 46px !important;
+  }
+
+  html.site .company-switcher__menu {
+    width: 100%;
+  }
+
+  html.site .content-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 16px 14px 32px !important;
+  }
+
+  html.site.site-has-section-nav .content-section {
+    padding-top: 60px !important;
+  }
+
+  .site-section-nav {
+    padding: 0 12px !important;
+  }
+
+  html.site .ui-page-header {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 12px;
+  }
+
+  html.site .ui-page-header h1 {
+    font-size: 1.45rem !important;
+  }
+
+  /* Grades da tela viram uma coluna; resumos ficam em duas. */
+  html.site .content-section :is(.form-grid, [class*="-grid"], [class*="grid-"]):not(.table-row):not(.table-head):not(.site-table-total):not(.cards):not(.metrics-grid) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html.site .content-section :is(.cards, .metrics-grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  html.site .admin-block,
+  html.site .ui-page-section,
+  html.site .ui-card,
+  html.site .card {
+    padding: 14px !important;
+  }
+
+  html.site .admin-block > h3,
+  html.site .ui-page-section > header {
+    margin: -14px -14px 14px !important;
+    padding: 12px 14px !important;
+  }
+
+  /* Tabelas rolam para o lado em vez de espremer as colunas. */
+  html.site .table,
+  html.site .ui-table-wrap,
+  html.site .warehouse-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  html.site .table > * {
+    min-width: 760px;
+  }
+
+  html.site .settings-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+  }
+
+  html.site .settings-tabs button {
+    flex: 0 0 auto;
+  }
+
+  html.site .toolbar > button,
+  html.site .actions > button {
+    flex: 1 1 auto !important;
+    max-width: 100% !important;
+    white-space: normal !important;
+  }
+
+  /* Linhas de titulo com botoes ao lado: os botoes descem para baixo do texto. */
+  html.site .content-section :is(.page-title-row, [class*="-title-row"], [class*="header-row"]) {
+    flex-wrap: wrap !important;
+  }
+
+  html.site .content-section :is(.page-title-row, [class*="-title-row"], [class*="header-row"]) > :is(.actions, .toolbar) {
+    flex: 1 1 100% !important;
+    width: 100%;
+  }
+
+  html.site .app-statusbar {
+    display: none !important;
+  }
+
+  .site-toasts {
+    right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  /* Entrada: a marca vira uma faixa no alto. */
+  html.site .auth-shell {
+    grid-template-columns: 1fr;
+    align-content: start;
+  }
+
+  .site-auth-brand {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 20px 22px;
+  }
+
+  .site-auth-brand img {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+  }
+
+  .site-auth-brand__word {
+    font-size: 1.7rem;
+  }
+
+  .site-auth-brand p {
+    flex: 1 1 100%;
+    font-size: 0.92rem;
+  }
+
+  .site-auth-brand small {
+    display: none;
+  }
+
+  html.site .auth-panel,
+  html.site .org-picker-panel {
+    width: calc(100% - 24px) !important;
+    margin: 16px auto 32px !important;
+    padding: 22px 18px !important;
+  }
+
+  html.site .org-picker-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
