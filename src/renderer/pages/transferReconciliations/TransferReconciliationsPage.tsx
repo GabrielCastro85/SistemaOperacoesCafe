@@ -93,11 +93,25 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     : Object.values(selected).reduce((sum, value) => sum + Math.max(0, parseCurrencyToCents(value || "0")), 0), [manualSourceAmount, selected, sourceMode]);
   const totalPayments = useMemo(() => payments.reduce((sum, item) => sum + Math.max(0, parseCurrencyToCents(item.amount || "0")), 0), [payments]);
   const balance = totalSource - totalPayments;
-  const filteredInvoices = useMemo(() => {
+  // Todas as notas que batem com a pesquisa (inclusive as que ainda nao aparecem
+  // por causa do "Mostrar mais notas"); a lista mostra so as primeiras.
+  const matchingInvoices = useMemo(() => {
     const term = invoiceSearch.trim().toLocaleLowerCase("pt-BR");
-    const rows = term ? invoices.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
-    return rows.slice(0, invoiceLimit);
-  }, [invoiceLimit, invoiceSearch, invoices]);
+    return term ? invoices.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
+  }, [invoiceSearch, invoices]);
+  const filteredInvoices = useMemo(() => matchingInvoices.slice(0, invoiceLimit), [invoiceLimit, matchingInvoices]);
+  // "Marcar todas": so notas com saldo disponivel, usando o saldo inteiro de cada uma.
+  const selectableInvoices = useMemo(() => matchingInvoices.filter((invoice) => invoice.availableCents > 0), [matchingInvoices]);
+  const allSelectableChecked = selectableInvoices.length > 0 && selectableInvoices.every((invoice) => invoice.fiscalDocumentId in selected);
+  const someSelectableChecked = selectableInvoices.some((invoice) => invoice.fiscalDocumentId in selected);
+  const toggleAllInvoices = (checked: boolean): void => setSelected((current) => {
+    const next = { ...current };
+    for (const invoice of selectableInvoices) {
+      if (checked) next[invoice.fiscalDocumentId] ??= (invoice.availableCents / 100).toFixed(2).replace(".", ",");
+      else delete next[invoice.fiscalDocumentId];
+    }
+    return next;
+  });
   const selectedInvoices = useMemo(() => invoices.filter((invoice) => invoice.fiscalDocumentId in selected), [invoices, selected]);
 
   function startNew(): void {
@@ -207,14 +221,14 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
         {!clientId ? <p className="muted">Selecione {counterpartyRole === "SUPPLIER" ? "um fornecedor" : "um cliente"} para listar as notas.</p> : loadingInvoices ? <div className="transfer-inline-loading">Carregando notas {counterpartyRole === "SUPPLIER" ? "do fornecedor" : "do cliente"}…</div> : invoices.length === 0 ? <div className="transfer-empty">Nenhuma nota de {counterpartyRole === "SUPPLIER" ? "entrada" : "saída"} foi encontrada para este {counterpartyRole === "SUPPLIER" ? "fornecedor" : "cliente"}.</div> : <>
           <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(10); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
           <div className="transfer-table">
-          <div className="transfer-row transfer-head"><span></span><span>Origem</span><span>Nota</span><span>Emissão</span><span>{counterpartyRole === "SUPPLIER" ? "Emitente" : "Destinatário"}</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
+          <div className="transfer-row transfer-head"><span><input type="checkbox" aria-label="Marcar todas as notas" title={allSelectableChecked ? "Desmarcar todas" : `Marcar todas (${selectableInvoices.length} nota(s)${invoiceSearch.trim() ? " da pesquisa" : ""})`} disabled={!selectableInvoices.length} checked={allSelectableChecked} ref={(element) => { if (element) element.indeterminate = someSelectableChecked && !allSelectableChecked; }} onChange={(event) => toggleAllInvoices(event.target.checked)} /></span><span>Origem</span><span>Nota</span><span>Emissão</span><span>{counterpartyRole === "SUPPLIER" ? "Emitente" : "Destinatário"}</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
           {filteredInvoices.map((invoice) => { const checked = invoice.fiscalDocumentId in selected; const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"); return <div className={`transfer-row ${used > invoice.availableCents ? "transfer-warning" : ""}`} key={invoice.fiscalDocumentId}>
             <span><input type="checkbox" checked={checked} onChange={(event) => setSelected((current) => { const next = { ...current }; if (event.target.checked) next[invoice.fiscalDocumentId] = (Math.max(0, invoice.availableCents) / 100).toFixed(2).replace(".", ","); else delete next[invoice.fiscalDocumentId]; return next; })} /></span>
             <span><span className="transfer-origin-badge">{invoice.organizationName}</span></span><span>{invoice.documentNumber}</span><span>{formatDateOnlyBr(invoice.issueDate)}</span><span>{(counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? "—"}</span><span>{formatCurrencyFromCents(invoice.invoiceTotalCents)}</span><span>{formatCurrencyFromCents(invoice.availableCents)}</span>
             <span>{checked ? <input value={selected[invoice.fiscalDocumentId]} onChange={(event) => setSelected((current) => ({ ...current, [invoice.fiscalDocumentId]: event.target.value }))} /> : "—"}{used > invoice.availableCents && <small> Acima do saldo disponível</small>}</span>
           </div>; })}
           </div>
-          {filteredInvoices.length < (invoiceSearch ? invoices.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(invoiceSearch.trim().toLocaleLowerCase("pt-BR")))).length : invoices.length) && <button onClick={() => setInvoiceLimit((value) => value + 10)}>Mostrar mais notas</button>}
+          {filteredInvoices.length < matchingInvoices.length && <button onClick={() => setInvoiceLimit((value) => value + 10)}>Mostrar mais notas</button>}
         </>}
         </>}
         </> : <>
