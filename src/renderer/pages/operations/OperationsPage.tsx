@@ -1122,10 +1122,19 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const purchaseLeg = detail?.operations.find((op) => op.operationType === "PURCHASE") ?? null;
   const saleLeg = detail?.operations.find((op) => op.operationType === "SALE") ?? null;
 
+  // Procura nos clientes e nos fornecedores: nota de compra (ou com o responsavel
+  // trocado para fornecedor) mostrava o id do parceiro em vez do nome.
   const documentClientName = (document: FiscalDocument): string =>
-    partners.find((partner) => partner.id === document.responsiblePartnerId)?.displayName ??
+    allKnownPartners.find((partner) => partner.id === document.responsiblePartnerId)?.displayName ??
     document.responsiblePartnerId ??
     "";
+  // Diferencia na lista nota de cliente (venda) e de fornecedor (compra).
+  const documentPartyKind = (document: FiscalDocument): { label: string; tone: "client" | "supplier" | "both" } | null => {
+    if (document.secondaryResponsiblePartnerId) return { label: "Triangulada", tone: "both" };
+    if (document.direction === "INBOUND") return { label: "Fornecedor", tone: "supplier" };
+    if (document.direction === "OUTBOUND") return { label: "Cliente", tone: "client" };
+    return null;
+  };
 
   function toggleDocumentSort(key: DocumentSortKey): void {
     setDocumentLimit(20);
@@ -1382,7 +1391,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             : triangulatedIssuer
               ? (triangulatedIssuer.legalName || triangulatedIssuer.tradeName)
               : null;
-          return <div key={doc.id} className="table-row invoice-grid"><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span>{documentClientName(doc)}</span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
+          const partyKind = documentPartyKind(doc);
+          return <div key={doc.id} className={`table-row invoice-grid${partyKind ? ` invoice-row--${partyKind.tone}` : ""}`}><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span className="invoice-party">{partyKind ? <em className={`party-kind party-kind--${partyKind.tone}`}>{partyKind.label}</em> : null}<span>{documentClientName(doc)}</span></span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
         })}
         {sortedDocuments.length === 0 ? (
           <EmptyState

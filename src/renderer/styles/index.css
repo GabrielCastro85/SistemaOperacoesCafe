@@ -2475,6 +2475,57 @@ table tbody tr:hover {
   grid-template-columns: 105px 1.15fr 105px 95px 115px 165px 1.1fr 85px;
 }
 
+/* Nota de cliente (venda) x nota de fornecedor (compra): faixa na borda e etiqueta. */
+.invoice-party {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.party-kind {
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.party-kind--client {
+  border-color: #b9dcc6;
+  background: #e8f5ec;
+  color: #1d6b3d;
+}
+
+.party-kind--supplier {
+  border-color: #ecd1a4;
+  background: #fbf0dc;
+  color: #8a5300;
+}
+
+.party-kind--both {
+  border-color: #cdc3e6;
+  background: #f0ecfa;
+  color: #5a3f9e;
+}
+
+.table-row.invoice-row--client {
+  box-shadow: inset 4px 0 0 #2f8f57;
+}
+
+.table-row.invoice-row--supplier {
+  box-shadow: inset 4px 0 0 #c98a1e;
+}
+
+.table-row.invoice-row--both {
+  box-shadow: inset 4px 0 0 #7a5cc2;
+}
+
 .import-grid {
   grid-template-columns: 1fr 1.4fr;
 }
