@@ -1,0 +1,612 @@
+/*
+ * Tema do site (graobase.com.br). Camada por cima do CSS do app: so vale no
+ * navegador (html.site), o programa do Windows continua igual.
+ *
+ * Ideia: cada coisa com uma aparencia so.
+ *  - Acao principal (salvar, emitir, gerar...): botao cheio na cor da empresa.
+ *  - Acao comum: botao branco com borda.
+ *  - Acao perigosa (excluir, cancelar algo, estornar): vermelho.
+ *  - Consulta (buscar, abrir, previa): contorno na cor da empresa.
+ *  - Sair de uma janela (cancelar, fechar, voltar): botao discreto, so texto.
+ *  - Abas de pagina: texto sublinhado. Escolha entre opcoes: seletor em pilula.
+ *  - Secoes: cartoes brancos com titulo marcado.
+ * O tipo de cada botao vem de web/siteEnhancer.ts (data-tone).
+ */
+
+html.site {
+  --site-bg: #f2f0eb;
+  --site-surface: #ffffff;
+  --site-surface-2: #f8f6f2;
+  --site-line: #e3ddd2;
+  --site-line-strong: #cfc6b6;
+  --site-ink: #1c1a17;
+  --site-ink-2: #4a453e;
+  --site-muted: #7a7366;
+  --site-brand: var(--color-sidebar, #1c1a17);
+  --site-gold: #b8863b;
+  --site-action: color-mix(in srgb, var(--color-sidebar, #1c1a17) 88%, #2e8b57);
+  --site-action-hover: color-mix(in srgb, var(--site-action) 82%, #ffffff);
+  --site-danger: #b3362d;
+  --site-danger-soft: #fbeceb;
+  --site-success: #237a4b;
+  --site-radius: 12px;
+  --site-radius-sm: 8px;
+  --site-shadow: 0 1px 2px rgb(28 26 23 / 6%), 0 4px 14px rgb(28 26 23 / 5%);
+  --site-shadow-hover: 0 2px 6px rgb(28 26 23 / 10%), 0 10px 24px rgb(28 26 23 / 8%);
+  --site-focus: 0 0 0 3px color-mix(in srgb, var(--site-gold) 35%, transparent);
+}
+
+/* A cor de cada empresa vem do app em .app-shell: recalcula ali. */
+html.site .app-shell {
+  --site-brand: var(--color-sidebar, #1c1a17);
+  --site-action: color-mix(in srgb, var(--color-sidebar, #1c1a17) 88%, #2e8b57);
+  --site-action-hover: color-mix(in srgb, var(--site-action) 82%, #ffffff);
+}
+
+html.site body,
+html.site .app-shell,
+html.site .main-area {
+  background: var(--site-bg) !important;
+  color: var(--site-ink);
+}
+
+/* ---------- Menu lateral ---------- */
+html.site .app-sidebar {
+  background: var(--site-brand) !important;
+  border-right: 0 !important;
+  box-shadow: none !important;
+}
+
+html.site .app-sidebar__brand {
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+html.site .nav-group-title {
+  margin-top: 18px !important;
+  padding: 0 14px !important;
+  color: rgb(255 250 240 / 48%) !important;
+  font-size: 0.68rem !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase;
+}
+
+html.site .app-sidebar__nav button {
+  margin: 1px 8px !important;
+  width: calc(100% - 16px) !important;
+  border: 0 !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: transparent !important;
+  color: rgb(255 250 240 / 82%) !important;
+  box-shadow: none !important;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+html.site .app-sidebar__nav button:hover {
+  background: rgb(255 255 255 / 8%) !important;
+  color: #fffaf0 !important;
+}
+
+html.site .app-sidebar__nav button.active {
+  background: rgb(255 255 255 / 12%) !important;
+  color: #ffffff !important;
+  box-shadow: inset 3px 0 0 var(--site-gold) !important;
+}
+
+html.site .app-sidebar__nav button.active .nav-icon {
+  color: var(--site-gold) !important;
+}
+
+html.site .app-sidebar__footer button {
+  background: rgb(255 255 255 / 8%) !important;
+  color: #fffaf0 !important;
+  border: 1px solid rgb(255 255 255 / 14%) !important;
+  box-shadow: none !important;
+}
+
+/* ---------- Topo ---------- */
+html.site .app-topbar {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center !important;
+  gap: 8px 12px !important;
+  min-height: 0 !important;
+  padding: 10px 24px !important;
+  background: var(--site-surface) !important;
+  color: var(--site-ink) !important;
+  border-bottom: 1px solid var(--site-line) !important;
+  box-shadow: none !important;
+}
+
+html.site .app-topbar__brandline {
+  flex: 0 1 auto;
+  min-width: 220px;
+  margin-right: auto;
+}
+
+html.site .app-topbar__brandline img {
+  width: 36px !important;
+  height: 36px !important;
+}
+
+html.site .page-context span,
+html.site .page-context small {
+  color: var(--site-muted) !important;
+}
+
+html.site .page-context strong {
+  color: var(--site-ink) !important;
+  font-family: "Fraunces Display", Georgia, serif;
+  font-size: 1.25rem !important;
+}
+
+html.site .context-select > span,
+html.site .context-pill > span {
+  color: var(--site-muted) !important;
+  font-size: 0.66rem !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+html.site .context-select select {
+  max-width: 210px;
+  min-height: 36px;
+  border: 1px solid var(--site-line-strong) !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: var(--site-surface-2) !important;
+  color: var(--site-ink) !important;
+  font-weight: 600;
+}
+
+html.site .context-select small {
+  display: none !important;
+}
+
+html.site .context-pill:not(.context-pill--active-company) {
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: var(--site-surface-2) !important;
+  color: var(--site-ink) !important;
+  box-shadow: none !important;
+}
+
+html.site .context-pill:not(.context-pill--active-company) strong {
+  color: var(--site-ink) !important;
+}
+
+html.site .context-pill:not(.context-pill--active-company) small {
+  color: var(--site-muted) !important;
+}
+
+/* Empresa ativa: mantem a bandeira do estado do app, com texto claro. */
+html.site .context-pill--active-company {
+  border-radius: var(--site-radius-sm) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--site-gold) 45%, transparent) !important;
+}
+
+html.site .context-pill--active-company > span,
+html.site .context-pill--active-company strong,
+html.site .context-pill--active-company small {
+  color: #fffaf0 !important;
+}
+
+html.site .context-pill.context-pill--user {
+  border: 0 !important;
+  background: transparent !important;
+}
+
+html.site .topbar-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 6px !important;
+}
+
+html.site .topbar-actions button {
+  min-height: 32px !important;
+  padding: 6px 10px !important;
+  font-size: 0.82rem !important;
+}
+
+/* ---------- Pagina ---------- */
+html.site .content-section {
+  padding: 26px 32px 40px !important;
+  background: transparent !important;
+}
+
+html.site .ui-page-header {
+  margin-bottom: 20px !important;
+  padding: 0 0 18px !important;
+  border-bottom: 1px solid var(--site-line) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.site .ui-page-header h1 {
+  color: var(--site-ink) !important;
+  font-size: 1.9rem !important;
+  letter-spacing: -0.01em;
+}
+
+html.site .ui-page-header p {
+  max-width: 860px;
+  color: var(--site-muted) !important;
+}
+
+html.site .ui-eyebrow {
+  color: var(--site-gold) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+}
+
+/* ---------- Secoes ---------- */
+html.site .admin-block,
+html.site .ui-page-section,
+html.site .ui-card,
+html.site .card {
+  margin-bottom: 18px !important;
+  padding: 20px 22px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius) !important;
+  background: var(--site-surface) !important;
+  box-shadow: var(--site-shadow) !important;
+}
+
+html.site .admin-block > h3,
+html.site .ui-page-section > header,
+html.site .ui-page-section > h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -20px -22px 18px !important;
+  padding: 14px 22px !important;
+  border-bottom: 1px solid var(--site-line);
+  border-radius: var(--site-radius) var(--site-radius) 0 0;
+  background: var(--site-surface-2);
+  color: var(--site-ink) !important;
+  font-family: "Karla Text", system-ui, sans-serif !important;
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.01em;
+}
+
+html.site .ui-page-section > header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+html.site .ui-page-section > header h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 !important;
+  color: var(--site-ink) !important;
+  font-family: "Karla Text", system-ui, sans-serif !important;
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+}
+
+html.site .ui-page-section > header p {
+  margin: 4px 0 0 14px !important;
+  color: var(--site-muted) !important;
+  font-size: 0.85rem;
+}
+
+html.site .admin-block > h3::before,
+html.site .ui-page-section > header h2::before,
+html.site .ui-page-section > h2::before {
+  content: "";
+  width: 4px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--site-gold);
+}
+
+/* Cartoes de numeros (resumos) */
+html.site .cards > *,
+html.site .metrics-grid > * {
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius) !important;
+  background: var(--site-surface) !important;
+  box-shadow: var(--site-shadow) !important;
+}
+
+/* ---------- Botoes ---------- */
+/* :where() deixa a regra base fraca: as variacoes abaixo (principal, perigosa...) vencem. */
+html.site :where(button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):not(.xml-batch-row):not(.settings-tabs button):not(.ui-tabs button):not(.alert-item)),
+html.site :where(.ui-button) {
+  min-height: 38px !important;
+  padding: 8px 16px !important;
+  border: 1px solid var(--site-line-strong) !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: var(--site-surface) !important;
+  color: var(--site-ink) !important;
+  box-shadow: 0 1px 1px rgb(28 26 23 / 4%) !important;
+  font-weight: 600 !important;
+  max-width: none !important;
+  overflow: visible !important;
+  transform: none !important;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+html.site :where(button:not(.app-sidebar__nav button):not(.settings-tabs button):not(.ui-tabs button):not(.alert-item):not(.sidebar-collapse):not(.company-choice)):hover:not(:disabled),
+html.site :where(.ui-button):hover:not(:disabled) {
+  border-color: var(--site-ink-2) !important;
+  background: var(--site-surface-2) !important;
+  box-shadow: var(--site-shadow-hover) !important;
+}
+
+html.site button:focus-visible {
+  outline: none !important;
+  box-shadow: var(--site-focus) !important;
+}
+
+html.site button:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+/* Principal */
+html.site button.primary,
+html.site .ui-button--primary,
+html.site button[class*="--primary"],
+html.site button[data-tone="primary"] {
+  border-color: var(--site-action) !important;
+  background: var(--site-action) !important;
+  color: #ffffff !important;
+}
+
+html.site button.primary:hover:not(:disabled),
+html.site .ui-button--primary:hover:not(:disabled),
+html.site button[class*="--primary"]:hover:not(:disabled),
+html.site button[data-tone="primary"]:hover:not(:disabled) {
+  border-color: var(--site-action-hover) !important;
+  background: var(--site-action-hover) !important;
+  color: #ffffff !important;
+}
+
+/* Perigosa */
+html.site button.danger,
+html.site button.danger-action,
+html.site .ui-button--danger,
+html.site button[class*="--danger"],
+html.site button[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--site-danger) 45%, #fff) !important;
+  background: #fff !important;
+  color: var(--site-danger) !important;
+}
+
+html.site button.danger:hover:not(:disabled),
+html.site button.danger-action:hover:not(:disabled),
+html.site .ui-button--danger:hover:not(:disabled),
+html.site button[class*="--danger"]:hover:not(:disabled),
+html.site button[data-tone="danger"]:hover:not(:disabled) {
+  border-color: var(--site-danger) !important;
+  background: var(--site-danger) !important;
+  color: #fff !important;
+}
+
+/* Consulta / proximo passo sem gravar: contorno na cor da empresa */
+html.site button[data-tone="accent"] {
+  border-color: var(--site-action) !important;
+  background: #fff !important;
+  color: var(--site-action) !important;
+}
+
+html.site button[data-tone="accent"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--site-action) 8%, #fff) !important;
+  border-color: var(--site-action) !important;
+}
+
+/* Discreta: sair de uma janela, limpar filtros */
+html.site button[data-tone="quiet"],
+html.site .ui-button--ghost {
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--site-ink-2) !important;
+  box-shadow: none !important;
+}
+
+html.site button[data-tone="quiet"]:hover:not(:disabled),
+html.site .ui-button--ghost:hover:not(:disabled) {
+  border-color: transparent !important;
+  background: rgb(28 26 23 / 6%) !important;
+  box-shadow: none !important;
+}
+
+/* Grupos de botoes: espaco e alinhamento */
+html.site .toolbar,
+html.site .actions,
+html.site .inline-actions,
+html.site .row-actions,
+html.site .ui-page-header__actions {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px !important;
+}
+
+html.site .actions,
+html.site .toolbar {
+  margin-top: 14px !important;
+}
+
+/* Botao nunca encolhe a ponto de cortar o texto: quebra para a linha de baixo. */
+html.site :is(.toolbar, .actions, .inline-actions, .row-actions, .ui-page-header__actions) > button {
+  flex: 0 0 auto !important;
+}
+
+/* ---------- Abas de pagina ---------- */
+html.site .settings-tabs {
+  display: flex !important;
+  gap: 4px !important;
+  margin: 4px 0 22px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--site-line-strong) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.site .settings-tabs button {
+  min-height: 0 !important;
+  margin-bottom: -1px !important;
+  padding: 10px 16px !important;
+  border: 0 !important;
+  border-bottom: 3px solid transparent !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--site-muted) !important;
+  box-shadow: none !important;
+  font-weight: 600 !important;
+}
+
+html.site .settings-tabs button:hover {
+  color: var(--site-ink) !important;
+  background: transparent !important;
+}
+
+html.site .settings-tabs button.active {
+  border-bottom-color: var(--site-gold) !important;
+  color: var(--site-ink) !important;
+  font-weight: 700 !important;
+}
+
+/* ---------- Escolha entre opcoes (ui-tabs) ---------- */
+html.site .ui-tabs {
+  display: inline-flex !important;
+  gap: 2px !important;
+  padding: 3px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: 999px !important;
+  background: var(--site-surface-2) !important;
+  box-shadow: none !important;
+}
+
+html.site .ui-tabs button {
+  min-height: 30px !important;
+  padding: 5px 14px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--site-ink-2) !important;
+  box-shadow: none !important;
+  font-weight: 600 !important;
+}
+
+html.site .ui-tabs button.active,
+html.site .ui-tabs button[aria-selected="true"] {
+  background: var(--site-brand) !important;
+  color: #fff !important;
+  box-shadow: 0 1px 3px rgb(28 26 23 / 20%) !important;
+}
+
+/* ---------- Campos ---------- */
+html.site input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html.site select,
+html.site textarea {
+  border: 1px solid var(--site-line-strong) !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: #fff !important;
+  color: var(--site-ink) !important;
+  box-shadow: none !important;
+}
+
+html.site input:not([type="checkbox"]):not([type="radio"]):focus,
+html.site select:focus,
+html.site textarea:focus {
+  border-color: var(--site-gold) !important;
+  outline: none !important;
+  box-shadow: var(--site-focus) !important;
+}
+
+html.site label,
+html.site .ui-field > span {
+  color: var(--site-ink-2);
+}
+
+html.site input[type="checkbox"],
+html.site input[type="radio"] {
+  accent-color: var(--site-action);
+}
+
+/* Barra de filtros */
+html.site .ui-filter-bar {
+  padding: 14px 16px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius) !important;
+  background: var(--site-surface) !important;
+  box-shadow: none !important;
+}
+
+/* ---------- Tabelas ---------- */
+html.site .ui-table-wrap,
+html.site .table,
+html.site .warehouse-table-wrap {
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius) !important;
+  background: var(--site-surface) !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+html.site table thead th,
+html.site .table-row.table-head,
+html.site .table > .table-row:first-child {
+  background: var(--site-surface-2) !important;
+  color: var(--site-muted) !important;
+  font-size: 0.74rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html.site table tbody tr:nth-child(even),
+html.site .table > .table-row:nth-child(odd):not(:first-child) {
+  background: color-mix(in srgb, var(--site-surface-2) 55%, #fff) !important;
+}
+
+html.site table tbody tr:hover,
+html.site .table > .table-row:not(:first-child):hover {
+  background: color-mix(in srgb, var(--site-gold) 7%, #fff) !important;
+}
+
+html.site table td,
+html.site table th {
+  border-color: var(--site-line) !important;
+}
+
+/* ---------- Avisos e janelas ---------- */
+html.site .ui-dialog > section,
+html.site .ui-drawer > section {
+  border: 1px solid var(--site-line) !important;
+  border-radius: 14px !important;
+  background: var(--site-surface) !important;
+  box-shadow: 0 24px 60px rgb(28 26 23 / 22%) !important;
+}
+
+html.site .app-statusbar {
+  border-top: 1px solid var(--site-line) !important;
+  background: var(--site-surface) !important;
+  color: var(--site-muted) !important;
+}
+
+/* ---------- Escolha de empresa (entrada) ---------- */
+html.site button.org-picker-card {
+  min-height: 64px !important;
+  padding: 10px 14px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius) !important;
+  background: #fff !important;
+  text-align: left;
+}
+
+html.site button.org-picker-card:hover:not(:disabled) {
+  border-color: var(--site-line-strong) !important;
+  box-shadow: var(--site-shadow-hover) !important;
+}
+
+html.site button.org-picker-card.active {
+  border-color: var(--site-gold) !important;
+  background: color-mix(in srgb, var(--site-gold) 10%, #fff) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--site-gold) 30%, transparent) !important;
+}
