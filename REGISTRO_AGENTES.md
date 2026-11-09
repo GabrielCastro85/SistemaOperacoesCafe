@@ -105,6 +105,15 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: na Conferência de repasses, uma caixa para marcar todas as notas de uma vez.
+- Feito (`c3984d3`), em `TransferReconciliationsPage.tsx` (app e site):
+  - Caixa no cabeçalho da lista. Marca ou desmarca todas as notas que batem com a pesquisa, inclusive as ainda escondidas pelo "Mostrar mais notas".
+  - Só entram notas com saldo disponível, cada uma com o saldo inteiro. Fica no estado intermediário quando só parte das notas está marcada.
+- Testado: typecheck, eslint e o site local, com o fornecedor CEREAIS (121 notas): marcar, desmarcar uma, estado intermediário, marcar e desmarcar todas.
+- Publicado: no site.
+- Em paralelo: `tmp/importar-thadeu-grao.mts --execute` rodando desde ~14:55. Cópia do banco em `database/backup-antes-thadeu-grao-2026-11-09`. Simulação: MG 4.098 vendas e SP 674. Pela numeração, as duas começam em set/2024. Falta jul/2026: MG nº 4819–5992 e SP nº 2078–2304. Isso precisa de novo "Enviar notas do período" de 01/07 a 31/07/2026.
+
+### 2026-11-09 - Claude
 - Pedido: na lista de notas, nota com responsável trocado para fornecedor mostrava um id no lugar do nome. Pedido também de diferença visual entre notas de cliente e de fornecedor.
 - Feito (`96f2376`), no app e no site, porque `OperationsPage.tsx` e `src/renderer/styles/index.css` são os mesmos:
   - `documentClientName` passou a procurar em `allKnownPartners` (clientes e fornecedores), e não só em `partners`, que tem apenas o papel da tela.
