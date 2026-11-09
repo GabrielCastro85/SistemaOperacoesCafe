@@ -1077,6 +1077,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       operationScope: inferredScope ?? xmlScopeOverrides[file.token] ?? scope,
       classificationLabel: file.xmlType.startsWith("EVENT_")
         ? "Cancelamento"
+        : xmlIgnoredSelections[file.token] && warehouseMovement
+          ? "Nao cadastrar"
         : warehouseMovement
           ? `${warehouseMovement.movementType === "RETURN" ? "Retorno" : "Remessa"} ${warehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}`
         : xmlIgnoredSelections[file.token]
@@ -1085,6 +1087,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     };
   });
   const validXmlBatchRows = xmlBatchRows.filter((row) => row.file.status !== "ERROR");
+  // Remessas/retornos simbolicos de armazem: so movimentam estoque no papel e
+  // muitas vezes nao interessam. Podem ser marcadas para nao cadastrar.
+  const symbolicWarehouseTokens = xmlQueue
+    .filter((file) => file.status !== "ERROR" && classifyWarehouseXml(parseNfeExtractedPreview(file.extractedData ?? null))?.movementKind === "SYMBOLIC")
+    .map((file) => file.token);
+  const allSymbolicIgnored = symbolicWarehouseTokens.length > 0 && symbolicWarehouseTokens.every((token) => xmlIgnoredSelections[token] === true);
+  function setSymbolicWarehouseIgnored(ignored: boolean): void {
+    setXmlJob(null);
+    setXmlIgnoredSelections((current) => ({ ...current, ...Object.fromEntries(symbolicWarehouseTokens.map((token) => [token, ignored])) }));
+  }
 
   const xmlJobStatus = xmlJob?.job.status;
   const visibleXmlJobFiles = xmlJob?.files.filter((file) => !xmlImportFileIsVisuallyDeleted(file)) ?? [];
@@ -1927,6 +1939,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     : `Ao importar, o sistema acrescentara ${decimalTextBr(selectedXmlSacks)} sacas ao estoque mantido em ${selectedXmlParties.recipientLabel ?? "armazem identificado no XML"}.`}
                 </span>
                 <span>CFOP {selectedWarehouseMovement.cfops.join(", ")} · movimentacao {selectedWarehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}. Nao sera criada compra, venda ou cobranca.</span>
+                {vulpeScan && selectedXmlFile ? (
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={xmlIgnoredSelections[selectedXmlFile.token] === true}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setXmlJob(null);
+                        setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: checked }));
+                      }}
+                    />
+                    Nao cadastrar esta nota (nao mexe no estoque do armazem) nem mostrar novamente nas buscas
+                  </label>
+                ) : null}
               </div>
             ) : (
               <>
@@ -1992,6 +2018,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </div>
               <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
             </div>
+            {vulpeScan && symbolicWarehouseTokens.length > 0 ? (
+              <div className="toolbar">
+                <button type="button" onClick={() => setSymbolicWarehouseIgnored(!allSymbolicIgnored)}>
+                  {allSymbolicIgnored
+                    ? `Voltar a cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`
+                    : `Nao cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`}
+                </button>
+              </div>
+            ) : null}
             <div className="table">
               <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
               {xmlBatchRows.map((row) => (
