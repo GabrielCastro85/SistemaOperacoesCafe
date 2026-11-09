@@ -105,6 +105,11 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: na tela de Cobranças do site, a tabela de notas (com "Receber NF") passava por cima do painel de ajustes ao lado.
+- Causa: o `overflow: clip` que pus em `.table` para o cabeçalho fixo faz o `min-width` automático do item da grade valer o conteúdo, e a tabela larga empurrava a coluna. Feito (`e01a2a2`): `.table`/`.ui-table-wrap`/`.warehouse-table-wrap` com `min-width: 0` e `overflow-x: auto` (como no app); `web/siteTables.ts` marca `site-table-fits` nas que cabem na largura, e só essas usam `overflow: clip` (cabeçalho fixo). Tabela larga rola para o lado e o cabeçalho dela não fica fixo.
+- Também em andamento: coletor da Grão (1.1.71) recebeu "Enviar notas do período" 01/01/2024–30/06/2026 às ~10:43; o "Comando desconhecido" anterior era de antes da atualização.
+
+### 2026-11-09 - Claude
 - Pedido: tela de entrada com a marca e uso no celular/tablet.
 - Feito (`4f7e58a`), só no site:
   - Marca: usei a **Grãonex** (logo e ícone que já existem em `public/assets/branding/graonex`, os mesmos do rodapé dos PDFs), não "GrãoBase" (que é só o domínio). `web/siteLayout.ts` acrescenta um `aside.site-auth-brand` no `.auth-shell` (login e escolha de empresa); o aviso "Computador autorizado" fica escondido no site.
