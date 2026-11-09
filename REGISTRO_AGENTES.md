@@ -105,6 +105,15 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: na cobrança, poder dar uma observação diferente para cada ajuste.
+- Feito (`c243726`, app e site), em `ChargesPage.tsx`:
+  - O campo único "Motivo do ajuste" (`adjustmentReason`) virou `adjustmentReasons` {advance, discount, surcharge}.
+  - Cada valor preenchido (adiantamento, desconto, acréscimo) abre a sua "Observação" logo abaixo. É exigida para aplicar, preparar, emitir e gerar documento (`missingAdjustmentReason`). Cada `addChargeAdjustment` grava a sua.
+  - CSS `.charge-adjustment-reason` em `src/renderer/styles/index.css`.
+- Testado: typecheck, eslint e o site local sobre a cópia do banco. Sem a observação do acréscimo, o site barra. A cobrança de teste emitida (PAULO BAIA) ficou com "Desconto: PAGO AO ADVOGADO" e "Acréscimo: SALARIO GUSTAVO".
+- Publicado: no site. O programa do computador só recebe na próxima versão.
+
+### 2026-11-09 - Claude
 - Pedido: cobrança do Neto de out/2026 (`b4205173…`, emitida). O acréscimo de +R$ 1.500 deveria ter a observação "SALARIO GUSTAVO", e não "PAGO AO ADVOGADO".
 - Causa: a tela de cobrança (`ChargesPage.tsx`, `applyPendingAdjustmentsToCharge`) usa um só campo `adjustmentReason` para adiantamento, desconto e acréscimo. Não há tela para editar ajuste de cobrança emitida.
 - Feito: o PDF corrigido foi gerado por `tmp/pdf-neto-corrigido.mts` sobre uma CÓPIA do banco (o banco real não foi alterado) e salvo em Downloads como "Neto 01-10-2026 a 31-10-2026 (corrigido).pdf". Conferi o texto do PDF: desconto com "PAGO AO ADVOGADO", acréscimo com "SALARIO GUSTAVO", total R$ 30.945,63.
