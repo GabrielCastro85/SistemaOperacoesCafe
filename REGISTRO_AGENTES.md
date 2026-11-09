@@ -105,6 +105,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: na busca de notas, poder ignorar as remessas simbólicas.
+- Feito (commit seguinte a `c243726`, app e site), em `OperationsPage.tsx`:
+  - O cartão de remessa/retorno de armazém ganhou a caixa "Não cadastrar", que só aparece na busca (`vulpeScan`). O backend já tratava `ignore` como SKIPPED, e `wasIgnoredByUser` (`handlers.ts`) esconde a chave nas próximas buscas.
+  - A revisão da fila ganhou o botão "Não cadastrar as N remessa(s) simbólica(s)" e o inverso. Usa `classifyWarehouseXml(...).movementKind === "SYMBOLIC"`.
+  - Na lista, a classificação mostra "Não cadastrar".
+- Também: a cobrança do Neto foi corrigida no banco local (reason do acréscimo = SALARIO GUSTAVO), com o programa fechado. Ela sobe ao abrir o programa.
+- Testado: typecheck e eslint. NÃO testado na tela, porque o ambiente local não tem busca com remessas simbólicas.
+- Grão jul/2026: a collector-inbox não recebeu nada desde 15:18. Falta o Gabriel enviar o período 01/07–31/07/2026 e buscar MG e SP.
+
+### 2026-11-09 - Claude
 - Pedido: na cobrança, poder dar uma observação diferente para cada ajuste.
 - Feito (`c243726`, app e site), em `ChargesPage.tsx`:
   - O campo único "Motivo do ajuste" (`adjustmentReason`) virou `adjustmentReasons` {advance, discount, surcharge}.
