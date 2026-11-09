@@ -105,6 +105,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: na lista de notas, nota com responsável trocado para fornecedor mostrava um id no lugar do nome. Pedido também de diferença visual entre notas de cliente e de fornecedor.
+- Feito (`96f2376`), no app e no site, porque `OperationsPage.tsx` e `src/renderer/styles/index.css` são os mesmos:
+  - `documentClientName` passou a procurar em `allKnownPartners` (clientes e fornecedores), e não só em `partners`, que tem apenas o papel da tela.
+  - Cada linha ganhou etiqueta e faixa na borda pela direção da nota: Cliente (OUTBOUND, verde), Fornecedor (INBOUND, laranja) ou Triangulada (com `secondaryResponsiblePartnerId`, roxo).
+- Testado: typecheck, eslint e o site local sobre uma cópia do banco. As notas 963–970 aparecem como Fornecedor (LUCAS, PRIME), sem nenhum id na lista.
+- Publicado: no site (Pages). O programa do computador só recebe na próxima versão, que não foi gerada.
+
+### 2026-11-09 - Claude
 - Pedido: no site, "Trocar responsável e recalcular" (detalhe da nota) dava "Caminho de arquivo não permitido no site".
 - Causa: a tela manda a nota inteira em `updateFiscalDocument`, inclusive `xmlFilePath` gravado por um PC (`C:\Users\...`), e a proteção de caminhos do motor barrava qualquer caminho fora das pastas dele. O schema do app descarta esse campo, então o caminho nem seria usado.
 - Feito (`bf24984`): em `server/engine/host.ts`, `assertSafePaths` virou `sanitizePaths`. Campo de objeto com nome terminado em `Path` e caminho fora das pastas do motor vira `null`. Os demais caminhos de fora continuam barrados.
