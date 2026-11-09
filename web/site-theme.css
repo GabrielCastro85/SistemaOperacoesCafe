@@ -62,6 +62,39 @@ html.site .app-sidebar__brand {
   border-bottom: 1px solid rgb(255 255 255 / 10%);
 }
 
+/* Nome do sistema em cima, grupo embaixo (antes ficavam colados na mesma linha). */
+html.site .app-sidebar__brand {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+}
+
+html.site .app-sidebar__brand > div {
+  display: grid !important;
+  gap: 2px;
+  min-width: 0;
+}
+
+html.site .app-sidebar__brand strong {
+  display: block !important;
+  color: #fffaf0 !important;
+  font-size: 1.02rem !important;
+  line-height: 1.15 !important;
+  white-space: normal !important;
+}
+
+html.site .app-sidebar__brand span {
+  display: block !important;
+  margin: 0 !important;
+  color: rgb(255 250 240 / 62%) !important;
+  font-family: "Karla Text", system-ui, sans-serif !important;
+  font-size: 0.72rem !important;
+  font-style: normal !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase;
+}
+
 html.site .nav-group-title {
   margin-top: 18px !important;
   padding: 0 14px !important;
@@ -764,4 +797,205 @@ html.site .company-switcher__check {
   flex: 0 0 auto !important;
   color: var(--site-success);
   font-weight: 800;
+}
+
+/* ---------- Avisos flutuantes (web/siteToasts.ts) ---------- */
+html.site .feedback,
+html.site .transfer-message {
+  padding: 8px 12px !important;
+  border: 0 !important;
+  border-left: 3px solid var(--site-line-strong) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--site-muted) !important;
+  font-size: 0.86rem;
+  box-shadow: none !important;
+}
+
+.site-toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 44px;
+  z-index: 1000;
+  display: grid;
+  gap: 10px;
+  width: min(420px, calc(100vw - 40px));
+  pointer-events: none;
+}
+
+.site-toast {
+  display: grid;
+  grid-template-columns: 28px 1fr 24px;
+  align-items: start;
+  gap: 10px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid #e3ddd2;
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: #fff;
+  color: #1c1a17;
+  box-shadow: 0 12px 32px rgb(28 26 23 / 18%);
+  font: 500 0.92rem/1.4 "Karla Text", system-ui, sans-serif;
+  pointer-events: auto;
+  animation: site-toast-in 180ms ease-out;
+}
+
+.site-toast.is-leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.site-toast p {
+  margin: 3px 0 0;
+}
+
+.site-toast__icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 800;
+}
+
+.site-toast--success { border-left-color: #237a4b; }
+.site-toast--success .site-toast__icon { background: #237a4b; }
+.site-toast--error { border-left-color: #b3362d; background: #fffafa; }
+.site-toast--error .site-toast__icon { background: #b3362d; }
+.site-toast--warning { border-left-color: #b8863b; }
+.site-toast--warning .site-toast__icon { background: #b8863b; }
+
+html.site button.site-toast__close {
+  min-height: 0 !important;
+  width: 24px;
+  height: 24px;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #7a7366 !important;
+  box-shadow: none !important;
+  font-size: 1.2rem !important;
+  line-height: 1 !important;
+}
+
+@keyframes site-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- Telas longas (web/sitePage.ts) ---------- */
+.site-section-nav {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 32px;
+  overflow-x: auto;
+  border-bottom: 1px solid #e3ddd2;
+  background: rgb(255 255 255 / 92%);
+  backdrop-filter: blur(6px);
+  scrollbar-width: thin;
+}
+
+.site-section-nav__label {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  color: #b8863b;
+  font: 700 0.68rem/1 "Karla Text", system-ui, sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+html.site .site-section-nav button {
+  flex: 0 0 auto;
+  min-height: 28px !important;
+  padding: 4px 12px !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: #4a453e !important;
+  box-shadow: none !important;
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+}
+
+html.site .site-section-nav button:hover {
+  background: #f8f6f2 !important;
+  border-color: #e3ddd2 !important;
+}
+
+html.site .site-section-nav button.is-active {
+  border-color: color-mix(in srgb, #b8863b 50%, #fff) !important;
+  background: color-mix(in srgb, #b8863b 12%, #fff) !important;
+  color: #1c1a17 !important;
+}
+
+html.site.site-has-section-nav .content-section {
+  padding-top: 70px !important;
+}
+
+html.site .admin-block,
+html.site .ui-page-section,
+html.site .content-section :is(h2, h3) {
+  scroll-margin-top: 60px;
+}
+
+/* Secoes que abrem e fecham pelo titulo */
+html.site .site-collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+html.site .site-collapsible::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--site-muted);
+  font-size: 0.9rem;
+  transition: transform 140ms ease;
+}
+
+html.site .site-collapsed > .site-collapsible::after {
+  transform: rotate(-90deg);
+}
+
+html.site .site-collapsible:hover {
+  background: color-mix(in srgb, var(--site-gold) 7%, var(--site-surface-2)) !important;
+}
+
+html.site .site-collapsible:focus-visible {
+  outline: none;
+  box-shadow: var(--site-focus);
+}
+
+html.site .site-collapsed > :not(.site-collapsible) {
+  display: none !important;
+}
+
+html.site .admin-block.site-collapsed,
+html.site .ui-page-section.site-collapsed {
+  padding-bottom: 0 !important;
+}
+
+html.site .site-collapsed > .site-collapsible {
+  margin-bottom: 0 !important;
+  border-bottom: 0;
+  border-radius: var(--site-radius);
+}
+
+/* Botoes principais presos no rodape da secao enquanto se rola */
+html.site :is(.admin-block, .ui-page-section) > :is(.actions, .toolbar, .inline-actions):last-child:has(> button.primary, > button[data-tone="primary"], > .ui-button--primary, > button[class*="--primary"]) {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin: 16px -22px -20px !important;
+  padding: 12px 22px !important;
+  border-top: 1px solid var(--site-line);
+  border-radius: 0 0 var(--site-radius) var(--site-radius);
+  background: rgb(255 255 255 / 95%);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 -6px 16px rgb(28 26 23 / 5%);
 }
