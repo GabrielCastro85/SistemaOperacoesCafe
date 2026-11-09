@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, FiscalDocument, FiscalDocumentDetail, OperationScope, Product, SheetPreview, SpreadsheetImportJob, SpreadsheetImportRow, WorkbookInspection, XmlFileInspection, XmlImportFile, XmlImportJob } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, formatDateBr, formatDateOnlyBr, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateBr, formatDateOnlyBr, formatSacks, onlyDigits, parseCurrencyToCents } from "../../../shared/utils/format";
 import { DateInput, EmptyState, FileDropzone, ListStepsIcon, PageHeader, StatusBadge, Stepper, Tabs } from "../../design-system";
 import type { StepperStep } from "../../design-system";
 import { SelectField, TextField } from "../../components/forms/LegacyFields";
@@ -1572,7 +1572,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
         <div className="cards">
           <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${formatProductUnit(item.unit)}`).join(" | ") || "Nenhum"}</strong></article>
-          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${formatOperationScope(op.operationScope)}: ${op.quantitySacks} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
+          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${formatOperationScope(op.operationScope)}: ${formatSacks(op.quantitySacks)} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
           <article><span>Status</span><strong>{formatStatusLabel(detail.document.status)}</strong></article>
         </div>
         {isTriangulatedDetail ? (

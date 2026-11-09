@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AuthSession, BootstrapData, InstallationProfile } from "../../shared/types/domain";
+import type { AuthSession, BootstrapData, InstallationProfile, LegalEntity } from "../../shared/types/domain";
 import { AppLayout } from "../layouts/AppLayout";
+import { isWebSite } from "../layouts/CompanySwitcher";
 import "../styles/index.css";
 import { AuditPage } from "../pages/audit/AuditPage";
 import { FirstAdminSetupPage, LockScreen, LoginPage } from "../pages/auth/AuthPages";
@@ -171,6 +172,13 @@ function RoutedApp(): JSX.Element {
     await refresh();
   }
 
+  // Site: troca grupo e empresa de uma vez pelo seletor unico do topo.
+  async function changeCompany(entity: LegalEntity): Promise<void> {
+    if (entity.organizationId !== profile?.defaultOrganizationId) await window.operationsCafe.setActiveOrganization(entity.organizationId);
+    setProfile(await window.operationsCafe.setActiveLegalEntity(entity.id));
+    await refresh();
+  }
+
   async function changeOrganization(id: string): Promise<void> {
     if (!id) return;
     setProfile(await window.operationsCafe.setActiveOrganization(id));
@@ -200,6 +208,10 @@ function RoutedApp(): JSX.Element {
       onNavigate={navigate}
       onOrganizationChange={(id) => void changeOrganization(id)}
       onLegalEntityChange={(id) => void changeLegalEntity(id)}
+      companySwitcher={isWebSite() ? {
+        entities: data.legalEntities.filter((item) => item.isActive && isOperationalLegalEntity(item)),
+        onSelect: (entity) => void changeCompany(entity)
+      } : undefined}
       onLock={() => void window.operationsCafe.authLock().then((nextSession) => setSession(nextSession))}
       onLogout={() => void window.operationsCafe.authLogout().then(() => { setSession(null); setOrgPickerDismissed(false); })}
     >

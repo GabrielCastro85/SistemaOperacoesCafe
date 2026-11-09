@@ -70,6 +70,12 @@ export function formatDateTimeBr(value: string | Date): string {
   }).format(parsed);
 }
 
+// Sacas no padrao brasileiro: "123136.7949" -> "123.136,795".
+export function formatSacks(value: string | number | null | undefined): string {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "0").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) : String(value ?? "0");
+}
+
 export function formatCurrencyFromCents(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
 }

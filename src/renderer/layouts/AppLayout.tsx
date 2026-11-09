@@ -23,9 +23,7 @@ import {
 import { formatCnpj } from "../../shared/utils/format";
 import { resolveOrganizationLogoSrc } from "../../shared/branding/branding";
 import type { NavigationItem } from "../app/navigation";
-import flagEspiritoSanto from "../assets/flags/bandeira-espirito-santo.svg";
-import flagMinasGerais from "../assets/flags/bandeira-minas-gerais.svg";
-import flagSaoPaulo from "../assets/flags/bandeira-sao-paulo.svg";
+import { CompanySwitcher, stateFlagSrc } from "./CompanySwitcher";
 import { CENTRAL_DATA_UPDATED_EVENT } from "../hooks/useCentralDataRefresh";
 
 export interface AppLayoutProps {
@@ -42,6 +40,8 @@ export interface AppLayoutProps {
   onNavigate: (menu: string) => void;
   onOrganizationChange: (organizationId: string) => void;
   onLegalEntityChange: (legalEntityId: string) => void;
+  // Site: um seletor unico com todas as empresas no lugar de Grupo + Empresa/CNPJ.
+  companySwitcher?: { entities: LegalEntity[]; onSelect: (entity: LegalEntity) => void };
   onLock: () => void;
   onLogout: () => void;
   children: ReactNode;
@@ -101,16 +101,6 @@ function stateFlagClass(state: string | null | undefined): string {
   return "context-pill--state-generic";
 }
 
-function stateFlagSrc(state: string | null | undefined): string | null {
-  const normalized = (state ?? "").trim().toUpperCase();
-  const flags: Record<string, string> = {
-    ES: flagEspiritoSanto,
-    MG: flagMinasGerais,
-    SP: flagSaoPaulo
-  };
-  return flags[normalized] ?? null;
-}
-
 export function AppLayout({
   variant,
   organization,
@@ -125,6 +115,7 @@ export function AppLayout({
   onNavigate,
   onOrganizationChange,
   onLegalEntityChange,
+  companySwitcher,
   onLock,
   onLogout,
   children
@@ -231,6 +222,16 @@ export function AppLayout({
               <small>Início / {activeMenu}</small>
             </div>
           </div>
+          {companySwitcher ? (
+            <CompanySwitcher
+              organizations={organizations}
+              entities={companySwitcher.entities}
+              activeEntity={legalEntity}
+              canSwitchOrganization={canSwitchOrganization}
+              canSwitchLegalEntity={canSwitchLegalEntity}
+              onSelect={companySwitcher.onSelect}
+            />
+          ) : <>
           <label className="context-select">
             <span>Grupo</span>
             <select value={organization?.id ?? ""} disabled={!canSwitchOrganization} onChange={(event) => onOrganizationChange(event.target.value)}>
@@ -261,6 +262,7 @@ export function AppLayout({
             </select>
             <small>{legalEntityLabel}</small>
           </label>
+          </>}
           <div className="context-pill context-pill--user">
             <span>Usuário</span>
             <strong>{session.user.displayName}</strong>

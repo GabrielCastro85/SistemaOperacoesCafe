@@ -310,6 +310,20 @@ html.site .metrics-grid > * {
   box-shadow: var(--site-shadow) !important;
 }
 
+/* Valores dos resumos numa linha so: a fonte diminui conforme a largura do cartao. */
+html.site .cards > *,
+html.site .metrics-grid > * {
+  container-type: inline-size;
+}
+
+html.site .cards > * > strong,
+html.site .metrics-grid > * > strong {
+  font-size: clamp(0.95rem, 11cqi, 1.75rem) !important;
+  white-space: nowrap;
+  overflow-wrap: normal !important;
+  word-break: keep-all !important;
+}
+
 /* ---------- Botoes ---------- */
 /* :where() deixa a regra base fraca: as variacoes abaixo (principal, perigosa...) vencem. */
 html.site :where(button:not(.app-sidebar__nav button):not(.sidebar-collapse):not(.company-choice):not(.xml-queue-list button):not(.auth-password-toggle):not(.partner-modal__close):not(.ui-icon-button):not(.xml-batch-row):not(.settings-tabs button):not(.ui-tabs button):not(.alert-item)),
@@ -609,4 +623,145 @@ html.site button.org-picker-card.active {
   border-color: var(--site-gold) !important;
   background: color-mix(in srgb, var(--site-gold) 10%, #fff) !important;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--site-gold) 30%, transparent) !important;
+}
+
+/* ---------- Seletor unico de empresa (topo) ---------- */
+html.site .company-switcher {
+  position: relative;
+}
+
+html.site button.company-switcher__current {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px !important;
+  padding: 6px 14px 6px 8px !important;
+  border: 1px solid var(--site-line-strong) !important;
+  border-radius: var(--site-radius) !important;
+  background: #fff !important;
+  text-align: left;
+  white-space: normal !important;
+}
+
+html.site button.company-switcher__current:disabled {
+  opacity: 1 !important;
+  cursor: default !important;
+}
+
+html.site .company-switcher.is-open button.company-switcher__current,
+html.site button.company-switcher__current:hover:not(:disabled) {
+  border-color: var(--site-gold) !important;
+  box-shadow: var(--site-focus) !important;
+}
+
+html.site .company-switcher__flag,
+html.site .company-switcher__option img,
+html.site .company-switcher__flag--empty {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 31px;
+  border-radius: 5px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgb(28 26 23 / 12%);
+}
+
+html.site .company-switcher__flag--empty {
+  background: var(--site-surface-2);
+}
+
+html.site .company-switcher__text {
+  display: grid;
+  line-height: 1.15;
+}
+
+html.site .company-switcher *,
+html.site .company-switcher__text strong {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+html.site .company-switcher__text small {
+  color: var(--site-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+html.site .company-switcher__text strong {
+  color: var(--site-ink);
+  font-size: 0.98rem;
+}
+
+html.site .company-switcher__chevron {
+  margin-left: 6px;
+  color: var(--site-muted);
+}
+
+html.site .company-switcher__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: max(100%, 340px);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--site-line);
+  border-radius: var(--site-radius);
+  background: #fff;
+  box-shadow: 0 18px 48px rgb(28 26 23 / 18%);
+}
+
+html.site .company-switcher__group {
+  display: block;
+  padding: 10px 10px 6px;
+  color: var(--site-gold);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+html.site button.company-switcher__option {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px !important;
+  padding: 6px 10px !important;
+  border: 0 !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  text-align: left;
+}
+
+html.site button.company-switcher__option:hover {
+  background: var(--site-surface-2) !important;
+  box-shadow: none !important;
+}
+
+html.site button.company-switcher__option.is-active {
+  background: color-mix(in srgb, var(--site-gold) 12%, #fff) !important;
+}
+
+html.site .company-switcher__option span {
+  display: grid;
+  flex: 1;
+  line-height: 1.2;
+}
+
+html.site .company-switcher__option strong {
+  color: var(--site-ink) !important;
+  font-size: 0.92rem;
+}
+
+html.site .company-switcher__option small {
+  color: var(--site-muted);
+  font-size: 0.76rem;
+}
+
+html.site .company-switcher__check {
+  flex: 0 0 auto !important;
+  color: var(--site-success);
+  font-weight: 800;
 }

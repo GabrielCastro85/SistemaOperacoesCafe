@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, BusinessPartnerLegalEntity, DealClauseTemplate, DealConfirmation, DealConfirmationDetail, DealConfirmationSummary, DealConfirmationTemplate, FiscalDocument, Product } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, formatDateBr, onlyDigits } from "../../../shared/utils/format";
+import { formatCurrencyFromCents, formatDateBr, formatSacks, onlyDigits } from "../../../shared/utils/format";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { fiscalDocumentCounterpartyNameFromSnapshot, resolveFiscalDocumentCounterpartyLegalEntityId } from "../../../shared/utils/fiscalDocumentLabels";
 import { inferConfirmationDealDirection, type ConfirmationDealDirection, type ConfirmationDealDirectionChoice } from "../../../shared/utils/dealDirection";
@@ -762,7 +762,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       {tab === "Confirmacoes" && view !== "detail" && (
         <div className="cards">
           <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
-          <article><span>Sacas confirmadas</span><strong>{summary?.totalSacksDecimal ?? "0"}</strong></article>
+          <article><span>Sacas confirmadas</span><strong>{formatSacks(summary?.totalSacksDecimal)}</strong></article>
           <article><span>Valor comercial</span><strong>{formatCurrencyFromCents(summary?.totalCommercialAmountCents ?? 0)}</strong></article>
           <article><span>Aguardando assinatura</span><strong>{summary?.waitingSignature ?? 0}</strong></article>
           <article><span>Assinadas</span><strong>{summary?.signed ?? 0}</strong></article>
@@ -814,7 +814,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
             <div className="table-head confirmation-grid"><span>Numero</span><span>Comprador / vendedor</span><span>Data</span><span>Sacas</span><span>Valor</span><span>Status</span><span>Assinatura</span><span>Acoes</span></div>
             {visibleConfirmations.map((item) => {
               const canDelete = item.status === "DRAFT" && !item.confirmationNumber;
-              return <div key={item.id} className="table-row confirmation-grid"><span>{confirmationDisplayNumber(item)}</span><span title={item.counterpartyRole === "SELLER" ? "Vendedor" : item.counterpartyRole === "BUYER" ? "Comprador" : undefined}>{item.counterpartyName ?? "Contraparte não identificada"}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{item.totalQuantitySacksDecimal}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
+              return <div key={item.id} className="table-row confirmation-grid"><span>{confirmationDisplayNumber(item)}</span><span title={item.counterpartyRole === "SELLER" ? "Vendedor" : item.counterpartyRole === "BUYER" ? "Comprador" : undefined}>{item.counterpartyName ?? "Contraparte não identificada"}</span><span>{formatDateBr(item.confirmationDate)}</span><span>{formatSacks(item.totalQuantitySacksDecimal)}</span><span>{formatCurrencyFromCents(item.totalCommercialAmountCents)}</span><span><StatusBadge status={item.status} /></span><span><StatusBadge status={item.signatureStatus} /></span><span className="actions"><button onClick={() => void openConfirmation(item.id)}>Abrir</button>{canDelete ? <button className="danger-action" onClick={() => void deleteDeal(item.id)}>Excluir</button> : null}</span></div>;
             })}
             {visibleConfirmations.length === 0 ? <EmptyState title="Nenhum fechamento encontrado" description="Ajuste os filtros de empresa ou período para consultar outros fechamentos." /> : null}
           </div>
