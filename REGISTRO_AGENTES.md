@@ -105,6 +105,12 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: cobrança do Neto de out/2026 (`b4205173…`, emitida). O acréscimo de +R$ 1.500 deveria ter a observação "SALARIO GUSTAVO", e não "PAGO AO ADVOGADO".
+- Causa: a tela de cobrança (`ChargesPage.tsx`, `applyPendingAdjustmentsToCharge`) usa um só campo `adjustmentReason` para adiantamento, desconto e acréscimo. Não há tela para editar ajuste de cobrança emitida.
+- Feito: o PDF corrigido foi gerado por `tmp/pdf-neto-corrigido.mts` sobre uma CÓPIA do banco (o banco real não foi alterado) e salvo em Downloads como "Neto 01-10-2026 a 31-10-2026 (corrigido).pdf". Conferi o texto do PDF: desconto com "PAGO AO ADVOGADO", acréscimo com "SALARIO GUSTAVO", total R$ 30.945,63.
+- Pendente: corrigir também no banco, com o programa fechado. O script está pronto no scratchpad (`fix-neto-adjustment.cjs`): faz UPDATE de `client_charge_adjustments` `525a1299…` reason = SALARIO GUSTAVO. Depois o programa sincroniza. Ofereci ao Gabriel separar a observação por tipo de ajuste na tela; sem resposta ainda.
+
+### 2026-11-09 - Claude
 - Pedido (retomado, item 1 de "Em andamento"): vendas da Grão & Grão no THADEU NOTAS.
 - Feito: `tmp/importar-thadeu-grao.mts --execute` rodou de ~14:55 a 16:18. Lento porque cada arquivo novo do lote demora mais que o anterior. Resultado:
   - Lote MG `19642377…`: 4.098 notas.
