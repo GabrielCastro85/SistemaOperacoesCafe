@@ -2969,6 +2969,23 @@ table tbody tr:hover {
   border-radius: var(--radius-sm);
 }
 
+/* Observacao de cada ajuste: logo abaixo do valor, ocupando a linha toda. */
+.charges-column .kv-list .charge-adjustment-reason {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 0 0 9px 12px;
+  border-left: 3px solid var(--color-border);
+}
+
+.charges-column .kv-list .charge-adjustment-reason dt {
+  font-size: 12px;
+}
+
+.charges-column .kv-list .charge-adjustment-reason input {
+  width: 100%;
+  text-align: left;
+}
+
 .charges-final-card {
   display: grid;
   gap: var(--space-2);

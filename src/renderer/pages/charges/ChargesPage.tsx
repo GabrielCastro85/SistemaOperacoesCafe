@@ -42,6 +42,9 @@ const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
 const INCLUDE_ALL_COMPANIES_IN_CHARGES = true;
 const HISTORY_PAGE_SIZE = 10;
 
+interface AdjustmentReasons { advance: string; discount: string; surcharge: string }
+const EMPTY_ADJUSTMENT_REASONS: AdjustmentReasons = { advance: "", discount: "", surcharge: "" };
+
 function chargeHashParam(name: string): string {
   const query = window.location.hash.split("?")[1] ?? "";
   return new URLSearchParams(query).get(name) ?? "";
@@ -137,7 +140,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [surchargeInput, setSurchargeInput] = useState("");
   const [cteNoteSelection, setCteNoteSelection] = useState<Record<string, boolean>>({});
   const [cteUnitValueInput, setCteUnitValueInput] = useState("1,50");
-  const [adjustmentReason, setAdjustmentReason] = useState("");
+  // Uma observacao para cada ajuste (sai no PDF ao lado de cada linha). Antes
+  // era um campo so, e o desconto e o acrescimo saiam com o mesmo texto.
+  const [adjustmentReasons, setAdjustmentReasons] = useState<AdjustmentReasons>(EMPTY_ADJUSTMENT_REASONS);
+  const reasonFor = (kind: keyof AdjustmentReasons): string => adjustmentReasons[kind].trim();
+  const setReason = (kind: keyof AdjustmentReasons, value: string): void => setAdjustmentReasons((current) => ({ ...current, [kind]: value }));
   const [clientCredits, setClientCredits] = useState<ClientLedgerEntry[]>([]);
   const [clientSurcharges, setClientSurcharges] = useState<ClientLedgerEntry[]>([]);
   const ledgerAutofillChargeIdRef = useRef<string | null>(null);
@@ -255,7 +262,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setSurchargeInput("");
     setCteNoteSelection({});
     setCteUnitValueInput("1,50");
-    setAdjustmentReason("");
+    setAdjustmentReasons(EMPTY_ADJUSTMENT_REASONS);
     ledgerAutofillChargeIdRef.current = null;
     ledgerAutofillClientIdRef.current = null;
   }, [clientId, detail?.charge.clientPartnerId]);
@@ -555,6 +562,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + selectedFreightDaeCents;
   const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents + cteTotalCents, discountCents, advanceCents);
   const hasPendingManualAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
+  const missingAdjustmentReason = (advanceCents > 0 && !reasonFor("advance")) || (discountCents > 0 && !reasonFor("discount")) || (surchargeCents > 0 && !reasonFor("surcharge"));
   const hasPendingCte = cteTotalCents > 0;
   const hasPendingAdjustments = hasPendingManualAdjustments || hasPendingCte;
   const visibleFinalCents = previewFinalCents;
@@ -641,8 +649,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function issue(): Promise<void> {
     if (!detail) return;
 
-    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
-      setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
+    if (missingAdjustmentReason) {
+      setMessage("Informe a observação de cada ajuste preenchido (adiantamento, desconto ou acréscimo).");
       return;
     }
 
@@ -667,7 +675,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setSurchargeInput("");
         setCteNoteSelection({});
         setCteUnitValueInput("1,50");
-        setAdjustmentReason("");
+        setAdjustmentReasons(EMPTY_ADJUSTMENT_REASONS);
       }
 
       setMessage(
@@ -710,17 +718,17 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       const consumed = await consumeLedgerEntries(clientCredits, advanceCents, current.charge.id, current);
       current = consumed.current;
       if (consumed.remainingCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: consumed.remainingCents, sortOrder: 10, reason: adjustmentReason.trim() || "Ajuste manual" });
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "ADVANCE", effect: "REDUCE_RECEIVABLE", description: "Adiantamento", amountCents: consumed.remainingCents, sortOrder: 10, reason: reasonFor("advance") || "Ajuste manual" });
       }
     }
     if (discountCents > 0) {
-      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: adjustmentReason.trim() || "Ajuste manual" });
+      current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "DISCOUNT", effect: "REDUCE_RECEIVABLE", description: "Desconto", amountCents: discountCents, sortOrder: 20, reason: reasonFor("discount") || "Ajuste manual" });
     }
     if (surchargeCents > 0) {
       const consumed = await consumeLedgerEntries(clientSurcharges, surchargeCents, current.charge.id, current);
       current = consumed.current;
       if (consumed.remainingCents > 0) {
-        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: adjustmentReason.trim() || "Ajuste manual" });
+        current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: reasonFor("surcharge") || "Ajuste manual" });
       }
     }
     if (hasPendingCte) {
@@ -744,15 +752,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setMessage("Informe ao menos um adiantamento, desconto, acrescimo ou CT-e.");
         return;
       }
-      if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
-        setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
+      if (missingAdjustmentReason) {
+        setMessage("Informe a observação de cada ajuste preenchido (adiantamento, desconto ou acréscimo).");
         return;
       }
       setMessage("Ajustes aplicados na previa. O valor final e os documentos internos ja consideram esses valores.");
       return;
     }
-    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
-      setMessage("Informe o motivo do acréscimo, desconto ou abatimento.");
+    if (missingAdjustmentReason) {
+      setMessage("Informe a observação de cada ajuste preenchido (adiantamento, desconto ou acréscimo).");
       return;
     }
     try {
@@ -765,7 +773,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setSurchargeInput("");
       setCteNoteSelection({});
       setCteUnitValueInput("1,50");
-      setAdjustmentReason("");
+      setAdjustmentReasons(EMPTY_ADJUSTMENT_REASONS);
       setMessage(shouldRegenerateDocuments ? "Ajustes aplicados. Escolha PDF ou Imagem para salvar uma nova copia." : "Ajustes aplicados.");
       await load();
       scrollTo(detailRef);
@@ -961,8 +969,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       setMessage("Selecione o cliente e marque as notas antes de gerar a previa.");
       return;
     }
-    if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
-      setMessage("Informe o motivo do acrescimo, desconto ou abatimento.");
+    if (missingAdjustmentReason) {
+      setMessage("Informe a observação de cada ajuste preenchido (adiantamento, desconto ou acréscimo).");
       return;
     }
 
@@ -1019,8 +1027,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function openDocument(kind: "pdf" | "image"): Promise<void> {
     if (!detail) return;
     try {
-      if (hasPendingManualAdjustments && !adjustmentReason.trim()) {
-        setMessage("Informe o motivo do acrescimo, desconto ou abatimento antes de gerar o documento.");
+      if (missingAdjustmentReason) {
+        setMessage("Informe a observação de cada ajuste preenchido (adiantamento, desconto ou acréscimo) antes de gerar o documento.");
         return;
       }
       const current = hasPendingAdjustments ? await applyPendingAdjustmentsToCharge(detail, true) : detail;
@@ -1030,7 +1038,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setDiscountInput("");
         setSurchargeInput("");
         setCteNoteSelection({});
-        setAdjustmentReason("");
+        setAdjustmentReasons(EMPTY_ADJUSTMENT_REASONS);
         await refreshClientLedgerAvailability(current.charge.clientPartnerId);
       }
       const exported = await window.operationsCafe.openChargeDocument({ chargeId: current.charge.id, kind });
@@ -1296,7 +1304,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   })}
                   {!detail && advanceCents > 0 ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>Adiantamento</strong><small>{adjustmentReason.trim() || "Ajuste informado"}</small></span>
+                      <span><strong>Adiantamento</strong><small>{reasonFor("advance") || "Ajuste informado"}</small></span>
                       <span>AJUSTE</span><span>Abatimento</span>
                       <span>- {formatCurrencyFromCents(advanceCents)}</span>
                       <span>Previa</span><span>Reduz o valor final</span>
@@ -1304,7 +1312,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   ) : null}
                   {!detail && discountCents > 0 ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>Desconto</strong><small>{adjustmentReason.trim() || "Ajuste informado"}</small></span>
+                      <span><strong>Desconto</strong><small>{reasonFor("discount") || "Ajuste informado"}</small></span>
                       <span>AJUSTE</span><span>Desconto</span>
                       <span>- {formatCurrencyFromCents(discountCents)}</span>
                       <span>Previa</span><span>Reduz o valor final</span>
@@ -1312,7 +1320,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   ) : null}
                   {!detail && surchargeCents > 0 ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>Acrescimo</strong><small>{adjustmentReason.trim() || "Ajuste informado"}</small></span>
+                      <span><strong>Acrescimo</strong><small>{reasonFor("surcharge") || "Ajuste informado"}</small></span>
                       <span>AJUSTE</span><span>Acrescimo</span>
                       <span>+ {formatCurrencyFromCents(surchargeCents)}</span>
                       <span>Previa</span><span>Aumenta o valor final</span>
@@ -1338,8 +1346,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             ) : null}
             <div className="kv-list">
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
+              {advanceCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do adiantamento</dt><dd><input value={adjustmentReasons.advance} onChange={(event) => setReason("advance", event.target.value)} placeholder="Sai no PDF ao lado do adiantamento" aria-label="Observação do adiantamento" /></dd></div> : null}
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" /></dd></div>
+              {discountCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do desconto</dt><dd><input value={adjustmentReasons.discount} onChange={(event) => setReason("discount", event.target.value)} placeholder="Ex.: pago ao advogado" aria-label="Observação do desconto" /></dd></div> : null}
               <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" /></dd></div>
+              {surchargeCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do acréscimo</dt><dd><input value={adjustmentReasons.surcharge} onChange={(event) => setReason("surcharge", event.target.value)} placeholder="Ex.: salário Gustavo" aria-label="Observação do acréscimo" /></dd></div> : null}
             </div>
             <div className="charge-cte-card">
               <div>
@@ -1369,16 +1380,6 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               {cteNotes.length === 0 ? <small>Selecione as notas da cobranca para calcular o CT-e.</small> : null}
               {cteAlreadyApplied ? <small>Esta cobranca ja possui ajuste de CT-e. Marque somente notas para uma cobranca adicional.</small> : null}
             </div>
-            <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
-              <span>Motivo do ajuste</span>
-              <textarea
-                value={adjustmentReason}
-                onChange={(event) => setAdjustmentReason(event.target.value)}
-                placeholder="Ex.: diferença de frete, correção de valor ou acordo comercial"
-                rows={3}
-               
-              />
-            </label>
             <div className="toolbar">
               <button onClick={() => void applyAdjustments()}>Aplicar ajustes</button>
             </div>
