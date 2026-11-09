@@ -593,7 +593,15 @@ html.site .warehouse-table-wrap {
   border-radius: var(--site-radius) !important;
   background: var(--site-surface) !important;
   box-shadow: none !important;
-  /* clip (e nao hidden): mantem o canto arredondado sem impedir o cabecalho fixo */
+  /* Tabela larga rola para o lado dentro da propria coluna (como no app). */
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Tabela que cabe na largura: "clip" (e nao auto/hidden) deixa o cabecalho
+   ficar fixo ao rolar a pagina. A classe vem de web/siteTables.ts. */
+html.site :is(.table, .ui-table-wrap, .warehouse-table-wrap).site-table-fits {
   overflow: clip;
 }
 

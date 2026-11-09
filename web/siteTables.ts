@@ -114,9 +114,18 @@ function render(grid: Grid): void {
   grid.place(element);
 }
 
+// Marca as tabelas que cabem na largura (cabecalho fixo); as largas rolam para o lado.
+function markFits(): void {
+  document.querySelectorAll<HTMLElement>(".content-section :is(.table, .ui-table-wrap, .warehouse-table-wrap)").forEach((table) => {
+    const fits = table.scrollWidth <= table.clientWidth + 1;
+    if (table.classList.contains("site-table-fits") !== fits) table.classList.toggle("site-table-fits", fits);
+  });
+}
+
 export function startSiteTables(): void {
   let timer = 0;
-  const run = () => { [...divGrids(), ...htmlGrids()].forEach(render); };
+  const run = () => { [...divGrids(), ...htmlGrids()].forEach(render); markFits(); };
+  window.addEventListener("resize", () => { window.clearTimeout(timer); timer = window.setTimeout(run, 250); });
   // A linha de total so e reescrita quando os numeros mudam, entao a observacao nao entra em ciclo.
   new MutationObserver(() => {
     window.clearTimeout(timer);
