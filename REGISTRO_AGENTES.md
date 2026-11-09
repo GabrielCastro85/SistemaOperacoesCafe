@@ -105,6 +105,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: no site, "Trocar responsável e recalcular" (detalhe da nota) dava "Caminho de arquivo não permitido no site".
+- Causa: a tela manda a nota inteira em `updateFiscalDocument`, inclusive `xmlFilePath` gravado por um PC (`C:\Users\...`), e a proteção de caminhos do motor barrava qualquer caminho fora das pastas dele. O schema do app descarta esse campo, então o caminho nem seria usado.
+- Feito (`bf24984`): em `server/engine/host.ts`, `assertSafePaths` virou `sanitizePaths`. Campo de objeto com nome terminado em `Path` e caminho fora das pastas do motor vira `null`. Os demais caminhos de fora continuam barrados.
+- Testado: typecheck do motor, eslint, build do motor e chamada direta ao motor (`xmlFilePath` de fora passa, outro campo com `C:/Windows/...` é barrado). Publicado no Railway, porque a mudança está em `server/`.
+- Grão: o envio do período antigo terminou às ~12:13, com 7.029 XMLs e 1 "aguardando novo envio" (status "falhou" só por isso). Falta o Gabriel buscar no programa (Grão MG e SP, 01/01/2024–30/06/2026), fechar o programa e rodar `tmp/importar-thadeu-grao.mts`. Conferir furos na numeração das vendas.
+
+### 2026-11-09 - Claude
 - Pedido: na tela de Cobranças do site, a tabela de notas (com "Receber NF") passava por cima do painel de ajustes ao lado.
 - Causa: o `overflow: clip` que pus em `.table` para o cabeçalho fixo faz o `min-width` automático do item da grade valer o conteúdo, e a tabela larga empurrava a coluna. Feito (`e01a2a2`): `.table`/`.ui-table-wrap`/`.warehouse-table-wrap` com `min-width: 0` e `overflow-x: auto` (como no app); `web/siteTables.ts` marca `site-table-fits` nas que cabem na largura, e só essas usam `overflow: clip` (cabeçalho fixo). Tabela larga rola para o lado e o cabeçalho dela não fica fixo.
 - Também em andamento: coletor da Grão (1.1.71) recebeu "Enviar notas do período" 01/01/2024–30/06/2026 às ~10:43; o "Comando desconhecido" anterior era de antes da atualização.
