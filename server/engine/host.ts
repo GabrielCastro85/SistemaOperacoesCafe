@@ -85,16 +85,25 @@ export function createEngine(options: { dataDir: string; version: string }) {
   const allowedRoots = [resolve(uploadsDir), resolve(tempRoot), resolve(directories.documentsDir)];
 
   // Caminhos vindos do navegador so podem apontar para arquivos enviados pelo site ou gerados pelo motor.
-  const assertSafePaths = (value: unknown): void => {
+  // Registros do app (ex.: a nota inteira ao trocar o responsavel) trazem de volta
+  // campos gravados por um PC, como xmlFilePath = "C:\\Users\\...". Esses campos sao
+  // so dados guardados: viram null em vez de barrar a acao. Qualquer outro caminho
+  // fora das pastas do motor continua bloqueado.
+  const isAllowedPath = (value: string): boolean => {
+    const looksLikePath = /^([a-zA-Z]:[\\/]|\/)/.test(value) && !/^\/v1\//.test(value);
+    return !looksLikePath || allowedRoots.some((root) => resolve(value).startsWith(root + sep));
+  };
+  const sanitizePaths = (value: unknown, key: string | null = null): unknown => {
     if (typeof value === "string") {
-      const looksLikePath = /^([a-zA-Z]:[\\/]|\/)/.test(value) && !/^\/v1\//.test(value);
-      if (looksLikePath && !allowedRoots.some((root) => resolve(value).startsWith(root + sep))) {
-        throw new AuthError("Caminho de arquivo nao permitido no site.", "PATH_NOT_ALLOWED");
-      }
-      return;
+      if (isAllowedPath(value)) return value;
+      if (key && /path$/i.test(key)) return null;
+      throw new AuthError("Caminho de arquivo nao permitido no site.", "PATH_NOT_ALLOWED");
     }
-    if (Array.isArray(value)) value.forEach(assertSafePaths);
-    else if (value && typeof value === "object") Object.values(value as Record<string, unknown>).forEach(assertSafePaths);
+    if (Array.isArray(value)) return value.map((item) => sanitizePaths(item));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([name, item]) => [name, sanitizePaths(item, name)]));
+    }
+    return value;
   };
 
   const run = async (webSessionId: string, channel: string, payload: unknown, uploadIds: string[] | null): Promise<EngineResult> => {
@@ -113,8 +122,8 @@ export function createEngine(options: { dataDir: string; version: string }) {
     }
     try {
       if (!handler || BLOCKED_CHANNELS.has(channel)) throw new AuthError("Esta funcao nao esta disponivel no site.", "NOT_AVAILABLE");
-      assertSafePaths(payload);
-      const result = await requestContext.run(context, () => handler({ sender: null }, decodeFromJson(payload)));
+      const safePayload = sanitizePaths(payload);
+      const result = await requestContext.run(context, () => handler({ sender: null }, decodeFromJson(safePayload)));
       for (const path of context.savedPaths) {
         if (existsSync(path) && !context.downloads.some((item) => item.path === path)) context.downloads.push({ name: basename(path), path });
       }
