@@ -105,6 +105,11 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-09 - Claude
+- Pedido: na importação de XML pelo site apareciam dois avisos "Erro XML: Failed to fetch", mas a nota ficava importada.
+- Causa provável: o Railway republicava o servidor a cada push no GitHub, inclusive commits só de documentação (o `702bf03`, do registro, foi publicado às ~09:50). A troca de versão corta pedidos em andamento e zera as sessões do motor. A nota já tinha sido gravada.
+- Feito (`3fd92e8`): `railway.toml` com `watchPatterns` (server, electron/main, src/shared, scripts/engine, public, package*, tsconfig.server.json, railway.toml); push só de docs, `web/` ou `src/renderer` não republica o servidor. **Atenção:** quem mexer em arquivo que o servidor usa fora dessa lista precisa incluir o caminho. No site: `postRpc` em `web/electronRenderer.ts` repete consultas (canais de leitura) até 2 vezes e troca "Failed to fetch" por mensagem clara ("a operação pode ter sido concluída"); avisos com o mesmo texto em 8 s aparecem uma vez só.
+
+### 2026-11-09 - Claude
 - Pedido: avisos flutuantes e telas longas mais navegáveis; no meio, arrumar o nome no canto superior esquerdo ("Villa Coffee Operações" colado com "Villa Coffee").
 - Feito (`a616952`), só no site:
   - `web/siteToasts.ts`: observa `.feedback`, `.transfer-message`, `.ui-alert--success`, `.warehouse-feedback`, `.period-comparison__message` e `p.success`; cada texto novo vira aviso no canto (erro pelo texto: "Erro", "não foi possível", "selecione", "informe", "inválido"...). O texto passa por `accentText` antes de comparar, para a correção de acento não gerar aviso duplicado. O parágrafo original fica discreto na página.
