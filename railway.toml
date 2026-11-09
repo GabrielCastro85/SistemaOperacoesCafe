@@ -1,10 +1,23 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "server/Dockerfile"
+# So republica quando muda algo que vai para a imagem do servidor. Mudancas so
+# de documentacao ou das telas do site (GitHub Pages) nao reiniciam o servidor,
+# o que cortava pedidos em andamento ("Failed to fetch") e derrubava as sessoes.
+watchPatterns = [
+  "server/**",
+  "electron/main/**",
+  "src/shared/**",
+  "scripts/engine/**",
+  "public/**",
+  "package.json",
+  "package-lock.json",
+  "tsconfig.server.json",
+  "railway.toml"
+]
 
 [deploy]
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
-

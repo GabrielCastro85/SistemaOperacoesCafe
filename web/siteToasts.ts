@@ -10,6 +10,8 @@ const SOURCES = ".feedback, .transfer-message, .ui-alert--success, .warehouse-fe
 const ERROR = /^(erro\b|falha|n[aã]o foi poss[ií]vel|nao foi possivel|n[aã]o (h[aá]|existe|encontr)|selecione|informe|preencha|escolha|confira|cadastre|revise)|inv[aá]lid|obrigat[oó]ri|bloquead|negad|n[aã]o pode|sem permiss/i;
 const WARNING = /^(aten[cç][aã]o|aviso|cuidado)|pendente|pendenc/i;
 const lastText = new WeakMap<Element, string>();
+// O mesmo texto em pouco tempo (mensagem remontada pela tela) vira um aviso so.
+const recent = new Map<string, number>();
 let container: HTMLDivElement | null = null;
 
 function host(): HTMLDivElement {
@@ -23,6 +25,9 @@ function host(): HTMLDivElement {
 }
 
 export function showToast(text: string, tone: "success" | "error" | "warning" = "success"): void {
+  const now = Date.now();
+  if ((recent.get(text) ?? 0) > now - 8000) return;
+  recent.set(text, now);
   const toast = document.createElement("div");
   toast.className = `site-toast site-toast--${tone}`;
   toast.setAttribute("role", tone === "error" ? "alert" : "status");

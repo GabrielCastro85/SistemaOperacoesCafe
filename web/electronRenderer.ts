@@ -148,17 +148,41 @@ function encodePayload(value: unknown): unknown {
   return value;
 }
 
+// Consultas (listar, buscar, ver...) podem ser repetidas com seguranca se a conexao cair.
+// Mesma regra de isLikelyDataMutation em electron/main/ipc/handlers.ts.
+function isReadOnly(channel: string): boolean {
+  const action = channel.slice(channel.indexOf(":") + 1);
+  return /^(list|get|preview|select|inspect|validate|calculate|find|export|print|open|bytes|reveal|lookup|ask|compare|history|progress|verify|suggest|alerts|indicators|monthlyTotals|summary|vulpeDev)|Summary$/.test(action)
+    && !/^(select)/.test(action);
+}
+
+const CONNECTION_LOST = "A conexão com o servidor caiu antes da resposta. A operação pode ter sido concluída: atualize a tela e confira antes de repetir.";
+
+async function postRpc(channel: string, body: string): Promise<EngineResponse> {
+  const retries = isReadOnly(channel) ? 2 : 0;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(`${API_URL}/v1/app/rpc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-app-session": sessionId() },
+        body
+      });
+      const parsed = await response.json().catch(() => null) as EngineResponse | null;
+      if (parsed) return parsed;
+      if (attempt >= retries) throw new EngineError(response.status >= 500 ? "O servidor está reiniciando. Aguarde alguns segundos e tente de novo." : `Servidor indisponível (${response.status}).`);
+    } catch (error) {
+      if (error instanceof EngineError) throw error;
+      if (attempt >= retries) throw new EngineError(isReadOnly(channel) ? "Sem conexão com o servidor. Confira a internet e tente de novo." : CONNECTION_LOST);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+  }
+}
+
 async function invoke(channel: string, payload?: unknown): Promise<unknown> {
   const prepared = encodePayload(await uploadDroppedReferences(payload));
   let uploadIds: string[] | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await fetch(`${API_URL}/v1/app/rpc`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-app-session": sessionId() },
-      body: JSON.stringify({ channel, payload: prepared, uploadIds })
-    });
-    const body = await response.json().catch(() => null) as EngineResponse | null;
-    if (!body) throw new EngineError(`Servidor indisponivel (${response.status}).`);
+    const body = await postRpc(channel, JSON.stringify({ channel, payload: prepared, uploadIds }));
     body.downloads?.forEach(deliver);
     body.prints?.forEach(printHtml);
     if (body.clipboardText !== null && body.clipboardText !== undefined) void navigator.clipboard?.writeText(body.clipboardText).catch(() => undefined);
