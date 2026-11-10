@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapData, BusinessPartner, TransferReconciliation, TransferReconciliationAvailableInvoice, TransferReconciliationClientBalance } from "../../../shared/types/domain";
-import { formatCurrencyFromCents, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
+import { formatCnpj, formatCurrencyFromCents, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { PageHeader } from "../../design-system";
 
 type PaymentDraft = { id?: string; beneficiaryName: string; beneficiaryDocument: string; description: string; paymentDate: string; amount: string; notes: string };
@@ -36,6 +36,9 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const [notes, setNotes] = useState("");
   const [invoices, setInvoices] = useState<TransferReconciliationAvailableInvoice[]>([]);
   const [invoiceSearch, setInvoiceSearch] = useState("");
+  // Filtro por empresa/CNPJ da nota (destinatario na venda, emitente na compra),
+  // independente do cliente em que a nota foi lancada.
+  const [partyFilter, setPartyFilter] = useState("");
   const [invoiceLimit, setInvoiceLimit] = useState(10);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [selected, setSelected] = useState<Record<string, string>>({});
@@ -95,10 +98,20 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const balance = totalSource - totalPayments;
   // Todas as notas que batem com a pesquisa (inclusive as que ainda nao aparecem
   // por causa do "Mostrar mais notas"); a lista mostra so as primeiras.
+  const partyOptions = useMemo(() => {
+    const byDocument = new Map<string, string>();
+    for (const invoice of invoices) {
+      const document = invoice.partyDocument ?? "";
+      if (!document || byDocument.has(document)) continue;
+      byDocument.set(document, (counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? document);
+    }
+    return [...byDocument.entries()].sort((left, right) => left[1].localeCompare(right[1], "pt-BR"));
+  }, [counterpartyRole, invoices]);
   const matchingInvoices = useMemo(() => {
     const term = invoiceSearch.trim().toLocaleLowerCase("pt-BR");
-    return term ? invoices.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : invoices;
-  }, [invoiceSearch, invoices]);
+    const byParty = partyFilter ? invoices.filter((invoice) => invoice.partyDocument === partyFilter) : invoices;
+    return term ? byParty.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : byParty;
+  }, [invoiceSearch, invoices, partyFilter]);
   const filteredInvoices = useMemo(() => matchingInvoices.slice(0, invoiceLimit), [invoiceLimit, matchingInvoices]);
   // "Marcar todas": so notas com saldo disponivel, usando o saldo inteiro de cada uma.
   const selectableInvoices = useMemo(() => matchingInvoices.filter((invoice) => invoice.availableCents > 0), [matchingInvoices]);
@@ -204,7 +217,8 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
       <section className="transfer-form">
         <div className="transfer-fields">
           <label>Exibir notas de<select value={counterpartyRole} disabled={Boolean(id)} onChange={(event) => { setCounterpartyRole(event.target.value as "CLIENT" | "SUPPLIER"); setClientId(""); setSelected({}); setInvoices([]); setInvoiceSearch(""); setInvoiceLimit(10); }}><option value="CLIENT">Clientes (notas de saída)</option><option value="SUPPLIER">Fornecedores (notas de entrada)</option></select></label>
-          <label>{counterpartyRole === "SUPPLIER" ? "Fornecedor" : "Cliente"}<select value={clientId} disabled={Boolean(id)} onChange={(event) => { setClientId(event.target.value); setSelected({}); setInvoices([]); setInvoiceSearch(""); setInvoiceLimit(10); }}><option value="">Selecione</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}</select></label>
+          <label>{counterpartyRole === "SUPPLIER" ? "Fornecedor" : "Cliente"}<select value={clientId} disabled={Boolean(id)} onChange={(event) => { setClientId(event.target.value); setSelected({}); setInvoices([]); setInvoiceSearch(""); setPartyFilter(""); setInvoiceLimit(10); }}><option value="">Selecione</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.displayName}</option>)}</select></label>
+          {sourceMode === "INVOICES" && partyOptions.length > 0 ? <label>Empresa/CNPJ da nota<select value={partyFilter} onChange={(event) => { setPartyFilter(event.target.value); setInvoiceLimit(10); }}><option value="">Todas ({partyOptions.length})</option>{partyOptions.map(([document, name]) => <option key={document} value={document}>{name} - {formatCnpj(document)}</option>)}</select></label> : null}
           <label>Data de referência<input type="date" value={referenceDate} onChange={(event) => setReferenceDate(event.target.value)} /></label>
           <label>Título<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex.: Repasse de setembro" /></label>
         </div>

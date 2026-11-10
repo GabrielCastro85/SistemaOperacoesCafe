@@ -1969,6 +1969,8 @@ export interface TransferReconciliationAvailableInvoice {
   availableCents: number;
   // Nota com o CNPJ deste cliente/fornecedor, mas lancada em outro (ex.: THADEU NOTAS).
   launchedUnderName?: string | null;
+  // CNPJ/CPF do destinatario (venda) ou emitente (compra) da nota, para filtrar por empresa.
+  partyDocument?: string | null;
 }
 
 export interface TransferReconciliationClientBalance {

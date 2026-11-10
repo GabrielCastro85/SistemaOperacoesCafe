@@ -3795,7 +3795,8 @@ export class AppRepository {
         issuerName: this.stringOrNull(issuer?.legalName) ?? (counterpartyRole === "SUPPLIER" ? partnerName : ownName),
         recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),
         invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents,
-        launchedUnderName: Number(row.own_responsible) ? null : this.stringOrNull(row.other_responsible_name)
+        launchedUnderName: Number(row.own_responsible) ? null : this.stringOrNull(row.other_responsible_name),
+        partyDocument: this.stringOrNull((counterpartyRole === "SUPPLIER" ? issuer?.cnpjCpf : recipient?.cnpjCpf) as string | undefined)
       };
     });
   }
