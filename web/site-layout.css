@@ -797,3 +797,104 @@ html.site .charge-context-note > small {
   color: var(--site-muted);
   font-size: 0.78rem;
 }
+
+/* ---------- Responsividade (janela menor que um monitor cheio) ---------- */
+/* Blocos que sao grades de uma coluna so cresciam ate o conteudo mais largo
+   (tabela, texto longo) e saiam do cartao. A coluna passa a ter no maximo a
+   largura do bloco: tabela rola de lado e texto quebra linha. */
+html.site .content-section :is(.ui-page-section, .admin-block, .import-column, .warehouse-panel, .charges-column, .ui-card) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+html.site .content-section .ui-page-section,
+html.site .content-section .import-column {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.site .content-section :is(.ui-page-section, .admin-block, .import-column, .warehouse-panel, .charges-column, .ui-card) > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Textos e valores longos quebram em vez de vazar do cartao. */
+html.site .content-section :is(.ui-card, .cards > *, .kv-list dd, .ui-page-section > header, .admin-block > h3, .collector-monitor__item) {
+  overflow-wrap: anywhere;
+}
+
+/* Numeros grandes dos cartoes de resumo diminuem um pouco em telas estreitas. */
+html.site .content-section :is(.dashboard-grid--hero, .cards, .metrics-grid) :is(strong, .ui-card__value) {
+  font-size: clamp(1.15rem, 1.6vw, 1.7rem);
+}
+
+/* Importacao de XML: as tres colunas (arquivos, dados extraidos, fluxo) se
+   reorganizam conforme a largura em vez de passar da tela. */
+html.site .import-columns {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)) !important;
+}
+
+/* Telas medias: areas lado a lado viram uma coluna antes de apertar. */
+@media (max-width: 1250px) {
+  html.site .dashboard-workspace,
+  html.site .charges-columns {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html.site .charges-columns > .charges-column:last-child {
+    position: static !important;
+  }
+}
+
+/* Cartoes de resumo (numeros do topo das telas): quantos couberem por linha,
+   sem cair para um por linha em janelas medias. */
+html.site .content-section :is(.dashboard-grid--hero, .cards, .metrics-grid) {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+}
+
+/* Filtro de periodo: campos e "Limpar" na mesma linha quando couber. */
+html.site .ui-filter-bar {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 16px !important;
+}
+
+html.site .ui-filter-bar > div:first-child {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 10px 16px !important;
+  flex: 1 1 320px;
+}
+
+html.site .ui-filter-bar > div:first-child > * {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+/* Quadro "CT-e por saca" (cobrancas): as tres colunas fixas passavam da coluna
+   da direita em telas de notebook; agora se reorganizam. */
+html.site .charge-cte-card {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) !important;
+}
+
+html.site .charge-cte-card > * {
+  min-width: 0;
+}
+
+html.site .charge-cte-card > .charge-cte-total {
+  grid-column: 1 / -1;
+}
+
+/* Seletores com nomes longos (empresa + CNPJ) nao passam da largura do bloco. */
+html.site .content-section select {
+  max-width: 100%;
+}
+
+html.site .numbering-audit__form label {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+html.site .numbering-audit__form select {
+  width: 100%;
+}
