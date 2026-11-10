@@ -11,6 +11,7 @@ import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { isPackagingDocument, PACKAGING_OVERRIDE_PREFIX } from "../../../shared/utils/packagingBilling";
+import { NumberingAudit } from "./NumberingAudit";
 import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
@@ -2116,6 +2117,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         </div>
       </AdminBlock>
+      {pageTab === "issued" ? <NumberingAudit legalEntities={data.legalEntities} /> : null}
       <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
         <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{visibleXmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span className="row-actions"><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button className="danger" disabled={!xmlImportCanBeReverted(job)} onClick={() => void removeXmlImportJob(job.id)}>Excluir/Reverter</button></span></div>)}</div>
       </AdminBlock></div>

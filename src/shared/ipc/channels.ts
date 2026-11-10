@@ -133,6 +133,7 @@ export const IPC_CHANNELS = {
   listFiscalDocuments: "fiscalDocuments:list",
   getFiscalDocument: "fiscalDocuments:get",
   listFiscalDocumentServiceSummaries: "fiscalDocuments:listServiceSummaries",
+  getFiscalNumberingAudit: "fiscalDocuments:getNumberingAudit",
   addFiscalDocumentReturn: "fiscalDocuments:addReturn",
   deleteFiscalDocumentReturn: "fiscalDocuments:deleteReturn",
   createFiscalDocument: "fiscalDocuments:create",

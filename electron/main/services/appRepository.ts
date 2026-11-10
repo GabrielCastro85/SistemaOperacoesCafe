@@ -2,7 +2,8 @@ import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { join as joinPath } from "node:path";
 import { deterministicUuid } from "./deterministicId.js";
 import { isPackagingDocument, isPackagingXmlItem, PACKAGING_OVERRIDE_PREFIX, PACKAGING_PENDING_NOTE, packagingOverrideReason, removePendingNote } from "../../../src/shared/utils/packagingBilling.js";
 import { buildPeriodComparisonReport, periodComparisonInputSchema, type ComparisonSaleRow } from "./periodComparison.js";
@@ -1661,6 +1662,111 @@ export class AppRepository {
       ? (this.db.prepare("SELECT * FROM fiscal_document_returns WHERE fiscal_document_id = ? ORDER BY return_date, created_at").all(id) as DbRecord[]).map(mapFiscalDocumentReturn)
       : [];
     return { document, items, operations, events, mergeHistory, rateHistory, returns };
+  }
+
+  // Conferencia de numeracao das notas EMITIDAS por uma empresa propria. A chave
+  // de acesso traz CNPJ do emitente (pos. 7-20), serie (23-25) e numero (26-34);
+  // por ela entram tambem notas lancadas em outro lugar (ex.: no destinatario).
+  // Numeros entre o menor e o maior do periodo que nao estao no sistema saem
+  // como "faltando", separando os cancelados (evento) e os marcados para nao cadastrar.
+  getFiscalNumberingAudit(input: { ownLegalEntityId: string; periodStart: string; periodEnd: string }): { cnpj: string; series: Array<{ series: string; first: number; last: number; firstDate: string; lastDate: string; launched: number; canceled: number[]; ignored: number[]; missing: Array<{ number: number; reason: string; actionable: boolean }> }> } {
+    const entity = this.getLegalEntity(input.ownLegalEntityId);
+    if (!this.isOrganizationAllowed(entity.organizationId)) throw new Error("Empresa nao autorizada.");
+    const cnpj = (entity.cnpj ?? "").replace(/\D/g, "");
+    if (cnpj.length !== 14) throw new Error("Empresa sem CNPJ cadastrado.");
+    const rows = this.db.prepare(`SELECT access_key AS key, document_number AS number, series, issue_date AS date, status FROM fiscal_documents
+      WHERE issue_date BETWEEN ? AND ? AND ((access_key IS NOT NULL AND substr(access_key, 7, 14) = ? AND substr(access_key, 21, 2) = '55')
+        OR (access_key IS NULL AND own_legal_entity_id = ? AND direction = 'OUTBOUND'))`)
+      .all(input.periodStart, input.periodEnd, cnpj, input.ownLegalEntityId) as Array<{ key: string | null; number: string; series: string | null; date: string; status: string }>;
+    const keyNumber = (key: string): { series: string; number: number } => ({ series: String(Number(key.slice(22, 25))), number: Number(key.slice(25, 34)) });
+    const bySeries = new Map<string, { numbers: Map<number, string>; canceled: Set<number> }>();
+    const group = (series: string) => {
+      const found = bySeries.get(series) ?? { numbers: new Map<number, string>(), canceled: new Set<number>() };
+      bySeries.set(series, found);
+      return found;
+    };
+    for (const row of rows) {
+      const parsed = row.key ? keyNumber(row.key) : { series: String(Number(row.series ?? "1") || 1), number: Number(String(row.number).replace(/\D/g, "")) };
+      if (!Number.isFinite(parsed.number) || parsed.number <= 0) continue;
+      const target = group(parsed.series);
+      target.numbers.set(parsed.number, row.date);
+      if (row.status === "CANCELED") target.canceled.add(parsed.number);
+    }
+    // Eventos de cancelamento e XMLs marcados para nao cadastrar, desta empresa (pela chave).
+    const canceledKeys = this.tableExists("fiscal_document_events")
+      ? (this.db.prepare("SELECT DISTINCT access_key AS key FROM fiscal_document_events WHERE event_type = 'CANCELLATION' AND substr(access_key, 7, 14) = ?").all(cnpj) as Array<{ key: string }>)
+      : [];
+    const ignoredKeys = this.db.prepare("SELECT DISTINCT access_key AS key FROM xml_import_files WHERE status = 'SKIPPED' AND json_extract(resolution_data_json, '$.ignore') = 1 AND substr(access_key, 7, 14) = ?").all(cnpj) as Array<{ key: string }>;
+    // XMLs que o sistema ja tem (pasta do coletor): explicam por que um numero
+    // ficou de fora (entre empresas proprias, nao e venda, complemento...).
+    const xmlByNumber = new Map<string, string>();
+    const inboxCanceled = new Set<string>();
+    const inboxDir = this.directories ? joinPath(this.directories.xmlImportsDir, "collector-inbox") : "";
+    if (inboxDir && existsSync(inboxDir)) {
+      for (const name of readdirSync(inboxDir)) {
+        if (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name)) {
+          // Cancelamento que veio pelo coletor (pode ainda nao estar aplicado no banco).
+          const event = readFileSync(joinPath(inboxDir, name), "utf8");
+          const eventKey = event.match(/<chNFe>(\d{44})</)?.[1];
+          if (eventKey && eventKey.slice(6, 20) === cnpj && /<tpEvento>110111</.test(event) && /<cStat>(135|155)</.test(event)) inboxCanceled.add(eventKey);
+          continue;
+        }
+        const key = name.match(/(\d{44})-nfe\.xml$/i)?.[1];
+        if (!key || key.slice(6, 20) !== cnpj) continue;
+        const parsed = keyNumber(key);
+        xmlByNumber.set(`${parsed.series}|${parsed.number}`, joinPath(inboxDir, name));
+      }
+    }
+    // No computador principal da Villa os XMLs emitidos ficam na pasta da Vulpe.
+    const vulpeRoot = "C:\\Vulpe\\NFe";
+    if (existsSync(vulpeRoot)) {
+      const pending = [vulpeRoot];
+      while (pending.length) {
+        const folder = pending.pop() as string;
+        for (const entry of readdirSync(folder, { withFileTypes: true })) {
+          if (entry.isDirectory()) { pending.push(joinPath(folder, entry.name)); continue; }
+          const key = entry.name.match(/^(\d{44})-nfe\.xml$/i)?.[1];
+          if (!key || key.slice(6, 20) !== cnpj) continue;
+          const parsed = keyNumber(key);
+          if (!xmlByNumber.has(`${parsed.series}|${parsed.number}`)) xmlByNumber.set(`${parsed.series}|${parsed.number}`, joinPath(folder, entry.name));
+        }
+      }
+    }
+    const ownCnpjs = new Set((this.db.prepare("SELECT cnpj FROM legal_entities WHERE cnpj IS NOT NULL AND COALESCE(document_prefix, '') <> 'TERC-XML'").all() as Array<{ cnpj: string }>).map((row) => row.cnpj.replace(/\D/g, "")));
+    const SALE_CFOPS = new Set(["5101", "5102", "5103", "5106", "6101", "6102", "6103", "6106"]);
+    const explain = (series: string, number: number): { reason: string; actionable: boolean } => {
+      const filePath = xmlByNumber.get(`${series}|${number}`);
+      if (!filePath) return { reason: "Sem XML no sistema (conferir na Sefaz/Vulpe)", actionable: true };
+      const xml = readFileSync(filePath, "utf8");
+      const status = xml.match(/<infProt[\s\S]*?<cStat>(\d+)</)?.[1] ?? "";
+      if (status !== "100" && status !== "150") return { reason: `Nao autorizada (cStat ${status || "?"})`, actionable: false };
+      const dest = xml.match(/<dest>[\s\S]*?<(?:CNPJ|CPF)>(\d+)</)?.[1] ?? "";
+      if (ownCnpjs.has(dest)) return { reason: "Entre empresas proprias", actionable: false };
+      const cfops = [...new Set([...xml.matchAll(/<CFOP>(\d+)</g)].map((match) => match[1]))];
+      if (!cfops.length || !cfops.every((cfop) => SALE_CFOPS.has(cfop))) return { reason: `Nao e venda (CFOP ${cfops.join("+") || "?"})`, actionable: false };
+      if (/COMPLEMENT/i.test(xml.match(/<natOp>([^<]*)</)?.[1] ?? "")) return { reason: "Nota complementar", actionable: false };
+      return { reason: "Venda com XML no sistema, mas nao lancada", actionable: true };
+    };
+    const series = [...bySeries.entries()].map(([name, data]) => {
+      const numbers = [...data.numbers.keys()].sort((left, right) => left - right);
+      const first = numbers[0];
+      const last = numbers[numbers.length - 1];
+      const canceled = new Set(data.canceled);
+      for (const key of [...canceledKeys.map((row) => row.key), ...inboxCanceled]) {
+        const parsed = keyNumber(key);
+        if (parsed.series === name && parsed.number >= first && parsed.number <= last && !data.numbers.has(parsed.number)) canceled.add(parsed.number);
+      }
+      const ignored = new Set<number>();
+      for (const { key } of ignoredKeys) { const parsed = keyNumber(key); if (parsed.series === name && parsed.number >= first && parsed.number <= last && !data.numbers.has(parsed.number)) ignored.add(parsed.number); }
+      const missing: Array<{ number: number; reason: string; actionable: boolean }> = [];
+      for (let number = first; number <= last; number += 1) if (!data.numbers.has(number) && !canceled.has(number) && !ignored.has(number)) missing.push({ number, ...explain(name, number) });
+      return {
+        series: name, first, last, firstDate: data.numbers.get(first) ?? "", lastDate: data.numbers.get(last) ?? "",
+        launched: numbers.filter((number) => !data.canceled.has(number)).length,
+        canceled: [...canceled].sort((left, right) => left - right), ignored: [...ignored].sort((left, right) => left - right), missing
+      };
+    }).sort((left, right) => left.series.localeCompare(right.series, "pt-BR", { numeric: true }));
+    return { cnpj, series };
   }
 
   // Mesmo calculo que a lista de notas fazia abrindo nota por nota

@@ -513,6 +513,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     )
   );
   handle(IPC_CHANNELS.getFiscalDocument, (_event, payload: unknown) => repository.getFiscalDocument(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.getFiscalNumberingAudit, (_event, payload: unknown) => repository.getFiscalNumberingAudit(z.object({
+    ownLegalEntityId: z.string().uuid(),
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  }).parse(payload)));
   handle(IPC_CHANNELS.listFiscalDocumentServiceSummaries, (_event, payload: unknown) => repository.listFiscalDocumentServiceSummaries(z.array(z.string().uuid()).max(50_000).parse(payload)));
   handle(IPC_CHANNELS.addFiscalDocumentReturn, (_event, payload: unknown) => repository.addFiscalDocumentReturn(payload));
   handle(IPC_CHANNELS.deleteFiscalDocumentReturn, (_event, payload: unknown) => repository.deleteFiscalDocumentReturn(z.string().uuid().parse(payload)));

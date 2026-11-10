@@ -227,6 +227,7 @@ const IPC_CHANNELS = {
   listFiscalDocuments: "fiscalDocuments:list",
   getFiscalDocument: "fiscalDocuments:get",
   listFiscalDocumentServiceSummaries: "fiscalDocuments:listServiceSummaries",
+  getFiscalNumberingAudit: "fiscalDocuments:getNumberingAudit",
   addFiscalDocumentReturn: "fiscalDocuments:addReturn",
   deleteFiscalDocumentReturn: "fiscalDocuments:deleteReturn",
   createFiscalDocument: "fiscalDocuments:create",
@@ -652,6 +653,8 @@ export interface OperationsCafeApi {
   listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; includeThirdParty?: boolean }) => Promise<FiscalDocument[]>;
   getFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
   // Sacas, tarifa e servico de varias notas numa chamada so (lista de notas).
+  // Numeros de nota emitida que faltam no sistema, por serie, numa empresa e periodo.
+  getFiscalNumberingAudit: (input: { ownLegalEntityId: string; periodStart: string; periodEnd: string }) => Promise<{ cnpj: string; series: Array<{ series: string; first: number; last: number; firstDate: string; lastDate: string; launched: number; canceled: number[]; ignored: number[]; missing: Array<{ number: number; reason: string; actionable: boolean }> }> }>;
   listFiscalDocumentServiceSummaries: (ids: string[]) => Promise<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>;
   addFiscalDocumentReturn: (input: { fiscalDocumentId: string; returnDate: string; inputUnit: "SACKS" | "KG"; inputQuantity: string; reason: string }) => Promise<FiscalDocumentDetail>;
   deleteFiscalDocumentReturn: (id: string) => Promise<FiscalDocumentDetail>;
@@ -1066,6 +1069,7 @@ const api: OperationsCafeApi = {
   resolvePurchaseRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.resolvePurchaseRateRule, input) as Promise<ResolveRateResult>,
   listFiscalDocuments: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listFiscalDocuments, filters) as Promise<FiscalDocument[]>,
   getFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalDocument, id) as Promise<FiscalDocumentDetail>,
+  getFiscalNumberingAudit: (input) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalNumberingAudit, input) as ReturnType<OperationsCafeApi["getFiscalNumberingAudit"]>,
   listFiscalDocumentServiceSummaries: (ids) => ipcRenderer.invoke(IPC_CHANNELS.listFiscalDocumentServiceSummaries, ids) as Promise<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>,
   addFiscalDocumentReturn: (input) => ipcRenderer.invoke(IPC_CHANNELS.addFiscalDocumentReturn, input) as Promise<FiscalDocumentDetail>,
   deleteFiscalDocumentReturn: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFiscalDocumentReturn, id) as Promise<FiscalDocumentDetail>,

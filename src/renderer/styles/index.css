@@ -2143,6 +2143,20 @@ table tbody tr:hover {
   cursor: wait;
 }
 
+/* Conferencia de numeracao das notas emitidas */
+.numbering-audit__form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 8px 0 14px; }
+.numbering-audit__form label { display: grid; gap: 4px; min-width: 180px; }
+.numbering-audit__result { display: grid; gap: 12px; }
+.numbering-audit__serie { padding: 12px 14px; border: 1px solid var(--color-border); border-left: 4px solid #2f8f57; border-radius: 10px; }
+.numbering-audit__serie.has-missing { border-left-color: #c98a1e; }
+.numbering-audit__serie header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.numbering-audit__serie dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 8px; }
+.numbering-audit__serie dl div { display: grid; gap: 2px; }
+.numbering-audit__serie dt { color: var(--color-text-muted); font-size: 12px; }
+.numbering-audit__serie dd { margin: 0; font-weight: 700; }
+.numbering-audit__serie p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.numbering-audit__actionable { padding: 6px 8px; border-radius: 6px; background: #fbf0dc; color: #6b4100; }
+
 /* Consultas em andamento: barra fina no topo, sem bloquear a tela. */
 .ui-reading-bar {
   position: fixed;
