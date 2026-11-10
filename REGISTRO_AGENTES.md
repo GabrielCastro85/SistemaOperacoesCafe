@@ -104,6 +104,20 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-10 - Claude
+- Pedido: ajustes repetidos na cobrança. Neto: +1.500 "SALARIO GUSTAVO" todo mês, mais avulsos. Valani (cobrança semanal): juros de 25.000 no dia 6 e 50.000 no dia 16 de todo mês, cada um só na sua semana.
+- Como era: a cobrança somava todos os acréscimos e adiantamentos disponíveis da conta-corrente, sem olhar a data (`refreshClientLedgerAvailability`). A observação do lançamento não ia para o ajuste: `applyCredit` gravava reason NULL.
+- Feito (`7b42cd3`, app e site):
+  - `ClientLedgerPage`:
+    - "Repetir" (mensal no mesmo dia, com o dia 31 virando o último dia do mês; ou semanal), de 2 a 60 vezes. Cria um lançamento por data com `referenceNumber` `REPETE-xxxxxxxx` comum.
+    - Quadro "Próximos lançamentos programados" e "Cancelar esta e as próximas" (só os ainda não usados: available == amount).
+  - `ChargesPage`:
+    - Puxa só lançamentos com `entry_date <= periodEnd` da cobrança, do mais antigo para o mais novo. O pré-preenchimento refaz ao trocar o fim do período.
+    - O valor coberto pela conta-corrente não exige observação e mostra "Da conta-corrente: …".
+  - `applyCredit` grava `reason = notes` do lançamento.
+- Testado: typecheck, eslint, vitest (365) e o site local com PAULO BAIA. Séries de 25k (dia 6) e 50k (dia 16) por 3 meses: semana 02–08/11 = só 25k; semana 16–22/11 = 75k (o do dia 6 não cobrado entra junto, de propósito). "Cancelar esta e as próximas" cancelou as 3 do dia 6.
+- Não testado: emissão com PDF mostrando a observação vinda da conta-corrente.
+
 ### 2026-11-10 - Claude (continuação da velocidade do site)
 - Medição em produção depois de `7554e4c`: entrar em Notas e operações deu 20 pedidos e 114 consultas, sem bloqueio. Mas no Resumo, o `billingDashboard:summary` levava 13–45 s.
 - Causa: o handler `getBillingSummary` (e também Comparativo e Assistente) faz `await centralSync.synchronize()` antes de calcular. No motor, isso roda dentro da fila única e trava todos os usuários. Somava-se o `getDiagnostics` a cada 5 s, que disparava CENTRAL_DATA_UPDATED e recarregava o Resumo sem parar.
