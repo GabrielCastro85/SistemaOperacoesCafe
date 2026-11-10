@@ -105,6 +105,22 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedidos do Gabriel:
+  - Excluir a cobrança "NOSSAS VENDAS" 01–31/10 (R$ 0,00, "Paga").
+  - Cobrança com saldo negativo virando crédito na próxima (opção 2).
+  - As barras de título das tabelas do site cobriam as linhas.
+- Feito:
+  - `99366f6`: `deleteClientCharge` e o botão Excluir não barram mais `PAID` sem valor recebido. O Gabriel excluiu a cobrança. A publicação do site ficou na fila do GitHub por uns minutos.
+  - `ffb25f6`: `web/site-theme.css`, com o cabeçalho e o total das tabelas em `position: static`. Presos (sticky), cobriam as linhas, principalmente nas tabelas com rolagem própria.
+  - `828f94f`:
+    - `recalculateClientCharge` permite `final_amount_cents` negativo, com open ≥ 0 e SERVICE_CHARGE ≥ 0.
+    - `syncChargeCarryoverCredit` cria e mantém um CREDIT (`reference_number` SALDO-COBRANCA, `entry_date` = fim do período) quando a cobrança emitida fica negativa. O crédito acompanha enquanto não é usado e é cancelado se a cobrança voltar a ser positiva ou for cancelada. `assertCarryoverCreditUnused` impede excluir ou cancelar se o crédito já foi usado.
+    - Cobrança "PAID" zerada ou negativa sem pagamento aceita ajustes.
+    - Na tela, aparece "Saldo a favor do cliente".
+- Testado: typecheck, vitest (365) e cópia do banco (`tmp/testar-cobranca-negativa.mts`, que está no gitignore). Desconto maior que a cobrança deu -3.000 e crédito de 3.000; ao tirar o desconto, o crédito foi cancelado e a cobrança voltou a 14.024.
+- Não testado na tela: emitir no site uma cobrança negativa e ver o crédito entrar na próxima.
+
+### 2026-11-10 - Claude
 - Pedido: ajustes repetidos na cobrança. Neto: +1.500 "SALARIO GUSTAVO" todo mês, mais avulsos. Valani (cobrança semanal): juros de 25.000 no dia 6 e 50.000 no dia 16 de todo mês, cada um só na sua semana.
 - Como era: a cobrança somava todos os acréscimos e adiantamentos disponíveis da conta-corrente, sem olhar a data (`refreshClientLedgerAvailability`). A observação do lançamento não ia para o ajuste: `applyCredit` gravava reason NULL.
 - Feito (`7b42cd3`, app e site):
