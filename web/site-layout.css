@@ -122,6 +122,348 @@ html.site .auth-central-connected {
   display: none !important;
 }
 
+/* ---------- Menu lateral: grupos que abrem e fecham ---------- */
+html.site .app-sidebar__nav .nav-group-title[data-site-group] {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+html.site .app-sidebar__nav .nav-group-title[data-site-group]::after {
+  content: "▾";
+  font-size: 0.8rem;
+  opacity: 0.7;
+  transition: transform 120ms ease;
+}
+
+html.site .app-sidebar__nav .site-group-collapsed .nav-group-title[data-site-group]::after {
+  transform: rotate(-90deg);
+}
+
+html.site .app-sidebar__nav .nav-group-title[data-site-group]:hover {
+  color: rgb(255 250 240 / 80%) !important;
+}
+
+/* Grupo recolhido: so a tela aberta continua visivel. */
+html.site .app-sidebar__nav .site-group-collapsed > button:not(.active) {
+  display: none !important;
+}
+
+/* Menu recolhido (so icones): sem grupos, mostra tudo. */
+html.site .is-collapsed .app-sidebar__nav .site-group-collapsed > button {
+  display: flex !important;
+}
+
+/* "Backup automatico" e "Versao" sao do programa do computador. */
+html.site .app-sidebar__footer > span,
+html.site .app-sidebar__footer > strong {
+  display: none !important;
+}
+
+/* ---------- Notas e operacoes ---------- */
+/* O "passo a passo" 1-4 do topo nao e clicavel e confundia; as abas viram a
+   navegacao principal da tela, logo abaixo do titulo. */
+html.site .content-section > .ui-stepper {
+  display: none !important;
+}
+
+html.site .content-section > .ui-tabs {
+  margin: 4px 0 18px !important;
+  padding: 4px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: 12px !important;
+  background: var(--site-surface) !important;
+}
+
+html.site .content-section > .ui-tabs button {
+  min-height: 42px !important;
+  padding: 8px 18px !important;
+  font-size: 0.98rem !important;
+}
+
+/* Texto explicativo repetido ("Localize as notas emitidas..."): o titulo do bloco ja diz. */
+html.site .notes-direction-hero {
+  display: none !important;
+}
+
+/* "Buscar notas" era uma caixa dentro do bloco, com o monitor e as datas
+   dentro dela: vira uma area simples, sem moldura extra. */
+html.site .admin-block .operation-warning-card--neutral:has(.collector-monitor) {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Monitor do coletor compacto: nome, situacao, ultima atividade, fila,
+   ultimo comando e botoes. "Detalhes" mostra o resto. */
+html.site .collector-monitor:not(.site-monitor-open) .collector-monitor__item > small,
+html.site .collector-monitor:not(.site-monitor-open) .collector-monitor__item dl > div:not(:nth-child(1)):not(:nth-child(4)),
+html.site .collector-monitor:not(.site-monitor-open) .collector-monitor__diagnostics,
+html.site .collector-monitor:not(.site-monitor-open) .collector-monitor__heading small {
+  display: none !important;
+}
+
+html.site .collector-monitor:not(.site-monitor-open) .collector-monitor__item dl {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 4px 18px !important;
+  margin: 6px 0 !important;
+}
+
+html.site .collector-monitor:not(.site-monitor-open) .collector-monitor__item dl > div {
+  display: flex !important;
+  gap: 6px;
+  align-items: baseline;
+}
+
+html.site .collector-monitor__actions button {
+  min-height: 34px !important;
+  padding: 6px 12px !important;
+  font-size: 0.85rem !important;
+}
+
+html.site .collector-monitor__heading {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+html.site .collector-monitor__heading > div {
+  margin-right: auto;
+}
+
+html.site .site-monitor-toggle {
+  min-height: 34px !important;
+  padding: 6px 12px !important;
+}
+
+/* "Emitidas por ...": uma fileira compacta de opcoes. */
+html.site .vulpe-search-actions {
+  gap: 6px !important;
+}
+
+html.site .vulpe-search-actions > button {
+  flex: 0 1 auto !important;
+  min-height: 36px !important;
+  padding: 6px 14px !important;
+  font-size: 0.88rem !important;
+}
+
+/* ---------- Resumo ---------- */
+/* Cartoes que so explicam ou nunca mudam saem; "Sacas por periodo" sobe. */
+html.site .dashboard-workspace > [data-site-card="fluxo"],
+html.site .dashboard-workspace > [data-site-card="estrutura"] {
+  display: none !important;
+}
+
+html.site .dashboard-workspace > [data-site-card="sacas-periodo"] { order: 1; }
+html.site .dashboard-workspace > [data-site-card="grafico"] { order: 2; }
+html.site .dashboard-workspace > [data-site-card="status"] { order: 3; }
+
+/* Os quatro numeros do topo levam para a tela correspondente. */
+html.site .dashboard-grid--hero > .ui-card[data-site-link] {
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+html.site .dashboard-grid--hero > .ui-card[data-site-link]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgb(28 26 23 / 10%) !important;
+}
+
+html.site .dashboard-grid--hero > .ui-card[data-site-link]::after {
+  content: "Ver detalhes →";
+  display: block;
+  margin-top: 8px;
+  color: var(--site-green, #1d6b3d);
+  font-size: 0.78rem;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+html.site .dashboard-grid--hero > .ui-card[data-site-link]:hover::after {
+  opacity: 1;
+}
+
+/* ---------- Acoes das linhas: primeiro botao + "⋯" ---------- */
+html.site .site-row-menu {
+  position: relative;
+  flex-wrap: nowrap !important;
+  align-items: center;
+}
+
+/* Fechado: so o primeiro botao e o "⋯". */
+html.site .site-row-menu:not(.site-row-open) > button:not(:first-of-type):not(.site-row-more),
+html.site .site-row-menu:not(.site-row-open) > span:not(:first-child) {
+  display: none !important;
+}
+
+html.site button.site-row-more {
+  min-width: 36px !important;
+  min-height: 32px !important;
+  padding: 2px 8px !important;
+  font-size: 1.1rem !important;
+  line-height: 1 !important;
+}
+
+/* Aberto: as demais acoes aparecem num menu embaixo da linha. */
+html.site .site-row-menu.site-row-open > button:not(:first-of-type):not(.site-row-more),
+html.site .site-row-menu.site-row-open > span:not(:first-child) {
+  position: relative;
+  z-index: 30;
+}
+
+html.site .site-row-menu.site-row-open {
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  padding: 6px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: var(--site-radius-sm) !important;
+  background: var(--site-surface) !important;
+  box-shadow: 0 10px 26px rgb(28 26 23 / 14%);
+}
+
+/* ---------- Cobrancas ---------- */
+/* As colunas sao grades que se esticavam ate o conteudo mais largo (os campos
+   de valor saiam 10 px para fora e aparecia rolagem lateral). */
+html.site .charges-columns > .charges-column {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Ajustes e valor final ficam fixos a direita enquanto se rola a lista de notas. */
+@media (min-width: 1200px) {
+  html.site .charges-columns > .charges-column:last-child {
+    position: sticky;
+    top: 56px;
+  }
+}
+
+/* "Dados para pagamento" numa linha so (o texto longo sai). */
+html.site .charge-diagnostics[data-site-bank]:not(:has(form, .form-grid, input)) {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px !important;
+}
+
+html.site .charge-diagnostics[data-site-bank] > h3 {
+  margin: 0 !important;
+  font-size: 0.95rem !important;
+}
+
+html.site .charge-diagnostics[data-site-bank]:not(:has(form, .form-grid, input)) > p {
+  display: none !important;
+}
+
+html.site .charge-diagnostics[data-site-bank] > button {
+  width: auto !important;
+}
+
+/* ---------- Abas internas (ex.: Clientes / Empresas) ---------- */
+html.site .sub-tabs {
+  display: inline-flex !important;
+  gap: 4px !important;
+  margin-bottom: 14px !important;
+  padding: 4px !important;
+  border: 1px solid var(--site-line) !important;
+  border-radius: 12px !important;
+  background: var(--site-surface) !important;
+}
+
+html.site .sub-tabs > button {
+  min-height: 40px !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.site .sub-tabs > button.active {
+  background: var(--site-ink, #1c1a17) !important;
+  color: #fffaf0 !important;
+}
+
+/* ---------- Topo (computador) ---------- */
+@media (min-width: 961px) {
+  /* O nome da tela ja aparece no titulo grande da pagina. */
+  html.site .app-topbar__brandline {
+    display: none !important;
+  }
+
+  html.site .app-topbar {
+    position: sticky;
+    justify-content: space-between;
+  }
+
+  html.site .context-pill.context-pill--user {
+    position: relative;
+    margin-left: auto;
+    padding: 6px 30px 6px 12px !important;
+    border: 1px solid var(--site-line) !important;
+    border-radius: var(--site-radius-sm) !important;
+    background: var(--site-surface-2) !important;
+    cursor: pointer;
+  }
+
+  html.site .context-pill.context-pill--user::after {
+    content: "▾";
+    position: absolute;
+    right: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--site-muted);
+  }
+
+  html.site .context-pill.context-pill--user:hover,
+  html.site.site-user-open .context-pill.context-pill--user {
+    border-color: var(--site-line-strong) !important;
+  }
+
+  /* Trocar senha / Bloquear / Sair: menu que abre embaixo do nome. */
+  html.site .topbar-actions {
+    position: absolute;
+    top: calc(100% - 4px);
+    right: 24px;
+    z-index: 70;
+    display: none !important;
+    flex-direction: column !important;
+    min-width: 190px;
+    padding: 6px;
+    border: 1px solid var(--site-line);
+    border-radius: var(--site-radius);
+    background: var(--site-surface);
+    box-shadow: 0 16px 40px rgb(28 26 23 / 16%);
+  }
+
+  html.site.site-user-open .topbar-actions {
+    display: flex !important;
+  }
+
+  html.site .topbar-actions button {
+    justify-content: flex-start !important;
+    width: 100%;
+    border: 0 !important;
+    background: transparent !important;
+    text-align: left;
+  }
+
+  html.site .topbar-actions button:hover {
+    background: var(--site-surface-2) !important;
+  }
+
+  html.site .topbar-actions button:last-child {
+    margin-top: 4px;
+    border-top: 1px solid var(--site-line) !important;
+    border-radius: 0 0 var(--site-radius-sm) var(--site-radius-sm) !important;
+    color: #9b2c2c !important;
+  }
+}
+
 /* ---------- Celular e tablet ---------- */
 html.site .site-menu-toggle,
 .site-menu-backdrop {

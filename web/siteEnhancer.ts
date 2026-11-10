@@ -6,7 +6,7 @@
 //   quiet   -> so sai/limpa (cancelar, fechar, voltar, limpar)
 // Botoes que o app ja marca (primary, danger, abas, menu) ficam como estao.
 
-const PRIMARY = /^(\+\s*)?(salvar|emitir|gerar|confirmar|registrar|concluir|importar|criar|lan[cç]ar|cadastrar|enviar|aplicar|receber|entrar|nova|novo|adicionar|incluir|vincular|baixar pagamento|finalizar|aprovar|autorizar|cobrar)\b/i;
+const PRIMARY = /^(\+\s*)?(salvar|emitir|gerar|confirmar|registrar|concluir|importar|criar|lan[cç]ar|cadastrar|enviar|aplicar|receber|entrar|nova|novo|adicionar|incluir|vincular|baixar pagamento|finalizar|aprovar|autorizar|cobrar|buscar opera[cç][oõ]es)\b/i;
 const DANGER = /^(excluir|estornar|remover|apagar|descartar|desvincular|inativar|desativar|bloquear cobran|cancelar\s+\S+|reverter)/i;
 const ACCENT = /^(selecionar|escolher|anexar|buscar|pesquisar|consultar|filtrar|atualizar|sugerir|carregar|ver |abrir|visualizar|pr[eé]via|conferir|calcular)/i;
 const QUIET = /^(cancelar|fechar|voltar|limpar|n[aã]o|agora n[aã]o|ocultar|esconder|mostrar menos)$/i;

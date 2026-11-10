@@ -54,8 +54,182 @@ function closeMenu(): void {
   document.querySelector(".site-menu-toggle")?.setAttribute("aria-expanded", "false");
 }
 
+// ---------- Menu do usuario no topo ----------
+// "Trocar senha / Bloquear / Sair" ficam dentro de um menu aberto pelo nome do
+// usuario, em vez de tres botoes ocupando o topo o tempo todo.
+const USER_OPEN = "site-user-open";
+
+function closeUserMenu(): void {
+  document.documentElement.classList.remove(USER_OPEN);
+  document.querySelector(".context-pill--user")?.setAttribute("aria-expanded", "false");
+}
+
+function ensureUserMenu(): void {
+  const pill = document.querySelector<HTMLElement>(".app-topbar .context-pill--user");
+  if (!pill || pill.dataset.siteUserMenu) return;
+  pill.dataset.siteUserMenu = "1";
+  pill.setAttribute("role", "button");
+  pill.setAttribute("tabindex", "0");
+  pill.setAttribute("aria-haspopup", "menu");
+  pill.setAttribute("aria-expanded", "false");
+  pill.title = "Conta: trocar senha, bloquear ou sair";
+  const toggle = () => {
+    const open = document.documentElement.classList.toggle(USER_OPEN);
+    pill.setAttribute("aria-expanded", String(open));
+  };
+  pill.addEventListener("click", toggle);
+  pill.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
+}
+
+// ---------- Grupos do menu lateral que abrem e fecham ----------
+// O menu tem 18 telas; cada grupo (Visao geral, Operacoes, Comercial...) pode
+// ser recolhido. A escolha fica salva neste navegador. O grupo da tela aberta
+// sempre mostra a tela ativa.
+const NAV_STATE_KEY = "site-nav-collapsed-groups";
+
+function readCollapsedGroups(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(NAV_STATE_KEY) ?? "[]") as string[]); } catch { return new Set(); }
+}
+
+function saveCollapsedGroups(groups: Set<string>): void {
+  try { localStorage.setItem(NAV_STATE_KEY, JSON.stringify([...groups])); } catch { /* sem armazenamento */ }
+}
+
+function ensureNavGroups(): void {
+  const collapsed = readCollapsedGroups();
+  document.querySelectorAll<HTMLElement>(".app-sidebar__nav section").forEach((section) => {
+    const title = section.querySelector<HTMLElement>(".nav-group-title");
+    if (!title) return;
+    const name = (title.textContent ?? "").trim();
+    if (!title.dataset.siteGroup) {
+      title.dataset.siteGroup = name;
+      title.setAttribute("role", "button");
+      title.setAttribute("tabindex", "0");
+      title.title = "Mostrar ou esconder este grupo";
+    }
+    const isCollapsed = collapsed.has(name);
+    if (section.classList.contains("site-group-collapsed") !== isCollapsed) section.classList.toggle("site-group-collapsed", isCollapsed);
+    title.setAttribute("aria-expanded", String(!isCollapsed));
+  });
+}
+
+function toggleNavGroup(name: string): void {
+  const collapsed = readCollapsedGroups();
+  if (collapsed.has(name)) collapsed.delete(name); else collapsed.add(name);
+  saveCollapsedGroups(collapsed);
+  ensureNavGroups();
+}
+
+// ---------- Monitor do coletor compacto ----------
+// Botao "Detalhes" no cabecalho do monitor: mostra/esconde os 8 indicadores,
+// a lista de CNPJs e o diagnostico de cada coletor.
+function ensureMonitorToggle(): void {
+  document.querySelectorAll<HTMLElement>(".collector-monitor").forEach((monitor) => {
+    const heading = monitor.querySelector<HTMLElement>(".collector-monitor__heading");
+    if (!heading || heading.querySelector(".site-monitor-toggle")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "site-monitor-toggle";
+    button.textContent = "Detalhes";
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      const open = monitor.classList.toggle("site-monitor-open");
+      button.textContent = open ? "Ocultar detalhes" : "Detalhes";
+      button.setAttribute("aria-expanded", String(open));
+    });
+    heading.appendChild(button);
+  });
+}
+
+// ---------- Resumo ----------
+// Marca os cartoes pelo titulo para o CSS esconder os que so explicam
+// ("Fluxo operacional", "Estrutura ativa") e subir "Sacas por periodo".
+// Os quatro numeros do topo viram atalhos para a tela correspondente.
+const DASHBOARD_CARDS: Array<[RegExp, string]> = [
+  [/fluxo operacional/i, "fluxo"],
+  [/estrutura ativa/i, "estrutura"],
+  [/sacas por per[ií]odo/i, "sacas-periodo"],
+  [/opera[cç][oõ]es e sacas/i, "grafico"],
+  [/status operacional/i, "status"]
+];
+const HERO_LINKS: Array<[RegExp, string, string]> = [
+  [/sacas vendidas/i, "#/operations", "Abrir notas e operações"],
+  [/valor total dos servi[cç]os/i, "#/charges", "Abrir cobranças"],
+  [/a receber/i, "#/charges", "Abrir cobranças"],
+  [/recebido/i, "#/client-ledger", "Abrir conta-corrente"]
+];
+
+function ensureDashboard(): void {
+  document.querySelectorAll<HTMLElement>(".dashboard-workspace > .ui-card:not([data-site-card])").forEach((card) => {
+    const title = card.querySelector("h2, h3")?.textContent ?? "";
+    const match = DASHBOARD_CARDS.find(([pattern]) => pattern.test(title));
+    if (match) card.dataset.siteCard = match[1];
+  });
+  document.querySelectorAll<HTMLElement>(".dashboard-grid--hero > .ui-card:not([data-site-link])").forEach((card) => {
+    const text = card.textContent ?? "";
+    const link = HERO_LINKS.find(([pattern]) => pattern.test(text));
+    if (!link) return;
+    card.dataset.siteLink = link[1];
+    card.setAttribute("role", "link");
+    card.setAttribute("tabindex", "0");
+    card.title = link[2];
+    const go = () => { window.location.hash = link[1]; };
+    card.addEventListener("click", go);
+    card.addEventListener("keydown", (event) => { if (event.key === "Enter") go(); });
+  });
+}
+
+// ---------- Acoes das linhas das tabelas ----------
+// Linhas com 3 ou mais botoes (ex.: Editar / Arquivar / Excluir) quebravam em
+// duas linhas e so cabiam 3 clientes na tela. Fica o primeiro botao e um "⋯"
+// que abre os demais. Os botoes continuam os mesmos do app (so ficam escondidos).
+function ensureRowMenus(): void {
+  document.querySelectorAll<HTMLElement>(".content-section :is(.row-actions, td .actions, .table-row > .actions)").forEach((cell) => {
+    const buttons = [...cell.querySelectorAll<HTMLButtonElement>(":scope > button, :scope > span > button")].filter((button) => !button.classList.contains("site-row-more"));
+    const existing = cell.querySelector<HTMLButtonElement>(":scope > .site-row-more");
+    if (buttons.length < 3) { existing?.remove(); cell.classList.remove("site-row-menu"); return; }
+    cell.classList.add("site-row-menu");
+    if (existing) return;
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "site-row-more";
+    more.textContent = "⋯";
+    more.title = "Mais ações";
+    more.setAttribute("aria-label", "Mais ações");
+    more.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = !cell.classList.contains("site-row-open");
+      document.querySelectorAll(".site-row-open").forEach((other) => other.classList.remove("site-row-open"));
+      cell.classList.toggle("site-row-open", open);
+    });
+    cell.appendChild(more);
+  });
+}
+
+// ---------- Cobrancas ----------
+// "Dados para pagamento" vira uma linha so (titulo + botao), sem o texto longo no meio do fluxo.
+function ensureChargesLayout(): void {
+  document.querySelectorAll<HTMLElement>(".charge-diagnostics:not([data-site-bank])").forEach((box) => {
+    if (/dados para pagamento/i.test(box.querySelector("h3")?.textContent ?? "")) box.dataset.siteBank = "1";
+  });
+}
+
 export function startSiteLayout(): void {
-  const ensure = () => { ensureAuthBrand(); ensureMenuButton(); ensureBackdrop(); };
+  const ensure = () => { ensureAuthBrand(); ensureMenuButton(); ensureBackdrop(); ensureUserMenu(); ensureNavGroups(); ensureMonitorToggle(); ensureDashboard(); ensureRowMenus(); ensureChargesLayout(); };
+  document.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const groupTitle = target?.closest<HTMLElement>(".app-sidebar__nav .nav-group-title[data-site-group]");
+    if (groupTitle) { toggleNavGroup(groupTitle.dataset.siteGroup ?? ""); return; }
+    // Menu do usuario: fecha ao escolher uma opcao ou clicar fora dele.
+    if (target?.closest(".topbar-actions button") || !target?.closest(".context-pill--user, .topbar-actions")) closeUserMenu();
+    // Menu "⋯" das linhas: fecha ao escolher uma acao ou clicar fora.
+    if (!target?.closest(".site-row-more")) document.querySelectorAll(".site-row-open").forEach((cell) => cell.classList.remove("site-row-open"));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { closeUserMenu(); document.querySelectorAll(".site-row-open").forEach((cell) => cell.classList.remove("site-row-open")); }
+    const title = (event.target as HTMLElement | null)?.closest<HTMLElement>(".nav-group-title[data-site-group]");
+    if (title && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); toggleNavGroup(title.dataset.siteGroup ?? ""); }
+  });
   new MutationObserver(ensure).observe(document.body, { childList: true, subtree: true });
   // Ao escolher uma tela no menu do celular, a gaveta fecha (o app troca de tela
   // por history.pushState, sem evento de hash; por isso o clique no item tambem fecha).

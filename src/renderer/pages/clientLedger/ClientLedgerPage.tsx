@@ -221,6 +221,8 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
         ) : null}
       </AdminBlock>
 
+      {/* Sem cliente escolhido, o resumo e o historico so mostrariam zeros. */}
+      {clientId ? <>
       <FilterBar activeCount={[periodStart, periodEnd].filter(Boolean).length} onClear={() => { const defaults = currentMonthToDateRange(); setPeriodStart(defaults.periodStart); setPeriodEnd(defaults.periodEnd); }}>
         <DateInput label="Periodo - inicio" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
         <DateInput label="Periodo - fim" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
@@ -345,6 +347,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
           />
         </AdminBlock>
       ) : null}
+      </> : <EmptyState title="Escolha um cliente" description="Digite o nome, CNPJ ou cidade acima para ver o saldo, os lançamentos e o histórico da conta-corrente." />}
       <Feedback message={message} />
     </section>
   );
