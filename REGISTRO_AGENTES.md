@@ -105,6 +105,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedidos:
+  - Conferência de repasses: somar as notas do Marcelo Café lançadas no THADEU NOTAS, e depois filtrar por empresa/CNPJ, independente do cliente.
+  - A cobrança NOSSAS VENDAS out/2026 ainda saía zerada no PDF.
+- Feito:
+  - `b755994`: `listTransferReconciliationInvoices` também traz notas cujo `fiscal_snapshot_json` recipient.cnpjCpf (venda) ou issuer.cnpjCpf (compra) é um CNPJ do cliente, mesmo com outro responsável. Elas aparecem com "Lançada em X". No banco deste PC, o MARCELO ganhou 19 notas da Grão lançadas em THADEU NOTAS (R$ 16.509.000). A validação ao salvar usa a mesma função.
+  - `34ac5da` e o commit anterior: cada nota traz `partyDocument`, e a tela ganhou o select "Empresa/CNPJ da nota". O PDF e a imagem da cobrança negativa mostram "Saldo a favor do cliente R$ - x". `adjustedChargeTotal` não trava mais em 0, com o teste atualizado. A prévia da tela mostra o negativo.
+- Testado: vitest (365), typecheck, lista do MARCELO na base deste PC e PDF negativo numa cópia (-8.010,21 no resumo).
+- Pendente: o Gabriel gerar de novo a cobrança NOSSAS VENDAS e conferir.
+
+### 2026-11-10 - Claude
 - Pedidos do Gabriel:
   - Excluir a cobrança "NOSSAS VENDAS" 01–31/10 (R$ 0,00, "Paga").
   - Cobrança com saldo negativo virando crédito na próxima (opção 2).
