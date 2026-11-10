@@ -2143,6 +2143,33 @@ table tbody tr:hover {
   cursor: wait;
 }
 
+/* Consultas em andamento: barra fina no topo, sem bloquear a tela. */
+.ui-reading-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 101;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgb(15 74 50 / 15%);
+}
+
+.ui-reading-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: #2f8f57;
+  animation: ui-reading-bar 1.1s ease-in-out infinite;
+}
+
+@keyframes ui-reading-bar {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
 .ui-loading-overlay__spinner {
   width: 48px;
   height: 48px;

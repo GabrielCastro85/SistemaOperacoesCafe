@@ -178,11 +178,78 @@ async function postRpc(channel: string, body: string): Promise<EngineResponse> {
   }
 }
 
+// Agrupamento: consultas pedidas ao mesmo tempo (ex.: os CNPJs de cada cliente,
+// que as telas buscam um por um) vao num pedido so ao servidor. Cada ida e volta
+// custa ~0,3 s; 90 consultas separadas viravam quase meio minuto de fila.
+const BATCH_LIMIT = 150;
+const NOT_BATCHED = /^(export|print|open|bytes|reveal)/;
+let batchSupported = true;
+interface QueuedCall { channel: string; payload: unknown; resolve: (body: EngineResponse) => void; reject: (error: unknown) => void }
+let queued: QueuedCall[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function isBatchable(channel: string): boolean {
+  const action = channel.slice(channel.indexOf(":") + 1);
+  return batchSupported && isReadOnly(channel) && !NOT_BATCHED.test(action);
+}
+
+async function sendBatch(calls: QueuedCall[]): Promise<void> {
+  if (calls.length === 1 || !batchSupported) {
+    await Promise.all(calls.map((call) => postRpc(call.channel, JSON.stringify({ channel: call.channel, payload: call.payload, uploadIds: null })).then(call.resolve, call.reject)));
+    return;
+  }
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(`${API_URL}/v1/app/rpc-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-app-session": sessionId() },
+        body: JSON.stringify({ calls: calls.map((call) => ({ channel: call.channel, payload: call.payload })) })
+      });
+      if (response.status === 404) {
+        // Servidor ainda sem a rota de lote: volta a mandar um por um.
+        batchSupported = false;
+        await sendBatch(calls);
+        return;
+      }
+      const parsed = await response.json().catch(() => null) as { results?: EngineResponse[] } | null;
+      if (parsed?.results && parsed.results.length === calls.length) {
+        calls.forEach((call, index) => call.resolve(parsed.results![index]));
+        return;
+      }
+      if (attempt >= 2) throw new EngineError(response.status >= 500 ? "O servidor está reiniciando. Aguarde alguns segundos e tente de novo." : `Servidor indisponível (${response.status}).`);
+    } catch (error) {
+      if (attempt >= 2) {
+        const failure = error instanceof EngineError ? error : new EngineError("Sem conexão com o servidor. Confira a internet e tente de novo.");
+        calls.forEach((call) => call.reject(failure));
+        return;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+  }
+}
+
+function flushQueued(): void {
+  flushTimer = null;
+  const calls = queued;
+  queued = [];
+  for (let index = 0; index < calls.length; index += BATCH_LIMIT) void sendBatch(calls.slice(index, index + BATCH_LIMIT));
+}
+
+function postQueued(channel: string, payload: unknown): Promise<EngineResponse> {
+  return new Promise((resolve, reject) => {
+    queued.push({ channel, payload, resolve, reject });
+    // Espera um instante para juntar as consultas que a tela dispara em sequencia.
+    if (!flushTimer) flushTimer = setTimeout(flushQueued, 8);
+  });
+}
+
 async function invoke(channel: string, payload?: unknown): Promise<unknown> {
   const prepared = encodePayload(await uploadDroppedReferences(payload));
   let uploadIds: string[] | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const body = await postRpc(channel, JSON.stringify({ channel, payload: prepared, uploadIds }));
+    const body = attempt === 0 && isBatchable(channel)
+      ? await postQueued(channel, prepared)
+      : await postRpc(channel, JSON.stringify({ channel, payload: prepared, uploadIds }));
     body.downloads?.forEach(deliver);
     body.prints?.forEach(printHtml);
     if (body.clipboardText !== null && body.clipboardText !== undefined) void navigator.clipboard?.writeText(body.clipboardText).catch(() => undefined);

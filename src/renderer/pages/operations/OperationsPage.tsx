@@ -359,17 +359,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setProductId((current) => current || activeProducts[0]?.id || "");
     const fiscalDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "all", includeThirdParty: true });
     setDocuments(fiscalDocuments);
-    const details = await Promise.all(fiscalDocuments.map((doc) => window.operationsCafe.getFiscalDocument(doc.id)));
-    setDocumentServiceInfo(Object.fromEntries(details.map((docDetail) => {
-      const sacks = docDetail.operations.map((op) => op.quantitySacks).reduce((total, value) => String(Number(total) + Number(value)), "0");
-      const rateValues = Array.from(new Set(docDetail.operations.map((op) => op.appliedRateValueCents)));
-      return [docDetail.document.id, {
-        sacks,
-        rateCents: rateValues.length === 1 ? rateValues[0] : null,
-        serviceCents: docDetail.operations.reduce((total, op) => total + op.serviceAmountCents, 0),
-        missingRate: docDetail.operations.some((op) => op.appliedRateValueCents === 0)
-      }];
-    })));
+    // Uma chamada para todas as notas (antes abria nota por nota).
+    setDocumentServiceInfo(await window.operationsCafe.listFiscalDocumentServiceSummaries(fiscalDocuments.map((doc) => doc.id)));
     setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
     const xmlJobs = await window.operationsCafe.listXmlImportJobs(organizationId);
     setXmlHistory(xmlJobs.filter((job) => !xmlImportIsVisuallyDeleted(job)));

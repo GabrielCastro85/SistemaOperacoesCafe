@@ -8,6 +8,7 @@ export function AppProviders({ children }: { children: ReactNode }): JSX.Element
       <DialogProvider>
         {children}
         <LoadingOverlay />
+        <ReadingBar />
       </DialogProvider>
     </RendererErrorBoundary>
   );
@@ -63,6 +64,21 @@ function LoadingOverlay(): JSX.Element | null {
       <div className="ui-loading-overlay__spinner" aria-hidden="true" />
     </div>
   );
+}
+
+// Barra fina no topo enquanto a tela carrega dados (consultas). Nao bloqueia
+// clique: so mostra que ainda esta chegando informacao do servidor.
+function ReadingBar(): JSX.Element | null {
+  const [pendingCount, setPendingCount] = useState(0);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => window.operationsCafeLoading.subscribeReads?.(setPendingCount), []);
+  useEffect(() => {
+    if (pendingCount === 0) { setVisible(false); return; }
+    const timer = setTimeout(() => setVisible(true), 200);
+    return () => clearTimeout(timer);
+  }, [pendingCount > 0]);
+  if (!visible || pendingCount === 0) return null;
+  return <div className="ui-reading-bar" role="progressbar" aria-label="Carregando dados" />;
 }
 
 function DialogProvider({ children }: { children: ReactNode }): JSX.Element {
