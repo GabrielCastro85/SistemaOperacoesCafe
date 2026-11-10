@@ -105,6 +105,11 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedido: uma varredura visual do site com sugestões de melhoria. Exemplo do Gabriel: o menu de empresas do topo ficava por cima da empresa.
+- Feito (`0675603`): `html.site .app-topbar { z-index: 45 }`. O topo é sticky com z 10, a barra "Nesta página" é fixed com z 40, e o menu de empresas abria por baixo dela.
+- Varredura feita no site local (Resumo, Notas e operações, Cobranças, Clientes, Confirmações, Conta-corrente). A lista de sugestões foi entregue ao Gabriel na conversa; nada implementado além do z-index.
+
+### 2026-11-10 - Claude
 - Pedido: lançar as entradas antigas da Grão.
 - Situação:
   - O coletor da Grão quase não traz notas de fornecedor: só envia a pasta das emitidas, e na inbox há 5 da SP de out/2025. Para essas, precisa mudar a pasta do coletor no PC da Grão (pendente, o Gabriel vai ver se lá usa Vulpe).
