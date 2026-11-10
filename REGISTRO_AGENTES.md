@@ -104,6 +104,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-10 - Claude
+- Pedido: ter certeza do número de notas lançadas. O Gabriel mandou `MARCELO.rar` (87 XMLs da Grão para o Marcelo Café, enviados pela funcionária) porque algumas não tinham sido pegas no THADEU.
+- Conferência do RAR (`tmp/conferir-xmls.cjs`): as 87 estão no sistema (19 em THADEU NOTAS, 68 em MARCELO). As que faltavam eram 24 de jul/2026 (o furo de julho do coletor) e 6 de 28/08 (fora do período do THADEU). O Gabriel lançou essas hoje às 10:06 no MARCELO.
+- Feito (`da452ec`): "Conferência de numeração das notas emitidas" em Notas e operações > Notas emitidas (`NumberingAudit.tsx`, canal `fiscalDocuments:getNumberingAudit`, `getFiscalNumberingAudit` no repositório).
+  - Por empresa, série e período, lista os números que faltam, pela chave de acesso (substr 7–20 = CNPJ).
+  - Explica pelos XMLs do coletor (`xml-imports/collector-inbox`) e da Vulpe (`C:\Vulpe\NFe`): entre empresas próprias, não é venda (CFOP), complemento, cancelada (evento no banco ou na pasta do coletor), marcada para não cadastrar.
+  - Destaca o que precisa de conferência: venda com XML e não lançada, e número sem XML.
+- Resultado na base deste PC (jan–out/2026), vendas com XML e não lançadas: Grão MG 969 (≈775 de julho e ≈190 de agosto), Grão SP 32, Villa MG 99. No site o motor só tem os XMLs que já baixou, então lá aparecem mais números "sem XML".
+- Pendente: lançar jul/2026 da Grão no THADEU (os XMLs já estão na collector-inbox) depois que terminar a gravação das entradas da Vulpe.
+
 ### 2026-11-10 - Claude (em andamento)
 - Pedido: lançar as notas de ENTRADA antigas da Villa MG/ES. Daqui para frente o Gabriel lança à mão.
 - Onde estão: `C:\Vulpe\XML Terceiros\VILLA_COFFEE_MG|VILLA_COFFEE\AAAAMM\Down` (`-nfe.xml` completos; `-resNFe.xml` são só resumo, sem manifestação). Cancelamentos ficam em `AAAAMM\Evento`.
