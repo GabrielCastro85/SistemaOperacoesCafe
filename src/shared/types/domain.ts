@@ -1967,6 +1967,8 @@ export interface TransferReconciliationAvailableInvoice {
   invoiceTotalCents: number;
   previouslyUsedCents: number;
   availableCents: number;
+  // Nota com o CNPJ deste cliente/fornecedor, mas lancada em outro (ex.: THADEU NOTAS).
+  launchedUnderName?: string | null;
 }
 
 export interface TransferReconciliationClientBalance {

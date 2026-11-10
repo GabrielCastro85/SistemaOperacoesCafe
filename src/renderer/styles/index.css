@@ -5462,6 +5462,7 @@ table tbody tr:hover {
 .transfer-row { display: grid; grid-template-columns: 34px 150px 70px 90px minmax(180px,1fr) 120px 120px 170px; gap: 10px; align-items: center; min-width: 1100px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
 .transfer-head { font-size: 11px; font-weight: 800; text-transform: uppercase; background: var(--color-background); }
 .transfer-origin-badge { display: inline-flex; align-items: center; max-width: 100%; padding: 4px 8px; border: 1px solid #78a98d; border-radius: 999px; background: #edf8f1; color: #175d3c; font-size: 11px; font-weight: 800; line-height: 1.2; }
+.transfer-launched-under { display: block; margin-top: 4px; color: #8a5300; font-size: 11px; font-weight: 700; }
 .transfer-warning { border-color: #c47d17; background: #fff4dc; }
 .transfer-warning small { display: block; color: #9b3e16; }
 .transfer-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

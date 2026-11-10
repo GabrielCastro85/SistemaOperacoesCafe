@@ -3740,20 +3740,43 @@ export class AppRepository {
         usedByDocument.set(documentId, (usedByDocument.get(documentId) ?? 0) + used);
       });
     }
+    // Tambem entram notas cujo destinatario (venda) ou emitente (compra) e um
+    // CNPJ deste cliente/fornecedor, mesmo lancadas em outro responsavel -- ex.:
+    // notas antigas do Marcelo Cafe lancadas no THADEU NOTAS.
+    const partnerCnpjs = [...new Set([
+      ...(this.db.prepare(`SELECT cnpj FROM partner_legal_entities WHERE business_partner_id IN (${partnerPlaceholders}) AND cnpj IS NOT NULL`).all(...matchingPartnerIds) as Array<{ cnpj: string }>).map((row) => row.cnpj.replace(/\D/g, "")),
+      selectedDocument
+    ].filter((cnpj) => cnpj.length >= 11))];
+    const fiscalPartyPath = counterpartyRole === "SUPPLIER" ? "$.issuer.cnpjCpf" : "$.recipient.cnpjCpf";
+    const cnpjFilter = partnerCnpjs.length
+      ? `OR (json_extract(f.fiscal_snapshot_json, '${fiscalPartyPath}') IN (${partnerCnpjs.map(() => "?").join(", ")})
+          AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ? AND o.status <> 'CANCELED'))`
+      : "";
     const rows = this.db.prepare(`
       SELECT f.id, f.organization_id, org.display_name AS organization_name,
         f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
         own.legal_name AS own_legal_name, own.trade_name AS own_trade_name,
-        partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name
+        partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name,
+        (SELECT bp.display_name FROM operations o JOIN business_partners bp ON bp.id = o.responsible_partner_id
+          WHERE o.fiscal_document_id = f.id AND o.operation_type = ? AND o.status <> 'CANCELED'
+            AND o.responsible_partner_id NOT IN (${partnerPlaceholders}) LIMIT 1) AS other_responsible_name,
+        EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
+          AND o.status <> 'CANCELED' AND o.responsible_partner_id IN (${partnerPlaceholders})) AS own_responsible
       FROM fiscal_documents f
       JOIN organizations org ON org.id = f.organization_id
       JOIN legal_entities own ON own.id = f.own_legal_entity_id
       LEFT JOIN partner_legal_entities partner ON partner.id = f.partner_legal_entity_id
       WHERE f.status <> 'CANCELED'
-        AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
+        AND (EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
           AND o.status <> 'CANCELED' AND o.responsible_partner_id IN (${partnerPlaceholders}))
+          ${cnpjFilter})
       ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
-    `).all(operationType, ...matchingPartnerIds) as DbRecord[];
+    `).all(
+      operationType, ...matchingPartnerIds,
+      operationType, ...matchingPartnerIds,
+      operationType, ...matchingPartnerIds,
+      ...(partnerCnpjs.length ? [...partnerCnpjs, operationType] : [])
+    ) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
       try {
@@ -3771,7 +3794,8 @@ export class AppRepository {
         documentNumber: String(row.document_number), issueDate: String(row.issue_date),
         issuerName: this.stringOrNull(issuer?.legalName) ?? (counterpartyRole === "SUPPLIER" ? partnerName : ownName),
         recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),
-        invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents
+        invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents,
+        launchedUnderName: Number(row.own_responsible) ? null : this.stringOrNull(row.other_responsible_name)
       };
     });
   }
