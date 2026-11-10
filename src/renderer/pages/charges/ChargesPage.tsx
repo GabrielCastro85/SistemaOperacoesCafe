@@ -1406,6 +1406,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
               <strong aria-live="polite">{loadingPeriod ? "Calculando..." : formatCurrencyFromCents(visibleFinalCents)}</strong>
+              {!loadingPeriod && visibleFinalCents < 0 ? <small>Saldo a favor do cliente: ao emitir, vira crédito na conta-corrente e desconta na próxima cobrança.</small> : null}
               {!detail && clientPeriodOperations.length > 0 && hasPendingAdjustments ? <small>Notas lancadas no periodo + CT-e e acrescimos - descontos - adiantamentos.</small> : null}
               {!detail && clientPeriodOperations.length > 0 && !hasPendingAdjustments ? <small>Soma das notas lancadas no periodo, incluindo rascunhos.</small> : null}
               {!detail ? <small>Somente notas selecionadas, com os ajustes informados.</small> : null}

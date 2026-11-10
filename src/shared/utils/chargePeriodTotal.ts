@@ -13,6 +13,7 @@ export function sumUnbilledPeriodNotes(operations: PeriodOperation[], start: str
   }, 0);
 }
 
+// Pode dar negativo: o excedente vira credito do cliente para a proxima cobranca.
 export function adjustedChargeTotal(base: number, surcharge: number, discount: number, advance: number): number {
-  return Math.max(0, base + surcharge - discount - advance);
+  return base + surcharge - discount - advance;
 }

@@ -143,7 +143,7 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   y -= infoHeight + 14;
   const chargeCount = 1;
   const totalOpenCents = detail.charge.openAmountCents;
-  drawSectionTitle(page, detail.charge.openAmountCents > 0 ? "Notas em aberto desta cobranca" : "Notas desta cobranca (pagas)", margin, y, bold, ink, green);
+  drawSectionTitle(page, detail.charge.openAmountCents > 0 ? "Notas em aberto desta cobranca" : detail.charge.finalAmountCents < 0 ? "Notas desta cobranca" : "Notas desta cobranca (pagas)", margin, y, bold, ink, green);
   y -= 16;
   const sections = summaryImageSections({ ...input, relatedOpenChargeDetails: [] });
   const columns = [
@@ -527,8 +527,11 @@ function drawTotalsBox(
     drawRightText(page, `R$ ${formatSignedCents(amount)}`, x + width - 102, rowY, 90, style.font, 7.2, style.ink);
   });
   page.drawLine({ start: { x: x + 10, y: topY - 88 }, end: { x: x + width - 10, y: topY - 88 }, thickness: 0.55, color: style.border });
-  page.drawText(combined && combined.chargeCount > 1 ? "Total aberto geral" : "Total em aberto", { x: x + 10, y: topY - 103, size: 7.4, font: style.bold, color: style.ink });
-  drawRightText(page, `R$ ${formatCents(openAmountCents)}`, x + width - 124, topY - 104, 112, style.bold, 12, style.green);
+  // Cobranca negativa: mostra o saldo a favor do cliente (vira credito na proxima).
+  const negative = !(combined && combined.chargeCount > 1) && charge.finalAmountCents < 0;
+  page.drawText(combined && combined.chargeCount > 1 ? "Total aberto geral" : negative ? "Saldo a favor do cliente" : "Total em aberto", { x: x + 10, y: topY - 103, size: 7.4, font: style.bold, color: style.ink });
+  drawRightText(page, `R$ ${negative ? formatSignedCents(charge.finalAmountCents) : formatCents(openAmountCents)}`, x + width - 124, topY - 104, 112, style.bold, 12, style.green);
+  if (negative) page.drawText("Desconta na proxima cobranca", { x: x + 10, y: topY - 114, size: 6.2, font: style.font, color: style.muted });
 }
 
 async function embedLogo(doc: PDFDocument, organization: Organization): Promise<{ image: Awaited<ReturnType<PDFDocument["embedPng"]>>; width: number; height: number } | null> {
@@ -799,9 +802,9 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
   ${emptyRows}
 
   <rect x="${innerX}" y="${totalBoxY}" width="${innerWidth}" height="58" rx="8" fill="#edf7ed" stroke="${accent}"/>
-  <text x="52" y="${totalBoxY + 21}" class="label">${chargeCount > 1 ? "Valor total em aberto" : charge.paidAmountCents > 0 ? "Valor em aberto" : "Valor final a cobrar"}</text>
+  <text x="52" y="${totalBoxY + 21}" class="label">${chargeCount > 1 ? "Valor total em aberto" : charge.finalAmountCents < 0 ? "Saldo a favor do cliente (desconta na proxima cobranca)" : charge.paidAmountCents > 0 ? "Valor em aberto" : "Valor final a cobrar"}</text>
   ${chargeCount > 1 ? `<text x="52" y="${totalBoxY + 42}" class="muted">Inclui a cobranca atual e outras cobrancas abertas do mesmo cliente no periodo.</text>` : charge.paidAmountCents > 0 ? `<text x="52" y="${totalBoxY + 42}" class="muted">Pago: R$ ${escapeXml(formatCents(charge.paidAmountCents))} de R$ ${escapeXml(formatCents(charge.finalAmountCents))}</text>` : ""}
-  <text x="${rightX}" y="${totalBoxY + 35}" class="value right">R$ ${escapeXml(formatCents(totalOpenCents))}</text>
+  <text x="${rightX}" y="${totalBoxY + 35}" class="value right">R$ ${escapeXml(chargeCount === 1 && charge.finalAmountCents < 0 ? formatSignedCents(charge.finalAmountCents) : formatCents(totalOpenCents))}</text>
   ${graonexSvgFooter(width, height - 15)}
 </svg>`;
   return svg;
