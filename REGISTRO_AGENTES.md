@@ -105,6 +105,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedido: a próxima parte da reorganização visual.
+- Feito (`bb8e94f`, só no site):
+  - `ensureSearchPicker`: `.vulpe-search-actions` vira select + "Buscar notas emitidas/recebidas", que clica no botão original escondido. A escolha fica em `localStorage` "site-vulpe-search-choice".
+  - O menu "⋯" também vale para duas ações quando a segunda é de perigo. Regras por saca caiu de 13.754 para 8.791 px.
+  - `ensureDesktopOnlyHidden` esconde Backups, Criar backup, Restaurar, Retenção, Diretórios e Perfil da instalação, nas Configurações e no menu.
+  - `sitePage`: `DEFAULT_CLOSED` (warehouse-stock: "Ajustar estoque manualmente") e reconhece `.warehouse-panel__heading`.
+  - `.charge-context-note` fica numa linha.
+- Testado no site local: a busca da Villa ES pelo seletor carregou 27 NF-e, sem gravar; mais typecheck, eslint, vitest e build. Publicado no Pages às 17:43.
+
+### 2026-11-10 - Claude
 - Pedido: aplicar as melhorias visuais sugeridas na varredura ("do jeito que você achar melhor").
 - Feito (`3e4161d`), só no site (`web/siteLayout.ts`, `web/site-layout.css`, `web/siteEnhancer.ts`), mais um ajuste em `ClientLedgerPage.tsx` (app e site):
   - Topo: some o brandline no computador. O nome do usuário vira o menu Trocar senha / Bloquear / Sair (`html.site-user-open`).
