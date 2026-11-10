@@ -105,6 +105,17 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedido: lançar as entradas antigas da Grão.
+- Situação:
+  - O coletor da Grão quase não traz notas de fornecedor: só envia a pasta das emitidas, e na inbox há 5 da SP de out/2025. Para essas, precisa mudar a pasta do coletor no PC da Grão (pendente, o Gabriel vai ver se lá usa Vulpe).
+  - As notas de entrada que a própria Grão emite (tpNF=0, compra de produtor CFOP 1101/1102/2101/2102) estão na inbox.
+- Feito: `tmp/importar-entradas-grao.mts --execute` criou o fornecedor "ENTRADAS NOTAS" da Grão (76e34474…) e lançou MG 256 e SP 3 como PURCHASE/INBOUND, sem erro. Cópia antes: `database/backup-antes-entradas-grao-2026-11-10`.
+- Achado: 9 notas tpNF=0 da Grão MG já estavam lançadas como SALE/OUTBOUND.
+  - NF 5679 e 5763: compras de produtor no ARAPONGA.
+  - NF 6808, 6810, 6811, 6818, 6821, 6860 e 6867 (set/2026): no THADEU NOTAS, para RANCHEIRO, MASSIMO ZANETTI, AROMA e GRAN CAFE, ≈3.280 sacas, provável devolução.
+  - Causa: com o emitente próprio, a importação deduz venda quando a escolha de compra não é informada. Correção aguardando o Gabriel.
+
+### 2026-11-10 - Claude
 - Pedido: lançar também ago/2026 da Grão no THADEU NOTAS.
 - O Gabriel enviou o período 01–31/08 no coletor da Grão e fez a busca de MG e SP. Os furos grandes de agosto sumiram da collector-inbox.
 - Feito: `PERIOD_END=2026-08-31 tmp/importar-thadeu-grao.mts --execute` (o script agora aceita PERIOD_END). Lançadas MG 212 e SP 10, sem erro. Cópia antes: `database/backup-antes-thadeu-agosto-2026-11-10`.
