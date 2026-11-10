@@ -672,6 +672,12 @@ html.site .company-switcher {
   position: relative;
 }
 
+/* O topo precisa ficar acima da barra "Nesta pagina" (z-index 40): senao o
+   menu de empresas abre por baixo dela e o comeco da lista some. */
+html.site .app-topbar {
+  z-index: 45 !important;
+}
+
 html.site button.company-switcher__current {
   display: flex !important;
   align-items: center;
