@@ -226,6 +226,7 @@ const IPC_CHANNELS = {
   resolvePurchaseRateRule: "purchaseRateRules:resolve",
   listFiscalDocuments: "fiscalDocuments:list",
   getFiscalDocument: "fiscalDocuments:get",
+  listFiscalDocumentServiceSummaries: "fiscalDocuments:listServiceSummaries",
   addFiscalDocumentReturn: "fiscalDocuments:addReturn",
   deleteFiscalDocumentReturn: "fiscalDocuments:deleteReturn",
   createFiscalDocument: "fiscalDocuments:create",
@@ -650,6 +651,8 @@ export interface OperationsCafeApi {
   resolvePurchaseRateRule: (input: unknown) => Promise<ResolveRateResult>;
   listFiscalDocuments: (filters?: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; includeThirdParty?: boolean }) => Promise<FiscalDocument[]>;
   getFiscalDocument: (id: string) => Promise<FiscalDocumentDetail>;
+  // Sacas, tarifa e servico de varias notas numa chamada so (lista de notas).
+  listFiscalDocumentServiceSummaries: (ids: string[]) => Promise<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>;
   addFiscalDocumentReturn: (input: { fiscalDocumentId: string; returnDate: string; inputUnit: "SACKS" | "KG"; inputQuantity: string; reason: string }) => Promise<FiscalDocumentDetail>;
   deleteFiscalDocumentReturn: (id: string) => Promise<FiscalDocumentDetail>;
   createFiscalDocument: (input: unknown) => Promise<FiscalDocumentDetail>;
@@ -1063,6 +1066,7 @@ const api: OperationsCafeApi = {
   resolvePurchaseRateRule: (input) => ipcRenderer.invoke(IPC_CHANNELS.resolvePurchaseRateRule, input) as Promise<ResolveRateResult>,
   listFiscalDocuments: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listFiscalDocuments, filters) as Promise<FiscalDocument[]>,
   getFiscalDocument: (id) => ipcRenderer.invoke(IPC_CHANNELS.getFiscalDocument, id) as Promise<FiscalDocumentDetail>,
+  listFiscalDocumentServiceSummaries: (ids) => ipcRenderer.invoke(IPC_CHANNELS.listFiscalDocumentServiceSummaries, ids) as Promise<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>,
   addFiscalDocumentReturn: (input) => ipcRenderer.invoke(IPC_CHANNELS.addFiscalDocumentReturn, input) as Promise<FiscalDocumentDetail>,
   deleteFiscalDocumentReturn: (id) => ipcRenderer.invoke(IPC_CHANNELS.deleteFiscalDocumentReturn, id) as Promise<FiscalDocumentDetail>,
   createFiscalDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.createFiscalDocument, input) as Promise<FiscalDocumentDetail>,
@@ -1347,10 +1351,19 @@ const api: OperationsCafeApi = {
 // funcao de cancelamento na hora, nao uma Promise, entao passam direto.
 export interface OperationsCafeLoadingApi {
   subscribe: (listener: (pendingCount: number) => void) => () => void;
+  // Consultas (listar, buscar, ver) em andamento: nao bloqueiam a tela, so
+  // acendem uma barra fina no topo. No site cada consulta atravessa a internet;
+  // travar a tela inteira a cada leitura deixava a navegacao lenta.
+  subscribeReads?: (listener: (pendingCount: number) => void) => () => void;
 }
 
 let pendingCallCount = 0;
+let pendingReadCount = 0;
 const loadingListeners = new Set<(pendingCount: number) => void>();
+const readListeners = new Set<(pendingCount: number) => void>();
+// Metodos que so leem dados. O overlay que bloqueia a tela fica para as acoes
+// que gravam (salvar, excluir, importar, emitir...), onde clique duplo duplicaria.
+const READ_ONLY_METHOD = /^(list|get|find|preview|calculate|suggest|search|lookup|compare)/;
 // Consultas periodicas atualizam indicadores em segundo plano. Inclui-las no
 // contador global cobre a janela com o overlay a cada ciclo e impede o uso do
 // Dashboard enquanto o banco responde.
@@ -1358,6 +1371,7 @@ const nonBlockingLoadingMethods = new Set(["getDiagnostics", "getBillingSummary"
 
 function notifyLoadingListeners(): void {
   for (const listener of loadingListeners) listener(pendingCallCount);
+  for (const listener of readListeners) listener(pendingReadCount);
 }
 
 function withLoadingTracking(target: OperationsCafeApi): OperationsCafeApi {
@@ -1372,8 +1386,16 @@ function withLoadingTracking(target: OperationsCafeApi): OperationsCafeApi {
       wrapped[key] = (...args: unknown[]) => (value as (...fnArgs: unknown[]) => unknown)(...args);
       continue;
     }
+    const readOnly = READ_ONLY_METHOD.test(key);
     wrapped[key] = (...args: unknown[]) => {
       const result = (value as (...fnArgs: unknown[]) => unknown)(...args);
+      if (result instanceof Promise && readOnly) {
+        pendingReadCount += 1;
+        notifyLoadingListeners();
+        const done = () => { pendingReadCount = Math.max(0, pendingReadCount - 1); notifyLoadingListeners(); };
+        void result.then(done, done);
+        return result;
+      }
       if (result instanceof Promise) {
         pendingCallCount += 1;
         notifyLoadingListeners();
@@ -1400,6 +1422,11 @@ const loadingApi: OperationsCafeLoadingApi = {
     loadingListeners.add(listener);
     listener(pendingCallCount);
     return () => loadingListeners.delete(listener);
+  },
+  subscribeReads: (listener) => {
+    readListeners.add(listener);
+    listener(pendingReadCount);
+    return () => readListeners.delete(listener);
   }
 };
 

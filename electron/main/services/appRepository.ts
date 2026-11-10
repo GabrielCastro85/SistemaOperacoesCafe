@@ -1663,6 +1663,34 @@ export class AppRepository {
     return { document, items, operations, events, mergeHistory, rateHistory, returns };
   }
 
+  // Mesmo calculo que a lista de notas fazia abrindo nota por nota
+  // (getFiscalDocument), mas numa consulta so. No site cada abertura era uma
+  // ida ao servidor: 2 mil notas = 2 mil chamadas.
+  listFiscalDocumentServiceSummaries(ids: string[]): Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }> {
+    const result: Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }> = {};
+    if (!ids.length) return result;
+    const documents = this.db.prepare("SELECT id, organization_id AS organizationId FROM fiscal_documents WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify(ids)) as Array<{ id: string; organizationId: string }>;
+    const allowed = new Set(documents.filter((document) => this.isOrganizationAllowed(document.organizationId)).map((document) => document.id));
+    const operations = (this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id IN (SELECT value FROM json_each(?)) ORDER BY created_at").all(JSON.stringify([...allowed])) as DbRecord[]).map(mapOperation);
+    const byDocument = new Map<string, Operation[]>();
+    for (const operation of operations) {
+      const list = byDocument.get(operation.fiscalDocumentId) ?? [];
+      list.push(operation);
+      byDocument.set(operation.fiscalDocumentId, list);
+    }
+    for (const id of allowed) {
+      const documentOperations = byDocument.get(id) ?? [];
+      const rateValues = Array.from(new Set(documentOperations.map((operation) => operation.appliedRateValueCents)));
+      result[id] = {
+        sacks: documentOperations.map((operation) => operation.quantitySacks).reduce((total, value) => String(Number(total) + Number(value)), "0"),
+        rateCents: rateValues.length === 1 ? rateValues[0] : null,
+        serviceCents: documentOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0),
+        missingRate: documentOperations.some((operation) => operation.appliedRateValueCents === 0)
+      };
+    }
+    return result;
+  }
+
   addFiscalDocumentReturn(input: unknown): FiscalDocumentDetail {
     const data = fiscalDocumentReturnInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);

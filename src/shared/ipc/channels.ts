@@ -132,6 +132,7 @@ export const IPC_CHANNELS = {
   resolvePurchaseRateRule: "purchaseRateRules:resolve",
   listFiscalDocuments: "fiscalDocuments:list",
   getFiscalDocument: "fiscalDocuments:get",
+  listFiscalDocumentServiceSummaries: "fiscalDocuments:listServiceSummaries",
   addFiscalDocumentReturn: "fiscalDocuments:addReturn",
   deleteFiscalDocumentReturn: "fiscalDocuments:deleteReturn",
   createFiscalDocument: "fiscalDocuments:create",
