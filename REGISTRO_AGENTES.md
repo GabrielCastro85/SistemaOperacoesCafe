@@ -109,7 +109,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Situação:
   - O coletor da Grão quase não traz notas de fornecedor: só envia a pasta das emitidas, e na inbox há 5 da SP de out/2025. Para essas, precisa mudar a pasta do coletor no PC da Grão (pendente, o Gabriel vai ver se lá usa Vulpe).
   - As notas de entrada que a própria Grão emite (tpNF=0, compra de produtor CFOP 1101/1102/2101/2102) estão na inbox.
-- Feito: `tmp/importar-entradas-grao.mts --execute` criou o fornecedor "ENTRADAS NOTAS" da Grão (76e34474…) e lançou MG 256 e SP 3 como PURCHASE/INBOUND, sem erro. Cópia antes: `database/backup-antes-entradas-grao-2026-11-10`.
+- Feito: `tmp/importar-entradas-grao.mts --execute` criou o fornecedor "ENTRADAS NOTAS" da Grão (76e34474…) e lançou MG 256 e SP 3 como PURCHASE, sem erro. A importação gravou direction OUTBOUND (o emitente é a própria Grão), e eu acertei as 259 para INBOUND por UPDATE, com o programa fechado. Cópia antes: `database/backup-antes-entradas-grao-2026-11-10`.
 - Achado: 9 notas tpNF=0 da Grão MG já estavam lançadas como SALE/OUTBOUND.
   - NF 5679 e 5763: compras de produtor no ARAPONGA.
   - NF 6808, 6810, 6811, 6818, 6821, 6860 e 6867 (set/2026): no THADEU NOTAS, para RANCHEIRO, MASSIMO ZANETTI, AROMA e GRAN CAFE, ≈3.280 sacas, provável devolução.
