@@ -1009,24 +1009,22 @@ html.site :is(.admin-block, .ui-page-section) > :is(.actions, .toolbar, .inline-
   box-shadow: 0 -6px 16px rgb(28 26 23 / 5%);
 }
 
-/* ---------- Tabelas: cabecalho fixo, total e acoes da linha ---------- */
+/* ---------- Tabelas: cabecalho, total e acoes da linha ---------- */
+/* Cabecalho e total NAO ficam presos na rolagem: presos, cobriam as linhas
+   (principalmente em tabelas com rolagem propria dentro da tela). */
 html.site { --site-sticky-top: 0px; }
 html.site.site-has-section-nav { --site-sticky-top: 44px; }
 
 html.site .table > .table-head,
 html.site .content-section table thead th {
-  position: sticky !important;
-  top: var(--site-sticky-top) !important;
-  z-index: 4;
+  position: static !important;
   background: var(--site-surface-2) !important;
   box-shadow: 0 1px 0 var(--site-line);
 }
 
 html.site .table > .site-table-total,
 html.site table tfoot.site-table-total td {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
+  position: static;
   border-top: 2px solid var(--site-line-strong) !important;
   background: color-mix(in srgb, var(--site-gold) 10%, #fff) !important;
   color: var(--site-ink) !important;
