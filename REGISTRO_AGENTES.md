@@ -114,7 +114,8 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Resultado na base deste PC (jan–out/2026), vendas com XML e não lançadas: Grão MG 969 (≈775 de julho e ≈190 de agosto), Grão SP 32, Villa MG 99. No site o motor só tem os XMLs que já baixou, então lá aparecem mais números "sem XML".
 - Pendente: lançar jul/2026 da Grão no THADEU (os XMLs já estão na collector-inbox) depois que terminar a gravação das entradas da Vulpe.
 
-### 2026-11-10 - Claude (em andamento)
+### 2026-11-10 - Claude
+- Resultado: entradas lançadas em ENTRADAS NOTAS (fornecedor e4dc1f05…), MG 1.030 e ES 525, sem erro. Depois, jul/2026 da Grão no THADEU NOTAS: MG 762 e SP 19, sem erro (cópia antes: database/backup-antes-thadeu-julho-2026-11-10). Falta o Gabriel abrir o programa para sincronizar e, depois, conferir access_key duplicada.
 - Pedido: lançar as notas de ENTRADA antigas da Villa MG/ES. Daqui para frente o Gabriel lança à mão.
 - Onde estão: `C:\Vulpe\XML Terceiros\VILLA_COFFEE_MG|VILLA_COFFEE\AAAAMM\Down` (`-nfe.xml` completos; `-resNFe.xml` são só resumo, sem manifestação). Cancelamentos ficam em `AAAAMM\Evento`.
   - O programa ("Recebidas por Villa MG") procura em `C:\Vulpe\NFe`, por isso não acha.
