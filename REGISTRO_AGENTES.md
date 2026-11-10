@@ -105,6 +105,21 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedido: aplicar as melhorias visuais sugeridas na varredura ("do jeito que você achar melhor").
+- Feito (`3e4161d`), só no site (`web/siteLayout.ts`, `web/site-layout.css`, `web/siteEnhancer.ts`), mais um ajuste em `ClientLedgerPage.tsx` (app e site):
+  - Topo: some o brandline no computador. O nome do usuário vira o menu Trocar senha / Bloquear / Sair (`html.site-user-open`).
+  - Menu lateral: grupos recolhíveis, guardados em `localStorage` "site-nav-collapsed-groups". O rodapé fica sem Backup/Versão.
+  - Notas e operações:
+    - Saem o `.ui-stepper` do topo e o `.notes-direction-hero`; as abas ficam em destaque.
+    - A busca deixa de ser caixa dentro de caixa (`:has(.collector-monitor)`).
+    - O monitor do coletor fica compacto, com o botão "Detalhes" (`site-monitor-open`).
+  - Resumo: `data-site-card` esconde fluxo e estrutura e reordena (sacas-periodo, gráfico, status). Os cartões do topo ganham `data-site-link` e viram clicáveis.
+  - Cobranças: "Buscar operações" passa a ser primary. "Dados para pagamento" fica numa linha (`data-site-bank`). A coluna da direita fica sticky. `.charges-column` passa a minmax(0,1fr), o que acabou com a rolagem lateral de 10 px.
+  - Linhas com 3 ou mais ações: só a primeira aparece, mais o menu "⋯" (`site-row-menu`/`site-row-open`), em `.row-actions`, `td .actions` e `.table-row > .actions`.
+  - `.sub-tabs` com visual de abas. A Conta-corrente sem cliente mostra o EmptyState "Escolha um cliente".
+- Testado: no site local (1600×900 e celular), typecheck, eslint, vitest (365) e build do site. Publicado no Pages às 17:28.
+
+### 2026-11-10 - Claude
 - Pedido: uma varredura visual do site com sugestões de melhoria. Exemplo do Gabriel: o menu de empresas do topo ficava por cima da empresa.
 - Feito (`0675603`): `html.site .app-topbar { z-index: 45 }`. O topo é sticky com z 10, a barra "Nesta página" é fixed com z 40, e o menu de empresas abria por baixo dela.
 - Varredura feita no site local (Resumo, Notas e operações, Cobranças, Clientes, Confirmações, Conta-corrente). A lista de sugestões foi entregue ao Gabriel na conversa; nada implementado além do z-index.
