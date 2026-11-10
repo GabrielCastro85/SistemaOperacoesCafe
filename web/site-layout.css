@@ -734,3 +734,66 @@ html.site .site-menu-toggle,
     grid-template-columns: 1fr !important;
   }
 }
+
+/* Opcoes que so existem no programa do computador (backup, restauracao, pastas). */
+html.site .site-desktop-only {
+  display: none !important;
+}
+
+/* Busca de notas: seletor de empresa + "Buscar notas" (os botoes originais ficam escondidos). */
+html.site .vulpe-search-actions.site-search-bar > button:not(.site-search-go) {
+  display: none !important;
+}
+
+html.site .site-search-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+html.site .site-search-picker select {
+  min-width: 260px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border: 1px solid var(--site-line-strong);
+  border-radius: var(--site-radius-sm);
+  background: var(--site-surface);
+  font-weight: 600;
+}
+
+html.site .site-search-picker .site-search-go {
+  min-height: 42px !important;
+}
+
+/* "Escopo da cobranca / do acerto": uma linha discreta em vez de um quadro. */
+html.site .charge-context-note {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px !important;
+  margin: 0 0 12px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.site .charge-context-note > span {
+  color: var(--site-muted);
+  font-size: 0.8rem;
+}
+
+html.site .charge-context-note > span::after {
+  content: ":";
+}
+
+html.site .charge-context-note > strong {
+  font-size: 0.9rem;
+}
+
+html.site .charge-context-note > small {
+  flex-basis: 100%;
+  color: var(--site-muted);
+  font-size: 0.78rem;
+}

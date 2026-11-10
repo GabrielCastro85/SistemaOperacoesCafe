@@ -5,7 +5,7 @@
 //  - (no CSS) botoes principais presos no rodape da secao enquanto se rola.
 // A barra fica fora da arvore do React (anexada ao body) para nao interferir nas telas.
 
-const HEADINGS = ".content-section .admin-block > h3, .content-section .ui-page-section > header";
+const HEADINGS = ".content-section .admin-block > h3, .content-section .ui-page-section > header, .content-section .warehouse-panel > .warehouse-panel__heading";
 // Atalhos do indice: qualquer titulo de secao da tela (h2/h3), fora de janelas, tabelas e resumos.
 const ANCHORS = ".content-section :is(h2, h3)";
 const ANCHOR_EXCLUDE = ".ui-page-header, .ui-dialog, .ui-drawer, .partner-modal, table, .table, .cards, .metrics-grid, .site-section-nav";
@@ -18,8 +18,16 @@ function routeKey(): string {
   return (location.hash || "#/").split("?")[0];
 }
 
+// Secoes que comecam recolhidas (correcoes raras que empurravam o principal
+// para baixo). Depois que o usuario abre ou fecha, vale a escolha dele.
+const DEFAULT_CLOSED: Record<string, string[]> = {
+  "#/warehouse-stock": ["Ajustar estoque manualmente"]
+};
+
 function readClosed(): Record<string, string[]> {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, string[]>; } catch { return {}; }
+  let stored: Record<string, string[]> = {};
+  try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, string[]>; } catch { stored = {}; }
+  return { ...DEFAULT_CLOSED, ...stored };
 }
 
 function writeClosed(value: Record<string, string[]>): void {
@@ -27,7 +35,7 @@ function writeClosed(value: Record<string, string[]>): void {
 }
 
 function headingTitle(heading: HTMLElement): string {
-  const target = heading.matches("header") ? heading.querySelector("h2") : heading;
+  const target = heading.matches("header, .warehouse-panel__heading") ? heading.querySelector("h2") : heading;
   return (target?.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 

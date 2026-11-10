@@ -183,11 +183,17 @@ function ensureDashboard(): void {
 // Linhas com 3 ou mais botoes (ex.: Editar / Arquivar / Excluir) quebravam em
 // duas linhas e so cabiam 3 clientes na tela. Fica o primeiro botao e um "⋯"
 // que abre os demais. Os botoes continuam os mesmos do app (so ficam escondidos).
+// Com dois botoes, so quando o segundo e de excluir/cancelar: fica Editar/Abrir
+// a vista e o perigoso dentro do "⋯" (evita clique sem querer e linha alta).
+const isDangerButton = (button: HTMLButtonElement): boolean =>
+  button.classList.contains("danger") || button.classList.contains("danger-action") || button.dataset.tone === "danger";
+
 function ensureRowMenus(): void {
   document.querySelectorAll<HTMLElement>(".content-section :is(.row-actions, td .actions, .table-row > .actions)").forEach((cell) => {
     const buttons = [...cell.querySelectorAll<HTMLButtonElement>(":scope > button, :scope > span > button")].filter((button) => !button.classList.contains("site-row-more"));
     const existing = cell.querySelector<HTMLButtonElement>(":scope > .site-row-more");
-    if (buttons.length < 3) { existing?.remove(); cell.classList.remove("site-row-menu"); return; }
+    const collapse = buttons.length >= 3 || (buttons.length === 2 && !isDangerButton(buttons[0]) && isDangerButton(buttons[1]));
+    if (!collapse) { existing?.remove(); cell.classList.remove("site-row-menu"); return; }
     cell.classList.add("site-row-menu");
     if (existing) return;
     const more = document.createElement("button");
@@ -206,6 +212,69 @@ function ensureRowMenus(): void {
   });
 }
 
+// ---------- Busca de notas: seletor de empresa + um botao ----------
+// Os 6 botoes "Emitidas por ..." / "Recebidas por ..." viram um seletor e o
+// botao "Buscar notas", que aciona o botao original escolhido (escondido).
+const SEARCH_CHOICE_KEY = "site-vulpe-search-choice";
+
+function ensureSearchPicker(): void {
+  document.querySelectorAll<HTMLElement>(".vulpe-search-actions").forEach((bar) => {
+    const originals = [...bar.querySelectorAll<HTMLButtonElement>(":scope > button:not(.site-search-go)")];
+    if (originals.length < 2) return;
+    let picker = bar.querySelector<HTMLElement>(":scope > .site-search-picker");
+    const labels = originals.map((button) => (button.textContent ?? "").replace(/\s+/g, " ").trim());
+    if (picker && picker.dataset.labels === labels.join("|")) {
+      const go = picker.querySelector<HTMLButtonElement>("button");
+      if (go) go.disabled = originals.some((button) => button.disabled);
+      return;
+    }
+    picker?.remove();
+    bar.classList.add("site-search-bar");
+    picker = document.createElement("div");
+    picker.className = "site-search-picker";
+    picker.dataset.labels = labels.join("|");
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", "Empresa da busca");
+    // Mostra so o nome da empresa: "Emitidas por Villa MG" -> "Villa MG".
+    labels.forEach((label, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = label.replace(/^(emitidas|recebidas) por\s+/i, "");
+      select.appendChild(option);
+    });
+    let remembered = "";
+    try { remembered = localStorage.getItem(SEARCH_CHOICE_KEY) ?? ""; } catch { remembered = ""; }
+    const rememberedIndex = labels.findIndex((label) => label.replace(/^(emitidas|recebidas) por\s+/i, "") === remembered);
+    if (rememberedIndex >= 0) select.value = String(rememberedIndex);
+    select.addEventListener("change", () => {
+      try { localStorage.setItem(SEARCH_CHOICE_KEY, select.selectedOptions[0]?.textContent ?? ""); } catch { /* sem armazenamento */ }
+    });
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "primary site-search-go";
+    go.textContent = /recebidas/i.test(labels[0]) ? "Buscar notas recebidas" : "Buscar notas emitidas";
+    go.addEventListener("click", () => {
+      const current = [...bar.querySelectorAll<HTMLButtonElement>(":scope > button:not(.site-search-go)")];
+      current[Number(select.value)]?.click();
+    });
+    picker.append(select, go);
+    bar.prepend(picker);
+  });
+}
+
+// ---------- Opcoes que so existem no programa do computador ----------
+// Backup, restauracao, pastas e perfil da instalacao sao do PC; no site davam
+// "funcao nao disponivel". Saem das Configuracoes e do menu de administracao.
+const DESKTOP_ONLY = /^(backups|criar backup|restaurar|reten[cç][aã]o|diret[oó]rios|perfil da instala[cç][aã]o)$/i;
+
+function ensureDesktopOnlyHidden(): void {
+  document.querySelectorAll<HTMLButtonElement>(".content-section .cards button:not([data-site-checked]), .app-sidebar__nav button:not([data-site-checked])").forEach((button) => {
+    button.dataset.siteChecked = "1";
+    const label = (button.querySelector(".nav-label")?.textContent ?? button.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (DESKTOP_ONLY.test(label)) button.classList.add("site-desktop-only");
+  });
+}
+
 // ---------- Cobrancas ----------
 // "Dados para pagamento" vira uma linha so (titulo + botao), sem o texto longo no meio do fluxo.
 function ensureChargesLayout(): void {
@@ -215,7 +284,7 @@ function ensureChargesLayout(): void {
 }
 
 export function startSiteLayout(): void {
-  const ensure = () => { ensureAuthBrand(); ensureMenuButton(); ensureBackdrop(); ensureUserMenu(); ensureNavGroups(); ensureMonitorToggle(); ensureDashboard(); ensureRowMenus(); ensureChargesLayout(); };
+  const ensure = () => { ensureAuthBrand(); ensureMenuButton(); ensureBackdrop(); ensureUserMenu(); ensureNavGroups(); ensureMonitorToggle(); ensureDashboard(); ensureRowMenus(); ensureChargesLayout(); ensureDesktopOnlyHidden(); ensureSearchPicker(); };
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;
     const groupTitle = target?.closest<HTMLElement>(".app-sidebar__nav .nav-group-title[data-site-group]");
