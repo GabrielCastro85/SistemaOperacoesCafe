@@ -3438,7 +3438,9 @@ export class AppRepository {
   // excluida por aqui -- so' cancelClientCharge, que preserva o rastro.
   deleteClientCharge(id: string): void {
     const detail = this.getClientCharge(id);
-    if (detail.charge.status === "PAID" || detail.charge.paidAmountCents > 0) throw new Error("Cobranca com pagamento registrado nao pode ser excluida.");
+    // Cobranca de valor zero fica "PAID" sozinha, sem pagamento nenhum: essa pode ser excluida.
+    const hasPayments = detail.charge.paidAmountCents > 0 || detail.payments.some((allocation) => !allocation.cancelledAt && allocation.amountCents > 0);
+    if (hasPayments) throw new Error("Cobranca com pagamento registrado nao pode ser excluida.");
     const documentPaths = detail.documents.flatMap((document) => [document.pdfFilePath, document.excelFilePath, document.imageFilePath]).filter((path): path is string => Boolean(path));
     const now = new Date().toISOString();
     const trx = this.db.transaction(() => {

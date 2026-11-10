@@ -619,7 +619,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
   function deleteChargeBlockedReason(charge: ClientCharge): string | null {
     if (charge.status === "CANCELLED") return "Essa cobranca ja foi cancelada.";
-    if (charge.status === "PAID" || charge.paidAmountCents > 0) return "Cobranca com pagamento registrado nao pode ser excluida diretamente.";
+    // Cobranca de valor zero fica "Paga" sozinha; sem valor recebido, pode ser excluida.
+    if (charge.paidAmountCents > 0) return "Cobranca com pagamento registrado nao pode ser excluida diretamente.";
     return null;
   }
 
