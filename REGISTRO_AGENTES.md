@@ -104,6 +104,26 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-10 - Claude
+- Pedido: deixar a comunicação do site com o servidor mais rápida. O círculo de carregamento travava a tela a cada troca de página, principalmente em Notas e operações.
+- Medição no site (Villa MG, Notas e operações): 2.060 chamadas, 45 s até a última resposta e 22 s com a tela bloqueada.
+  - 1.948 chamadas eram `fiscalDocuments:get` (a lista abria nota por nota para somar sacas e serviço).
+  - 90 chamadas eram `partnerLegalEntities:list` (uma por parceiro, padrão repetido em 9 telas).
+  - A lista de notas tem 8,4 MB e ia sem compressão. Cada ida e volta custa ~270 ms (borda do Railway em gru1, servidor fora do Brasil).
+- Feito:
+  - `824f3ce` (servidor/app):
+    - `POST /v1/app/rpc-batch` (até 200 consultas, em ordem).
+    - gzip nas respostas acima de 4 KB (`sendJson` em `appEngineRoutes.ts`).
+    - Canal `fiscalDocuments:listServiceSummaries` (`listFiscalDocumentServiceSummaries` no repositório).
+    - Preload: métodos list/get/find/preview/calculate/suggest/search/lookup/compare não acendem o overlay e contam em `subscribeReads`.
+  - `7554e4c` (telas):
+    - `web/electronRenderer.ts` junta as consultas disparadas no mesmo instante (espera 8 ms, até 150 por pedido). Volta a um por um se a rota der 404.
+    - `OperationsPage` usa o resumo.
+    - `ReadingBar` (barra fina no topo, `.ui-reading-bar`) em `providers.tsx`.
+- Testado: typecheck (app, servidor e motor), eslint e vitest (365). No site local, Notas e operações deu 199 consultas em 8 pedidos e 0 ms de overlay. gzip conferido com curl: 8,4 MB viraram 1,8 MB.
+- Publicado: servidor primeiro (Railway `824f3ce` conferido), depois o site.
+- Observação: cada publicação do servidor derruba as sessões do site, que ficam só na memória do motor, e todos precisam entrar de novo. Vale guardar as sessões no disco.
+
 ### 2026-11-09 - Claude
 - Pedido: na busca de notas, poder ignorar as remessas simbólicas.
 - Feito (commit seguinte a `c243726`, app e site), em `OperationsPage.tsx`:
