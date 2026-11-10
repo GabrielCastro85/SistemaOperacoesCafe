@@ -1725,6 +1725,13 @@ export class AppRepository {
         const folder = pending.pop() as string;
         for (const entry of readdirSync(folder, { withFileTypes: true })) {
           if (entry.isDirectory()) { pending.push(joinPath(folder, entry.name)); continue; }
+          if (/-eve\.xml$/i.test(entry.name) && !/-ped-eve\.xml$/i.test(entry.name)) {
+            // Cancelamentos da Villa ficam so na pasta da Vulpe (nem sempre no banco).
+            const event = readFileSync(joinPath(folder, entry.name), "utf8");
+            const eventKey = event.match(/<chNFe>(\d{44})</)?.[1];
+            if (eventKey && eventKey.slice(6, 20) === cnpj && /<tpEvento>110111</.test(event) && /<cStat>(135|155)</.test(event)) inboxCanceled.add(eventKey);
+            continue;
+          }
           const key = entry.name.match(/^(\d{44})-nfe\.xml$/i)?.[1];
           if (!key || key.slice(6, 20) !== cnpj) continue;
           const parsed = keyNumber(key);
