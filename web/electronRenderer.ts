@@ -183,6 +183,8 @@ async function postRpc(channel: string, body: string): Promise<EngineResponse> {
 // custa ~0,3 s; 90 consultas separadas viravam quase meio minuto de fila.
 const BATCH_LIMIT = 150;
 const NOT_BATCHED = /^(export|print|open|bytes|reveal)/;
+// Consultas periodicas e leves vao sozinhas, para nao esperar atras de uma consulta pesada do mesmo lote.
+const POLLING_CHANNELS = new Set(["app:getDiagnostics", "app:getUpdateStatus", "xmlFiles:vulpeDevStatus"]);
 let batchSupported = true;
 interface QueuedCall { channel: string; payload: unknown; resolve: (body: EngineResponse) => void; reject: (error: unknown) => void }
 let queued: QueuedCall[] = [];
@@ -190,7 +192,7 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function isBatchable(channel: string): boolean {
   const action = channel.slice(channel.indexOf(":") + 1);
-  return batchSupported && isReadOnly(channel) && !NOT_BATCHED.test(action);
+  return batchSupported && isReadOnly(channel) && !NOT_BATCHED.test(action) && !POLLING_CHANNELS.has(channel);
 }
 
 async function sendBatch(calls: QueuedCall[]): Promise<void> {

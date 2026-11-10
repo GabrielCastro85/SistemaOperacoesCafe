@@ -23,7 +23,7 @@ import {
 import { formatCnpj } from "../../shared/utils/format";
 import { resolveOrganizationLogoSrc } from "../../shared/branding/branding";
 import type { NavigationItem } from "../app/navigation";
-import { CompanySwitcher, stateFlagSrc } from "./CompanySwitcher";
+import { CompanySwitcher, isWebSite, stateFlagSrc } from "./CompanySwitcher";
 import { CENTRAL_DATA_UPDATED_EVENT } from "../hooks/useCentralDataRefresh";
 
 export interface AppLayoutProps {
@@ -133,9 +133,14 @@ export function AppLayout({
 
   useEffect(() => {
     let active = true;
+    // Uma consulta por vez: se a anterior ainda nao voltou (no site ela passa
+    // pela internet e pela fila do servidor), pula este ciclo em vez de empilhar.
+    let inFlight = false;
     const refresh = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || inFlight) return;
+      inFlight = true;
       void window.operationsCafe.getDiagnostics()
+      .finally(() => { inFlight = false; })
       .then((result) => {
         if (!active) return;
         const nextRevision = result.centralSyncRevision ?? 0;
@@ -153,7 +158,8 @@ export function AppLayout({
     refresh();
     // A consulta e' apenas ao estado SQLite local e e' barata. O intervalo
     // curto faz a interface reagir logo depois do ciclo central de 30 s.
-    const timer = window.setInterval(refresh, 5_000);
+    // No site o servidor sincroniza a cada 30 s; perguntar a cada 15 s basta.
+    const timer = window.setInterval(refresh, isWebSite() ? 15_000 : 5_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);

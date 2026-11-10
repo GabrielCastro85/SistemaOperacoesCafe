@@ -66,6 +66,20 @@ export function createEngine(options: { dataDir: string; version: string }) {
   const context = { version: options.version, directories, db };
   const repository = new AppRepository(db, directories);
   const centralSync = new CentralSyncService(db, options.version);
+  // Telas como o Resumo, o Comparativo e o Assistente esperam uma sincronizacao
+  // completa com o central antes de responder. Num PC isso e o certo; aqui o
+  // motor ja sincroniza sozinho a cada 30 s, e essa espera (10-30 s) rodava
+  // dentro da fila unica de chamadas, travando o site de todos. Com uma
+  // sincronizacao bem-sucedida ha menos de 2 min, responde na hora com o que ja
+  // tem e sincroniza em segundo plano; sem isso (motor recem-iniciado), espera.
+  const synchronizeAndWait = centralSync.synchronize.bind(centralSync);
+  let backgroundSync: Promise<void> | null = null;
+  centralSync.synchronize = async (): Promise<void> => {
+    const row = db.prepare("SELECT last_success_at AS at FROM central_sync_state WHERE singleton = 1").get() as { at: string | null } | undefined;
+    const fresh = Boolean(row?.at) && Date.now() - Date.parse(String(row?.at)) < 120_000;
+    if (!fresh) return synchronizeAndWait();
+    backgroundSync ??= synchronizeAndWait().catch(() => undefined).finally(() => { backgroundSync = null; });
+  };
   const auth = new AuthService(db);
   const handlers = new Map<string, Listener>();
   registerIpcHandlers({ handle: (channel: string, listener: Listener) => handlers.set(channel, listener) } as never, context, repository, centralSync, { auth });
