@@ -3083,7 +3083,9 @@ export class AppRepository {
   addChargeAdjustment(input: unknown): ClientChargeDetail {
     const data = clientChargeAdjustmentInputSchema.parse(input);
     const charge = this.getClientCharge(data.clientChargeId).charge;
-    if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status)) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
+    // Cobranca zerada ou negativa fica "PAID" sem ter recebido nada: ainda aceita ajustes.
+    const editableZeroCharge = charge.status === "PAID" && charge.paidAmountCents === 0 && charge.finalAmountCents <= 0;
+    if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status) && !editableZeroCharge) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
     if (data.adjustmentType === "MANUAL_ADJUSTMENT" && !data.reason?.trim()) throw new Error("Ajuste manual exige justificativa.");
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -3098,7 +3100,9 @@ export class AppRepository {
     if (!row) throw new Error("Ajuste nao encontrado.");
     if (row.sourceFiscalDocumentId) throw new Error("O DAE de frete vem da nota fiscal. Libere a nota da cobranca e altere o DAE no cadastro da nota.");
     const charge = this.getClientCharge(row.chargeId).charge;
-    if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status)) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
+    // Cobranca zerada ou negativa fica "PAID" sem ter recebido nada: ainda aceita ajustes.
+    const editableZeroCharge = charge.status === "PAID" && charge.paidAmountCents === 0 && charge.finalAmountCents <= 0;
+    if (!["DRAFT", "PENDING_REVIEW", "ISSUED", "OVERDUE"].includes(charge.status) && !editableZeroCharge) throw new Error("Ajustes bloqueados para cobranca paga, parcial, cancelada ou substituida.");
     this.db.prepare("DELETE FROM client_charge_adjustments WHERE id = ?").run(id);
     this.recalculateClientCharge(row.chargeId);
     return this.getClientCharge(row.chargeId);
@@ -3205,7 +3209,7 @@ export class AppRepository {
       this.db.prepare("UPDATE client_charges SET issue_date = ?, status = 'ISSUED', issued_at = ?, snapshot_json = ?, updated_at = ? WHERE id = ?").run(now.slice(0, 10), now, snapshot, now, id);
       this.db.prepare("UPDATE operations SET billing_status = 'BILLED', updated_at = ? WHERE client_charge_id = ?").run(now, id);
       this.db.prepare("INSERT INTO client_ledger_entries (id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents, entry_date, description, status, available_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'SERVICE_CHARGE', 'INCREASE_RECEIVABLE', ?, ?, ?, 'CONFIRMED', NULL, ?, ?)")
-        .run(randomUUID(), before.charge.organizationId, before.charge.ownLegalEntityId, before.charge.clientPartnerId, id, this.getClientCharge(id).charge.finalAmountCents, now.slice(0, 10), `Cobranca ${chargePeriodLabel(before.charge)}`, now, now);
+        .run(randomUUID(), before.charge.organizationId, before.charge.ownLegalEntityId, before.charge.clientPartnerId, id, Math.max(0, this.getClientCharge(id).charge.finalAmountCents), now.slice(0, 10), `Cobranca ${chargePeriodLabel(before.charge)}`, now, now);
       this.recordChargeStatus(id, before.charge.status, "ISSUED", "Cobranca emitida");
       // Um pagamento pode ter sido registrado enquanto a cobranca ainda era
       // rascunho (comportamento permitido pelas versoes anteriores). Depois de
@@ -3441,6 +3445,7 @@ export class AppRepository {
     // Cobranca de valor zero fica "PAID" sozinha, sem pagamento nenhum: essa pode ser excluida.
     const hasPayments = detail.charge.paidAmountCents > 0 || detail.payments.some((allocation) => !allocation.cancelledAt && allocation.amountCents > 0);
     if (hasPayments) throw new Error("Cobranca com pagamento registrado nao pode ser excluida.");
+    this.assertCarryoverCreditUnused(id);
     const documentPaths = detail.documents.flatMap((document) => [document.pdfFilePath, document.excelFilePath, document.imageFilePath]).filter((path): path is string => Boolean(path));
     const now = new Date().toISOString();
     const trx = this.db.transaction(() => {
@@ -3476,7 +3481,8 @@ export class AppRepository {
   cancelClientCharge(id: string, reason: string): ClientChargeDetail {
     if (!reason.trim()) throw new Error("Motivo obrigatorio.");
     const detail = this.getClientCharge(id);
-    if (detail.charge.status === "PAID" || detail.charge.paidAmountCents > 0) throw new Error("Cobranca com pagamento nao pode ser cancelada diretamente.");
+    if (detail.charge.paidAmountCents > 0 || (detail.charge.status === "PAID" && detail.charge.finalAmountCents > 0)) throw new Error("Cobranca com pagamento nao pode ser cancelada diretamente.");
+    this.assertCarryoverCreditUnused(id);
     const now = new Date().toISOString();
     const trx = this.db.transaction(() => {
       this.db.prepare("UPDATE client_charges SET status = 'CANCELLED', cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?").run(now, reason, now, id);
@@ -3485,9 +3491,16 @@ export class AppRepository {
       this.db.prepare("UPDATE client_credit_allocations SET cancelled_at = ?, cancellation_reason = ? WHERE client_charge_id = ? AND cancelled_at IS NULL").run(now, reason, id);
       detail.creditAllocations.forEach((allocation) => this.db.prepare("UPDATE client_ledger_entries SET available_amount_cents = available_amount_cents + ?, updated_at = ? WHERE id = ?").run(allocation.amountCents, now, allocation.ledgerEntryId));
       this.recordChargeStatus(id, detail.charge.status, "CANCELLED", reason);
+      this.db.prepare("UPDATE client_ledger_entries SET status = 'CANCELLED', available_amount_cents = 0, cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE client_charge_id = ? AND entry_type = 'CREDIT' AND reference_number = 'SALDO-COBRANCA' AND status <> 'CANCELLED'")
+        .run(now, reason, now, id);
     });
     trx();
     return this.getClientCharge(id);
+  }
+
+  private assertCarryoverCreditUnused(chargeId: string): void {
+    const used = this.db.prepare("SELECT 1 FROM client_ledger_entries WHERE client_charge_id = ? AND entry_type = 'CREDIT' AND reference_number = 'SALDO-COBRANCA' AND status <> 'CANCELLED' AND COALESCE(available_amount_cents, 0) < amount_cents LIMIT 1").get(chargeId);
+    if (used) throw new Error("O saldo a favor desta cobranca ja foi descontado em outra cobranca. Exclua ou ajuste aquela cobranca primeiro.");
   }
 
   listClientCharges(filters: { organizationId?: string; clientPartnerId?: string; status?: string } = {}): ClientCharge[] {
@@ -5567,7 +5580,10 @@ export class AppRepository {
     const subtotal = operations.reduce((sum, item) => sum + item.serviceAmountCentsSnapshot, 0);
     const additions = adjustments.filter((item) => item.effect === "INCREASE_RECEIVABLE").reduce((sum, item) => sum + item.amountCents, 0);
     const deductions = adjustments.filter((item) => item.effect === "REDUCE_RECEIVABLE").reduce((sum, item) => sum + item.amountCents, 0);
-    const finalAmount = Math.max(0, subtotal + additions - deductions);
+    // Pode ficar negativo (ex.: nota tirada da cobranca e o desconto passou do
+    // valor das notas). O negativo vira credito do cliente para a proxima
+    // cobranca (syncChargeCarryoverCredit), em vez de sumir como R$ 0,00.
+    const finalAmount = subtotal + additions - deductions;
     const paid = payments.reduce((sum, item) => sum + item.amountCents, 0);
     const open = Math.max(0, finalAmount - paid);
     const current = mapClientCharge(this.db.prepare("SELECT * FROM client_charges WHERE id = ?").get(id) as DbRecord);
@@ -5579,7 +5595,37 @@ export class AppRepository {
     this.db.prepare("UPDATE client_charges SET subtotal_services_cents = ?, additions_cents = ?, deductions_cents = ?, final_amount_cents = ?, paid_amount_cents = ?, open_amount_cents = ?, status = ?, updated_at = ? WHERE id = ?")
       .run(subtotal, additions, deductions, finalAmount, paid, open, status, new Date().toISOString(), id);
     this.db.prepare("UPDATE client_ledger_entries SET amount_cents = ?, updated_at = ? WHERE client_charge_id = ? AND entry_type = 'SERVICE_CHARGE'")
-      .run(finalAmount, new Date().toISOString(), id);
+      .run(Math.max(0, finalAmount), new Date().toISOString(), id);
+    if (!["DRAFT", "PENDING_REVIEW", "CANCELLED", "REPLACED"].includes(status)) this.syncChargeCarryoverCredit(current, finalAmount);
+  }
+
+  // Cobranca emitida com valor negativo: o que passou vira um credito na
+  // conta-corrente do cliente (referencia SALDO-COBRANCA), datado no fim do
+  // periodo, e entra sozinho na proxima cobranca dele. Se a cobranca mudar,
+  // o credito acompanha enquanto ainda nao foi usado.
+  private syncChargeCarryoverCredit(charge: ClientCharge, finalAmount: number): void {
+    const wanted = finalAmount < 0 ? -finalAmount : 0;
+    const now = new Date().toISOString();
+    const existing = this.db.prepare("SELECT id, amount_cents AS amount, COALESCE(available_amount_cents, 0) AS available FROM client_ledger_entries WHERE client_charge_id = ? AND entry_type = 'CREDIT' AND reference_number = 'SALDO-COBRANCA' AND status <> 'CANCELLED' LIMIT 1")
+      .get(charge.id) as { id: string; amount: number; available: number } | undefined;
+    if (!existing) {
+      if (wanted <= 0) return;
+      const label = `Saldo a favor da cobranca ${chargePeriodLabel(charge)}`;
+      this.db.prepare("INSERT INTO client_ledger_entries (id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, entry_type, effect, amount_cents, entry_date, description, reference_number, notes, status, available_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'CREDIT', 'REDUCE_RECEIVABLE', ?, ?, ?, 'SALDO-COBRANCA', ?, 'CONFIRMED', ?, ?, ?)")
+        .run(randomUUID(), charge.organizationId, charge.ownLegalEntityId, charge.clientPartnerId, charge.id, wanted, charge.periodEnd, label, label, wanted, now, now);
+      return;
+    }
+    const used = existing.amount - existing.available;
+    if (wanted === existing.amount) return;
+    if (wanted <= 0 && used === 0) {
+      this.db.prepare("UPDATE client_ledger_entries SET status = 'CANCELLED', available_amount_cents = 0, cancelled_at = ?, cancellation_reason = ?, updated_at = ? WHERE id = ?")
+        .run(now, "Cobranca deixou de ter saldo negativo", now, existing.id);
+      return;
+    }
+    // Ja usado em outra cobranca alem do novo valor: mantem o que foi usado.
+    if (wanted < used) return;
+    this.db.prepare("UPDATE client_ledger_entries SET amount_cents = ?, available_amount_cents = ?, updated_at = ? WHERE id = ?")
+      .run(wanted, wanted - used, now, existing.id);
   }
 
   private buildChargeSnapshot(id: string): Record<string, unknown> {

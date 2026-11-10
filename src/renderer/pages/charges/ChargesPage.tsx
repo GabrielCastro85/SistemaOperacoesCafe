@@ -1516,7 +1516,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   ? <><strong>{packagingUnits(operation.serviceAmountCentsSnapshot, operation.serviceRateCentsSnapshot)} un</strong><small>{formatCurrencyFromCents(operation.serviceRateCentsSnapshot)}/un · big bag</small></>
                   : <><strong>{decimalTextBr(operation.quantitySacksDecimalSnapshot)}</strong><small>{formatCurrencyFromCents(operation.serviceRateCentsSnapshot)}/saca</small></>}</span>
                 <span>{formatCurrencyFromCents(operation.serviceAmountCentsSnapshot)} x NF {operation.fiscalDocumentNumberSnapshot ?? "-"}</span>
-                <span>{detail.charge.status === "PAID" ? "Paga" : detail.charge.paidAmountCents > 0 ? "Pagamento parcial" : "Em aberto"}</span>
+                <span>{detail.charge.finalAmountCents < 0 ? `Saldo a favor do cliente: ${formatCurrencyFromCents(-detail.charge.finalAmountCents)} (vira crédito na próxima cobrança)` : detail.charge.status === "PAID" ? "Paga" : detail.charge.paidAmountCents > 0 ? "Pagamento parcial" : "Em aberto"}</span>
               </div>
             );
           })}
@@ -1631,7 +1631,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 <span>{formatCurrencyFromCents(charge.finalAmountCents)}</span>
                 <span>{formatCurrencyFromCents(charge.paidAmountCents)}</span>
                 <span>{formatCurrencyFromCents(charge.openAmountCents)}</span>
-                <span>{formatStatusLabel(charge.status)}</span>
+                <span>{charge.finalAmountCents < 0 ? "Saldo a favor do cliente" : formatStatusLabel(charge.status)}</span>
                 <span className="row-actions">
                   <button onClick={() => void openCharge(charge)}>Abrir</button>
                   <span className="disabled-action-tip" tabIndex={deleteBlockedReason ? 0 : -1}>
