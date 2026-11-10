@@ -105,6 +105,25 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedido: seguir os próximos passos e corrigir a responsividade do site inteiro (o conteúdo saía dos cartões ao diminuir a janela).
+- Feito:
+  - `00e308d`, responsividade, só em `web/site-layout.css`:
+    - `.ui-page-section` e `.import-column` com `grid-template-columns: minmax(0,1fr)`, e min-width 0 nos blocos e filhos. O "grid blowout" fazia a coluna implícita crescer até a tabela.
+    - `.import-columns` em auto-fit. Resumo e Cobranças viram uma coluna abaixo de 1.250 px.
+    - Cartões de resumo em auto-fit com minmax(240px).
+    - `.ui-filter-bar` flex, `.charge-cte-card` em auto-fit e select com max-width 100%.
+    - Detector de transbordo rodado em 15 telas a 1.000, 1.100 e 1.366 px e no celular: nada fora dos cartões.
+  - `8907745`: `getFiscalNumberingAudit` lê os cancelamentos (-eve.xml, 110111/135) de `C:\Vulpe\NFe`. Das 99 vendas "não lançadas" da Villa MG, 52 eram canceladas. Lista das 47 (+2 de novembro) em `outputs/villa-mg-vendas-nao-lancadas.csv` (fora do git).
+  - 9 notas tpNF=0 da Grão analisadas, sem mexer em nada:
+    - NF 5679 e 5763 (ARAPONGA, só cliente) são compras de produtor.
+    - NF 6808, 6810, 6811, 6818, 6821, 6860 e 6867 são "ESTORNO DE NF-E NAO CANCELADA NO PRAZO LEGAL" das vendas 6766, 6741, 6740, 6529, 6782, 6823 e 6737 (KATUAI, BRUNO MAIS BRASIL, EXCELENCIA 3.5 em cobrança PAGA, THADEU, RAFAEL x2, EVANDRO), e essas vendas seguem ativas.
+    - Proposta ao Gabriel, aguardando ok: cancelar os 7 estornos e as 6 vendas não cobradas, a 6782 só depois de ele conferir, e 5679/5763 viram compra.
+- Não feito:
+  - Coletor Villa: `C:\ProgramData\GraoBase\Coletor\coletor-config.json` exige administrador. Criei `coletor-config.json.antes-vulpe-raiz.bak`. O Gabriel vai trocar o xmlRoot para C:\Vulpe e reiniciar o coletor.
+  - Login que não cai: adiado. Ao reiniciar, o motor perde também o token do central (só volta quando alguém entra). Manter as sessões deixaria o site sem sincronizar sem aviso. Precisa de uma credencial de serviço do motor junto ao central.
+- Pendente do Gabriel: abrir o programa para sincronizar as 259 entradas da Grão (ainda não sincronizadas às 17:47).
+
+### 2026-11-10 - Claude
 - Pedido: a próxima parte da reorganização visual.
 - Feito (`bb8e94f`, só no site):
   - `ensureSearchPicker`: `.vulpe-search-actions` vira select + "Buscar notas emitidas/recebidas", que clica no botão original escondido. A escolha fica em `localStorage` "site-vulpe-search-choice".
