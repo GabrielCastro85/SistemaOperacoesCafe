@@ -17,7 +17,7 @@ const ENTRY_TYPE_LABELS: Record<LedgerEntryType, string> = {
   OTHER: "Outro"
 };
 
-export function ClientLedgerTable({ entries, onMarkLoanCollected, onCancel }: { entries: ClientLedgerEntry[]; onMarkLoanCollected?: (id: string) => void | Promise<void>; onCancel?: (id: string) => void | Promise<void> }): JSX.Element {
+export function ClientLedgerTable({ entries, onMarkLoanCollected, onCancel, onCancelSeries }: { entries: ClientLedgerEntry[]; onMarkLoanCollected?: (id: string) => void | Promise<void>; onCancel?: (id: string) => void | Promise<void>; onCancelSeries?: (entry: ClientLedgerEntry) => void | Promise<void> }): JSX.Element {
   return (
     <DataTable
       rows={entries}
@@ -26,7 +26,17 @@ export function ClientLedgerTable({ entries, onMarkLoanCollected, onCancel }: { 
       columns={[
         { key: "date", header: "Data", render: (row) => formatDateBr(row.entryDate) },
         { key: "type", header: "Tipo", render: (row) => ENTRY_TYPE_LABELS[row.entryType] ?? row.entryType },
-        { key: "description", header: "Descricao", render: (row) => row.description },
+        {
+          key: "description",
+          header: "Descricao",
+          render: (row) => (
+            <span>
+              {row.description}
+              {row.notes ? <small style={{ display: "block" }}>{row.notes}</small> : null}
+              {row.referenceNumber?.startsWith("REPETE-") ? <small style={{ display: "block" }}>Repetição {row.referenceNumber.slice(7)}</small> : null}
+            </span>
+          )
+        },
         {
           key: "amount",
           header: "Valor",
@@ -57,7 +67,14 @@ export function ClientLedgerTable({ entries, onMarkLoanCollected, onCancel }: { 
           header: "Ações",
           render: (row) => {
             const canCancel = row.status !== "CANCELLED" && !["SERVICE_CHARGE", "PAYMENT_RECEIVED", "REVERSAL"].includes(row.entryType);
-            return canCancel && onCancel ? <button className="danger" onClick={() => void onCancel(row.id)}>Cancelar lançamento</button> : "-";
+            if (!canCancel || !onCancel) return "-";
+            const isSeries = Boolean(row.referenceNumber?.startsWith("REPETE-")) && onCancelSeries;
+            return (
+              <span className="row-actions">
+                <button className="danger" onClick={() => void onCancel(row.id)}>Cancelar lançamento</button>
+                {isSeries ? <button className="danger" onClick={() => void onCancelSeries?.(row)}>Cancelar esta e as próximas</button> : null}
+              </span>
+            );
           }
         }
       ]}

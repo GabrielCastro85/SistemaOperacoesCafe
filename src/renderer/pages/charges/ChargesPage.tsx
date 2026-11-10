@@ -42,6 +42,12 @@ const PERIODICITY_ITEMS: Array<{ id: BillingPeriodicity; label: string }> = [
 const INCLUDE_ALL_COMPANIES_IN_CHARGES = true;
 const HISTORY_PAGE_SIZE = 10;
 
+// Soma do saldo disponivel dos lancamentos para pre-preencher a cobranca ("" quando nao ha).
+function totalAutofill(entries: ClientLedgerEntry[]): string {
+  const total = entries.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+  return total > 0 ? formatCurrencyFromCents(total) : "";
+}
+
 interface AdjustmentReasons { advance: string; discount: string; surcharge: string }
 const EMPTY_ADJUSTMENT_REASONS: AdjustmentReasons = { advance: "", discount: "", surcharge: "" };
 
@@ -267,9 +273,14 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     ledgerAutofillClientIdRef.current = null;
   }, [clientId, detail?.charge.clientPartnerId]);
 
-  const refreshClientLedgerAvailability = useCallback(async (clientPartnerId: string) => {
-    const entries = await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId });
-    const available = entries.filter((entry) => entry.status === "CONFIRMED" && (entry.availableAmountCents ?? 0) > 0);
+  // So entram lancamentos da conta-corrente com data ate o fim do periodo da
+  // cobranca. Lancamentos programados para depois (repeticoes mensais/semanais)
+  // ficam para a cobranca do periodo deles; os antigos ainda nao cobrados entram.
+  const refreshClientLedgerAvailability = useCallback(async (clientPartnerId: string, untilDate?: string | null) => {
+    const entries = await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId, periodEnd: untilDate || null });
+    const available = entries
+      .filter((entry) => entry.status === "CONFIRMED" && (entry.availableAmountCents ?? 0) > 0)
+      .sort((left, right) => left.entryDate.localeCompare(right.entryDate) || left.createdAt.localeCompare(right.createdAt));
     const credits = available.filter((entry) => entry.effect === "REDUCE_RECEIVABLE");
     const surcharges = available.filter((entry) => entry.effect === "INCREASE_RECEIVABLE");
     setClientCredits(credits);
@@ -283,16 +294,15 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   // saldo que o usuario ja enxerga na aba Conta-corrente.
   useEffect(() => {
     if (!clientId || detail) return;
-    if (ledgerAutofillClientIdRef.current === clientId) return;
-    ledgerAutofillClientIdRef.current = clientId;
+    const autofillKey = `${clientId}|${periodEnd}`;
+    if (ledgerAutofillClientIdRef.current === autofillKey) return;
+    ledgerAutofillClientIdRef.current = autofillKey;
     void (async () => {
-      const { credits, surcharges } = await refreshClientLedgerAvailability(clientId);
-      const totalCreditCents = credits.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
-      const totalSurchargeCents = surcharges.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
-      if (totalCreditCents > 0) setAdvanceInput(formatCurrencyFromCents(totalCreditCents));
-      if (totalSurchargeCents > 0) setSurchargeInput(formatCurrencyFromCents(totalSurchargeCents));
+      const { credits, surcharges } = await refreshClientLedgerAvailability(clientId, periodEnd);
+      setAdvanceInput(totalAutofill(credits));
+      setSurchargeInput(totalAutofill(surcharges));
     })();
-  }, [clientId, detail, refreshClientLedgerAvailability]);
+  }, [clientId, detail, periodEnd, refreshClientLedgerAvailability]);
 
   // Assim que um rascunho de cobranca e' aberto, pre-preenche Adiantamento e
   // Acrescimos com o que ja esta registrado (e confirmado, nao usado) na
@@ -308,7 +318,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     if (ledgerAutofillChargeIdRef.current === detail.charge.id) return;
     ledgerAutofillChargeIdRef.current = detail.charge.id;
     void (async () => {
-      const { credits, surcharges } = await refreshClientLedgerAvailability(detail.charge.clientPartnerId);
+      const { credits, surcharges } = await refreshClientLedgerAvailability(detail.charge.clientPartnerId, detail.charge.periodEnd);
       const totalCreditCents = credits.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
       const totalSurchargeCents = surcharges.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
       if (totalCreditCents > 0) setAdvanceInput(formatCurrencyFromCents(Math.min(totalCreditCents, detail.charge.openAmountCents)));
@@ -562,7 +572,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + selectedFreightDaeCents;
   const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents + cteTotalCents, discountCents, advanceCents);
   const hasPendingManualAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
-  const missingAdjustmentReason = (advanceCents > 0 && !reasonFor("advance")) || (discountCents > 0 && !reasonFor("discount")) || (surchargeCents > 0 && !reasonFor("surcharge"));
+  // O que vem da conta-corrente ja tem a observacao do lancamento (sai no PDF);
+  // so a parte digitada alem disso precisa de observacao propria.
+  const ledgerCreditCents = clientCredits.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+  const ledgerSurchargeCents = clientSurcharges.reduce((sum, entry) => sum + (entry.availableAmountCents ?? 0), 0);
+  const advanceNeedsReason = advanceCents > ledgerCreditCents;
+  const surchargeNeedsReason = surchargeCents > ledgerSurchargeCents;
+  const missingAdjustmentReason = (advanceNeedsReason && !reasonFor("advance")) || (discountCents > 0 && !reasonFor("discount")) || (surchargeNeedsReason && !reasonFor("surcharge"));
   const hasPendingCte = cteTotalCents > 0;
   const hasPendingAdjustments = hasPendingManualAdjustments || hasPendingCte;
   const visibleFinalCents = previewFinalCents;
@@ -667,7 +683,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
 
       if (hasPendingAdjustments) {
         await refreshClientLedgerAvailability(
-          issued.charge.clientPartnerId
+          issued.charge.clientPartnerId,
+          issued.charge.periodEnd
         );
 
         setAdvanceInput("");
@@ -767,7 +784,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       const shouldRegenerateDocuments = !["DRAFT", "PENDING_REVIEW"].includes(detail.charge.status);
       const current = await applyPendingAdjustmentsToCharge(detail, shouldRegenerateDocuments);
       setDetail(current);
-      await refreshClientLedgerAvailability(current.charge.clientPartnerId);
+      await refreshClientLedgerAvailability(current.charge.clientPartnerId, current.charge.periodEnd);
       setAdvanceInput("");
       setDiscountInput("");
       setSurchargeInput("");
@@ -1039,7 +1056,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         setSurchargeInput("");
         setCteNoteSelection({});
         setAdjustmentReasons(EMPTY_ADJUSTMENT_REASONS);
-        await refreshClientLedgerAvailability(current.charge.clientPartnerId);
+        await refreshClientLedgerAvailability(current.charge.clientPartnerId, current.charge.periodEnd);
       }
       const exported = await window.operationsCafe.openChargeDocument({ chargeId: current.charge.id, kind });
       setMessage(exported ? `${kind === "pdf" ? "PDF" : "Imagem"} da cobranca salvo na pasta escolhida.` : "Exportacao cancelada. Nenhuma pasta foi escolhida.");
@@ -1346,11 +1363,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             ) : null}
             <div className="kv-list">
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
-              {advanceCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do adiantamento</dt><dd><input value={adjustmentReasons.advance} onChange={(event) => setReason("advance", event.target.value)} placeholder="Sai no PDF ao lado do adiantamento" aria-label="Observação do adiantamento" /></dd></div> : null}
+              {advanceCents > 0 && ledgerCreditCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientCredits.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
+              {advanceNeedsReason ? <div className="charge-adjustment-reason"><dt>Observação do adiantamento</dt><dd><input value={adjustmentReasons.advance} onChange={(event) => setReason("advance", event.target.value)} placeholder="Sai no PDF ao lado do adiantamento" aria-label="Observação do adiantamento" /></dd></div> : null}
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" /></dd></div>
               {discountCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do desconto</dt><dd><input value={adjustmentReasons.discount} onChange={(event) => setReason("discount", event.target.value)} placeholder="Ex.: pago ao advogado" aria-label="Observação do desconto" /></dd></div> : null}
               <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" /></dd></div>
-              {surchargeCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do acréscimo</dt><dd><input value={adjustmentReasons.surcharge} onChange={(event) => setReason("surcharge", event.target.value)} placeholder="Ex.: salário Gustavo" aria-label="Observação do acréscimo" /></dd></div> : null}
+              {surchargeCents > 0 && ledgerSurchargeCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientSurcharges.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
+              {surchargeNeedsReason ? <div className="charge-adjustment-reason"><dt>Observação do acréscimo</dt><dd><input value={adjustmentReasons.surcharge} onChange={(event) => setReason("surcharge", event.target.value)} placeholder="Ex.: salário Gustavo" aria-label="Observação do acréscimo" /></dd></div> : null}
             </div>
             <div className="charge-cte-card">
               <div>

@@ -16,6 +16,24 @@ function localDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+// Datas de um lancamento que se repete. Mensal: mesmo dia de cada mes (dia 31
+// vira o ultimo dia nos meses mais curtos). Semanal: a cada 7 dias.
+export function recurringDates(firstDate: string, frequency: "MONTHLY" | "WEEKLY", count: number): string[] {
+  const [year, month, day] = firstDate.split("-").map(Number);
+  const dates: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (frequency === "WEEKLY") {
+      dates.push(localDateInputValue(new Date(year, month - 1, day + index * 7)));
+    } else {
+      const lastDay = new Date(year, month - 1 + index + 1, 0).getDate();
+      dates.push(localDateInputValue(new Date(year, month - 1 + index, Math.min(day, lastDay))));
+    }
+  }
+  return dates;
+}
+
+const RECURRING_PREFIX = "REPETE-";
+
 function currentMonthToDateRange(): { periodStart: string; periodEnd: string } {
   const today = new Date();
   const start = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -31,6 +49,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const [clientLegalEntities, setClientLegalEntities] = useState<BusinessPartnerLegalEntity[]>([]);
   const [showClientDetails, setShowClientDetails] = useState(false);
   const [entries, setEntries] = useState<ClientLedgerEntry[]>([]);
+  const [upcomingEntries, setUpcomingEntries] = useState<ClientLedgerEntry[]>([]);
   const [confirmedOperations, setConfirmedOperations] = useState<Operation[]>([]);
   const [amount, setAmount] = useState("5000,00");
   const [entryDate, setEntryDate] = useState(() => localDateInputValue(new Date()));
@@ -38,6 +57,8 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
   const [movementKind, setMovementKind] = useState<"ADIANTAMENTO" | "ACRESCIMO" | "EMPRESTIMO">("ADIANTAMENTO");
   const [movementNotes, setMovementNotes] = useState("");
   const [loanCollectionDueDate, setLoanCollectionDueDate] = useState("");
+  const [repeat, setRepeat] = useState<"NONE" | "MONTHLY" | "WEEKLY">("NONE");
+  const [repeatCount, setRepeatCount] = useState("12");
   const [periodStart, setPeriodStart] = useState(() => currentMonthToDateRange().periodStart);
   const [periodEnd, setPeriodEnd] = useState(() => currentMonthToDateRange().periodEnd);
   const [message, setMessage] = useState<string | null>(null);
@@ -56,6 +77,10 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
     const selected = clientId;
     if (selected) {
       setEntries(await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId: selected, periodStart: periodStart || null, periodEnd: periodEnd || null }));
+      // Lancamentos com data futura (repeticoes ja programadas) ficam visiveis a parte.
+      const today = localDateInputValue(new Date());
+      setUpcomingEntries((await window.operationsCafe.listLedgerEntries({ organizationId, ownLegalEntityId, clientPartnerId: selected, periodStart: periodEnd && periodEnd > today ? periodEnd : today, periodEnd: null }))
+        .filter((entry) => entry.status !== "CANCELLED" && entry.entryDate > (periodEnd || today)));
       // Notas confirmadas ainda sem cobranca emitida tambem entram no total --
       // o dono quer ver o que o cliente deve desde o lancamento da nota, nao
       // so' depois que a cobranca formal for gerada.
@@ -63,6 +88,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
       setClientLegalEntities(await window.operationsCafe.listPartnerLegalEntities(selected));
     } else {
       setEntries([]);
+      setUpcomingEntries([]);
       setConfirmedOperations([]);
     }
   }, [organizationId, ownLegalEntityId, clientId, periodStart, periodEnd]);
@@ -98,27 +124,41 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
     }
 
     const config = MOVEMENT_KIND_CONFIG[movementKind];
+    const occurrences = repeat === "NONE" ? 1 : Number(repeatCount);
+    if (repeat !== "NONE" && (!Number.isInteger(occurrences) || occurrences < 2 || occurrences > 60)) {
+      setMessage("Informe de 2 a 60 repetições.");
+      return;
+    }
+    const dates = repeat === "NONE" ? [entryDate] : recurringDates(entryDate, repeat, occurrences);
+    // Os lancamentos de uma mesma repeticao compartilham a referencia, para
+    // poder cancelar "esta e as proximas" de uma vez.
+    const referenceNumber = repeat === "NONE" ? null : `${RECURRING_PREFIX}${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
     try {
-      await window.operationsCafe.createLedgerEntry({
-        organizationId,
-        ownLegalEntityId,
-        clientPartnerId: clientId,
-        clientChargeId: null,
-        entryType: config.entryType,
-        effect: config.effect,
-        amountCents,
-        entryDate,
-        description: config.description,
-        referenceNumber: null,
-        notes: movementNotes.trim() || null,
-        attachmentPath: null,
-        availableAmountCents: amountCents,
-        status: applyNow ? "CONFIRMED" : "DRAFT",
-        collectionDueDate: movementKind === "EMPRESTIMO" ? (loanCollectionDueDate || null) : null
-      });
+      for (const date of dates) {
+        await window.operationsCafe.createLedgerEntry({
+          organizationId,
+          ownLegalEntityId,
+          clientPartnerId: clientId,
+          clientChargeId: null,
+          entryType: config.entryType,
+          effect: config.effect,
+          amountCents,
+          entryDate: date,
+          description: config.description,
+          referenceNumber,
+          notes: movementNotes.trim() || null,
+          attachmentPath: null,
+          availableAmountCents: amountCents,
+          status: applyNow ? "CONFIRMED" : "DRAFT",
+          collectionDueDate: movementKind === "EMPRESTIMO" ? (loanCollectionDueDate || null) : null
+        });
+      }
 
-      setMessage(applyNow ? config.confirmedMessage : config.draftMessage);
+      setMessage(repeat === "NONE"
+        ? (applyNow ? config.confirmedMessage : config.draftMessage)
+        : `${dates.length} lançamentos criados, de ${formatDateBr(dates[0])} a ${formatDateBr(dates[dates.length - 1])}. Cada um entra na cobrança do período da sua data.`);
+      setRepeat("NONE");
       setEntryDate(localDateInputValue(new Date()));
       setMovementNotes("");
       setLoanCollectionDueDate("");
@@ -216,7 +256,14 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
             ]}
           />
           <TextField label="Valor (R$)" value={amount} onChange={setAmount} />
-          <DateInput label="Data do lancamento" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} />
+          <DateInput label={repeat === "NONE" ? "Data do lancamento" : "Data do primeiro lancamento"} value={entryDate} onChange={(event) => setEntryDate(event.target.value)} />
+          <SelectField
+            label="Repetir"
+            value={repeat}
+            onChange={(value) => setRepeat(value as typeof repeat)}
+            options={[["NONE", "Nao repetir"], ["MONTHLY", "Todo mes (mesmo dia)"], ["WEEKLY", "Toda semana (mesmo dia da semana)"]]}
+          />
+          {repeat !== "NONE" ? <TextField label="Quantas vezes" value={repeatCount} onChange={setRepeatCount} /> : null}
           {movementKind === "EMPRESTIMO" ? (
             <DateInput label="Data prevista de cobranca (opcional)" value={loanCollectionDueDate} onChange={(event) => setLoanCollectionDueDate(event.target.value)} />
           ) : null}
@@ -231,6 +278,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
           <button className="primary" onClick={() => void createLedgerMovement()}>{MOVEMENT_KIND_CONFIG[movementKind].actionLabel}</button>
         </FormGrid>
         {!applyNow ? <p className="muted">Sem marcar, o lancamento fica registrado no historico mas nao entra no saldo ate ser confirmado.</p> : null}
+        {repeat !== "NONE" && entryDate ? <p className="muted">Serao criados {Number(repeatCount) || 0} lancamentos: {recurringDates(entryDate, repeat, Math.min(Math.max(Number(repeatCount) || 0, 0), 60)).slice(0, 4).map((date) => formatDateBr(date)).join(", ")}{Number(repeatCount) > 4 ? "..." : ""}. Na cobranca, cada um so entra no periodo que contem a sua data.</p> : null}
         {movementKind !== "ADIANTAMENTO" ? <p className="muted">A observacao e obrigatoria para acrescimos e emprestimos.</p> : null}
         {movementKind !== "ADIANTAMENTO" ? <p className="muted">Acrescimos e emprestimos aumentam o quanto o cliente deve -- quando houver uma cobranca em aberto para ele, esse valor aparece automaticamente em "Acrescimos" na tela de Cobrancas.</p> : null}
         {movementKind === "EMPRESTIMO" ? <p className="muted">Informando a data prevista de cobranca, o emprestimo aparece como alerta no Dashboard a partir dessa data ate ser marcado como cobrado.</p> : null}
@@ -240,6 +288,18 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
         {entries.length ? <ClientLedgerTable
           entries={entries}
           onMarkLoanCollected={async (id) => { await window.operationsCafe.markLoanCollected(id); await load(); }}
+          onCancelSeries={async (entry) => {
+            const series = [...entries, ...upcomingEntries].filter((item, index, all) => all.findIndex((other) => other.id === item.id) === index && item.referenceNumber === entry.referenceNumber && item.status !== "CANCELLED" && item.entryDate >= entry.entryDate && (item.availableAmountCents ?? 0) === item.amountCents);
+            const reason = await requestTextInput({ title: "Cancelar esta e as próximas", label: `Serão cancelados ${series.length} lançamento(s) ainda não cobrados desta repetição (a partir de ${formatDateBr(entry.entryDate)}). Motivo:`, initialValue: "Valor mudou" });
+            if (!reason?.trim()) return;
+            try {
+              for (const item of series) await window.operationsCafe.cancelLedgerEntry(item.id, reason.trim());
+              setMessage(`${series.length} lançamento(s) cancelado(s).`);
+              await load();
+            } catch (errorValue) {
+              setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cancelar os lançamentos."}`);
+            }
+          }}
           onCancel={async (id) => {
             // window.prompt nao existe no Electron e alguns navegadores bloqueiam; usa a janela do proprio app.
             const reason = await requestTextInput({ title: "Cancelar lançamento", label: "Informe o motivo do cancelamento", initialValue: "Lançamento incorreto" });
@@ -254,6 +314,37 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
           }}
         /> : <EmptyState title="Nenhum lancamento" description="Este cliente ainda nao possui movimentos na conta-corrente no periodo selecionado." />}
       </AdminBlock>
+      {upcomingEntries.length ? (
+        <AdminBlock title="Proximos lancamentos programados">
+          <p className="muted">Lancamentos com data depois do periodo acima (repeticoes ja criadas). Cada um entra na cobranca do periodo da sua data.</p>
+          <ClientLedgerTable
+            entries={[...upcomingEntries].sort((left, right) => left.entryDate.localeCompare(right.entryDate))}
+            onCancelSeries={async (entry) => {
+              const series = [...entries, ...upcomingEntries].filter((item, index, all) => all.findIndex((other) => other.id === item.id) === index && item.referenceNumber === entry.referenceNumber && item.status !== "CANCELLED" && item.entryDate >= entry.entryDate && (item.availableAmountCents ?? 0) === item.amountCents);
+              const reason = await requestTextInput({ title: "Cancelar esta e as próximas", label: `Serão cancelados ${series.length} lançamento(s) ainda não cobrados desta repetição (a partir de ${formatDateBr(entry.entryDate)}). Motivo:`, initialValue: "Valor mudou" });
+              if (!reason?.trim()) return;
+              try {
+                for (const item of series) await window.operationsCafe.cancelLedgerEntry(item.id, reason.trim());
+                setMessage(`${series.length} lançamento(s) cancelado(s).`);
+                await load();
+              } catch (errorValue) {
+                setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cancelar os lançamentos."}`);
+              }
+            }}
+            onCancel={async (id) => {
+              const reason = await requestTextInput({ title: "Cancelar lançamento", label: "Informe o motivo do cancelamento", initialValue: "Lançamento incorreto" });
+              if (!reason?.trim()) return;
+              try {
+                await window.operationsCafe.cancelLedgerEntry(id, reason.trim());
+                setMessage("Lançamento cancelado.");
+                await load();
+              } catch (errorValue) {
+                setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao cancelar o lançamento."}`);
+              }
+            }}
+          />
+        </AdminBlock>
+      ) : null}
       <Feedback message={message} />
     </section>
   );
