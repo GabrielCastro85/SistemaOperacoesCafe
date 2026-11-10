@@ -104,6 +104,18 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-10 - Claude (em andamento)
+- Pedido: lançar as notas de ENTRADA antigas da Villa MG/ES. Daqui para frente o Gabriel lança à mão.
+- Onde estão: `C:\Vulpe\XML Terceiros\VILLA_COFFEE_MG|VILLA_COFFEE\AAAAMM\Down` (`-nfe.xml` completos; `-resNFe.xml` são só resumo, sem manifestação). Cancelamentos ficam em `AAAAMM\Evento`.
+  - O programa ("Recebidas por Villa MG") procura em `C:\Vulpe\NFe`, por isso não acha.
+  - O coletor VILLA_MG_ES (`C:\ProgramData\GraoBase\Coletor\coletor-config.json`, `xmlRoot = C:\Vulpe\NFe`) também não envia as entradas. Não alterei.
+- Decisões do Gabriel:
+  - Fornecedor coringa "ENTRADAS NOTAS", porque o fornecedor do sistema é quem negociou e o mesmo CNPJ emitente aparece em LUCAS, UNI GRAO ES etc.
+  - Só compras: CFOP 5101/5102/5103/5105/5106/5356 e 6xxx equivalentes. Ficam de fora armazém e devoluções.
+- Script `tmp/importar-entradas-vulpe.mts` (cria o fornecedor e usa o mesmo caminho do THADEU). Simulação: MG 1.030 compras (abr–nov/2026) e ES 524 (nov/2025–nov/2026). Ficaram de fora: MG 114 intercompany, 208 não-compra, 5 complementos e 115 já cadastradas; ES 68 não-compra, 2 complementos e 196 já cadastradas.
+- Cópia antes de gravar: `database/backup-antes-entradas-vulpe-2026-11-10`. A gravação foi iniciada às 10:30, com o programa fechado.
+- Pendente: depois do Gabriel sincronizar, conferir `access_key` duplicada em fiscal_documents (a última sincronização local antes da gravação foi às 10:18).
+
 ### 2026-11-10 - Claude
 - Pedidos:
   - Conferência de repasses: somar as notas do Marcelo Café lançadas no THADEU NOTAS, e depois filtrar por empresa/CNPJ, independente do cliente.
