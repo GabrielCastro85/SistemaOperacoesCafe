@@ -104,6 +104,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-10 - Claude (continuação da velocidade do site)
+- Medição em produção depois de `7554e4c`: entrar em Notas e operações deu 20 pedidos e 114 consultas, sem bloqueio. Mas no Resumo, o `billingDashboard:summary` levava 13–45 s.
+- Causa: o handler `getBillingSummary` (e também Comparativo e Assistente) faz `await centralSync.synchronize()` antes de calcular. No motor, isso roda dentro da fila única e trava todos os usuários. Somava-se o `getDiagnostics` a cada 5 s, que disparava CENTRAL_DATA_UPDATED e recarregava o Resumo sem parar.
+- Feito (`80c79e7`):
+  - `server/engine/host.ts` sobrescreve `centralSync.synchronize`. Com `last_success_at` a menos de 2 min, dispara em segundo plano e não espera; sem isso, espera como antes.
+  - `useCentralDataRefresh` junta avisos em sequência numa recarga só.
+  - `AppLayout` não empilha `getDiagnostics` e faz 15 s no site.
+  - O lote não inclui diagnóstico, atualização nem coletor.
+- Testado: typecheck, motor, eslint e vitest (365). Publicado no Railway e no Pages. Falta medir em produção, porque o Gabriel precisa entrar de novo depois do reinício.
+
 ### 2026-11-10 - Claude
 - Pedido: deixar a comunicação do site com o servidor mais rápida. O círculo de carregamento travava a tela a cada troca de página, principalmente em Notas e operações.
 - Medição no site (Villa MG, Notas e operações): 2.060 chamadas, 45 s até a última resposta e 22 s com a tela bloqueada.
