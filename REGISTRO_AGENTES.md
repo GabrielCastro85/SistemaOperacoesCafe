@@ -105,6 +105,12 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ## Histórico (mais recente primeiro)
 
 ### 2026-11-10 - Claude
+- Pedido: lançar também ago/2026 da Grão no THADEU NOTAS.
+- O Gabriel enviou o período 01–31/08 no coletor da Grão e fez a busca de MG e SP. Os furos grandes de agosto sumiram da collector-inbox.
+- Feito: `PERIOD_END=2026-08-31 tmp/importar-thadeu-grao.mts --execute` (o script agora aceita PERIOD_END). Lançadas MG 212 e SP 10, sem erro. Cópia antes: `database/backup-antes-thadeu-agosto-2026-11-10`.
+- Pendente: o Gabriel abrir o programa para sincronizar. Depois, conferir chave duplicada.
+
+### 2026-11-10 - Claude
 - Pedido: ter certeza do número de notas lançadas. O Gabriel mandou `MARCELO.rar` (87 XMLs da Grão para o Marcelo Café, enviados pela funcionária) porque algumas não tinham sido pegas no THADEU.
 - Conferência do RAR (`tmp/conferir-xmls.cjs`): as 87 estão no sistema (19 em THADEU NOTAS, 68 em MARCELO). As que faltavam eram 24 de jul/2026 (o furo de julho do coletor) e 6 de 28/08 (fora do período do THADEU). O Gabriel lançou essas hoje às 10:06 no MARCELO.
 - Feito (`da452ec`): "Conferência de numeração das notas emitidas" em Notas e operações > Notas emitidas (`NumberingAudit.tsx`, canal `fiscalDocuments:getNumberingAudit`, `getFiscalNumberingAudit` no repositório).
