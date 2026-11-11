@@ -6183,3 +6183,59 @@ table tbody tr:hover {
 @media (max-width: 560px) {
   .note-option__fields { padding-left: 12px; }
 }
+
+/* Camadas de janelas, em ordem: gaveta/janela de edicao (50-70) <
+   confirmacao (90) < carregamento (100) < avisos (120). Antes a confirmacao
+   (50) abria por baixo da janela de cadastro (70) e os avisos ficavam atras. */
+.ui-dialog { z-index: 90; }
+.ui-toast { z-index: 120; }
+
+/* Tela de carregamento: cartao com o que esta acontecendo, em vez de so um
+   circulo sobre a tela escurecida. */
+.ui-loading-overlay {
+  background: rgb(28 26 23 / 18%);
+  backdrop-filter: blur(1.5px);
+  animation: ui-loading-fade 160ms ease-out;
+}
+
+.ui-loading-overlay__card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 260px;
+  max-width: calc(100vw - 32px);
+  padding: 16px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface, #fff);
+  box-shadow: 0 18px 48px rgb(28 26 23 / 18%);
+}
+
+.ui-loading-overlay__card .ui-loading-overlay__spinner {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #e6dfd3;
+  border-top-color: #2f8f57;
+  border-right-color: #2f8f57;
+}
+
+.ui-loading-overlay__text {
+  display: grid;
+  gap: 2px;
+}
+
+.ui-loading-overlay__text strong {
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.ui-loading-overlay__text span {
+  color: var(--color-text-muted, #7a7366);
+  font-size: 13px;
+}
+
+@keyframes ui-loading-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

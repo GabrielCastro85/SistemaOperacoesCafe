@@ -37,9 +37,16 @@ class RendererErrorBoundary extends Component<{ children: ReactNode }, { error: 
 function LoadingOverlay(): JSX.Element | null {
   const [pendingCount, setPendingCount] = useState(0);
   const [visible, setVisible] = useState(false);
+  const [slow, setSlow] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => window.operationsCafeLoading.subscribe(setPendingCount), []);
+  // Demorou: avisa que continua trabalhando (evita parecer travado).
+  useEffect(() => {
+    if (!visible) { setSlow(false); return; }
+    const timer = setTimeout(() => setSlow(true), 5000);
+    return () => clearTimeout(timer);
+  }, [visible]);
 
   useEffect(() => {
     if (pendingCount > 0) {
@@ -61,7 +68,13 @@ function LoadingOverlay(): JSX.Element | null {
 
   return (
     <div className="ui-loading-overlay" role="status" aria-live="polite" aria-label="Carregando, aguarde">
-      <div className="ui-loading-overlay__spinner" aria-hidden="true" />
+      <div className="ui-loading-overlay__card">
+        <div className="ui-loading-overlay__spinner" aria-hidden="true" />
+        <div className="ui-loading-overlay__text">
+          <strong>Processando...</strong>
+          <span>{slow ? "Ainda trabalhando. Isso pode levar alguns segundos." : "Aguarde um instante."}</span>
+        </div>
+      </div>
     </div>
   );
 }

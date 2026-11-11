@@ -1186,3 +1186,137 @@ html.site button.site-command__item.is-active {
   padding: 18px;
   color: #7a7366;
 }
+
+/* ---------- Janelas de cadastro (cliente, empresa, regra) ----------
+   Cabecalho e rodape claros: no rodape preto os botoes "Fechar/Cancelar"
+   (discretos, texto escuro) ficavam invisiveis. */
+html.site .partner-modal-backdrop {
+  background: rgb(28 26 23 / 42%) !important;
+  backdrop-filter: blur(2px);
+}
+
+html.site .partner-modal {
+  border: 1px solid var(--site-line) !important;
+  border-radius: 14px !important;
+  background: var(--site-bg) !important;
+  box-shadow: 0 24px 60px rgb(28 26 23 / 24%) !important;
+}
+
+html.site .partner-modal__header,
+html.site .partner-modal__footer {
+  background: var(--site-surface) !important;
+  border-color: var(--site-line) !important;
+}
+
+html.site .partner-modal__header span {
+  color: var(--site-gold) !important;
+  letter-spacing: 0.04em;
+}
+
+html.site .partner-modal__header strong {
+  color: var(--site-ink) !important;
+}
+
+html.site .partner-modal__close {
+  border-color: var(--site-line-strong) !important;
+  color: var(--site-ink-2) !important;
+  background: var(--site-surface) !important;
+}
+
+html.site .partner-modal__close:hover {
+  color: var(--site-ink) !important;
+  background: var(--site-surface-2) !important;
+}
+
+html.site .partner-modal__footer {
+  gap: 10px;
+}
+
+/* ---------- Janela de confirmacao ---------- */
+html.site .ui-dialog {
+  background: rgb(28 26 23 / 42%) !important;
+  backdrop-filter: blur(2px);
+}
+
+html.site .ui-dialog > section {
+  width: min(480px, calc(100vw - 32px)) !important;
+  padding: 22px 24px !important;
+  gap: 12px;
+}
+
+html.site .ui-dialog > section h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+html.site .ui-dialog > section p {
+  margin: 0;
+  color: var(--site-ink-2);
+  line-height: 1.5;
+}
+
+html.site .ui-dialog > section footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* ---------- Caixas de selecao ---------- */
+html.site input[type="checkbox"],
+html.site input[type="radio"] {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--site-action);
+  cursor: pointer;
+}
+
+/* Rotulo com caixa de selecao: caixa ao lado do texto, nunca em cima. */
+html.site label:has(> input[type="checkbox"]),
+html.site label:has(> input[type="radio"]) {
+  cursor: pointer;
+}
+
+html.site .form-grid > label:has(> input[type="checkbox"]:first-child),
+html.site .form-grid > label:has(> input[type="radio"]:first-child),
+html.site label.inline-check,
+html.site label.checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 9px !important;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+html.site .form-grid > label:has(> input[type="checkbox"]:first-child) {
+  align-self: end;
+  min-height: 40px;
+}
+
+/* Botoes discretos (Fechar, Cancelar, Voltar, Limpar) com borda leve: antes
+   pareciam texto solto e nao botao. */
+html.site button[data-tone="quiet"] {
+  border-color: var(--site-line) !important;
+  background: var(--site-surface) !important;
+}
+
+html.site button[data-tone="quiet"]:hover:not(:disabled) {
+  border-color: var(--site-line-strong) !important;
+  background: var(--site-surface-2) !important;
+}
+
+/* Cartoes lado a lado: conteudo comeca no topo (antes se espalhava para
+   ocupar a altura do cartao mais alto e os titulos ficavam desalinhados). */
+html.site .cards > .ui-card {
+  align-content: start !important;
+}
+
+/* ".ui-card + .ui-card" da margem para cartoes empilhados; em grades o
+   espaco ja vem do gap e a margem desalinhava o primeiro cartao da linha
+   (Resumo, Cafes armazenados, Assistente, Configuracoes). */
+html.site :is(.cards, .dashboard-grid, .dashboard-workspace, .assistant-sidebar) > .ui-card + .ui-card {
+  margin-top: 0 !important;
+}
