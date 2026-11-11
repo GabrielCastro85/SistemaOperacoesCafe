@@ -104,6 +104,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude (repasses responsivo)
+- Pedido: conferir a responsividade da Conferência de repasses.
+- Problema: em 1366 px a tabela de notas, com `min-width: 1100px`, alargava a coluna do formulário e ficava cortada embaixo do card de totais. Os campos do topo ficavam espremidos, e no celular o botão "Continuar para pagamentos" saía da tela.
+- Feito (`0809c62`, CSS só do site em `web/site-layout.css`, e `data-label` nas células da tabela):
+  - `.transfer-page` virou container (`transfer`). Os breakpoints são do espaço real do conteúdo.
+  - Até 1320 px de container, os totais saem da coluna lateral e viram uma faixa acima do formulário, sem flutuar por cima das notas. Os botões Salvar e Concluir ficam na faixa.
+  - As colunas da tabela ficaram flexíveis, sem largura mínima. Até 860 px, cada nota vira um cartão de 3 colunas com o nome de cada campo; até 520 px, de 2 colunas.
+  - Campos e pagamentos usam auto-fit; o título e a barra de busca quebram linha.
+- Conferido: sem overflow em 1920, 1366, 1000 e 375 px, nas etapas de notas e de pagamentos.
+
 ### 2026-11-11 - Claude (repasses por empresa)
 - Pedido: na seleção de notas da Conferência de repasses, mostrar só as notas faturadas pela empresa em operação. Exemplo: em Villa MG, só as da Villa MG; em Grão MG, só as da Grão MG.
 - Feito (`b4660e3`):
