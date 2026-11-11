@@ -104,6 +104,15 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude
+- Pedido: primeiro o site (funcionamento, visual, responsividade); as notas antigas ficam para depois. Railway (volume) a ver junto com o Gabriel logado.
+- Feito (`769b4f5`):
+  - `electronShim`: `BrowserWindow.webContents.executeJavaScript` devolve o SVG do comparativo (extraído do `image.src`) como data URL. "Escolher pasta" (`openDirectory`) junta os uploads em `web-uploads/pasta-<uuid>`; na pasta temporária da chamada, o rmSync do fim apagaria os arquivos antes do inspect.
+  - `web/electronRenderer.ts`: download ou clipboard com bytes SVG (.svg/.png) vira PNG por canvas 2x. `deliver` passou a ser async. "Escolher pasta" sem filtro envia só .xml.
+  - Testado no site local: comparativo PNG 3200×2320 (salvar e copiar), imagem da cobrança PNG 2200×1796, selectFolder + inspect com 3 XMLs da Vulpe.
+- `b3579dd`: o teste `operational-management-api` tinha due_date 2026-11-10 e falhou em 11/11 (OVERDUE). Agora usa 2099.
+- Publicado no Railway e no Pages (09:53).
+
 ### 2026-11-10 - Claude
 - Pedido: seguir os próximos passos e corrigir a responsividade do site inteiro (o conteúdo saía dos cartões ao diminuir a janela).
 - Feito:
