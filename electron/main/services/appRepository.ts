@@ -3837,7 +3837,7 @@ export class AppRepository {
     return rows.map((row) => this.mapTransferReconciliation(row));
   }
 
-  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; counterpartyRole?: "CLIENT" | "SUPPLIER"; reconciliationId?: string }): TransferReconciliationAvailableInvoice[] {
+  listTransferReconciliationInvoices(input: { organizationId: string; clientPartnerId: string; counterpartyRole?: "CLIENT" | "SUPPLIER"; reconciliationId?: string; partyDocuments?: string[] }): TransferReconciliationAvailableInvoice[] {
     this.assertOrganizationWritable(input.organizationId);
     const counterpartyRole = input.counterpartyRole ?? "CLIENT";
     const operationType = counterpartyRole === "SUPPLIER" ? "PURCHASE" : "SALE";
@@ -3899,6 +3899,18 @@ export class AppRepository {
       ? `OR (json_extract(f.fiscal_snapshot_json, '${fiscalPartyPath}') IN (${partnerCnpjs.map(() => "?").join(", ")})
           AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ? AND o.status <> 'CANCELED'))`
       : "";
+    // Empresa/CNPJ escolhida no filtro: entram todas as notas com esse
+    // destinatario (venda) ou emitente (compra), em qualquer cliente. Ex.: notas
+    // da FRANCA lancadas no KATUAI aparecem na conferencia do ALCA.
+    const partyDocuments = [...new Set((input.partyDocuments ?? []).map((value) => value.trim()).filter(Boolean))];
+    const partyFilterSql = partyDocuments.length
+      ? `OR (json_extract(f.fiscal_snapshot_json, '${fiscalPartyPath}') IN (${partyDocuments.map(() => "?").join(", ")})
+          AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ? AND o.status <> 'CANCELED'))`
+      : "";
+    // Notas que ja fazem parte desta conferencia continuam disponiveis ao reabrir.
+    const savedFilterSql = input.reconciliationId
+      ? "OR f.id IN (SELECT fiscal_document_id FROM transfer_reconciliation_invoices WHERE reconciliation_id = ?)"
+      : "";
     const rows = this.db.prepare(`
       SELECT f.id, f.organization_id, org.display_name AS organization_name, f.own_legal_entity_id,
         f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
@@ -3916,13 +3928,17 @@ export class AppRepository {
       WHERE f.status <> 'CANCELED'
         AND (EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ?
           AND o.status <> 'CANCELED' AND o.responsible_partner_id IN (${partnerPlaceholders}))
-          ${cnpjFilter})
+          ${cnpjFilter}
+          ${partyFilterSql}
+          ${savedFilterSql})
       ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC, f.document_number DESC
     `).all(
       operationType, ...matchingPartnerIds,
       operationType, ...matchingPartnerIds,
       operationType, ...matchingPartnerIds,
-      ...(partnerCnpjs.length ? [...partnerCnpjs, operationType] : [])
+      ...(partnerCnpjs.length ? [...partnerCnpjs, operationType] : []),
+      ...(partyDocuments.length ? [...partyDocuments, operationType] : []),
+      ...(input.reconciliationId ? [input.reconciliationId] : [])
     ) as DbRecord[];
     return rows.map((row) => {
       let snapshot: Record<string, unknown> = {};
@@ -4009,9 +4025,16 @@ export class AppRepository {
       this.db.prepare("DELETE FROM transfer_reconciliation_payments WHERE reconciliation_id = ?").run(id);
       const insertInvoice = this.db.prepare(`INSERT INTO transfer_reconciliation_invoices (id, reconciliation_id, fiscal_document_id, document_number_snapshot, issue_date_snapshot, issuer_name_snapshot, recipient_name_snapshot, invoice_total_cents_snapshot, source_amount_cents, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      // Notas de outros clientes escolhidas pelo filtro de empresa/CNPJ tambem valem.
+      const selectedPartyDocuments = input.invoices.flatMap((selection) => {
+        const row = this.db.prepare(`SELECT json_extract(fiscal_snapshot_json, ?) AS party FROM fiscal_documents WHERE id = ?`)
+          .get(counterpartyRole === "SUPPLIER" ? "$.issuer.cnpjCpf" : "$.recipient.cnpjCpf", selection.fiscalDocumentId) as { party: string | null } | undefined;
+        return row?.party ? [String(row.party)] : [];
+      });
+      const availableInvoices = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, counterpartyRole, reconciliationId: id, partyDocuments: selectedPartyDocuments });
       for (const selection of input.invoices) {
         const document = this.getFiscalDocument(selection.fiscalDocumentId).document;
-        const available = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, counterpartyRole, reconciliationId: id }).find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
+        const available = availableInvoices.find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
         if (!available) throw new Error("Nota indisponivel para conferencia.");
         if (selection.sourceAmountCents > available.availableCents) throw new Error("O valor informado supera o saldo disponivel da nota.");
         insertInvoice.run(randomUUID(), id, document.id, document.documentNumber, document.issueDate, available.issuerName, available.recipientName, document.totalAmountCents, selection.sourceAmountCents, now, now);

@@ -77,7 +77,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     let active = true;
     setLoadingInvoices(true);
     setMessage(null);
-    void window.operationsCafe.listTransferReconciliationInvoices({ organizationId, clientPartnerId: clientId, counterpartyRole, reconciliationId: id })
+    void window.operationsCafe.listTransferReconciliationInvoices({ organizationId, clientPartnerId: clientId, counterpartyRole, reconciliationId: id, partyDocuments: partyFilter ? [partyFilter] : undefined })
       .then((rows) => {
         if (!active) return;
         setInvoices((Array.isArray(rows) ? rows : []).filter((row) => row && typeof row.fiscalDocumentId === "string").map((row) => ({
@@ -92,7 +92,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
       .catch((error: unknown) => { if (active) { setInvoices([]); setMessage(`Não foi possível carregar as notas: ${error instanceof Error ? error.message : "falha inesperada"}`); } })
       .finally(() => { if (active) setLoadingInvoices(false); });
     return () => { active = false; };
-  }, [clientId, counterpartyRole, editing, id, organizationId, sourceMode]);
+  }, [clientId, counterpartyRole, editing, id, organizationId, partyFilter, sourceMode]);
 
   const totalSource = useMemo(() => sourceMode === "MANUAL"
     ? Math.max(0, parseCurrencyToCents(manualSourceAmount || "0"))

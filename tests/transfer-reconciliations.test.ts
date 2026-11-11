@@ -43,6 +43,45 @@ describe("transfer reconciliations", () => {
     } finally { db.close(); }
   });
 
+  it("includes notes of the chosen recipient CNPJ launched under another client", async () => {
+    const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-party-"));
+    tempDirs.push(userData);
+    const dirs = resolveAppDirectories(userData);
+    ensureAppDirectories(dirs);
+    const db = initializeDatabase(dirs);
+    const repo = new AppRepository(db, dirs);
+    try {
+      const organizationId = "11111111-1111-4111-8111-111111111111";
+      const ownLegalEntityId = "33333333-3333-4333-8333-333333333331";
+      repo.saveInstallationProfile({ installationName: "Operacoes", appVariant: "multiempresa", defaultOrganizationId: organizationId, defaultLegalEntityId: ownLegalEntityId, allowOrganizationSwitch: true, allowLegalEntitySwitch: true, completedSetup: true });
+      const alca = await repo.createBusinessPartner({ organizationId, displayName: "ALCA", notes: null, roles: ["CLIENT"], isActive: true });
+      const katuai = await repo.createBusinessPartner({ organizationId, displayName: "KATUAI", notes: null, roles: ["CLIENT"], isActive: true });
+      const franca = "19813000000199";
+      const createSale = (partnerId: string, documentNumber: string, recipient: string): string => {
+        const product = repo.listProducts({ organizationId })[0];
+        const created = repo.createFiscalDocument({ organizationId, ownLegalEntityId, responsiblePartnerId: partnerId, partnerLegalEntityId: null, accessKey: null, documentNumber, series: "1", issueDate: "2026-10-26", totalAmountCents: 1_000_00, hasPendingIssues: false, pendingNotes: null, notes: null });
+        const item = repo.addFiscalDocumentItem({ fiscalDocumentId: created.document.id, productId: product.id, description: "Cafe", quantity: "1", unit: "SACK", unitPriceDecimal: "1000.00", totalAmountCents: 1_000_00, sacksQuantity: "1" });
+        repo.addOperation({ fiscalDocumentId: created.document.id, fiscalDocumentItemId: item.id, ownLegalEntityId, responsiblePartnerId: partnerId, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-10-26", quantitySacks: "1", manualRateValueCents: null, manualOverrideReason: null, notes: null });
+        repo.confirmFiscalDocument(created.document.id);
+        db.prepare("UPDATE fiscal_documents SET fiscal_snapshot_json = ? WHERE id = ?").run(JSON.stringify({ recipient: { cnpjCpf: recipient, legalName: "Destinatario " + recipient } }), created.document.id);
+        return created.document.id;
+      };
+      createSale(alca.id, "856", franca);
+      const katuaiFranca = createSale(katuai.id, "900", franca);
+      createSale(katuai.id, "901", "11111111000111");
+
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: alca.id }).map((item) => item.documentNumber)).toEqual(["856"]);
+      const withParty = repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: alca.id, partyDocuments: [franca] });
+      expect(withParty.map((item) => item.documentNumber).sort()).toEqual(["856", "900"]);
+      expect(withParty.find((item) => item.documentNumber === "900")?.launchedUnderName).toBe("KATUAI");
+
+      const saved = repo.saveTransferReconciliation({ organizationId, clientPartnerId: alca.id, sourceMode: "INVOICES", referenceDate: "2026-10-26", status: "DRAFT", invoices: [{ fiscalDocumentId: katuaiFranca, sourceAmountCents: 500_00 }], payments: [] });
+      expect(saved.invoices.map((item) => item.documentNumber)).toEqual(["900"]);
+      const reopened = repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: alca.id, reconciliationId: saved.reconciliation.id });
+      expect(reopened.map((item) => item.documentNumber).sort()).toEqual(["856", "900"]);
+    } finally { db.close(); }
+  });
+
   it("accepts a payment with only its amount filled", async () => {
     const userData = mkdtempSync(join(tmpdir(), "operacoes-transfer-optional-payment-"));
     tempDirs.push(userData);
