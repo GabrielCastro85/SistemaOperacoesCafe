@@ -3900,7 +3900,7 @@ export class AppRepository {
           AND EXISTS (SELECT 1 FROM operations o WHERE o.fiscal_document_id = f.id AND o.operation_type = ? AND o.status <> 'CANCELED'))`
       : "";
     const rows = this.db.prepare(`
-      SELECT f.id, f.organization_id, org.display_name AS organization_name,
+      SELECT f.id, f.organization_id, org.display_name AS organization_name, f.own_legal_entity_id,
         f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
         own.legal_name AS own_legal_name, own.trade_name AS own_trade_name,
         partner.legal_name AS partner_legal_name, partner.trade_name AS partner_trade_name,
@@ -3938,6 +3938,7 @@ export class AppRepository {
       const partnerName = this.stringOrNull(row.partner_legal_name) ?? this.stringOrNull(row.partner_trade_name);
       return {
         fiscalDocumentId: String(row.id), organizationId: String(row.organization_id), organizationName: String(row.organization_name),
+        ownLegalEntityId: String(row.own_legal_entity_id ?? ""),
         documentNumber: String(row.document_number), issueDate: String(row.issue_date),
         issuerName: this.stringOrNull(issuer?.legalName) ?? (counterpartyRole === "SUPPLIER" ? partnerName : ownName),
         recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),

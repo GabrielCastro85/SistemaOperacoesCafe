@@ -20,6 +20,9 @@ export function paymentHasUserInput(payment: PaymentDraft): boolean {
 
 export function TransferReconciliationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
+  // Empresa/CNPJ em operacao: a lista de notas mostra so as faturadas por ela.
+  const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? "";
+  const ownLegalEntityName = data.legalEntities.find((entity) => entity.id === ownLegalEntityId)?.tradeName ?? "";
   const [tab, setTab] = useState<"LIST" | "BALANCES">("LIST");
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [history, setHistory] = useState<TransferReconciliation[]>([]);
@@ -98,20 +101,25 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const balance = totalSource - totalPayments;
   // Todas as notas que batem com a pesquisa (inclusive as que ainda nao aparecem
   // por causa do "Mostrar mais notas"); a lista mostra so as primeiras.
+  // Notas da empresa em operacao. Nota ja marcada nesta conferencia (de outra
+  // empresa, feita antes desta regra) continua aparecendo para poder desmarcar.
+  const companyInvoices = useMemo(() => ownLegalEntityId
+    ? invoices.filter((invoice) => !invoice.ownLegalEntityId || invoice.ownLegalEntityId === ownLegalEntityId || invoice.fiscalDocumentId in selected)
+    : invoices, [invoices, ownLegalEntityId, selected]);
   const partyOptions = useMemo(() => {
     const byDocument = new Map<string, string>();
-    for (const invoice of invoices) {
+    for (const invoice of companyInvoices) {
       const document = invoice.partyDocument ?? "";
       if (!document || byDocument.has(document)) continue;
       byDocument.set(document, (counterpartyRole === "SUPPLIER" ? invoice.issuerName : invoice.recipientName) ?? document);
     }
     return [...byDocument.entries()].sort((left, right) => left[1].localeCompare(right[1], "pt-BR"));
-  }, [counterpartyRole, invoices]);
+  }, [counterpartyRole, companyInvoices]);
   const matchingInvoices = useMemo(() => {
     const term = invoiceSearch.trim().toLocaleLowerCase("pt-BR");
-    const byParty = partyFilter ? invoices.filter((invoice) => invoice.partyDocument === partyFilter) : invoices;
+    const byParty = partyFilter ? companyInvoices.filter((invoice) => invoice.partyDocument === partyFilter) : companyInvoices;
     return term ? byParty.filter((invoice) => [invoice.organizationName, invoice.documentNumber, invoice.issuerName, invoice.recipientName, invoice.issueDate].some((value) => String(value ?? "").toLocaleLowerCase("pt-BR").includes(term))) : byParty;
-  }, [invoiceSearch, invoices, partyFilter]);
+  }, [invoiceSearch, companyInvoices, partyFilter]);
   const filteredInvoices = useMemo(() => matchingInvoices.slice(0, invoiceLimit), [invoiceLimit, matchingInvoices]);
   // "Marcar todas": so notas com saldo disponivel, usando o saldo inteiro de cada uma.
   const selectableInvoices = useMemo(() => matchingInvoices.filter((invoice) => invoice.availableCents > 0), [matchingInvoices]);
@@ -233,7 +241,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
         </div> : <>
         <div className="transfer-section-title transfer-invoice-title"><div><h2>Selecione as notas fiscais</h2><p className="muted">Marque as notas que fazem parte deste repasse. Na próxima etapa você informará os pagamentos.</p></div><div className="transfer-invoice-title-actions">{selectedInvoices.length > 0 && <strong>{selectedInvoices.length} nota(s) selecionada(s)</strong>}<button className="primary" disabled={!selectedInvoices.length || loadingInvoices} onClick={continueToPayments}>Continuar para pagamentos</button></div></div>
         {!clientId ? <p className="muted">Selecione {counterpartyRole === "SUPPLIER" ? "um fornecedor" : "um cliente"} para listar as notas.</p> : loadingInvoices ? <div className="transfer-inline-loading">Carregando notas {counterpartyRole === "SUPPLIER" ? "do fornecedor" : "do cliente"}…</div> : invoices.length === 0 ? <div className="transfer-empty">Nenhuma nota de {counterpartyRole === "SUPPLIER" ? "entrada" : "saída"} foi encontrada para este {counterpartyRole === "SUPPLIER" ? "fornecedor" : "cliente"}.</div> : <>
-          <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(10); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{invoices.length} nota(s) encontrada(s)</span></div>
+          <div className="transfer-invoice-toolbar"><input type="search" value={invoiceSearch} onChange={(event) => { setInvoiceSearch(event.target.value); setInvoiceLimit(10); }} placeholder="Pesquisar por número, emitente, destinatário ou data" /><span>{matchingInvoices.length} nota(s){ownLegalEntityName ? ` de ${ownLegalEntityName}` : ""}</span></div>
           <div className="transfer-table">
           <div className="transfer-row transfer-head"><span><input type="checkbox" aria-label="Marcar todas as notas" title={allSelectableChecked ? "Desmarcar todas" : `Marcar todas (${selectableInvoices.length} nota(s)${invoiceSearch.trim() ? " da pesquisa" : ""})`} disabled={!selectableInvoices.length} checked={allSelectableChecked} ref={(element) => { if (element) element.indeterminate = someSelectableChecked && !allSelectableChecked; }} onChange={(event) => toggleAllInvoices(event.target.checked)} /></span><span>Origem</span><span>Nota</span><span>Emissão</span><span>{counterpartyRole === "SUPPLIER" ? "Emitente" : "Destinatário"}</span><span>Valor da nota</span><span>Disponível</span><span>Valor nesta conferência</span></div>
           {filteredInvoices.map((invoice) => { const checked = invoice.fiscalDocumentId in selected; const used = parseCurrencyToCents(selected[invoice.fiscalDocumentId] || "0"); return <div className={`transfer-row ${used > invoice.availableCents ? "transfer-warning" : ""}`} key={invoice.fiscalDocumentId}>

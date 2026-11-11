@@ -1963,6 +1963,8 @@ export interface TransferReconciliationAvailableInvoice {
   fiscalDocumentId: string;
   organizationId: string;
   organizationName: string;
+  // Empresa/CNPJ propria da nota (quem faturou na venda, quem recebeu na compra).
+  ownLegalEntityId?: string;
   documentNumber: string;
   issueDate: string;
   issuerName: string | null;
