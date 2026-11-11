@@ -104,6 +104,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude (repasses: CNPJ em qualquer cliente)
+- Pedido: com o cliente ALCA e a empresa FRANCA escolhida no filtro, apareciam só as notas da FRANCA lançadas no ALCA. Faltavam as que foram lançadas no KATUAI.
+- Feito (`7259ff8`):
+  - `listTransferReconciliationInvoices` aceita `partyDocuments`: todas as notas com esse destinatário (venda) ou emitente (compra), em qualquer cliente. Também inclui as notas já salvas na conferência (`reconciliationId`), para reabrir sem perder nenhuma.
+  - Ao salvar, o CNPJ das notas escolhidas é passado para a validação, que aceita as notas de outros clientes.
+  - A tela recarrega a lista ao trocar o filtro de empresa. As notas de outro cliente aparecem com "Lançada em KATUAI".
+  - A empresa em operação continua filtrando.
+  - Teste novo em `transfer-reconciliations.test.ts`; 367 testes passam.
+- Publicado: Railway e Pages. Desktop: só na próxima versão.
+
 ### 2026-11-11 - Claude (repasses responsivo)
 - Pedido: conferir a responsividade da Conferência de repasses.
 - Problema: em 1366 px a tabela de notas, com `min-width: 1100px`, alargava a coluna do formulário e ficava cortada embaixo do card de totais. Os campos do topo ficavam espremidos, e no celular o botão "Continuar para pagamentos" saía da tela.
