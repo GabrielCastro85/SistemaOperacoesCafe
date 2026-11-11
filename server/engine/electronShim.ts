@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { currentRequest, NeedsUploadError } from "./requestContext.js";
 
@@ -39,6 +39,20 @@ export const dialog = {
     if (context.uploadedPaths === null) throw new NeedsUploadError({ title: options.title, filters: options.filters, properties: options.properties });
     const paths = context.uploadedPaths;
     context.uploadedPaths = null;
+    // "Escolher pasta": o navegador envia os arquivos da pasta; aqui eles sao
+    // juntados numa pasta temporaria e o app recebe essa pasta, como no Windows.
+    if (options.properties?.includes("openDirectory")) {
+      if (!paths.length) return { canceled: true, filePaths: [] };
+      // Junto dos arquivos enviados (que ficam guardados), e nao na pasta
+      // temporaria da chamada: os passos seguintes da importacao leem daqui.
+      const folder = join(dirname(dirname(paths[0])), `pasta-${randomUUID()}`);
+      mkdirSync(folder, { recursive: true });
+      paths.forEach((path, index) => {
+        const target = join(folder, safeName(basename(path), `arquivo-${index}`));
+        copyFileSync(path, existsSync(target) ? join(folder, `${index}-${safeName(basename(path), "arquivo")}`) : target);
+      });
+      return { canceled: false, filePaths: [folder] };
+    }
     return { canceled: paths.length === 0, filePaths: paths };
   },
   async showMessageBox(): Promise<{ response: number }> { return { response: 0 }; },
@@ -73,7 +87,18 @@ export class BrowserWindow {
       currentRequest().prints.push(this.html);
       callback?.(true, "");
     },
-    send: () => undefined
+    send: () => undefined,
+    // A imagem do Comparativo e desenhada num canvas da janela oculta do app.
+    // Aqui nao ha janela: devolve o proprio SVG; o navegador converte em PNG
+    // ao baixar ou copiar (web/electronRenderer.ts).
+    executeJavaScript: async (code: string): Promise<string> => {
+      const match = /image\.src\s*=\s*("(?:[^"\\]|\\.)*")/.exec(code);
+      if (!match) throw new Error("Recurso de janela indisponivel no site.");
+      const source = JSON.parse(match[1]) as string;
+      const comma = source.indexOf(",");
+      const svg = /;base64,/.test(source.slice(0, comma + 1)) ? Buffer.from(source.slice(comma + 1), "base64").toString("utf8") : decodeURIComponent(source.slice(comma + 1));
+      return `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+    }
   };
   constructor(_options?: unknown) {}
   static fromWebContents(): BrowserWindow | null { return null; }

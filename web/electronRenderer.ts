@@ -55,9 +55,49 @@ function mimeFor(name: string): string {
   return ({ pdf: "application/pdf", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", png: "image/png", svg: "image/svg+xml", csv: "text/csv", xml: "application/xml", json: "application/json", zip: "application/zip", html: "text/html" } as Record<string, string>)[extension] ?? "application/octet-stream";
 }
 
+// Imagens que o app gera com janela do Windows (comparativo, resumo da
+// cobranca, recibo) chegam do servidor como SVG. WhatsApp e outros programas
+// nao aceitam SVG: o navegador desenha num canvas e entrega PNG.
+function isSvgBytes(bytes: Uint8Array): boolean {
+  const head = new TextDecoder().decode(bytes.subarray(0, 300)).trimStart();
+  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
+}
+
+async function svgBytesToPng(bytes: Uint8Array): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "image/svg+xml" }));
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new EngineError("Não foi possível gerar a imagem."));
+      element.src = url;
+    });
+    // Escala 2x para a imagem ficar nitida ao ampliar no celular.
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, image.naturalWidth) * scale;
+    canvas.height = Math.max(1, image.naturalHeight) * scale;
+    const context = canvas.getContext("2d");
+    if (!context) throw new EngineError("Não foi possível gerar a imagem.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new EngineError("Não foi possível gerar a imagem.")), "image/png"));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 // PDF e imagem abrem numa aba (como o app abria no Windows); o resto baixa.
-function deliver(download: { name: string; base64: string }): void {
-  const blob = new Blob([base64ToBytes(download.base64) as BlobPart], { type: mimeFor(download.name) });
+async function deliver(download: { name: string; base64: string }): Promise<void> {
+  const bytes = base64ToBytes(download.base64);
+  let blob = new Blob([bytes as BlobPart], { type: mimeFor(download.name) });
+  let name = download.name;
+  if (/\.(svg|png)$/i.test(name) && isSvgBytes(bytes)) {
+    blob = await svgBytesToPng(bytes);
+    name = name.replace(/\.svg$/i, ".png");
+  }
+  download = { ...download, name };
   const url = URL.createObjectURL(blob);
   const viewable = /\.(pdf|png|jpe?g|svg)$/i.test(download.name);
   const opened = viewable ? window.open(url, "_blank", "noopener") : null;
@@ -114,7 +154,13 @@ function pickFiles(dialog: NonNullable<EngineResponse["needsUpload"]>): Promise<
     input.style.display = "none";
     let settled = false;
     const finish = (files: File[]) => { if (settled) return; settled = true; input.remove(); resolve(files); };
-    input.addEventListener("change", () => finish([...(input.files ?? [])]));
+    input.addEventListener("change", () => {
+      const chosen = [...(input.files ?? [])];
+      // "Escolher pasta" traz todos os arquivos da pasta (PDFs, logs...): sem
+      // filtro definido pelo app, a unica pasta escolhida no site e a de XMLs.
+      const onlyXml = properties.includes("openDirectory") && !extensions.length;
+      finish(onlyXml ? chosen.filter((file) => /\.xml$/i.test(file.name)) : chosen);
+    });
     input.addEventListener("cancel", () => finish([]));
     document.body.appendChild(input);
     input.click();
@@ -252,12 +298,16 @@ async function invoke(channel: string, payload?: unknown): Promise<unknown> {
     const body = attempt === 0 && isBatchable(channel)
       ? await postQueued(channel, prepared)
       : await postRpc(channel, JSON.stringify({ channel, payload: prepared, uploadIds }));
-    body.downloads?.forEach(deliver);
+    for (const download of body.downloads ?? []) await deliver(download);
     body.prints?.forEach(printHtml);
     if (body.clipboardText !== null && body.clipboardText !== undefined) void navigator.clipboard?.writeText(body.clipboardText).catch(() => undefined);
     if (body.clipboardImagePng) {
-      const blob = new Blob([base64ToBytes(body.clipboardImagePng) as BlobPart], { type: "image/png" });
-      void navigator.clipboard?.write?.([new ClipboardItem({ "image/png": blob })]).catch(() => undefined);
+      const bytes = base64ToBytes(body.clipboardImagePng);
+      // Imagem em SVG (ex.: comparativo) vira PNG antes de ir para a area de transferencia.
+      const png = isSvgBytes(bytes) ? svgBytesToPng(bytes) : Promise.resolve(new Blob([bytes as BlobPart], { type: "image/png" }));
+      await navigator.clipboard?.write?.([new ClipboardItem({ "image/png": png })]).catch(() => {
+        throw new EngineError("O navegador não deixou copiar a imagem. Clique na página e tente de novo, ou use Salvar imagem.");
+      });
     }
     if (body.needsUpload) {
       const files = await pickFiles(body.needsUpload);
