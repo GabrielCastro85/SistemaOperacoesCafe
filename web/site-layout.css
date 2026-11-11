@@ -898,3 +898,91 @@ html.site .numbering-audit__form label {
 html.site .numbering-audit__form select {
   width: 100%;
 }
+
+/* Paginas que sao grades (ex.: Conferencia de repasses) cresciam ate a lista
+   mais larga e passavam da tela no celular. */
+html.site .content-section.transfer-page {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html.site .content-section.transfer-page > * {
+  min-width: 0;
+}
+
+/* Assistente: perguntas sugeridas quebram linha em vez de sair da tela. */
+html.site .assistant-suggestions .ui-button,
+html.site .assistant-suggestions button {
+  height: auto !important;
+  min-height: 40px;
+  white-space: normal !important;
+  text-align: left !important;
+  justify-content: flex-start !important;
+}
+
+html.site .assistant-suggestions .ui-button span,
+html.site .assistant-suggestions button span {
+  white-space: normal !important;
+}
+
+/* Cartoes da lista de conferencias de repasse: colunas se ajustam a largura. */
+html.site .transfer-history,
+html.site .transfer-history > article {
+  min-width: 0;
+  max-width: 100%;
+}
+
+html.site .transfer-history > article {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
+}
+
+html.site .transfer-history > article > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+html.site .transfer-history > article > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Janelas de edicao (cliente/empresa e janelas em geral): o conteudo nao
+   passa da largura da janela; o botao de fechar fica sempre visivel. */
+html.site :is(.partner-modal, .partner-modal__body, .ui-dialog > section, .ui-drawer > section) {
+  grid-template-columns: minmax(0, 1fr) !important;
+  min-width: 0;
+  max-width: 100%;
+}
+
+html.site :is(.partner-modal, .partner-modal__body, .ui-dialog > section, .ui-drawer > section) > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+html.site .partner-modal__header {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 960px) {
+  html.site .partner-records-grid,
+  html.site .partner-action-panel {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Conferencia de repasse nova/edicao: etapas quebram linha no celular. */
+html.site .transfer-steps {
+  width: auto !important;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+html.site .transfer-steps button {
+  white-space: normal;
+}
+
+html.site .transfer-editor,
+html.site .transfer-editor > * {
+  min-width: 0;
+  max-width: 100%;
+}
