@@ -183,6 +183,7 @@ const IPC_CHANNELS = {
   addBusinessPartnerRole: "businessPartners:addRole",
   removeBusinessPartnerRole: "businessPartners:removeRole",
   listPartnerLegalEntities: "partnerLegalEntities:list",
+  listPartnerLegalEntitiesForPartners: "partnerLegalEntities:listForPartners",
   listUnlinkedPartnerLegalEntities: "partnerLegalEntities:listUnlinked",
   resolveIssuerLegalEntityFromPartner: "partnerLegalEntities:resolveIssuer",
   createPartnerLegalEntity: "partnerLegalEntities:create",
@@ -609,6 +610,7 @@ export interface OperationsCafeApi {
   addBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
   removeBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
   listPartnerLegalEntities: (businessPartnerId: string) => Promise<BusinessPartnerLegalEntity[]>;
+  listPartnerLegalEntitiesForPartners: (businessPartnerIds: string[]) => Promise<BusinessPartnerLegalEntity[]>;
   listUnlinkedPartnerLegalEntities: (organizationId: string, search?: string) => Promise<BusinessPartnerLegalEntity[]>;
   resolveIssuerLegalEntityFromPartner: (organizationId: string, partnerLegalEntityId: string) => Promise<LegalEntity>;
   createPartnerLegalEntity: (input: unknown) => Promise<BusinessPartnerLegalEntity>;
@@ -1026,6 +1028,7 @@ const api: OperationsCafeApi = {
   addBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.addBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
   removeBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.removeBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
   listPartnerLegalEntities: (businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerLegalEntities, businessPartnerId) as Promise<BusinessPartnerLegalEntity[]>,
+  listPartnerLegalEntitiesForPartners: (businessPartnerIds) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerLegalEntitiesForPartners, businessPartnerIds) as Promise<BusinessPartnerLegalEntity[]>,
   listUnlinkedPartnerLegalEntities: (organizationId, search) => ipcRenderer.invoke(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, { organizationId, search }) as Promise<BusinessPartnerLegalEntity[]>,
   resolveIssuerLegalEntityFromPartner: (organizationId, partnerLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.resolveIssuerLegalEntityFromPartner, { organizationId, partnerLegalEntityId }) as Promise<LegalEntity>,
   createPartnerLegalEntity: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPartnerLegalEntity, input) as Promise<BusinessPartnerLegalEntity>,

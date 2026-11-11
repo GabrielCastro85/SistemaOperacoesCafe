@@ -96,22 +96,28 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
   const scrollTo = useAutoScroll();
   const partnersListRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(async () => {
+  // Lista de clientes (muda com a busca) separada do carregamento completo:
+  // digitar na busca nao recarrega mais todas as empresas/CNPJs.
+  const loadPartnerList = useCallback(async () => {
     const searchedPartners = await window.operationsCafe.listBusinessPartners({ search, status: "active" });
-    const activePartners = await window.operationsCafe.listBusinessPartners({ status: "active" });
     setItems(searchedPartners.filter((partner) => partner.roles.includes("CLIENT") || partner.roles.includes("SUPPLIER")));
+  }, [search]);
+  const loadAll = useCallback(async () => {
+    const activePartners = await window.operationsCafe.listBusinessPartners({ status: "active" });
     setAllPartners(activePartners);
     // Empresas/CNPJs sem cliente/corretor dono nao aparecem percorrendo os
     // parceiros (nao tem partner.id pra' consultar) -- precisa buscar as
     // soltas separadamente e juntar, senao a aba "Empresas/CNPJs" mostra so'
-    // as ja vinculadas.
+    // as ja vinculadas. As vinculadas vem numa consulta so' (antes, uma por cliente).
     const [linkedEntities, unlinkedEntities] = await Promise.all([
-      Promise.all(activePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(activePartners.map((partner) => partner.id)),
       organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
     ]);
-    setAllLegalEntities([...linkedEntities.flat(), ...unlinkedEntities]);
-  }, [search, organizationId]);
-  useEffect(() => { void load(); }, [load]);
+    setAllLegalEntities([...linkedEntities, ...unlinkedEntities]);
+  }, [organizationId]);
+  const load = useCallback(async () => { await Promise.all([loadPartnerList(), loadAll()]); }, [loadPartnerList, loadAll]);
+  useEffect(() => { void loadPartnerList(); }, [loadPartnerList]);
+  useEffect(() => { void loadAll(); }, [loadAll]);
 
   async function loadDetail(partner: BusinessPartner): Promise<void> {
     setSelected(partner);

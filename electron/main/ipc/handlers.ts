@@ -419,6 +419,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.removeBusinessPartnerRole(data.id, data.role);
   });
   handle(IPC_CHANNELS.listPartnerLegalEntities, (_event, payload: unknown) => repository.listPartnerLegalEntities(z.string().uuid().parse(payload)));
+  handle(IPC_CHANNELS.listPartnerLegalEntitiesForPartners, (_event, payload: unknown) => repository.listPartnerLegalEntitiesForPartners(z.array(z.string().uuid()).max(5000).parse(payload)));
   handle(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), search: z.string().optional() }).parse(payload);
     return repository.listUnlinkedPartnerLegalEntities(data.organizationId, data.search);

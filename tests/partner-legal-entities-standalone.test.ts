@@ -61,6 +61,21 @@ function sampleCompany(organizationId: string, cnpj: string, businessPartnerId: 
 }
 
 describe("standalone empresas/CNPJs (sem cliente/corretor dono)", () => {
+  it("lista as empresas de varios clientes numa consulta so, igual a uma por cliente", async () => {
+    const { repo, db } = setup();
+    const leo = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Leo ES", notes: null, roles: ["CLIENT"], isActive: true });
+    const bob = await repo.createBusinessPartner({ organizationId: villaId, displayName: "Bob MG", notes: null, roles: ["CLIENT"], isActive: true });
+    const shared = await repo.createPartnerLegalEntity({ ...sampleCompany(villaId, cnpjA, leo.id), isPrimary: true });
+    await repo.createPartnerLegalEntity({ ...sampleCompany(villaId, cnpjB, bob.id), tradeName: "Outra" });
+    db.prepare("INSERT INTO partner_company_links VALUES (?, ?, ?)").run(shared.id, bob.id, new Date().toISOString());
+    const key = (item: { id: string; businessPartnerId: string | null; isPrimary: boolean }) => item.id + "|" + item.businessPartnerId + "|" + item.isPrimary;
+    const oneByOne = [...repo.listPartnerLegalEntities(leo.id), ...repo.listPartnerLegalEntities(bob.id)].map(key).sort();
+    const together = repo.listPartnerLegalEntitiesForPartners([leo.id, bob.id]).map(key).sort();
+    expect(together).toEqual(oneByOne);
+    expect(together).toHaveLength(3);
+    db.close();
+  });
+
   it("cadastra uma empresa sem cliente/corretor dono, e depois vincula a um -- fluxo pedido pelo dono", async () => {
     const { repo, db } = setup();
     const company = await repo.createPartnerLegalEntity(sampleCompany(villaId, cnpjA));

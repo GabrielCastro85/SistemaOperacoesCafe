@@ -89,6 +89,7 @@ export const IPC_CHANNELS = {
   addBusinessPartnerRole: "businessPartners:addRole",
   removeBusinessPartnerRole: "businessPartners:removeRole",
   listPartnerLegalEntities: "partnerLegalEntities:list",
+  listPartnerLegalEntitiesForPartners: "partnerLegalEntities:listForPartners",
   listUnlinkedPartnerLegalEntities: "partnerLegalEntities:listUnlinked",
   resolveIssuerLegalEntityFromPartner: "partnerLegalEntities:resolveIssuer",
   createPartnerLegalEntity: "partnerLegalEntities:create",

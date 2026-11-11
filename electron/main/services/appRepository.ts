@@ -1065,6 +1065,30 @@ export class AppRepository {
     return (this.db.prepare("SELECT * FROM partner_legal_entities WHERE business_partner_id = ? OR id IN (SELECT partner_legal_entity_id FROM partner_company_links WHERE business_partner_id = ?) ORDER BY trade_name").all(partner.id, partner.id) as DbRecord[]).map((row) => ({ ...mapBusinessPartnerLegalEntity(row), businessPartnerId: partner.id, isPrimary: row.business_partner_id === partner.id && Boolean(row.is_primary) }));
   }
 
+  /** Mesmo resultado de listPartnerLegalEntities para varios clientes de uma vez
+   *  (tela de Clientes e empresas: antes era uma consulta por cliente). */
+  listPartnerLegalEntitiesForPartners(businessPartnerIds: string[]): BusinessPartnerLegalEntity[] {
+    const ids = [...new Set(businessPartnerIds)];
+    if (!ids.length) return [];
+    const result: BusinessPartnerLegalEntity[] = [];
+    for (let start = 0; start < ids.length; start += 500) {
+      const chunk = ids.slice(start, start + 500);
+      const marks = chunk.map(() => "?").join(", ");
+      const rows = this.db.prepare(`
+        SELECT ple.*, ple.business_partner_id AS owner_id FROM partner_legal_entities ple WHERE ple.business_partner_id IN (${marks})
+        UNION ALL
+        SELECT ple.*, link.business_partner_id AS owner_id FROM partner_company_links link
+          JOIN partner_legal_entities ple ON ple.id = link.partner_legal_entity_id
+          WHERE link.business_partner_id IN (${marks}) AND (ple.business_partner_id IS NULL OR ple.business_partner_id <> link.business_partner_id)
+        ORDER BY trade_name`).all(...chunk, ...chunk) as DbRecord[];
+      for (const row of rows) {
+        const ownerId = String(row.owner_id);
+        result.push({ ...mapBusinessPartnerLegalEntity(row), businessPartnerId: ownerId, isPrimary: row.business_partner_id === ownerId && Boolean(row.is_primary) });
+      }
+    }
+    return result;
+  }
+
   /** Empresas/CNPJs cadastradas mas ainda sem cliente/corretor dono -- lista pra tela de "vincular empresa existente". */
   listUnlinkedPartnerLegalEntities(organizationId: string, search?: string): BusinessPartnerLegalEntity[] {
     this.assertOrganizationWritable(organizationId);
