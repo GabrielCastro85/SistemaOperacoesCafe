@@ -104,6 +104,18 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude (polimento visual, etapa 1)
+- Pedido: polir o site inteiro. Exemplos dados: botões pretos com texto preto; confirmação abrindo atrás da janela de cadastro; caixas de seleção; tela de carregamento.
+- Feito (`6e5f8cb`):
+  - **Camadas (index.css, vale também para o programa):** a confirmação `.ui-dialog` foi para o z 90 (estava em 50, abaixo da janela de cadastro, z 70) e os avisos `.ui-toast` para 120 (estavam em 60).
+  - **Janelas de cadastro no site (site-theme.css):** o cabeçalho e o rodapé ficaram claros. No rodapé preto, "Fechar" (`data-tone=quiet`: transparente com texto escuro) ficava invisível. O fundo tem desfoque leve, e a confirmação ganhou largura e espaçamento padrão.
+  - **Botões discretos** (Fechar, Cancelar, Voltar, Limpar) ganharam borda leve.
+  - **Caixas de seleção:** tamanho de 17 px, cor do site (`accent-color`), sempre ao lado do texto (`label:has(> input[type=checkbox])` em form-grid, inline-check e checkbox).
+  - **Carregamento (providers.tsx + index.css):** cartão com spinner verde, "Processando..." e, depois de 5 s, "Ainda trabalhando...".
+  - **Cartões em grade** (Configurações, Resumo, Cafés armazenados, Assistente): a margem de `.ui-card + .ui-card` desalinhava o primeiro cartão. Ela foi zerada nas grades, e `.cards > .ui-card` passou a usar `align-content: start`.
+- Auditoria automática no site local, em todas as rotas e nas janelas de cliente, empresa e regra: verificados contraste de texto, caixas de seleção acima do texto e áreas escuras com botões. O único caso encontrado foi o rodapé das janelas. A confirmação foi conferida por cima da janela, com a opção cancelada.
+- Próximas etapas possíveis: estados vazios, padronizar tabelas e detalhes de nota e cobrança, revisar no celular.
+
 ### 2026-11-11 - Claude (repasses: CNPJ em qualquer cliente)
 - Pedido: com o cliente ALCA e a empresa FRANCA escolhida no filtro, apareciam só as notas da FRANCA lançadas no ALCA. Faltavam as que foram lançadas no KATUAI.
 - Feito (`7259ff8`):
