@@ -104,6 +104,15 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude (repasses por empresa)
+- Pedido: na seleção de notas da Conferência de repasses, mostrar só as notas faturadas pela empresa em operação. Exemplo: em Villa MG, só as da Villa MG; em Grão MG, só as da Grão MG.
+- Feito (`b4660e3`):
+  - `listTransferReconciliationInvoices` devolve o `ownLegalEntityId` da nota.
+  - A tela filtra pela `profile.defaultLegalEntityId` (a empresa em operação). Uma nota já marcada na conferência continua visível, para poder ser desmarcada.
+  - O contador mostra "N nota(s) de <empresa>".
+- Testado no site local com o cliente ADRIANO D E G, que tem 6 notas: em Villa MG aparecem 4; em Grão MG aparecem 0, porque as outras 2 são da Grão SP.
+- Publicado: Railway e Pages.
+
 ### 2026-11-11 - Claude (DAE da nota fiscal)
 - Pedido: além do DAE de frete, cobrar o DAE referente à nota fiscal no mesmo esquema (marcar e informar o valor), e melhorar o visual das caixas de seleção abaixo de "Observações desta nota".
 - Feito (`0888f3a`). É o trabalho não commitado que o Codex viu, agora entregue.
