@@ -39,7 +39,7 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-11-11, pelo Codex (auditoria de retomada; sem alteração de código).
+- **Atualizado em:** 2026-11-11, pelo Codex (planilha de vendas de novembro atualizada e validada; sem alteração de código do sistema).
 - **Branch:** `codex/central-server-neon`.
 - **Última versão publicada:** 1.1.71, em 2026-11-06.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
@@ -103,6 +103,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-11 - Codex (planilha de vendas de novembro atualizada)
+- Pedido: atualizar `C:/Users/gabri/OneDrive/Área de Trabalho/VENDAS 11-26.xlsx` com as notas disponíveis no Operações Café.
+- Fonte: banco local consultado somente em modo leitura; nenhuma alteração feita no banco do programa.
+- Critério: operações de venda confirmadas, com documento confirmado e não cancelado, de novembro/2026.
+- Resultado: 222 notas fiscais (237 operações consolidadas por NF), de 02/11/2026 a 10/11/2026, totalizando 71.157,736333 sacas.
+- A aba `DADOS` foi preenchida preservando o modelo; a aba `RESUMO` foi recalculada com as tarifas efetivamente aplicadas no mês. A tarifa variável de JOÃO MÁRIO foi registrada pela média ponderada para manter o valor financeiro exato.
+- Novos clientes adicionados ao resumo: ISABELA KATUAI, RHOWIN e YURI MG.
+- Validação: arquivo exportado, reaberto e recalculado; nenhuma ocorrência de `#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?` ou `#N/A`; prévias visuais das duas abas conferidas.
+- Saída: `outputs/01a0ca6f-27e8-7743-8958-a0a8a9e6d7c6/VENDAS 11-26 - ATUALIZADA 11-11-2026.xlsx`. O original da Área de Trabalho foi preservado.
 
 ### 2026-11-11 - Claude (polimento visual, etapa 1)
 - Pedido: polir o site inteiro. Exemplos dados: botões pretos com texto preto; confirmação abrindo atrás da janela de cadastro; caixas de seleção; tela de carregamento.
