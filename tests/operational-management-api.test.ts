@@ -174,7 +174,7 @@ describe("operational management API", () => {
     state.records.set("client_charges", new Map([["charge", {
       id: "charge", organization_id: "org", own_legal_entity_id: "entity", client_partner_id: "client",
       status: "ISSUED", final_amount_cents: 250000, paid_amount_cents: 0, open_amount_cents: 250000,
-      due_date: "2026-11-10", updated_at: "2026-11-01T12:00:00.000Z"
+      due_date: "2099-11-10", updated_at: "2026-11-01T12:00:00.000Z"
     }]]));
     const app = Fastify(); registerOperationalManagementRoutes(app, state.pool);
     const headers = { authorization: "Bearer test", "content-type": "application/json" };
