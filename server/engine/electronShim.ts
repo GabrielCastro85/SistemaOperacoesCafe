@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { currentRequest, NeedsUploadError } from "./requestContext.js";
@@ -113,18 +113,47 @@ export class BrowserWindow {
   close(): void { /* nada */ }
 }
 
-// Credenciais do servidor central guardadas so enquanto o processo vive.
-const key = randomBytes(32);
+// Chave do armazenamento seguro (senhas do central de cada usuario). Fica num
+// arquivo na pasta de dados do motor (volume da Railway): sem isso, a cada
+// atualizacao do servidor a chave mudava e as senhas guardadas deixavam de abrir.
+// ENGINE_STORAGE_KEY (base64, 32 bytes), se definida, tem prioridade.
+let cachedKey: Buffer | null = null;
+function storageKey(): Buffer {
+  if (cachedKey) return cachedKey;
+  const fromEnv = Buffer.from(process.env.ENGINE_STORAGE_KEY ?? "", "base64");
+  if (fromEnv.length === 32) return (cachedKey = fromEnv);
+  const directory = process.env.ENGINE_DATA_DIR;
+  if (directory) {
+    const file = join(directory, ".storage-key");
+    const readKey = (): Buffer | null => {
+      if (!existsSync(file)) return null;
+      const value = Buffer.from(readFileSync(file, "utf8").trim(), "base64");
+      return value.length === 32 ? value : null;
+    };
+    try {
+      const existing = readKey();
+      if (existing) return (cachedKey = existing);
+      mkdirSync(directory, { recursive: true });
+      const created = randomBytes(32);
+      writeFileSync(file, created.toString("base64"), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      return (cachedKey = created);
+    } catch {
+      const existing = readKey();
+      if (existing) return (cachedKey = existing);
+    }
+  }
+  return (cachedKey = randomBytes(32));
+}
 export const safeStorage = {
   isEncryptionAvailable: (): boolean => true,
   encryptString(value: string): Buffer {
     const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const cipher = createCipheriv("aes-256-gcm", storageKey(), iv);
     const data = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
     return Buffer.concat([iv, cipher.getAuthTag(), data]);
   },
   decryptString(value: Buffer): string {
-    const decipher = createDecipheriv("aes-256-gcm", key, value.subarray(0, 12));
+    const decipher = createDecipheriv("aes-256-gcm", storageKey(), value.subarray(0, 12));
     decipher.setAuthTag(value.subarray(12, 28));
     return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString("utf8");
   }

@@ -76,6 +76,8 @@ const loadEngine = (): Promise<Engine> => {
   enginePromise ??= (async () => {
     process.env.OPERACOES_CAFE_CENTRAL_URL ??= `http://127.0.0.1:${config.PORT}`;
     const dataDir = process.env.ENGINE_DATA_DIR ?? (existsSync("/data") ? "/data/engine" : "/tmp/operacoes-cafe-engine");
+    // O substituto do Electron (chave do armazenamento seguro) usa a mesma pasta.
+    process.env.ENGINE_DATA_DIR = dataDir;
     const modulePath = new URL("../../../dist-engine/host.mjs", import.meta.url).href;
     const { createEngine } = await import(modulePath) as { createEngine(options: { dataDir: string; version: string }): Engine };
     app.log.info({ dataDir }, "Motor do app carregado para o site");

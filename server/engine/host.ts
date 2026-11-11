@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { initializeDatabase } from "../../electron/main/database/database.js";
 import { registerIpcHandlers } from "../../electron/main/ipc/handlers.js";
@@ -90,10 +90,29 @@ export function createEngine(options: { dataDir: string; version: string }) {
   // O servidor nao e um computador para autorizar: cada usuario entra com a propria senha do central.
   handlers.set(IPC_CHANNELS.authCentralConnectionStatus, () => ({ configured: true }));
 
-  const sessions = new Map<string, string | null>();
+  // Login e empresa ativa de cada navegador, gravados na pasta de dados (volume
+  // da Railway): numa atualizacao do servidor ninguem precisa entrar de novo.
+  // As sessoes em si ficam no banco do motor e continuam expirando normalmente.
+  const sessionsFile = join(options.dataDir, "web-sessions.json");
+  type Scope = { organizationId: string | null; legalEntityId: string | null };
+  const saved = ((): { sessions: Record<string, string>; scopes: Record<string, Scope> } => {
+    try { return JSON.parse(readFileSync(sessionsFile, "utf8")) as { sessions: Record<string, string>; scopes: Record<string, Scope> }; } catch { return { sessions: {}, scopes: {} }; }
+  })();
+  const sessions = new Map<string, string | null>(Object.entries(saved.sessions ?? {}));
   // Empresa ativa de cada navegador. O app guarda uma so por computador
   // (installation_profiles); o motor troca antes de cada chamada.
-  const activeScopes = new Map<string, { organizationId: string | null; legalEntityId: string | null }>();
+  const activeScopes = new Map<string, Scope>(Object.entries(saved.scopes ?? {}));
+  let savedSnapshot = "";
+  const persistSessions = (): void => {
+    const sessionEntries = [...sessions.entries()].filter((entry): entry is [string, string] => Boolean(entry[1]));
+    const snapshot = JSON.stringify({ sessions: Object.fromEntries(sessionEntries), scopes: Object.fromEntries([...activeScopes.entries()].filter(([id]) => sessions.get(id))) });
+    if (snapshot === savedSnapshot) return;
+    try {
+      writeFileSync(`${sessionsFile}.tmp`, snapshot, { encoding: "utf8", mode: 0o600 });
+      renameSync(`${sessionsFile}.tmp`, sessionsFile);
+      savedSnapshot = snapshot;
+    } catch { /* sem disco gravavel: segue so em memoria */ }
+  };
   const readScope = () => db.prepare("SELECT id, default_organization_id AS organizationId, default_legal_entity_id AS legalEntityId FROM installation_profiles ORDER BY created_at DESC LIMIT 1").get() as { id: string; organizationId: string | null; legalEntityId: string | null } | undefined;
   let queue: Promise<unknown> = Promise.resolve();
   const allowedRoots = [resolve(uploadsDir), resolve(tempRoot), resolve(directories.documentsDir)];
@@ -157,6 +176,7 @@ export function createEngine(options: { dataDir: string; version: string }) {
       const after = readScope();
       if (after) activeScopes.set(webSessionId, { organizationId: after.organizationId, legalEntityId: after.legalEntityId });
       auth.useSession(null);
+      persistSessions();
       rmSync(context.tempDir, { recursive: true, force: true });
     }
   };
