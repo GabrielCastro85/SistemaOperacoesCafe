@@ -104,6 +104,17 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude (volume Railway e login persistente)
+- Pedido: criar o volume da Railway junto com o Gabriel (logado no navegador do app).
+- **Railway:** no projeto `proud-delight`, serviço `mindful-peace`, foi criado o volume `mindful-peace-volume`, montado em `/data`, região sfo. Mudanças aplicadas com "Deploy Changes". O `server/src/index.ts` já usava `/data/engine` quando `/data` existe.
+- **Só o volume não bastava** (`940284a`):
+  - O mapa navegador→sessão (`sessions`/`activeScopes` em host.ts) ficava só na memória. Agora é gravado em `<dataDir>/web-sessions.json` (0600), e as sessões continuam no banco do motor.
+  - A chave do `safeStorage` do electronShim era sorteada a cada processo, e as senhas do central em `central-credentials.json` deixavam de abrir após reiniciar. Agora fica em `<dataDir>/.storage-key` (0600). A variável `ENGINE_STORAGE_KEY` (base64, 32 bytes), se definida, tem prioridade.
+  - O index.ts passa `ENGINE_DATA_DIR` ao shim.
+- Testado localmente: login, motor reiniciado, página recarregada continua logada (pede só a empresa, como sempre). 367 testes passam.
+- Publicado: Railway `/health` = 940284a.
+- Efeito: a partir da próxima atualização, ninguém precisa entrar de novo e a sincronização do motor segue sem novo login. A atualização que acabou de entrar ainda pediu login uma última vez.
+
 ### 2026-11-11 - Codex (planilha de vendas de novembro atualizada)
 - Pedido: atualizar `C:/Users/gabri/OneDrive/Área de Trabalho/VENDAS 11-26.xlsx` com as notas disponíveis no Operações Café.
 - Fonte: banco local consultado somente em modo leitura; nenhuma alteração feita no banco do programa.
