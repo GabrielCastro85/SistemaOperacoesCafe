@@ -986,3 +986,186 @@ html.site .transfer-editor > * {
   min-width: 0;
   max-width: 100%;
 }
+
+/* Conferencia de repasse (nova/edicao): a tela se ajusta ao espaco real da
+   area de conteudo (container), nao so a largura da janela. */
+html.site .content-section.transfer-page {
+  container-type: inline-size;
+  container-name: transfer;
+}
+
+html.site .transfer-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.site .transfer-fields {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) !important;
+}
+
+html.site .transfer-source-fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)) !important;
+}
+
+html.site .transfer-section-title,
+html.site .transfer-invoice-toolbar {
+  flex-wrap: wrap;
+}
+
+html.site .transfer-invoice-toolbar input {
+  min-width: min(100%, 260px);
+}
+
+html.site .transfer-payment {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)) !important;
+}
+
+/* Tabela de notas: colunas flexiveis em vez de largura minima de 1100px. */
+html.site .transfer-table {
+  overflow-x: visible;
+}
+
+html.site .transfer-row {
+  min-width: 0 !important;
+  grid-template-columns: 30px minmax(100px, 0.9fr) minmax(56px, 0.5fr) minmax(86px, 0.6fr) minmax(150px, 2fr) minmax(104px, 0.9fr) minmax(104px, 0.9fr) minmax(130px, 1.1fr) !important;
+}
+
+html.site .transfer-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Sem espaco para a coluna lateral: os totais viram uma faixa acima do
+   formulario (sem flutuar por cima das notas). */
+@container transfer (max-width: 1320px) {
+  html.site .transfer-editor {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  html.site .transfer-summary {
+    position: static;
+    order: -1;
+    box-shadow: none;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto !important;
+    column-gap: 18px;
+    row-gap: 2px;
+    padding: 12px 18px;
+  }
+
+  html.site .transfer-summary strong {
+    margin-bottom: 0;
+    font-size: 20px;
+  }
+
+  html.site .transfer-summary > small:nth-of-type(1) { grid-area: 1 / 1; }
+  html.site .transfer-summary > strong:nth-of-type(1) { grid-area: 2 / 1; }
+  html.site .transfer-summary > small:nth-of-type(2) { grid-area: 1 / 2; }
+  html.site .transfer-summary > strong:nth-of-type(2) { grid-area: 2 / 2; }
+  html.site .transfer-summary > small:nth-of-type(3) { grid-area: 1 / 3; }
+  html.site .transfer-summary > strong:nth-of-type(3) { grid-area: 2 / 3; }
+
+  html.site .transfer-summary .transfer-actions {
+    grid-area: 1 / 4 / span 2 / 5;
+    margin-top: 0;
+    align-content: center;
+    grid-template-columns: auto auto;
+  }
+}
+
+/* Estreito: cada nota vira um cartao com o nome de cada campo. */
+@container transfer (max-width: 860px) {
+  html.site .transfer-head {
+    display: flex !important;
+    align-items: center;
+    gap: 10px;
+  }
+
+  html.site .transfer-head > span:not(:first-child) {
+    display: none;
+  }
+
+  html.site .transfer-head::after {
+    content: "Marcar todas";
+  }
+
+  html.site .transfer-row:not(.transfer-head) {
+    grid-template-columns: 28px repeat(3, minmax(0, 1fr)) !important;
+    row-gap: 10px;
+    align-items: start;
+  }
+
+  html.site .transfer-row:not(.transfer-head) > span:first-child {
+    grid-row: 1 / span 4;
+    padding-top: 2px;
+  }
+
+  html.site .transfer-row:not(.transfer-head) > span[data-label="Destinatário"],
+  html.site .transfer-row:not(.transfer-head) > span[data-label="Emitente"] {
+    grid-column: 2 / -1;
+  }
+
+  html.site .transfer-row > span[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--color-text-muted, #7a6f62);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  html.site .transfer-summary {
+    padding: 10px 12px;
+    column-gap: 10px;
+  }
+
+  html.site .transfer-summary small {
+    font-size: 10px;
+  }
+
+  html.site .transfer-summary strong {
+    font-size: 15px;
+  }
+
+  html.site .transfer-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  html.site .transfer-summary .transfer-actions {
+    grid-area: 3 / 1 / 4 / -1;
+    margin-top: 6px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  }
+
+  html.site .transfer-summary .transfer-actions button {
+    width: 100%;
+    white-space: normal;
+  }
+}
+
+/* Celular: duas colunas no cartao da nota; valor da conferencia na largura toda. */
+@container transfer (max-width: 520px) {
+  html.site .transfer-row:not(.transfer-head) {
+    grid-template-columns: 28px repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  html.site .transfer-row:not(.transfer-head) > span[data-label="Valor nesta conferência"] {
+    grid-column: 2 / -1;
+  }
+
+}
+
+html.site .transfer-section-title > * {
+  min-width: 0;
+}
+
+html.site .transfer-invoice-title-actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+html.site .transfer-invoice-title-actions .primary {
+  min-width: 0 !important;
+  max-width: 100%;
+  white-space: normal;
+}
