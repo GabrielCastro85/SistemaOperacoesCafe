@@ -39,13 +39,13 @@ Modelo de entrada:
 
 ## Situação atual
 
-- **Atualizado em:** 2026-11-06, pelo Claude.
+- **Atualizado em:** 2026-11-11, pelo Codex (auditoria de retomada; sem alteração de código).
 - **Branch:** `codex/central-server-neon`.
 - **Última versão publicada:** 1.1.71, em 2026-11-06.
 - **Commits:** o código das versões 1.1.63 e 1.1.64 foi commitado junto com a 1.1.65. Faça commit antes de publicar, para o que está no ar sempre existir no Git.
 - **`docs/CHANGELOG.md`:** não tem a versão 1.1.61.
 - **Próxima versão:** 1.1.72. **Não publique sem o Gabriel pedir.**
-- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo, e não será apenas uma consulta. Já existem escritas web para cadastros comerciais, produtos, regras, ajustes de cafés armazenados, lançamentos extras da conta-corrente, notas manuais, NF-e comercial e especial por XML (armazém, cancelamento e triangulação), emissão de cobranças e recebimentos/estornos, usando o mesmo banco, revisões centrais, permissões e auditoria do desktop. O desktop permanece ativo durante a transição. Ainda faltam importação por planilha, confirmações, repasses, contas a pagar e administração web.
+- **Migração web total em andamento:** Gabriel decidiu que `graobase.com.br` substituirá 100% do aplicativo. A importação por planilha, confirmações, cobranças/conta-corrente, repasses e acertos foram publicadas em rotas web próprias em 06/11; no mesmo dia entrou o motor do próprio aplicativo no servidor, permitindo ao site usar as telas e regras completas do desktop. `graobase.com.br` serve a versão completa e `/consulta/` preserva o viewer anterior. Entre 09 e 11/11 foram publicados novo visual, responsividade, otimizações de desempenho, importação de pasta XML e geração PNG. O desktop permanece ativo durante a transição. Pendências principais: volume persistente no Railway, sessão/credencial de serviço do motor após reinício e validação contínua das funções que dependiam de diálogos/arquivos do Windows.
 
 ### Publicado na 1.1.71
 
@@ -103,6 +103,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - `npm run dist` gera **e publica** a versão no GitHub. Só execute quando o Gabriel pedir.
 
 ## Histórico (mais recente primeiro)
+
+### 2026-11-11 - Codex
+- Pedido: depois de alguns dias sem tokens, conferir o que foi feito no período sem refazer trabalho do Claude.
+- Feito: releitura integral deste registro; conferidos `git status`, histórico desde `7494eee`, commits-chave da migração, estado remoto e produção. A importação por planilha e os blocos seguintes já tinham sido implementados pelo Claude; o site completo passou a reutilizar o motor e as telas do app, recebeu melhorias visuais, responsivas e de desempenho, além de PNG e importação de pasta XML.
+- Verificado em produção: `/health` saudável no commit `769b4f5`, `/ready` com banco conectado e `graobase.com.br` respondendo 200. O Git local e remoto estão em `ff4743f`; os commits posteriores ao servidor são de site/layout.
+- Preservado: 14 arquivos rastreados atualmente alterados por outro trabalho em andamento (DAE próprio da nota fiscal, separado do DAE de frete), além dos arquivos locais não rastreados já conhecidos. Nenhum código, banco local ou `tmp/importar-thadeu*` foi alterado nesta auditoria.
+- Publicado: nada.
+- Pendente: decidir a próxima tarefa somente depois de o trabalho não commitado do Claude ser concluído ou claramente entregue, para evitar sobreposição.
 
 ### 2026-11-11 - Claude
 - Pedido: primeiro o site (funcionamento, visual, responsividade); as notas antigas ficam para depois. Railway (volume) a ver junto com o Gabriel logado.
