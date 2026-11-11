@@ -104,6 +104,21 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-11 - Claude (DAE da nota fiscal)
+- Pedido: além do DAE de frete, cobrar o DAE referente à nota fiscal no mesmo esquema (marcar e informar o valor), e melhorar o visual das caixas de seleção abaixo de "Observações desta nota".
+- Feito (`0888f3a`). É o trabalho não commitado que o Codex viu, agora entregue.
+  - Migração `062_fiscal_document_invoice_dae` cria a tabela própria `fiscal_document_invoice_daes`, com uma linha por nota: reference e amount_cents. Ela está em `CENTRAL_SYNCED_TABLES` e em `SYNCED_TABLES`.
+  - Foi uma tabela, e não uma coluna em fiscal_documents, porque um PC em versão antiga reenviaria a nota sem a coluna e apagaria o valor. Tabela desconhecida, a versão antiga ignora.
+  - `appRepository`: `withInvoiceDae`, `invoiceDaeMap` e `saveInvoiceDae`. Os campos `invoiceDaeReference` e `invoiceDaeAmountCents` entram no FiscalDocument, no create/update, nas resoluções da importação XML e nos esquemas.
+  - Na reserva da cobrança, o DAE de frete e o DAE da nota da mesma NF viram um único ajuste, porque há um índice único por nota em cada cobrança. A descrição é "DAE de frete e DAE da nota referentes a NF X" e o motivo traz os dois valores.
+  - Os alertas do Resumo somam o DAE da nota.
+- Telas:
+  - Na importação de XML, as opções viraram o bloco `.note-options` (Financeiro, DAE de frete, DAE da nota fiscal), com a caixa ao lado do título, uma explicação e os campos abrindo quando a opção é marcada. CSS em `src/renderer/styles/index.css`.
+  - No detalhe da nota há a seção "DAE da nota fiscal".
+  - A prévia da cobrança mostra uma linha para cada DAE.
+- Testes: 366 passam, incluindo um teste novo de DAE da nota somado ao de frete. Os testes que fixam o nome da última migração foram atualizados. No site local, importei um XML com DAE da nota de R$ 150 e o valor foi salvo na nota.
+- Publicado: Railway e Pages (master). Desktop: só na próxima versão; até lá o DAE da nota deve ser lançado pelo site.
+
 ### 2026-11-11 - Codex
 - Pedido: depois de alguns dias sem tokens, conferir o que foi feito no período sem refazer trabalho do Claude.
 - Feito: releitura integral deste registro; conferidos `git status`, histórico desde `7494eee`, commits-chave da migração, estado remoto e produção. A importação por planilha e os blocos seguintes já tinham sido implementados pelo Claude; o site completo passou a reutilizar o motor e as telas do app, recebeu melhorias visuais, responsivas e de desempenho, além de PNG e importação de pasta XML.
