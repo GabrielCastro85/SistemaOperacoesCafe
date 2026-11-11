@@ -542,7 +542,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
                           <strong>{item.partnerName}</strong>
                           <span>{item.ownLegalEntityName} · {item.documentCount} nota(s) · {item.operationCount} operação(ões)</span>
                           <small>NF {shownNotes}{hiddenNotes ? ` e mais ${hiddenNotes}` : ""}</small>
-                          {item.freightDaeAmountCents > 0 ? <small>Inclui {formatCurrencyFromCents(item.freightDaeAmountCents)} de DAE de frete</small> : null}
+                          {item.freightDaeAmountCents > 0 ? <small>Inclui {formatCurrencyFromCents(item.freightDaeAmountCents)} de DAE</small> : null}
                         </div>
                         <div className="alert-item__meta">
                           <Badge tone="warning">Não cobrada</Badge>

@@ -3611,6 +3611,23 @@ export const migrations: Migration[] = [
       rebaselineAddedNullColumns(db, "legal_entities", added);
     }
   }
+  ,{
+    // DAE referente a nota fiscal (alem do DAE de frete). Tabela propria em vez
+    // de coluna nova em fiscal_documents: um computador em versao antiga nao
+    // conhece a coluna, reenviaria a nota sem ela e apagaria o valor no central.
+    // Tabela que a versao antiga nao conhece ela simplesmente ignora.
+    name: "062_fiscal_document_invoice_dae",
+    up: (db) => db.exec(`
+      CREATE TABLE IF NOT EXISTS fiscal_document_invoice_daes (
+        id TEXT PRIMARY KEY,
+        fiscal_document_id TEXT NOT NULL UNIQUE REFERENCES fiscal_documents(id) ON DELETE CASCADE,
+        reference TEXT,
+        amount_cents INTEGER NOT NULL DEFAULT 0 CHECK (amount_cents >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `)
+  }
 ];
 
 /**

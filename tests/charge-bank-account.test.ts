@@ -80,7 +80,7 @@ describe("conta das cobrancas separada da conta das confirmacoes", () => {
       const dirtyRow = rows[0];
       db.prepare("UPDATE central_sync_baseline SET row_sha256 = 'pendente' WHERE table_name = 'legal_entities' AND row_key = ?").run(dirtyRow.id);
       for (const column of columns) db.exec(`ALTER TABLE legal_entities DROP COLUMN ${column}`);
-      db.prepare("DELETE FROM migration_history WHERE migration_name = '061_legal_entity_charge_bank_account'").run();
+      db.prepare("DELETE FROM migration_history WHERE migration_name = '062_fiscal_document_invoice_dae'").run();
       db.close();
 
       const reopened = { db: initializeDatabase(dirs) };

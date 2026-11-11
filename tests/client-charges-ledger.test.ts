@@ -707,6 +707,35 @@ describe("client charges and ledger", () => {
     } finally { db.close(); }
   });
 
+  it("adds the invoice DAE together with the freight DAE of the same note", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      createConfirmedOperation(repo, partnerId, productId, "DAE-901", "10");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operation = repo.findEligibleOperations(filters)[0];
+      const fiscal = repo.getFiscalDocument(operation.fiscalDocumentId).document;
+      const saved = repo.updateFiscalDocument(fiscal.id, { ...fiscal, operationType: "SALE", invoiceDaeReference: "NF-77", invoiceDaeAmountCents: 3000 });
+      expect(saved.document).toMatchObject({ invoiceDaeReference: "NF-77", invoiceDaeAmountCents: 3000 });
+
+      let draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      expect(draft.charge.additionsCents).toBe(3000);
+      expect(draft.adjustments).toEqual([expect.objectContaining({ description: "DAE referente a NF DAE-901 - DAE NF-77", amountCents: 3000 })]);
+      repo.releaseOperations(draft.charge.id, [operation.id]);
+
+      const current = repo.getFiscalDocument(fiscal.id).document;
+      repo.updateFiscalDocument(fiscal.id, { ...current, operationType: "SALE", freightDaeAmountCents: 1000, freightDaeReference: null });
+      expect(repo.getFiscalDocument(fiscal.id).document.invoiceDaeAmountCents).toBe(3000);
+      draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: [operation.id] });
+      expect(draft.charge.additionsCents).toBe(4000);
+      expect(draft.adjustments).toEqual([expect.objectContaining({ description: "DAE de frete e DAE da nota referentes a NF DAE-901", amountCents: 4000 })]);
+      repo.releaseOperations(draft.charge.id, [operation.id]);
+
+      const latest = repo.getFiscalDocument(fiscal.id).document;
+      repo.updateFiscalDocument(fiscal.id, { ...latest, operationType: "SALE", invoiceDaeAmountCents: 0 });
+      expect(repo.getFiscalDocument(fiscal.id).document.invoiceDaeAmountCents).toBe(0);
+    } finally { db.close(); }
+  });
+
   it("subtracts manual returns in sacks or kilograms and recalculates an open charge", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {

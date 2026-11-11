@@ -642,6 +642,9 @@ export interface FiscalDocument {
   contractNumber?: string | null;
   freightDaeReference?: string | null;
   freightDaeAmountCents?: number;
+  // DAE referente a nota fiscal (cobrado junto, como o DAE de frete).
+  invoiceDaeReference?: string | null;
+  invoiceDaeAmountCents?: number;
   hasFinancialService?: boolean;
   id: string;
   organizationId: string;

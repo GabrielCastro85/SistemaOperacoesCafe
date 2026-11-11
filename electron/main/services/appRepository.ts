@@ -1625,6 +1625,34 @@ export class AppRepository {
     return this.getPurchaseRateRule(id);
   }
 
+  // DAE referente a nota fiscal: guardado em fiscal_document_invoice_daes.
+  private invoiceDaeMap(): Map<string, { reference: string | null; amountCents: number }> {
+    if (!this.tableExists("fiscal_document_invoice_daes")) return new Map();
+    return new Map((this.db.prepare("SELECT fiscal_document_id AS id, reference, amount_cents AS amount FROM fiscal_document_invoice_daes").all() as Array<{ id: string; reference: string | null; amount: number }>)
+      .map((row) => [row.id, { reference: row.reference, amountCents: Number(row.amount ?? 0) }]));
+  }
+
+  private withInvoiceDae(document: FiscalDocument, map?: Map<string, { reference: string | null; amountCents: number }>): FiscalDocument {
+    let dae = map?.get(document.id);
+    if (!map && this.tableExists("fiscal_document_invoice_daes")) {
+      const row = this.db.prepare("SELECT reference, amount_cents AS amount FROM fiscal_document_invoice_daes WHERE fiscal_document_id = ?").get(document.id) as { reference: string | null; amount: number } | undefined;
+      dae = row ? { reference: row.reference, amountCents: Number(row.amount ?? 0) } : undefined;
+    }
+    return { ...document, invoiceDaeReference: dae?.reference ?? null, invoiceDaeAmountCents: dae?.amountCents ?? 0 };
+  }
+
+  private saveInvoiceDae(fiscalDocumentId: string, amountCents: number, reference: string | null | undefined): void {
+    if (!this.tableExists("fiscal_document_invoice_daes")) return;
+    const now = new Date().toISOString();
+    if (amountCents > 0) {
+      this.db.prepare(`INSERT INTO fiscal_document_invoice_daes (id, fiscal_document_id, reference, amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fiscal_document_id) DO UPDATE SET reference = excluded.reference, amount_cents = excluded.amount_cents, updated_at = excluded.updated_at`)
+        .run(fiscalDocumentId, fiscalDocumentId, reference?.trim() || null, amountCents, now, now);
+    } else {
+      this.db.prepare("DELETE FROM fiscal_document_invoice_daes WHERE fiscal_document_id = ?").run(fiscalDocumentId);
+    }
+  }
+
   listFiscalDocuments(filters: { organizationId?: string; ownLegalEntityId?: string; search?: string; status?: "DRAFT" | "PENDING" | "CONFIRMED" | "CANCELED" | "all"; includeThirdParty?: boolean } = {}): FiscalDocument[] {
     // Nota terceirizada (emissora e' um CNPJ TERC-XML, nem a nossa propria
     // empresa) nunca bate com nenhum CNPJ ativo -- sem esse extra ela ficaria
@@ -1636,8 +1664,10 @@ export class AppRepository {
     const thirdPartyEntityIds = filters.ownLegalEntityId && filters.includeThirdParty
       ? new Set(this.listLegalEntities({ status: "all" }).filter((entity) => this.isThirdPartyLegalEntity(entity)).map((entity) => entity.id))
       : null;
+    const invoiceDaes = this.invoiceDaeMap();
     return (this.db.prepare("SELECT * FROM fiscal_documents ORDER BY issue_date DESC, updated_at DESC").all() as DbRecord[])
       .map(mapFiscalDocument)
+      .map((item) => this.withInvoiceDae(item, invoiceDaes))
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
       .filter((item) => !filters.organizationId || item.organizationId === filters.organizationId)
       .filter((item) => !filters.ownLegalEntityId || item.ownLegalEntityId === filters.ownLegalEntityId || (thirdPartyEntityIds?.has(item.ownLegalEntityId) ?? false))
@@ -1648,7 +1678,7 @@ export class AppRepository {
   getFiscalDocument(id: string): FiscalDocumentDetail {
     const row = this.db.prepare("SELECT * FROM fiscal_documents WHERE id = ?").get(id) as DbRecord | undefined;
     if (!row) throw new Error("Nota nao encontrada.");
-    const document = mapFiscalDocument(row);
+    const document = this.withInvoiceDae(mapFiscalDocument(row));
     if (!this.isOrganizationAllowed(document.organizationId)) throw new Error("Nota nao autorizada.");
     const items = (this.db.prepare("SELECT * FROM fiscal_document_items WHERE fiscal_document_id = ? ORDER BY created_at").all(id) as DbRecord[]).map(mapFiscalDocumentItem);
     const operations = (this.db.prepare("SELECT * FROM operations WHERE fiscal_document_id = ? ORDER BY created_at").all(id) as DbRecord[]).map(mapOperation);
@@ -1916,6 +1946,7 @@ export class AppRepository {
     const freightDaeAmountCents = data.freightDaeAmountCents ?? 0;
     this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ?, has_financial_service = ? WHERE id = ?")
       .run(data.contractNumber?.trim() || null, data.billingObservations ?? null, freightDaeAmountCents > 0 ? data.freightDaeReference?.trim() || null : null, freightDaeAmountCents, data.hasFinancialService ? 1 : 0, id);
+    this.saveInvoiceDae(id, data.invoiceDaeAmountCents ?? 0, data.invoiceDaeReference);
     return this.getFiscalDocument(id);
   }
 
@@ -1941,6 +1972,9 @@ export class AppRepository {
       ? (data.freightDaeReference === undefined ? previous.document.freightDaeReference : data.freightDaeReference?.trim() || null)
       : null;
     const hasFinancialService = data.hasFinancialService ?? previous.document.hasFinancialService ?? false;
+    if (data.invoiceDaeAmountCents !== undefined) {
+      this.saveInvoiceDae(id, data.invoiceDaeAmountCents, data.invoiceDaeAmountCents > 0 ? (data.invoiceDaeReference === undefined ? previous.document.invoiceDaeReference : data.invoiceDaeReference) : null);
+    }
     this.db.prepare("UPDATE fiscal_documents SET contract_number = ?, billing_observations = ?, freight_dae_reference = ?, freight_dae_amount_cents = ?, has_financial_service = ? WHERE id = ?")
       .run(data.contractNumber === undefined ? previous.document.contractNumber ?? null : data.contractNumber?.trim() || null, data.billingObservations === undefined ? previous.document.billingObservations ?? null : data.billingObservations, freightDaeReference, freightDaeAmountCents, hasFinancialService ? 1 : 0, id);
     const financialServiceChanged = hasFinancialService !== (previous.document.hasFinancialService ?? false);
@@ -3211,7 +3245,7 @@ export class AppRepository {
   removeChargeAdjustment(id: string): ClientChargeDetail {
     const row = this.db.prepare("SELECT client_charge_id AS chargeId, source_fiscal_document_id AS sourceFiscalDocumentId FROM client_charge_adjustments WHERE id = ?").get(id) as { chargeId: string; sourceFiscalDocumentId: string | null } | undefined;
     if (!row) throw new Error("Ajuste nao encontrado.");
-    if (row.sourceFiscalDocumentId) throw new Error("O DAE de frete vem da nota fiscal. Libere a nota da cobranca e altere o DAE no cadastro da nota.");
+    if (row.sourceFiscalDocumentId) throw new Error("O DAE vem da nota fiscal. Libere a nota da cobranca e altere o DAE no cadastro da nota.");
     const charge = this.getClientCharge(row.chargeId).charge;
     // Cobranca zerada ou negativa fica "PAID" sem ter recebido nada: ainda aceita ajustes.
     const editableZeroCharge = charge.status === "PAID" && charge.paidAmountCents === 0 && charge.finalAmountCents <= 0;
@@ -4048,7 +4082,8 @@ export class AppRepository {
         operations.fiscal_document_id,
         fiscal_documents.document_number,
         operations.service_amount_cents,
-        COALESCE(fiscal_documents.freight_dae_amount_cents, 0) AS freight_dae_amount_cents
+        COALESCE(fiscal_documents.freight_dae_amount_cents, 0)
+          + COALESCE((SELECT d.amount_cents FROM fiscal_document_invoice_daes d WHERE d.fiscal_document_id = fiscal_documents.id), 0) AS freight_dae_amount_cents
       FROM operations
       INNER JOIN fiscal_documents ON fiscal_documents.id = operations.fiscal_document_id
       INNER JOIN business_partners ON business_partners.id = operations.responsible_partner_id
@@ -4865,6 +4900,8 @@ export class AppRepository {
       billingObservations: typeof fileResolution.billingObservations === "string" ? fileResolution.billingObservations : (typeof resolution.billingObservations === "string" ? resolution.billingObservations : null),
       freightDaeReference: typeof fileResolution.freightDaeReference === "string" ? fileResolution.freightDaeReference : (typeof resolution.freightDaeReference === "string" ? resolution.freightDaeReference : null),
       freightDaeAmountCents: typeof fileResolution.freightDaeAmountCents === "number" ? fileResolution.freightDaeAmountCents : (typeof resolution.freightDaeAmountCents === "number" ? resolution.freightDaeAmountCents : 0),
+      invoiceDaeReference: typeof fileResolution.invoiceDaeReference === "string" ? fileResolution.invoiceDaeReference : null,
+      invoiceDaeAmountCents: typeof fileResolution.invoiceDaeAmountCents === "number" ? fileResolution.invoiceDaeAmountCents : 0,
       hasFinancialService: typeof fileResolution.hasFinancialService === "boolean" ? fileResolution.hasFinancialService : resolution.hasFinancialService === true,
       notes: [String(extracted.nature ?? ""), isThirdPartyDocument ? "Nota terceirizada: entra apenas em cobrancas, nao em fechamento de negocio." : "", secondaryResponsiblePartnerId ? "Nota triangulada: gera compra e venda a partir da mesma remessa." : ""].filter(Boolean).join(" | ")
     });
@@ -5652,12 +5689,24 @@ export class AppRepository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(randomUUID(), charge.id, operation.id, operation.ownLegalEntityId, ownLegalEntity.legalName || ownLegalEntity.tradeName, doc.issueDate, doc.documentNumber, doc.series, issuerName, companyName, product?.name ?? null, operation.operationScope, operation.quantitySacks, operation.appliedRateValueCents, operation.serviceAmountCents, now, doc.contractNumber ?? null, doc.billingObservations ?? null);
       this.db.prepare("UPDATE operations SET billing_status = 'RESERVED', client_charge_id = ?, updated_at = ? WHERE id = ?").run(charge.id, now, operation.id);
-      if ((doc.freightDaeAmountCents ?? 0) > 0) {
-        const reference = doc.freightDaeReference ? ` - DAE ${doc.freightDaeReference}` : "";
+      const invoiceDae = this.withInvoiceDae(doc);
+      const freightCents = doc.freightDaeAmountCents ?? 0;
+      const invoiceCents = invoiceDae.invoiceDaeAmountCents ?? 0;
+      if (freightCents > 0 || invoiceCents > 0) {
+        // Um ajuste por nota em cada cobranca (indice unico): DAE de frete e
+        // DAE da nota da mesma NF entram juntos, com os dois valores descritos.
+        const parts: string[] = [];
+        if (freightCents > 0) parts.push(`frete${doc.freightDaeReference ? ` (DAE ${doc.freightDaeReference})` : ""} R$ ${(freightCents / 100).toFixed(2).replace(".", ",")}`);
+        if (invoiceCents > 0) parts.push(`nota fiscal${invoiceDae.invoiceDaeReference ? ` (DAE ${invoiceDae.invoiceDaeReference})` : ""} R$ ${(invoiceCents / 100).toFixed(2).replace(".", ",")}`);
+        const description = freightCents > 0 && invoiceCents > 0
+          ? `DAE de frete e DAE da nota referentes a NF ${doc.documentNumber}`
+          : freightCents > 0
+            ? `DAE de frete referente a NF ${doc.documentNumber}${doc.freightDaeReference ? ` - DAE ${doc.freightDaeReference}` : ""}`
+            : `DAE referente a NF ${doc.documentNumber}${invoiceDae.invoiceDaeReference ? ` - DAE ${invoiceDae.invoiceDaeReference}` : ""}`;
         this.db.prepare(`INSERT OR IGNORE INTO client_charge_adjustments (
           id, client_charge_id, ledger_entry_id, source_fiscal_document_id, adjustment_type, effect, description, reason, amount_cents, sort_order, created_at, updated_at
         ) VALUES (?, ?, NULL, ?, 'SURCHARGE', 'INCREASE_RECEIVABLE', ?, ?, ?, 40, ?, ?)`)
-          .run(randomUUID(), charge.id, doc.id, `DAE de frete referente a NF ${doc.documentNumber}${reference}`, `Valor de DAE de frete registrado na nota fiscal ${doc.documentNumber}.`, doc.freightDaeAmountCents ?? 0, now, now);
+          .run(randomUUID(), charge.id, doc.id, description, `DAE registrado na nota fiscal ${doc.documentNumber}: ${parts.join(" + ")}.`, freightCents + invoiceCents, now, now);
       }
     });
   }

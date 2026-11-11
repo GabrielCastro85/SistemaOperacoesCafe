@@ -560,11 +560,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const cteQuantity = decimalTextBr(cteCalculation.sacks);
   const cteTotalCents = cteCalculation.amountCents;
   const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
+  // DAE de frete e DAE da nota fiscal: cada um vira uma linha na previa.
   const selectedFreightDaes = Array.from(new Set(selectedOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
     const document = operationDocuments[documentId];
-    return document && (document.freightDaeAmountCents ?? 0) > 0 ? [document] : [];
+    if (!document) return [];
+    const rows: Array<{ key: string; title: string; documentNumber: string; reference: string | null; amountCents: number; fallback: string }> = [];
+    if ((document.freightDaeAmountCents ?? 0) > 0) rows.push({ key: `frete-${document.id}`, title: "DAE de frete", documentNumber: document.documentNumber, reference: document.freightDaeReference ?? null, amountCents: document.freightDaeAmountCents ?? 0, fallback: "Frete" });
+    if ((document.invoiceDaeAmountCents ?? 0) > 0) rows.push({ key: `nota-${document.id}`, title: "DAE da nota fiscal", documentNumber: document.documentNumber, reference: document.invoiceDaeReference ?? null, amountCents: document.invoiceDaeAmountCents ?? 0, fallback: "Nota fiscal" });
+    return rows;
   });
-  const selectedFreightDaeCents = selectedFreightDaes.reduce((total, document) => total + (document.freightDaeAmountCents ?? 0), 0);
+  const selectedFreightDaeCents = selectedFreightDaes.reduce((total, row) => total + row.amountCents, 0);
   const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
   const eligibleSacks = selectedOperations.length ? sumDecimalTexts(selectedOperations.map((operation) => operation.quantitySacks)) : "0";
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
@@ -1279,12 +1284,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     </div>
                   );
                 })}
-                {!detail ? selectedFreightDaes.map((document) => (
-                  <div key={`dae-${document.id}`} className="table-row charge-operation-grid charge-row--adjustment">
-                    <span><strong>DAE de frete</strong><small>Referente à NF {document.documentNumber}</small></span>
+                {!detail ? selectedFreightDaes.map((row) => (
+                  <div key={`dae-${row.key}`} className="table-row charge-operation-grid charge-row--adjustment">
+                    <span><strong>{row.title}</strong><small>Referente à NF {row.documentNumber}</small></span>
                     <span>DAE</span>
-                    <span>{document.freightDaeReference ? `Referência ${document.freightDaeReference}` : "Frete"}</span>
-                    <span><strong>+ {formatCurrencyFromCents(document.freightDaeAmountCents ?? 0)}</strong></span>
+                    <span>{row.reference ? `Referência ${row.reference}` : row.fallback}</span>
+                    <span><strong>+ {formatCurrencyFromCents(row.amountCents)}</strong></span>
                     <span>Automático</span>
                     <span>Entra na cobrança</span>
                   </div>

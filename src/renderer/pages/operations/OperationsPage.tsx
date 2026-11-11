@@ -196,6 +196,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [freightDaeReference, setFreightDaeReference] = useState("");
   const [freightDaeAmount, setFreightDaeAmount] = useState("");
   const [financialServiceEnabled, setFinancialServiceEnabled] = useState(false);
+  const [invoiceDaeEnabled, setInvoiceDaeEnabled] = useState(false);
+  const [invoiceDaeReference, setInvoiceDaeReference] = useState("");
+  const [invoiceDaeAmount, setInvoiceDaeAmount] = useState("");
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState("");
@@ -234,6 +237,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlFreightDaeReferences, setXmlFreightDaeReferences] = useState<Record<string, string>>({});
   const [xmlFreightDaeAmounts, setXmlFreightDaeAmounts] = useState<Record<string, string>>({});
   const [xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled] = useState<Record<string, boolean>>({});
+  const [xmlInvoiceDaeEnabled, setXmlInvoiceDaeEnabled] = useState<Record<string, boolean>>({});
+  const [xmlInvoiceDaeReferences, setXmlInvoiceDaeReferences] = useState<Record<string, string>>({});
+  const [xmlInvoiceDaeAmounts, setXmlInvoiceDaeAmounts] = useState<Record<string, string>>({});
   const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
   const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
@@ -304,6 +310,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     detail?.document.freightDaeAmountCents,
     detail?.document.freightDaeReference,
   ]);
+  useEffect(() => {
+    const amount = detail?.document.invoiceDaeAmountCents ?? 0;
+    setInvoiceDaeEnabled(amount > 0);
+    setInvoiceDaeReference(detail?.document.invoiceDaeReference ?? "");
+    setInvoiceDaeAmount(amount > 0 ? formatCurrencyFromCents(amount) : "");
+  }, [detail?.document.id, detail?.document.invoiceDaeAmountCents, detail?.document.invoiceDaeReference]);
   useEffect(() => {
     setFinancialServiceEnabled(detail?.document.hasFinancialService ?? false);
   }, [detail?.document.id, detail?.document.hasFinancialService]);
@@ -809,6 +821,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlFreightDaeReferences({});
     setXmlFreightDaeAmounts({});
     setXmlFinancialServiceEnabled({});
+    setXmlInvoiceDaeEnabled({});
+    setXmlInvoiceDaeReferences({});
+    setXmlInvoiceDaeAmounts({});
     setSelectedXmlToken(inspections.find((file) => file.status !== "ERROR")?.token ?? inspections[0]?.token ?? null);
     setMessage(
       invalidCount
@@ -866,18 +881,29 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         const freightDaeAmountCents = freightDaeEnabled ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0;
         const freightDaeReference = freightDaeEnabled ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null;
         const hasFinancialService = xmlFinancialServiceEnabled[inspected.token] === true;
+        const invoiceDaeEnabled = xmlInvoiceDaeEnabled[inspected.token] === true;
+        const invoiceDaeAmountCents = invoiceDaeEnabled ? parseCurrency(xmlInvoiceDaeAmounts[inspected.token] ?? "") : 0;
+        const invoiceDaeReference = invoiceDaeEnabled ? xmlInvoiceDaeReferences[inspected.token]?.trim() || null : null;
         if (!ignore && freightDaeEnabled && freightDaeAmountCents <= 0) {
           setSelectedXmlToken(inspected.token);
           setMessage(`Informe um valor de DAE de frete maior que zero para a NF ${inspected.extractedData?.number ?? inspected.originalFileName}.`);
           scrollTo(xmlDataRef);
           return;
         }
-        if (contractNumber || billingObservations || selectedPartnerId || ignore || freightDaeAmountCents > 0 || hasFinancialService) {
+        if (!ignore && invoiceDaeEnabled && invoiceDaeAmountCents <= 0) {
+          setSelectedXmlToken(inspected.token);
+          setMessage(`Informe um valor de DAE da nota maior que zero para a NF ${inspected.extractedData?.number ?? inspected.originalFileName}.`);
+          scrollTo(xmlDataRef);
+          return;
+        }
+        if (contractNumber || billingObservations || selectedPartnerId || ignore || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService) {
           await window.operationsCafe.updateXmlImportFileResolution(file.id, {
             contractNumber,
             billingObservations,
             freightDaeReference,
             freightDaeAmountCents,
+            invoiceDaeReference,
+            invoiceDaeAmountCents,
             hasFinancialService,
             clientPartnerId: selectedPartnerId,
             ignore
@@ -963,6 +989,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         billingObservations: inspected ? xmlBillingObservations[inspected.token]?.trim() || null : null,
         freightDaeReference: inspected && xmlFreightDaeEnabled[inspected.token] ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null,
         freightDaeAmountCents: inspected && xmlFreightDaeEnabled[inspected.token] ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0,
+        invoiceDaeReference: inspected && xmlInvoiceDaeEnabled[inspected.token] ? xmlInvoiceDaeReferences[inspected.token]?.trim() || null : null,
+        invoiceDaeAmountCents: inspected && xmlInvoiceDaeEnabled[inspected.token] ? parseCurrency(xmlInvoiceDaeAmounts[inspected.token] ?? "") : 0,
         hasFinancialService: inspected ? xmlFinancialServiceEnabled[inspected.token] === true : false
       });
       if (xmlJob) setXmlJob(await window.operationsCafe.getXmlImportJob(xmlJob.job.id));
@@ -1479,6 +1507,36 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar o DAE de frete."}`); }
           }}>Salvar DAE de frete</button>
         </section>
+        <section className="coffee-return-card">
+          <header><span>DAE da nota fiscal</span><strong>Valor do DAE referente à NF {detail.document.documentNumber}</strong></header>
+          <label className="inline-check">
+            <input type="checkbox" checked={invoiceDaeEnabled} onChange={(event) => {
+              setInvoiceDaeEnabled(event.target.checked);
+              if (!event.target.checked) { setInvoiceDaeReference(""); setInvoiceDaeAmount(""); }
+            }} />
+            Foi feito DAE referente a esta nota
+          </label>
+          {invoiceDaeEnabled ? <FormGrid>
+            <TextField label="Numero ou referencia do DAE (opcional)" value={invoiceDaeReference} onChange={setInvoiceDaeReference} />
+            <TextField label="Valor a cobrar (R$)" value={invoiceDaeAmount} onChange={setInvoiceDaeAmount} />
+          </FormGrid> : null}
+          <p className="muted">Entra na cobranca junto com a nota, como o DAE de frete. Se a nota tiver os dois, a cobranca mostra os dois valores.</p>
+          <button className="invoice-action-button invoice-action-button--primary" onClick={async () => {
+            const amountCents = invoiceDaeEnabled ? parseCurrency(invoiceDaeAmount) : 0;
+            if (invoiceDaeEnabled && amountCents <= 0) { setMessage("Informe um valor de DAE maior que zero."); return; }
+            try {
+              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
+                ...detail.document,
+                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
+                invoiceDaeReference: invoiceDaeEnabled ? invoiceDaeReference.trim() || null : null,
+                invoiceDaeAmountCents: amountCents
+              });
+              setDetail(updated);
+              await load();
+              setMessage(amountCents > 0 ? "DAE da nota salvo. O valor entrara automaticamente na cobranca desta nota." : "DAE da nota removido.");
+            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar o DAE da nota."}`); }
+          }}>Salvar DAE da nota</button>
+        </section>
         <h3>Revisao para cobranca</h3>
         <p>Contrato: <strong>{detail.document.contractNumber || "Nao informado"}</strong></p>
         {detail.operations.map((op) => <div className="operation-warning-card operation-warning-card--neutral" key={op.id}>
@@ -1873,29 +1931,43 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <FormGrid>
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
                     <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
-                    <label className="inline-check">
-                      <input type="checkbox" checked={xmlFinancialServiceEnabled[selectedXmlFile.token] === true} onChange={(event) => {
-                        setXmlJob(null);
-                        setXmlFinancialServiceEnabled((current) => ({ ...current, [selectedXmlFile.token]: event.target.checked }));
-                      }} />
-                      Esta nota possui financeiro
-                    </label>
-                    <label className="inline-check">
-                      <input type="checkbox" checked={xmlFreightDaeEnabled[selectedXmlFile.token] === true} onChange={(event) => {
-                        const checked = event.target.checked;
-                        setXmlJob(null);
-                        setXmlFreightDaeEnabled((current) => ({ ...current, [selectedXmlFile.token]: checked }));
-                        if (!checked) {
-                          setXmlFreightDaeReferences((current) => ({ ...current, [selectedXmlFile.token]: "" }));
-                          setXmlFreightDaeAmounts((current) => ({ ...current, [selectedXmlFile.token]: "" }));
-                        }
-                      }} />
-                      Esta NF possui DAE de frete
-                    </label>
-                    {xmlFreightDaeEnabled[selectedXmlFile.token] ? <>
-                      <label>Numero ou referencia do DAE (opcional)<input maxLength={120} value={xmlFreightDaeReferences[selectedXmlFile.token] ?? ""} onChange={(event) => { setXmlJob(null); setXmlFreightDaeReferences((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} placeholder="Ex.: DAE 12345" /></label>
-                      <label>Valor do DAE a cobrar (R$)<input value={xmlFreightDaeAmounts[selectedXmlFile.token] ?? ""} onChange={(event) => { setXmlJob(null); setXmlFreightDaeAmounts((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} placeholder="R$ 0,00" /></label>
-                    </> : null}
+                    <div className="note-options" role="group" aria-label="Itens desta nota que entram na cobranca">
+                      <span className="note-options__title">O que esta nota tem</span>
+                      <div className={`note-option${xmlFinancialServiceEnabled[selectedXmlFile.token] ? " is-on" : ""}`}>
+                        <label className="note-option__head">
+                          <input type="checkbox" checked={xmlFinancialServiceEnabled[selectedXmlFile.token] === true} onChange={(event) => {
+                            setXmlJob(null);
+                            setXmlFinancialServiceEnabled((current) => ({ ...current, [selectedXmlFile.token]: event.target.checked }));
+                          }} />
+                          <span><strong>Financeiro</strong><small>Usa o valor por saca "com financeiro" do cliente</small></span>
+                        </label>
+                      </div>
+                      {([
+                        { key: "freight", title: "DAE de frete", hint: "Valor do DAE de frete cobrado junto com a nota", enabled: xmlFreightDaeEnabled, setEnabled: setXmlFreightDaeEnabled, refs: xmlFreightDaeReferences, setRefs: setXmlFreightDaeReferences, amounts: xmlFreightDaeAmounts, setAmounts: setXmlFreightDaeAmounts },
+                        { key: "invoice", title: "DAE da nota fiscal", hint: "Valor do DAE referente a nota, cobrado junto com ela", enabled: xmlInvoiceDaeEnabled, setEnabled: setXmlInvoiceDaeEnabled, refs: xmlInvoiceDaeReferences, setRefs: setXmlInvoiceDaeReferences, amounts: xmlInvoiceDaeAmounts, setAmounts: setXmlInvoiceDaeAmounts }
+                      ] as const).map((option) => {
+                        const token = selectedXmlFile.token;
+                        const on = option.enabled[token] === true;
+                        return <div key={option.key} className={`note-option${on ? " is-on" : ""}`}>
+                          <label className="note-option__head">
+                            <input type="checkbox" checked={on} onChange={(event) => {
+                              const checked = event.target.checked;
+                              setXmlJob(null);
+                              option.setEnabled((current) => ({ ...current, [token]: checked }));
+                              if (!checked) {
+                                option.setRefs((current) => ({ ...current, [token]: "" }));
+                                option.setAmounts((current) => ({ ...current, [token]: "" }));
+                              }
+                            }} />
+                            <span><strong>{option.title}</strong><small>{option.hint}</small></span>
+                          </label>
+                          {on ? <div className="note-option__fields">
+                            <label>Valor a cobrar (R$)<input value={option.amounts[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setAmounts((current) => ({ ...current, [token]: event.target.value })); }} placeholder="R$ 0,00" /></label>
+                            <label>Numero do DAE (opcional)<input maxLength={120} value={option.refs[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setRefs((current) => ({ ...current, [token]: event.target.value })); }} placeholder="Ex.: 12345" /></label>
+                          </div> : null}
+                        </div>;
+                      })}
+                    </div>
                   </FormGrid>
                 ) : null}
               </>
@@ -1994,7 +2066,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </>
             )}
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentacao" : "Importar XMLs"}
               </button>
