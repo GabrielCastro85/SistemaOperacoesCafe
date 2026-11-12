@@ -30,16 +30,22 @@ export function ownEntityShortLabel(entity: { tradeName?: string | null; legalNa
   return uf ? `${brand} ${uf}` : brand;
 }
 
-const STOP_WORDS = new Set(["COMERCIO", "COMERCIAL", "COMERCIALIZACAO", "EXPORTACAO", "EXPORTADORA", "IMPORTACAO", "INDUSTRIA", "IND", "COM", "EXP", "IMP", "E", "DE", "DO", "DA", "DOS", "DAS", "LTDA", "ME", "EPP", "EIRELI", "SA", "S/A", "S.A.", "CAFE", "CAFES", "-", "&"]);
+const STOP_WORDS = new Set(["COMERCIO", "COMERCIAL", "COMERCIALIZACAO", "EXPORTACAO", "EXPORTADORA", "IMPORTACAO", "INDUSTRIA", "IND", "COM", "EXP", "IMP", "E", "LTDA", "ME", "EPP", "EIRELI", "SA", "S/A", "CAFE", "CAFES", "-", "&"]);
+const CONNECTORS = new Set(["DE", "DO", "DA", "DOS", "DAS"]);
 
+// "PRIME COFFEE COMERCIO E EXPORTACAO..." -> "PRIME COFFEE";
+// "BOM DO GRAOS EXPORTACAO..." -> "BOM DO GRAOS".
 export function thirdPartyShortName(name: string): string {
   const words = strip(name).replace(/[.,]/g, " ").split(" ").filter(Boolean);
   const picked: string[] = [];
+  let significant = 0;
   for (const word of words) {
-    if (STOP_WORDS.has(word)) { if (picked.length) break; continue; }
+    if (STOP_WORDS.has(word)) { if (significant) break; continue; }
+    if (CONNECTORS.has(word)) { if (significant) picked.push(word); continue; }
     picked.push(word);
-    if (picked.length === 2) break;
+    if (++significant === 2) break;
   }
+  while (picked.length && CONNECTORS.has(picked[picked.length - 1])) picked.pop();
   return picked.join(" ") || strip(name).split(" ").slice(0, 2).join(" ") || "-";
 }
 

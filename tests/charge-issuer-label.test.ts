@@ -18,6 +18,9 @@ describe("emitente curto na cobranca", () => {
     expect(thirdPartyShortName("PRIME COFFEE COMERCIO E EXPORTACAO DE CAFE LTDA")).toBe("PRIME COFFEE");
     expect(thirdPartyShortName("GARDINGO TRADE IMPORTACAO E EXPORTACAO LTDA")).toBe("GARDINGO TRADE");
     expect(thirdPartyShortName("COOPERATIVA AGROPECUARIA CENTRO SERRANA")).toBe("COOPERATIVA AGROPECUARIA");
+    expect(thirdPartyShortName("BOM DO GRAOS EXPORTACAO E COMERCIALIZACAO LTDA")).toBe("BOM DO GRAOS");
+    expect(thirdPartyShortName("MUNIZ COMERCIO DE GRAOS LTDA")).toBe("MUNIZ");
+    expect(thirdPartyShortName("RODRIGUES ARMAZEM E COMERCIO LTDA")).toBe("RODRIGUES ARMAZEM");
     expect(chargeIssuerLabelFromNames("VILLA CEREAIS LTDA", "VILLA COFFEE COMERCIO E EXP. LTDA")).toBe("VILLA CEREAIS");
     expect(chargeIssuerLabelFromNames("VILLA COFFEE COMERCIO E EXP. LTDA", "Villa Coffee Minas Gerais")).toBe("VILLA MG");
   });
