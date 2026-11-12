@@ -111,6 +111,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
 - Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
+### 2026-11-12 - Claude (partes restantes: PDF de cobrança, repasses e proposta de dezembro)
+- Pedido: "Pode fazer as partes restantes e me responda sempre em portugues".
+- Feito (`4203185`): PDF de cobrança mostra, abaixo das notas já pagas, cada cobrança paga com valor e "pago em dd/mm/aaaa" e o TOTAL JÁ PAGO NO PERÍODO (data vem de `client_payments.payment_date`, agora em `ClientPaymentAllocation.paymentDate`); "RESUMO DA COBRANÇA" mostra "N notas · X sacas"; coluna TIPO some quando todas as notas (abertas e pagas) têm o mesmo tipo, e a EMPRESA ganha o espaço. Conferência de repasses: mostra "Carregando conferências…" até a lista chegar e busca clientes, conferências e saldos ao mesmo tempo.
+- Proposta de dezembro em diante (`outputs/contas-dezembro-em-diante-para-conferir.xlsx`), nada gravado: 19 parceladas (361 parcelas futuras), 64 mensais (27 com valor que muda), 5 só de novembro. Limitações achadas: modelo mensal e grupo parcelado não guardam chave PIX, e o grupo parcelado sempre começa na parcela 1 ("17/22" viraria "1/5").
+- Dúvidas para o Gabriel: MUSTANG 1/48 a R$ 48.000,00 por parcela (seria o total?); duas sequências DUETTO (1402 ED DUETTO 3/52 R$ 8.477 dia 15 e APARTAMENTO DUETTO 4/52 R$ 15.000 dia 25; em outubro havia 2/52 e 3/52 a R$ 13.000).
+- Pendente: cópias de segurança do Neon (precisa do Gabriel logado no console do Neon).
+
 ### 2026-11-12 - Claude (contas de novembro importadas)
 - Pedido: lançar no Contas a pagar as contas de novembro das planilhas NOV.pdf e NOV 2.pdf (Downloads).
 - Decisões do Gabriel: todas em aberto (a coluna STATUS da planilha estava vazia; marcam pagas na tela); criar 7 categorias novas; tudo em Grão & Grão Minas Gerais (mesmo lugar das contas de outubro).
