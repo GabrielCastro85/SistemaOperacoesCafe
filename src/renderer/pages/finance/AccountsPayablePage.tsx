@@ -3,6 +3,7 @@ import type { AccountPayable, PayablePaymentMethod } from "../../../shared/types
 import { formatCurrencyFromCents, formatDateOnlyBr, parseCurrencyToCents } from "../../../shared/utils/format";
 import { PageHeader } from "../../design-system";
 import { requestTextInput } from "../../utils/dialogs";
+import { buildExpenseControlHtml } from "./expenseControlPrint";
 import { useFinanceData } from "./hooks/useFinanceData";
 import type { FinancePageProps } from "./types";
 
@@ -170,6 +171,29 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
     } finally { setBusy(false); }
   }
 
+  // Folha "Controle de despesas" do mes (filtro de mes, ou o mes atual),
+  // com as contas pagas marcadas como PAGO.
+  function printControl(): void {
+    const target = month || monthPrefix;
+    const list = finance.payables.filter((payable) => payable.status !== "CANCELLED" && payable.status !== "DRAFT" && payable.dueDate.startsWith(target));
+    const html = buildExpenseControlHtml(list.map((payable) => ({
+      dueDate: payable.dueDate,
+      // parcela vem na coluna propria (em roxo); tira o "1/3" repetido do nome
+      description: payable.description.replace(/\s+\d+\/\d+$/, ""),
+      payee: payable.payeeNameSnapshot,
+      installment: payable.installmentNumber && payable.installmentCount ? `${payable.installmentNumber}/${payable.installmentCount}` : null,
+      amountCents: payable.finalAmountCents ?? 0,
+      paidCents: payable.paidAmountCents ?? 0,
+      status: payable.status === "PAID" ? "PAID" : (payable.paidAmountCents ?? 0) > 0 ? "PARTIAL" : "OPEN",
+      pixKey: payable.pixKey
+    })), { title: `Controle de despesas ${monthLabel(target)}`, subtitle: `${monthLabel(target)} · impresso em ${formatDateOnlyBr(today)}` });
+    const win = window.open("", "_blank");
+    if (!win) { setMessage("O navegador bloqueou a janela de impressão. Permita pop-ups para o site e tente de novo."); return; }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
+
   async function cancel(payable: AccountPayable): Promise<void> {
     const reason = await requestTextInput({ title: `Cancelar "${payable.description}"`, label: "Motivo do cancelamento", required: true });
     if (!reason) return;
@@ -227,6 +251,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
           <option value="">Todos os meses</option>
           {months.map((value) => <option key={value} value={value}>{monthLabel(value)}</option>)}
         </select>
+        <button type="button" onClick={printControl}>Imprimir controle {month ? "do mês" : "deste mês"}</button>
       </div>
 
       <div className="payables-list">
