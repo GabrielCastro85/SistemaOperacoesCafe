@@ -1328,3 +1328,22 @@ html.site :is(.admin-block, .ui-page-section) > :is(.actions, .toolbar, .inline-
   backdrop-filter: none;
   box-shadow: 0 -8px 18px rgb(28 26 23 / 7%);
 }
+
+/* A barra de botoes principais NAO fica mais presa no rodape: presa, ela
+   cobria linhas de tabela (ex.: notas no detalhe da cobranca). Fica no fim da
+   secao, como o restante do conteudo. */
+html.site :is(.admin-block, .ui-page-section) > :is(.actions, .toolbar, .inline-actions):last-child:has(> button.primary, > button[data-tone="primary"], > .ui-button--primary, > button[class*="--primary"]) {
+  position: static !important;
+  box-shadow: none !important;
+}
+
+/* Botao desativado: cinza claro com texto legivel (antes era o verde escuro
+   com 50% de opacidade, apagado e dificil de ler). */
+html.site button:disabled,
+html.site .ui-button:disabled {
+  opacity: 1 !important;
+  border-color: var(--site-line) !important;
+  background: #eeeae3 !important;
+  color: #8f877a !important;
+  box-shadow: none !important;
+}
