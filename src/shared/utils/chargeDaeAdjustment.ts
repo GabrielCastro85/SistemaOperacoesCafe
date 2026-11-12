@@ -33,6 +33,39 @@ export function parseChargeDaeAdjustment(adjustment: { description: string; reas
   return null;
 }
 
+export interface ChargeDaeLine {
+  kind: "FREIGHT" | "INVOICE" | "BOTH";
+  label: string; // "DAE 2059", "DAE FRETE 2059"
+  amountCents: number;
+}
+
+const centsFromBr = (value: string) => Math.round(Number(value.replace(/\./g, "").replace(",", ".")) * 100);
+
+// Uma linha por DAE, cada uma com o proprio valor: "DAE 2059" (da nota) e
+// "DAE FRETE 2059". Quando o ajuste junta os dois, separa pelos valores do
+// motivo gravado; se nao conseguir ler, fica uma linha so' com o total.
+export function chargeDaeLines(adjustment: { description: string; reason?: string | null; amountCents: number; adjustmentType?: string; effect?: string }): ChargeDaeLine[] {
+  const info = parseChargeDaeAdjustment(adjustment);
+  if (!info) return [];
+  const nf = info.documentNumber;
+  if (info.kind === "FREIGHT") return [{ kind: "FREIGHT", label: `DAE FRETE ${nf}`, amountCents: adjustment.amountCents }];
+  if (info.kind === "INVOICE") return [{ kind: "INVOICE", label: `DAE ${nf}`, amountCents: adjustment.amountCents }];
+  const reason = adjustment.reason ?? "";
+  const freight = /frete(?:\s*\([^)]*\))?\s*R\$\s*([\d.]+,\d{2})/i.exec(reason);
+  const invoice = /nota fiscal(?:\s*\([^)]*\))?\s*R\$\s*([\d.]+,\d{2})/i.exec(reason.replace(/^DAE registrado na nota fiscal\s+\S+:/i, ""));
+  if (freight && invoice) {
+    const freightCents = centsFromBr(freight[1]);
+    const invoiceCents = centsFromBr(invoice[1]);
+    if (freightCents + invoiceCents === adjustment.amountCents) {
+      return [
+        { kind: "INVOICE", label: `DAE ${nf}`, amountCents: invoiceCents },
+        { kind: "FREIGHT", label: `DAE FRETE ${nf}`, amountCents: freightCents }
+      ];
+    }
+  }
+  return [{ kind: "BOTH", label: `DAE + DAE FRETE ${nf}`, amountCents: adjustment.amountCents }];
+}
+
 // O motivo gravado so' repete a descricao; observacao de verdade e' o que o
 // usuario escreveu diferente disso.
 export function isGeneratedDaeReason(reason: string | null | undefined): boolean {
