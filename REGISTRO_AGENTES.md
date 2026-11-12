@@ -108,7 +108,8 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Pedido: no PDF de cobrança, mostrar qual empresa emitiu cada nota (VILLA MG, VILLA ES, GRÃO MG, GRÃO SP, PRIME COFFEE); tirar "Dados podem ser ajustados no cadastro da empresa antes da emissão."; sugerir melhorias.
 - Feito: coluna EMITENTE no PDF, na imagem de resumo e na planilha (primeira coluna da aba Operações). O nome curto é calculado ao ler a cobrança (`issuerShortLabel`, não gravado): emitente com CNPJ de empresa própria vira marca + UF; terceiro vira o começo do nome sem COMERCIO/LTDA etc. (`src/shared/utils/chargeIssuerLabel.ts`). Rotas antigas sem o campo usam o nome gravado. Frase do cadastro removida. TIPO mais estreito para o nome da empresa caber.
 - Testado: suíte completa, typecheck e PDF de amostra renderizado (`outputs/amostra-cobranca-emitente.pdf`).
-- Publicado: ver commit seguinte.
+- Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
+- Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
 ### 2026-11-12 - Claude (aviso de saldo no repasse do LUCAS)
 - Pedido: por que o repasse do LUCAS (09/11, 119 notas) dá "O valor informado supera o saldo disponível da nota." ao lançar mais R$ 1.000.000.

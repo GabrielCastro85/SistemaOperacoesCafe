@@ -1,6 +1,7 @@
 import { readChargeCte } from "../../../src/shared/utils/chargeCte.js";
 import { isPackagingChargeLine, packagingUnits } from "../../../src/shared/utils/packagingBilling.js";
 import { chargeIssuerLabelFromNames } from "../../../src/shared/utils/chargeIssuerLabel.js";
+import { chargeAdjustmentEffectLabel, chargeAdjustmentTypeLabel, isGeneratedDaeReason, parseChargeDaeAdjustment } from "../../../src/shared/utils/chargeDaeAdjustment.js";
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
 import { chargeBankDetails } from "../../../src/shared/utils/chargeBankDetails.js";
 import ExcelJS from "exceljs";
@@ -257,9 +258,33 @@ export async function buildChargeWorkbook(input: ChargeDocumentsInput): Promise<
   const operations = workbook.addWorksheet("Operacoes");
   operations.addRow(["Emitente", "Empresa", "Data de emissao da NF", "NF", "Serie", "Produto", "Tipo", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
   input.detail.operations.forEach((item) => operations.addRow([chargeIssuerLabel(item), chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatChargeOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
+  // Ajustes: DAE em colunas (NF, emitente, referencia), sem repetir a frase
+  // gravada em cada linha; demais ajustes com tipo/efeito em portugues.
   const adjustments = workbook.addWorksheet("Ajustes");
-  adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor", "Observacoes / notas de referencia"]);
-  input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100, item.reason ?? ""]));
+  adjustments.addRow(["Data", "NF", "Emitente", "Empresa", "Ajuste", "Referencia DAE", "Efeito", "Valor", "Observacoes"]);
+  const operationByNumber = new Map(input.detail.operations.map((operation) => [operation.fiscalDocumentNumberSnapshot ?? "", operation] as const));
+  const sortedAdjustments = [...input.detail.adjustments].sort((left, right) => {
+    const leftDae = parseChargeDaeAdjustment(left);
+    const rightDae = parseChargeDaeAdjustment(right);
+    if (Boolean(leftDae) !== Boolean(rightDae)) return leftDae ? 1 : -1;
+    return leftDae && rightDae ? (Number(leftDae.documentNumber) || 0) - (Number(rightDae.documentNumber) || 0) : 0;
+  });
+  let adjustmentsTotal = 0;
+  sortedAdjustments.forEach((item) => {
+    const signed = (item.effect === "REDUCE_RECEIVABLE" ? -1 : 1) * item.amountCents / 100;
+    adjustmentsTotal += signed;
+    const dae = parseChargeDaeAdjustment(item);
+    if (dae) {
+      const operation = operationByNumber.get(dae.documentNumber);
+      adjustments.addRow([operation?.operationDateSnapshot ?? item.ledgerEntryDate ?? "", dae.documentNumber, operation ? chargeIssuerLabel(operation) : "", operation ? chargeOperationCompanyName(operation) : "", dae.label, dae.references.join(" / "), chargeAdjustmentEffectLabel(item.effect), signed, isGeneratedDaeReason(item.reason) ? "" : item.reason ?? ""]);
+      return;
+    }
+    adjustments.addRow([item.ledgerEntryDate ?? "", "", "", "", item.description || chargeAdjustmentTypeLabel(item.adjustmentType), "", chargeAdjustmentEffectLabel(item.effect), signed, item.reason ?? ""]);
+  });
+  if (sortedAdjustments.length) {
+    const totalRow = adjustments.addRow(["Total", "", "", "", "", "", "", adjustmentsTotal, ""]);
+    totalRow.font = { bold: true };
+  }
   const payments = workbook.addWorksheet("Pagamentos");
   payments.addRow(["Pagamento", "Valor"]);
   input.detail.payments.forEach((item) => payments.addRow([item.clientPaymentId, item.amountCents / 100]));
@@ -384,7 +409,8 @@ function drawChargeOperationSectionsPdf(
     cursorY -= 15;
   });
 
-  if (adjustments.some((adjustment) => !readChargeCte(adjustment))) {
+  const daeAdjustments = adjustments.filter((adjustment) => !readChargeCte(adjustment) && parseChargeDaeAdjustment(adjustment));
+  if (adjustments.some((adjustment) => !readChargeCte(adjustment) && !parseChargeDaeAdjustment(adjustment))) {
     ensureSpace(35);
     currentPage.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
     currentPage.drawText("AJUSTES", { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
@@ -445,6 +471,7 @@ function drawChargeOperationSectionsPdf(
         cursorY -= 6;
         return;
       }
+      if (parseChargeDaeAdjustment(adjustment)) return;
       const reasonLines = adjustment.reason?.trim()
         ? wrapText(`Obs.: ${adjustment.reason.trim()}`, style.font, 5.8, contentWidth - 20)
         : [];
@@ -465,6 +492,43 @@ function drawChargeOperationSectionsPdf(
         cursorY -= 10;
       });
     });
+  }
+
+  // DAE: um bloco so', uma linha por nota (data, NF, emitente, tipo e
+  // referencia), sem a frase "DAE ... registrado na nota fiscal" repetida.
+  if (daeAdjustments.length > 0) {
+    const operationByNumber = new Map(sections.flatMap((section) => section.rows.map((row) => [row.operation.fiscalDocumentNumberSnapshot ?? "", row] as const)));
+    const rows = daeAdjustments.map((adjustment) => ({ adjustment, dae: parseChargeDaeAdjustment(adjustment)! }))
+      .sort((left, right) => (Number(left.dae.documentNumber) || 0) - (Number(right.dae.documentNumber) || 0));
+    ensureSpace(35);
+    currentPage.drawRectangle({ x: margin + 4, y: cursorY - 5, width: contentWidth - 8, height: 13, color: style.soft });
+    currentPage.drawText(`DAE - ${rows.length} ${rows.length === 1 ? "NOTA" : "NOTAS"}`, { x: margin + 10, y: cursorY - 1, size: 6.8, font: style.bold, color: style.ink });
+    cursorY -= 13;
+    let totalCents = 0;
+    rows.forEach(({ adjustment, dae }) => {
+      const custom = isGeneratedDaeReason(adjustment.reason) ? [] : wrapText(`Obs.: ${adjustment.reason!.trim()}`, style.font, 5.8, contentWidth - 20);
+      ensureSpace(custom.length ? 25 : 15);
+      const source = operationByNumber.get(dae.documentNumber);
+      currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: contentWidth - 8, height: 12, color: rgb(0.985, 0.965, 0.89) });
+      currentPage.drawRectangle({ x: margin + 4, y: cursorY - 4, width: 2.2, height: 12, color: style.gold });
+      currentPage.drawText(source?.issueDate ?? (adjustment.ledgerEntryDate ? formatDate(adjustment.ledgerEntryDate) : "-"), { x: columns[0].x, y: cursorY, size: 6.4, font: style.font, color: style.ink });
+      currentPage.drawText(truncate(dae.documentNumber, style.font, 6.4, columns[1].width), { x: columns[1].x, y: cursorY, size: 6.4, font: style.font, color: style.ink });
+      if (columns[6] && source) currentPage.drawText(truncate(chargeIssuerLabel(source.operation), style.bold, 6.4, columns[6].width), { x: columns[6].x, y: cursorY, size: 6.4, font: style.bold, color: style.ink });
+      const detailText = dae.references.length ? `${dae.label} - ref. ${dae.references.join(" / ")}` : dae.label;
+      currentPage.drawText(truncate(detailText, style.font, 6.4, columns[2].width + columns[3].width), { x: columns[2].x, y: cursorY, size: 6.4, font: style.font, color: style.ink });
+      drawRightText(currentPage, `R$ ${formatCents(adjustment.amountCents)}`, columns[5].x, cursorY, columns[5].width, style.bold, 6.4, style.ink);
+      totalCents += adjustment.amountCents;
+      cursorY -= 13;
+      custom.forEach((line) => {
+        ensureSpace(10);
+        currentPage.drawText(line, { x: margin + 10, y: cursorY, size: 5.8, font: style.font, color: style.ink });
+        cursorY -= 10;
+      });
+    });
+    ensureSpace(18);
+    drawRightText(currentPage, `TOTAL DAE: ${rows.length} ${rows.length === 1 ? "nota" : "notas"}`, columns[2].x, cursorY - 1, columns[5].x - 6 - columns[2].x, style.bold, 5.8, style.gold);
+    drawRightText(currentPage, `R$ ${formatCents(totalCents)}`, columns[5].x, cursorY - 1, columns[5].width, style.bold, 5.8, style.ink);
+    cursorY -= 15;
   }
   return { page: currentPage, y: cursorY };
 }
