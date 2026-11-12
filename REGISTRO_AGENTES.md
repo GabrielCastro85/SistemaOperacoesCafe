@@ -104,6 +104,16 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (desktop aposentado; coletor Villa com entradas)
+- Conferido, antes de aposentar o programa: o SQLite local e o site batem.
+  - ENTRADAS NOTAS Grão: 259 notas e 263 operações. ENTRADAS NOTAS Villa: 1.526 notas e 1.528 operações.
+  - Revisão 3476 dos dois lados. Nada ficou preso no PC.
+- Coletor Villa (`C:\ProgramData\GraoBase\Coletor`):
+  - `xmlRoot` foi de `C:\Vulpe\NFe` para **`C:\Vulpe`**, para incluir `C:\Vulpe\XML Terceiros\<empresa>\<AAAAMM>\Down`, onde ficam as notas de entrada. O filtro do coletor aceita a nota se o emitente **ou o destinatário** está em `emitterCnpjs`.
+  - O Gabriel rodou como administrador `outputs/COLETOR-VILLA-INCLUIR-ENTRADAS.cmd`, que chama `outputs/coletor-villa-incluir-entradas.ps1`. Backup gravado: `coletor-config.json.antes-entradas-20261112-103718.bak`.
+  - Primeira varredura: 8.273 arquivos inspecionados e 764 enviados, em cerca de 18 min. O monitor fica em "Sem sinal" durante esse tempo, porque o heartbeat só sai no fim da varredura, e a vigilância chegou a reiniciar o coletor uma vez.
+  - As varreduras seguintes levam ~1 min. A fila do servidor da Villa passou de 667 para 2.447 arquivos.
+
 ### 2026-11-12 - Claude (central religa sozinho, coletor Villa e carrossel)
 - **Sincronização do site OFFLINE após atualizações** (`7788f6e`):
   - O token do central fica só na memória do motor. Com o login persistente, ninguém digitava a senha após o deploy e o motor ficava sem sincronizar; o monitor do coletor mostrava "Entre no servidor central".
