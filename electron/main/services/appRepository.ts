@@ -1,4 +1,5 @@
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
+import { transferOverLimitMessage } from "../../../src/shared/utils/transferReconciliationUsage.js";
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
 import { randomUUID } from "node:crypto";
@@ -120,6 +121,7 @@ import type {
   TransferReconciliation,
   TransferReconciliationDetail,
   TransferReconciliationAvailableInvoice,
+  TransferReconciliationInvoiceUsage,
   InvoiceReceiptDraft,
   InvoiceReceiptInvoice,
   InvoiceReceiptMode,
@@ -3883,9 +3885,11 @@ export class AppRepository {
     const partnerPlaceholders = matchingPartnerIds.map(() => "?").join(", ");
     const usageRows = this.db.prepare(`
       SELECT ri.reconciliation_id, ri.fiscal_document_id, ri.source_amount_cents,
-        rr.status, rr.total_source_cents, rr.total_payments_cents
+        rr.status, rr.total_source_cents, rr.total_payments_cents,
+        rr.title, rr.reference_date, rr.created_at AS reconciliation_created_at, rr.counterparty_role, bp.display_name AS reconciliation_client_name
       FROM transfer_reconciliation_invoices ri
       JOIN transfer_reconciliations rr ON rr.id = ri.reconciliation_id
+      LEFT JOIN business_partners bp ON bp.id = rr.client_partner_id
       WHERE rr.status <> 'CANCELLED'
         ${input.reconciliationId ? "AND rr.id <> ?" : ""}
       ORDER BY ri.reconciliation_id, ri.created_at, ri.id
@@ -3898,6 +3902,24 @@ export class AppRepository {
       rowsByReconciliation.set(reconciliationId, group);
     }
     const usedByDocument = new Map<string, number>();
+    // Outros repasses (nao cancelados) em que a nota ja esta, para o aviso
+    // "Nota ja esta no repasse X do dia Y" na tela.
+    const usedInByDocument = new Map<string, TransferReconciliationInvoiceUsage[]>();
+    for (const row of usageRows) {
+      const documentId = String(row.fiscal_document_id);
+      const list = usedInByDocument.get(documentId) ?? [];
+      list.push({
+        reconciliationId: String(row.reconciliation_id),
+        title: this.stringOrNull(row.title),
+        clientName: this.stringOrNull(row.reconciliation_client_name),
+        counterpartyRole: String(row.counterparty_role) === "SUPPLIER" ? "SUPPLIER" : "CLIENT",
+        status: String(row.status) as TransferReconciliationInvoiceUsage["status"],
+        referenceDate: this.stringOrNull(row.reference_date),
+        createdAt: String(row.reconciliation_created_at ?? ""),
+        sourceAmountCents: Number(row.source_amount_cents ?? 0)
+      });
+      usedInByDocument.set(documentId, list);
+    }
     for (const group of rowsByReconciliation.values()) {
       const totalSource = Math.max(0, Number(group[0]?.total_source_cents ?? 0));
       const totalPayments = Math.max(0, Number(group[0]?.total_payments_cents ?? 0));
@@ -3988,7 +4010,8 @@ export class AppRepository {
         recipientName: this.stringOrNull(recipient?.legalName) ?? (counterpartyRole === "SUPPLIER" ? ownName : partnerName),
         invoiceTotalCents, previouslyUsedCents, availableCents: invoiceTotalCents - previouslyUsedCents,
         launchedUnderName: Number(row.own_responsible) ? null : this.stringOrNull(row.other_responsible_name),
-        partyDocument: this.stringOrNull((counterpartyRole === "SUPPLIER" ? issuer?.cnpjCpf : recipient?.cnpjCpf) as string | undefined)
+        partyDocument: this.stringOrNull((counterpartyRole === "SUPPLIER" ? issuer?.cnpjCpf : recipient?.cnpjCpf) as string | undefined),
+        usedIn: usedInByDocument.get(String(row.id)) ?? []
       };
     });
   }
@@ -4182,11 +4205,16 @@ export class AppRepository {
         return row?.party ? [String(row.party)] : [];
       });
       const availableInvoices = this.listTransferReconciliationInvoices({ organizationId: input.organizationId, clientPartnerId: input.clientPartnerId, counterpartyRole, reconciliationId: id, partyDocuments: selectedPartyDocuments });
+      // Diz quais notas passaram do saldo e em que outros repasses elas estao.
+      const overLimit = input.invoices.flatMap((selection) => {
+        const available = availableInvoices.find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
+        return available && selection.sourceAmountCents > available.availableCents ? [{ selection, available }] : [];
+      });
+      if (overLimit.length) throw new Error(transferOverLimitMessage(overLimit.map(({ selection, available }) => ({ documentNumber: available.documentNumber, sourceAmountCents: selection.sourceAmountCents, availableCents: available.availableCents, usedIn: available.usedIn ?? [] }))));
       for (const selection of input.invoices) {
         const document = this.getFiscalDocument(selection.fiscalDocumentId).document;
         const available = availableInvoices.find((item) => item.fiscalDocumentId === selection.fiscalDocumentId);
         if (!available) throw new Error("Nota indisponivel para conferencia.");
-        if (selection.sourceAmountCents > available.availableCents) throw new Error("O valor informado supera o saldo disponivel da nota.");
         insertInvoice.run(randomUUID(), id, document.id, document.documentNumber, document.issueDate, available.issuerName, available.recipientName, document.totalAmountCents, selection.sourceAmountCents, now, now);
       }
       const insertPayment = this.db.prepare(`INSERT INTO transfer_reconciliation_payments (id, reconciliation_id, beneficiary_name, beneficiary_document, description, payment_date, amount_cents, notes, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);

@@ -202,7 +202,15 @@ describe("transfer reconciliations", () => {
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ creditCents: 20_000_00, debitCents: 10_000_00, netBalanceCents: 10_000_00 });
       expect(repo.getTransferReconciliation(second.reconciliation.id).payments[0]).toMatchObject({ beneficiaryName: "Maria", amountCents: 210_000_00 });
       expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].availableCents).toBe(20_000_00);
-      const draft = repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-19", status: "DRAFT", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 10_000_00 }], payments: [] });
+      // Aviso: a nota mostra em quais outros repasses ja esta.
+      const usedIn = repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id })[0].usedIn ?? [];
+      expect(usedIn.map((usage) => usage.reconciliationId).sort()).toEqual([first.reconciliation.id, second.reconciliation.id].sort());
+      expect(usedIn[0]).toMatchObject({ status: "COMPLETED", clientName: "Cliente Repasse" });
+      expect(repo.listTransferReconciliationInvoices({ organizationId, clientPartnerId: partner.id, reconciliationId: first.reconciliation.id })[0].usedIn?.map((usage) => usage.reconciliationId)).toEqual([second.reconciliation.id]);
+      // Ao salvar acima do saldo, a mensagem diz a nota, o saldo e o outro repasse.
+      expect(() => repo.saveTransferReconciliation({ id: first.reconciliation.id, organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-17", status: "COMPLETED", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 400_000_00 }], payments: [{ beneficiaryName: "Joao", amountCents: 280_000_00 }] }))
+        .toThrow(/NF 9001: informado R\$ 400\.000,00, saldo R\$ 300\.000,00 — também está no repasse Cliente Repasse do dia/);
+      const draft =repo.saveTransferReconciliation({ organizationId, clientPartnerId: partner.id, referenceDate: "2026-09-19", status: "DRAFT", invoices: [{ fiscalDocumentId: doc.document.id, sourceAmountCents: 10_000_00 }], payments: [] });
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ netBalanceCents: 10_000_00, openReconciliations: 1 });
       repo.cancelTransferReconciliation(draft.reconciliation.id);
       expect(repo.listTransferReconciliationClientBalances(organizationId)[0]).toMatchObject({ netBalanceCents: 10_000_00, openReconciliations: 0 });

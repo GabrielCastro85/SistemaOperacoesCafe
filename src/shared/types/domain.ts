@@ -2015,6 +2015,19 @@ export interface TransferReconciliationAvailableInvoice {
   launchedUnderName?: string | null;
   // CNPJ/CPF do destinatario (venda) ou emitente (compra) da nota, para filtrar por empresa.
   partyDocument?: string | null;
+  // Outros repasses nao cancelados que ja usam esta nota.
+  usedIn?: TransferReconciliationInvoiceUsage[];
+}
+
+export interface TransferReconciliationInvoiceUsage {
+  reconciliationId: string;
+  title: string | null;
+  clientName: string | null;
+  counterpartyRole: "CLIENT" | "SUPPLIER";
+  status: "DRAFT" | "COMPLETED" | "CANCELLED";
+  referenceDate: string | null;
+  createdAt: string;
+  sourceAmountCents: number;
 }
 
 export interface TransferReconciliationClientBalance {

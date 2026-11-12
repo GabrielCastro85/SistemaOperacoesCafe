@@ -104,6 +104,11 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (aviso de saldo no repasse do LUCAS)
+- Pedido: por que o repasse do LUCAS (09/11, 119 notas) dá "O valor informado supera o saldo disponível da nota." ao lançar mais R$ 1.000.000.
+- Feito: só diagnóstico. O repasse 372ab69a, criado em 12/11 às 16:50 (concluído, 13 notas), repete 12 notas do 5b01894f (09/11): NFs 49, 50, 51, 52, 53, 54, 56, 57, 280, 281, 282 e 283. Ao ser concluído, ele consumiu parte do saldo dessas notas, e o repasse de 09/11 não salva mais com o valor cheio delas, seja qual for o pagamento. Nenhum dado alterado.
+- Pendente: o Gabriel decidir se tira as 12 notas do repasse de 12/11 ou ajusta o de 09/11. Melhoria oferecida: a mensagem dizer qual nota passou do saldo e a tela avisar que a nota já está em outro repasse.
+
 ### 2026-11-12 - Claude (contas a pagar refeitas e folha de controle)
 - Pedido: a operação de contas a pagar estava confusa. O Gabriel quer controlar **despesas gerais** (aluguel, energia, salários, impostos). No acerto de entrada, "nós pagamos" ao fornecedor, mas esse fluxo não é o foco agora.
 - Diagnóstico: nenhuma conta tinha sido lançada.
