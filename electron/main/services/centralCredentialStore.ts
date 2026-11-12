@@ -27,6 +27,11 @@ export class CentralCredentialStore {
     return Object.keys(this.read().passwords).length > 0;
   }
 
+  /** Usuarios com senha do central guardada (o site religa o central com elas apos reiniciar). */
+  usernames(): string[] {
+    return Object.keys(this.read().passwords);
+  }
+
   load(username: string): CentralCredential | null {
     if (!safeStorage.isEncryptionAvailable()) return null;
     const passwords = this.read().passwords;

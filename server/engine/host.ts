@@ -5,6 +5,7 @@ import { initializeDatabase } from "../../electron/main/database/database.js";
 import { registerIpcHandlers } from "../../electron/main/ipc/handlers.js";
 import { AppRepository } from "../../electron/main/services/appRepository.js";
 import { CentralSyncService } from "../../electron/main/services/centralSyncService.js";
+import { CentralCredentialStore } from "../../electron/main/services/centralCredentialStore.js";
 import { ensureAppDirectories, resolveAppDirectories } from "../../electron/main/services/paths.js";
 import { AuthError, AuthService } from "../../electron/main/services/security.js";
 import { IPC_CHANNELS } from "../../src/shared/ipc/channels.js";
@@ -81,6 +82,31 @@ export function createEngine(options: { dataDir: string; version: string }) {
     backgroundSync ??= synchronizeAndWait().catch(() => undefined).finally(() => { backgroundSync = null; });
   };
   const auth = new AuthService(db);
+  // A conexao com o central (token) fica so na memoria. Apos reiniciar (cada
+  // atualizacao do servidor), as sessoes do site continuam valendo, mas sem
+  // token o motor nao sincroniza e o monitor do coletor fica sem dados. Religa
+  // sozinho com a senha do central guardada (chave no volume), sem esperar
+  // alguem digitar a senha de novo. Em falha, tenta de novo apos 1 minuto.
+  const centralCredentials = new CentralCredentialStore(directories.settingsDir);
+  let centralLoginRunning: Promise<void> | null = null;
+  let centralRetryAt = 0;
+  const ensureCentralSession = (preferredUsername?: string | null): void => {
+    if (centralSync.hasSession() || centralLoginRunning || Date.now() < centralRetryAt) return;
+    const candidates = [...new Set([preferredUsername ?? "", ...centralCredentials.usernames()].filter(Boolean))];
+    if (!candidates.length) return;
+    centralLoginRunning = (async () => {
+      for (const username of candidates) {
+        const credential = centralCredentials.load(username);
+        if (!credential) continue;
+        try {
+          await centralSync.login(credential.username, credential.password);
+          if (centralSync.hasSession()) return;
+        } catch { /* tenta o proximo usuario guardado */ }
+      }
+      centralRetryAt = Date.now() + 60_000;
+    })().finally(() => { centralLoginRunning = null; });
+  };
+  ensureCentralSession();
   const handlers = new Map<string, Listener>();
   registerIpcHandlers({ handle: (channel: string, listener: Listener) => handlers.set(channel, listener) } as never, context, repository, centralSync, { auth });
 
@@ -148,6 +174,7 @@ export function createEngine(options: { dataDir: string; version: string }) {
     };
     mkdirSync(context.tempDir, { recursive: true });
     auth.useSession(sessions.get(webSessionId) ?? null);
+    if (!centralSync.hasSession()) ensureCentralSession(auth.getCurrentSession()?.user.username ?? null);
     const profile = readScope();
     const scope = activeScopes.get(webSessionId);
     if (profile && scope && (scope.organizationId !== profile.organizationId || scope.legalEntityId !== profile.legalEntityId)) {
