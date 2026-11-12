@@ -104,6 +104,27 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (recibos de pagamento de notas)
+- Pedido: gerar recibo **exatamente** no modelo `Recibo de Pagamento DLG 652.pdf` (Área de Trabalho\Recibos), com os dados das notas selecionadas e da empresa em operação, nas duas direções. O logo da empresa em operação vai abaixo do nome quando ela assina; quando assina a outra empresa, sai sem logo.
+- Feito (`8863536`):
+  - **Tela:** Recebimentos > **Recibos de pagamento** (`/invoice-receipts`, `InvoiceReceiptsPage.tsx`).
+    - Modo "Nós recebemos": notas OUTBOUND da empresa em operação; ela assina, com o logo.
+    - Modo "Nós pagamos": notas INBOUND; o vendedor assina, sem logo.
+    - Busca e período; 100 notas por vez com "Mostrar mais"; marcar várias.
+    - Campos editáveis: valor, data, sacas e mercadoria. Prévia igual ao PDF.
+  - **Regras dos dados** (`listInvoiceReceiptInvoices` / `getInvoiceReceiptDraft`):
+    - Vendedor = emitente da nota; comprador = destinatário. Os dados vêm do `fiscal_snapshot_json` (XML). Sem XML, vêm da empresa própria e do `partner_legal_entities`; o que falta da empresa própria é completado pelo cadastro.
+    - Notas de outro vendedor ou comprador geram aviso e bloqueiam a geração.
+    - Valor = soma das notas; sacas = soma dos itens; mercadoria "café em grão cru arábica/conilon".
+  - **Texto e PDF:**
+    - `src/shared/utils/invoiceReceiptText.ts`: texto, endereço e cidade/data; "– cidade" preso por espaço não separável.
+    - `src/shared/utils/currencyInWords.ts`: valor por extenso.
+    - `electron/main/services/invoiceReceipt.ts`: PDF pdf-lib Helvetica 12, parágrafo justificado com negritos, título sublinhado, linha e nome centralizado, logo via `resolveBrandingLogoBytes`.
+  - Calibrado pelo modelo: as 7 primeiras linhas quebram nas mesmas palavras do original.
+  - **Canais:** `invoiceReceipts:listInvoices`, `invoiceReceipts:getDraft`, `invoiceReceipts:exportPdf`. O arquivo se chama "Recibo de Pagamento <outra empresa> <notas>.pdf".
+- Testes novos: `invoice-receipt.test.ts` (texto idêntico ao modelo, soma de duas notas, aviso de comprador diferente, PDF válido) e `currency-in-words.test.ts`. 371 testes passam.
+- Testado no site local com notas reais da Villa MG nos dois modos, no computador e no celular.
+
 ### 2026-11-12 - Claude (região da Railway e Clientes mais rápido)
 - **Decisão do Gabriel:** o programa desktop não será mais usado, só o site. Não há mais versão do desktop a publicar.
 - **Railway:** o serviço `mindful-peace` passou de US West (sfo) para **US East (Virgínia, us-east4)**. O volume foi migrado junto, com alguns minutos fora do ar. Feito com o Gabriel logado.
