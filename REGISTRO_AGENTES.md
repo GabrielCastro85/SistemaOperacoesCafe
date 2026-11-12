@@ -104,6 +104,26 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (central religa sozinho, coletor Villa e carrossel)
+- **Sincronização do site OFFLINE após atualizações** (`7788f6e`):
+  - O token do central fica só na memória do motor. Com o login persistente, ninguém digitava a senha após o deploy e o motor ficava sem sincronizar; o monitor do coletor mostrava "Entre no servidor central".
+  - Agora `ensureCentralSession` (host.ts) religa com a senha guardada (`CentralCredentialStore.usernames()` + load) ao subir e a cada chamada; em falha, tenta de novo após 1 min.
+  - Conferido em produção: ONLINE após reiniciar.
+- **Coletor Villa (este PC, VILLACOFFEE)** travado desde 11/11 18:22:
+  - Às 08:56 a entrada Run do HKCU e o atalho da pasta Inicializar abriram o coletor como `gabri`. Os arquivos em `C:\ProgramData\GraoBase\Coletor` só aceitam gravação de SISTEMA/Administradores, então ele não gravava nem varria, e a vigilância (SYSTEM) achava que estava rodando.
+  - Encerrei os processos do usuário e a vigilância reabriu como SYSTEM às 09:12. Os dois coletores ficaram OK.
+  - **Pendente (perguntei ao Gabriel):** remover a entrada Run "ColetorGraoBase" do HKCU e o atalho "Coletor GraoBase.lnk" da pasta Inicializar, senão volta a travar no próximo logon.
+- **Carrossel de cotações em reais** (`e7b5be7`, `3f45e2d`, layout em seguida):
+  - O Gabriel pediu igual ao do projeto pessoal dele; foi feito do zero, sem olhar o código de `operacoes-cafe-web` (regra de não compartilhar código).
+  - `server/src/market.ts`: `GET /v1/market/quotes`, público, cache de 10 min. Fontes:
+    - café arábica e conilon: CEPEA/Esalq (`cepea.org.br/br/indicador/cafe.aspx`, tabelas `imagenet-indicador1/2`), R$/saca;
+    - dólar, euro e ouro: AwesomeAPI, que recusa a Railway; reserva no Yahoo (`BRL=X`, `EURBRL=X`, `GC=F`); ouro em R$/g;
+    - Ibovespa: Yahoo `^BVSP`.
+  - `web/siteTicker.ts`: faixa abaixo do topo, para no hover, respeita reduced-motion e se atualiza a cada 10 min.
+  - Layout: `.app-main:has(> .site-ticker)` ganha uma linha própria na grade.
+  - Teste: `market-quotes.test.ts`.
+- Observação: logo após um deploy, o Resumo pode mostrar zeros por alguns segundos, até o motor religar e sincronizar. Recarregar resolve.
+
 ### 2026-11-12 - Claude (recibos de pagamento de notas)
 - Pedido: gerar recibo **exatamente** no modelo `Recibo de Pagamento DLG 652.pdf` (Área de Trabalho\Recibos), com os dados das notas selecionadas e da empresa em operação, nas duas direções. O logo da empresa em operação vai abaixo do nome quando ela assina; quando assina a outra empresa, sai sem logo.
 - Feito (`8863536`):
