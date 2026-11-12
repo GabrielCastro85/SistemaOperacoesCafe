@@ -275,6 +275,24 @@ function ensureDesktopOnlyHidden(): void {
   });
 }
 
+// ---------- Telas vazias ----------
+// Mensagens "Nenhum.../Nenhuma..." sozinhas numa lista, tabela ou cartao ganham
+// o mesmo visual do aviso vazio do Resumo (caixa tracejada, centralizada).
+const EMPTY_TEXT = /^(Nenhum|Nenhuma)\b/i;
+function ensureEmptyStates(): void {
+  document.querySelectorAll<HTMLElement>(".content-section p:not([data-site-empty]), .content-section .table-row > span:only-child:not([data-site-empty]), .content-section td[colspan]:not([data-site-empty]), .content-section .table > p:not([data-site-empty])").forEach((element) => {
+    element.dataset.siteEmpty = "0";
+    if (element.closest(".ui-empty, .site-empty, .partner-search__panel, .ui-dialog, .site-ticker")) return;
+    const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (!EMPTY_TEXT.test(text) || text.length > 140 || element.querySelector("button, input, select, a")) return;
+    // Paragrafo solto so vira aviso quando e o unico texto do bloco (nao explicacoes no meio de formularios).
+    if (element.tagName === "P" && element.parentElement && element.parentElement.querySelectorAll(":scope > p, :scope > div, :scope > section").length > 2) return;
+    element.dataset.siteEmpty = "1";
+    element.classList.add("site-empty");
+    element.closest(".table-row")?.classList.add("site-empty-row");
+  });
+}
+
 // ---------- Cobrancas ----------
 // "Dados para pagamento" vira uma linha so (titulo + botao), sem o texto longo no meio do fluxo.
 function ensureChargesLayout(): void {
@@ -284,7 +302,7 @@ function ensureChargesLayout(): void {
 }
 
 export function startSiteLayout(): void {
-  const ensure = () => { ensureAuthBrand(); ensureMenuButton(); ensureBackdrop(); ensureUserMenu(); ensureNavGroups(); ensureMonitorToggle(); ensureDashboard(); ensureRowMenus(); ensureChargesLayout(); ensureDesktopOnlyHidden(); ensureSearchPicker(); };
+  const ensure = () => { ensureAuthBrand(); ensureMenuButton(); ensureBackdrop(); ensureUserMenu(); ensureNavGroups(); ensureMonitorToggle(); ensureDashboard(); ensureRowMenus(); ensureChargesLayout(); ensureDesktopOnlyHidden(); ensureSearchPicker(); ensureEmptyStates(); };
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;
     const groupTitle = target?.closest<HTMLElement>(".app-sidebar__nav .nav-group-title[data-site-group]");
