@@ -85,7 +85,7 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
     // fornecedores -- precisa buscar as soltas separadamente e juntar (ver
     // mesmo padrao em PartnersPage/OperationsPage/ChargesPage).
     const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
-      Promise.all(supplierPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(supplierPartners.map((partner) => partner.id)).then((rows) => [rows]),
       organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
     ]);
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);

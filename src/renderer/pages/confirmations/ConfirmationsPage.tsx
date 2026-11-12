@@ -169,7 +169,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
     // a busca por empresa/CNPJ precisa achar as duas, ja que uma nota pode
     // chegar de uma empresa que ainda nao tem corretor vinculado.
     const [linkedEntityGroups, unlinkedEntities] = await Promise.all([
-      Promise.all(partnerList.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(partnerList.map((partner) => partner.id)).then((rows) => [rows]),
       window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId)
     ]);
     setPartnerLegalEntities([...linkedEntityGroups.flat(), ...unlinkedEntities]);

@@ -70,7 +70,7 @@ export function ClientLedgerPage({ data }: { data: BootstrapData }): JSX.Element
     // parceiros -- precisa buscar as soltas separadamente e juntar (ver
     // mesmo padrao em PartnersPage/OperationsPage/ChargesPage).
     const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
-      Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(clients.map((partner) => partner.id)).then((rows) => [rows]),
       organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
     ]);
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);

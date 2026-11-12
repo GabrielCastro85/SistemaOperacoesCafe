@@ -52,7 +52,7 @@ export function PurchaseRateRulesPage({ data }: { data: BootstrapData }): JSX.El
     const allPartners = await window.operationsCafe.listBusinessPartners({ status: "active" });
     const activeProducts = await window.operationsCafe.listProducts({ status: "active" });
     const activeRules = await window.operationsCafe.listPurchaseRateRules({ organizationId, status: "active" });
-    const linkedLegalEntities = (await Promise.all(allPartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id)))).flat();
+    const linkedLegalEntities = (await window.operationsCafe.listPartnerLegalEntitiesForPartners(allPartners.map((partner) => partner.id)).then((rows) => [rows])).flat();
     const unlinkedLegalEntities = await window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId);
     const allCounterpartyLegalEntities = [...linkedLegalEntities, ...unlinkedLegalEntities]
       .filter((item) => item.isActive)

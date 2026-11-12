@@ -226,13 +226,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     // buscar as soltas separadamente e juntar, senao a coluna "Empresa" desta
     // tela mostra "Nao identificado" mesmo pra nota ja vinculada a uma dessas
     // empresas (ver mesmo padrao em PartnersPage/OperationsPage).
-    const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
-      Promise.all(clients.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
-      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    // Tudo junto (antes: uma consulta por cliente e o resto em fila).
+    const [linkedLegalEntities, unlinkedLegalEntities, ownLegalEntities, chargeList] = await Promise.all([
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(clients.map((partner) => partner.id)),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([]),
+      window.operationsCafe.listLegalEntities({ status: "all" }),
+      window.operationsCafe.listClientCharges({ status: "all" })
     ]);
-    setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
-    setLegalEntities(await window.operationsCafe.listLegalEntities({ status: "all" }));
-    setCharges(await window.operationsCafe.listClientCharges({ status: "all" }));
+    setPartnerLegalEntities([...linkedLegalEntities, ...unlinkedLegalEntities]);
+    setLegalEntities(ownLegalEntities);
+    setCharges(chargeList);
   }, [organizationId]);
 
   useEffect(() => { void load(); }, [load]);

@@ -334,9 +334,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         setCollectorStatuses([]);
         setCollectorMonitorError("Nao foi possivel consultar o servidor agora. Uma nova tentativa sera feita em 30 segundos.");
       });
-    void refresh();
+    // O status do coletor espera a lista de notas carregar (antes saia na frente
+    // e atrasava a tela em ~0,7 s).
+    const first = window.setTimeout(() => void refresh(), 1_500);
     const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => window.clearInterval(timer);
+    return () => { window.clearTimeout(first); window.clearInterval(timer); };
   }, []);
 
   const load = useCallback(async () => {
@@ -344,9 +346,16 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     // Nota triangulada: o segundo parceiro (a outra perna, compra ou venda)
     // precisa ter o papel OPOSTO ao do parceiro principal selecionado acima.
     const secondaryRole = roleForOperationType === "SUPPLIER" ? "CLIENT" : "SUPPLIER";
-    const [rolePartners, oppositeRolePartners] = await Promise.all([
+    // Primeira rodada: tudo que nao depende de nada sai junto (o site agrupa
+    // as consultas numa ida so ao servidor). Antes era uma fila de 8 esperas.
+    const [rolePartners, oppositeRolePartners, unlinkedLegalEntities, activeProducts, fiscalDocuments, importJobs, xmlJobs] = await Promise.all([
       window.operationsCafe.listBusinessPartners({ role: roleForOperationType, status: "active" }),
-      window.operationsCafe.listBusinessPartners({ role: secondaryRole, status: "active" })
+      window.operationsCafe.listBusinessPartners({ role: secondaryRole, status: "active" }),
+      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([]),
+      window.operationsCafe.listProducts({ organizationId, status: "active" }),
+      window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "all", includeThirdParty: true }),
+      window.operationsCafe.listSpreadsheetImportJobs(organizationId),
+      window.operationsCafe.listXmlImportJobs(organizationId)
     ]);
     setPartners(rolePartners);
     setSecondaryPartners(oppositeRolePartners);
@@ -356,9 +365,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     // buscar as soltas separadamente e juntar, senao elas nunca aparecem nas
     // buscas desta tela (responsavel da nota, empresa da nota, resolucao de
     // XML), mesmo depois de cadastradas (ver mesmo padrao em PartnersPage).
-    const [linkedLegalEntities, unlinkedLegalEntities] = await Promise.all([
-      Promise.all(searchablePartners.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
-      organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([])
+    // Segunda rodada: o que depende da primeira.
+    const [linkedLegalEntities, serviceSummaries] = await Promise.all([
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(searchablePartners.map((partner) => partner.id)).then((rows) => [rows]),
+      // Uma chamada para todas as notas (antes abria nota por nota).
+      window.operationsCafe.listFiscalDocumentServiceSummaries(fiscalDocuments.map((doc) => doc.id))
     ]);
     setPartnerLegalEntities([...linkedLegalEntities.flat(), ...unlinkedLegalEntities]);
     setPartnerId((current) => (rolePartners.some((partner) => partner.id === current) ? current : ""));
@@ -367,15 +378,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       const selected = [...linkedLegalEntities.flat(), ...unlinkedLegalEntities].find((entity) => entity.id === current);
       return selected && rolePartners.some((partner) => partner.id === selected.businessPartnerId) ? current : "";
     });
-    const activeProducts = await window.operationsCafe.listProducts({ organizationId, status: "active" });
     setProducts(activeProducts);
     setProductId((current) => current || activeProducts[0]?.id || "");
-    const fiscalDocuments = await window.operationsCafe.listFiscalDocuments({ organizationId, ownLegalEntityId, status: "all", includeThirdParty: true });
     setDocuments(fiscalDocuments);
-    // Uma chamada para todas as notas (antes abria nota por nota).
-    setDocumentServiceInfo(await window.operationsCafe.listFiscalDocumentServiceSummaries(fiscalDocuments.map((doc) => doc.id)));
-    setImportHistory(await window.operationsCafe.listSpreadsheetImportJobs(organizationId));
-    const xmlJobs = await window.operationsCafe.listXmlImportJobs(organizationId);
+    setDocumentServiceInfo(serviceSummaries);
+    setImportHistory(importJobs);
     setXmlHistory(xmlJobs.filter((job) => !xmlImportIsVisuallyDeleted(job)));
   }, [organizationId, ownLegalEntityId, operationType]);
 

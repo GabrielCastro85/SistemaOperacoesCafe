@@ -396,7 +396,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
     void window.operationsCafe.listBusinessPartners({ organizationId, status: "active" }).then(async (partnerList) => {
       setBusinessPartners(partnerList);
       const [linkedGroups, unlinked] = await Promise.all([
-        Promise.all(partnerList.map((partner) => window.operationsCafe.listPartnerLegalEntities(partner.id))),
+        window.operationsCafe.listPartnerLegalEntitiesForPartners(partnerList.map((partner) => partner.id)).then((rows) => [rows]),
         window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId)
       ]);
       setPartnerLegalEntities([...linkedGroups.flat(), ...unlinked]);
