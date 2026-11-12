@@ -20,6 +20,7 @@ import { XmlImportPage } from "../pages/imports/xml/XmlImportPage";
 import { ChargesPage } from "../pages/charges/ChargesPage";
 import { TransferReconciliationsPage } from "../pages/transferReconciliations/TransferReconciliationsPage";
 import { InvoiceReceiptsPage } from "../pages/invoiceReceipts/InvoiceReceiptsPage";
+import { AccountsPayablePage } from "../pages/finance/AccountsPayablePage";
 import { PeriodComparisonPage } from "../pages/comparison/PeriodComparisonPage";
 import { ClientLedgerPage } from "../pages/clientLedger/ClientLedgerPage";
 import { Dashboard, NotFoundPage, SetupWizard, Splash } from "../pages/appStates/AppStatePages";
@@ -33,11 +34,9 @@ import { FinancialReportHistoryPage } from "../pages/finance/FinancialReportHist
 import { FinancialReportsPage } from "../pages/finance/FinancialReportsPage";
 import { InstallmentGroupDetailsPage } from "../pages/finance/InstallmentGroupDetailsPage";
 import { InstallmentGroupsPage } from "../pages/finance/InstallmentGroupsPage";
-import { PayableCreatePage } from "../pages/finance/PayableCreatePage";
 import { PayableDetailsPage } from "../pages/finance/PayableDetailsPage";
 import { PayablePaymentDetailsPage } from "../pages/finance/PayablePaymentDetailsPage";
 import { PayablePaymentsPage } from "../pages/finance/PayablePaymentsPage";
-import { PayablesPage } from "../pages/finance/PayablesPage";
 import { RecurringPayableDetailsPage } from "../pages/finance/RecurringPayableDetailsPage";
 import { RecurringPayablesPage } from "../pages/finance/RecurringPayablesPage";
 import { OperationsPage } from "../pages/operations/OperationsPage";
@@ -256,10 +255,11 @@ function renderRoute(
   if (path.startsWith("/client-ledger")) return <ClientLedgerPage data={data} />;
   if (path.startsWith("/finance/purchase-settlements")) return <PurchaseSettlementsPage data={data} />;
   if (path.startsWith("/finance/purchase-rates")) return <PurchaseRateRulesPage data={data} />;
-  if (path.startsWith("/finance/payables/new")) return <PayableCreatePage data={data} />;
+  // Lancar conta agora e na janela da lista; o endereco antigo abre a lista.
+  if (path.startsWith("/finance/payables/new")) return <AccountsPayablePage data={data} />;
   if (/^\/finance\/payables\/[^/]+\/edit$/.test(path)) return <PayableDetailsPage data={data} id={path.split("/")[3] ?? null} initialEditing />;
   if (path.startsWith("/finance/payables/")) return <PayableDetailsPage data={data} id={routeTail(path, "/finance/payables/")} />;
-  if (path.startsWith("/finance/payables")) return <PayablesPage data={data} />;
+  if (path.startsWith("/finance/payables")) return <AccountsPayablePage data={data} />;
   if (path.startsWith("/finance/recurring/new")) return <RecurringPayablesPage data={data} />;
   if (path.startsWith("/finance/recurring/")) return <RecurringPayableDetailsPage data={data} id={routeTail(path, "/finance/recurring/")} />;
   if (path.startsWith("/finance/recurring")) return <RecurringPayablesPage data={data} />;

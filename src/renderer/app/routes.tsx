@@ -16,6 +16,7 @@ export type AppRouteId =
   | "ledger"
   | "confirmations"
   | "finance"
+  | "payables"
   | "reports"
   | "users"
   | "roles"
@@ -43,6 +44,7 @@ export const routeTitleById: Record<AppRouteId, string> = {
   ledger: "Conta-corrente",
   confirmations: "Confirmações de negócio",
   finance: "Financeiro",
+  payables: "Contas a pagar",
   reports: "Relatórios",
   users: "Usuarios",
   roles: "Roles",
