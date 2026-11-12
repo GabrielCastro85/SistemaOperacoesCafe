@@ -1241,3 +1241,11 @@ html.site .app-main:has(> .site-ticker) {
 }
 
 html.site .site-ticker { flex: 0 0 auto; min-height: 31px; }
+
+/* Icones do carrossel (bandeiras, ouro, graos de cafe) */
+html.site .site-ticker__item { align-items: center; }
+html.site .site-ticker__icon { display: inline-flex; align-items: center; flex: 0 0 auto; }
+html.site .site-ticker__icon svg { display: block; width: 20px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px rgb(255 255 255 / 18%); }
+html.site .site-ticker__icon--arabica svg,
+html.site .site-ticker__icon--conilon svg { width: 16px; height: 16px; box-shadow: none; }
+html.site .site-ticker__icon--gold svg { width: 19px; height: 14px; box-shadow: none; }
