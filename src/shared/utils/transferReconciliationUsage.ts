@@ -14,7 +14,10 @@ function brDate(value: string | null | undefined): string {
 // Dia do repasse: o dia em que foi criado (e o que a lista de repasses mostra);
 // sem ele, a data de referencia.
 export function transferUsageDate(usage: TransferReconciliationInvoiceUsage): string {
-  return brDate(usage.createdAt) || brDate(usage.referenceDate);
+  // createdAt vem em UTC; mostra o dia de Brasilia (criado as 22h nao vira o dia seguinte).
+  const created = usage.createdAt ? new Date(usage.createdAt) : null;
+  if (created && !Number.isNaN(created.getTime())) return created.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric" });
+  return brDate(usage.referenceDate);
 }
 
 export function transferUsageName(usage: TransferReconciliationInvoiceUsage): string {
