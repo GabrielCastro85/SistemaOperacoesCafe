@@ -116,6 +116,9 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Contas a pagar de dezembro em diante: o Gabriel disse que o financeiro lança. Proposta descartada, nada gravado.
 - Conta da Grão & Grão São Paulo (lida da NF 3305, dados adicionais): Santander 033, agência 3369, conta corrente 130040685, PIX CNPJ 16.594.876/0004-96. A gravação no cadastro (campos default*) foi bloqueada pela proteção de permissões; aguardando o Gabriel autorizar ou fazer pelo site.
 - Correios NF 2446: expliquei o que a planilha mostra (cobrada a R$ 13 e de novo a R$ 7); motivo desconhecido.
+- Depois, com autorização ("pode gravar"): conta da Grão & Grão São Paulo gravada nos campos default* (Santander 033, ag. 3369, cc 130040685, CONTA CORRENTE, titular GRAO & GRAO COMERCIO EXP LTDA, PIX CNPJ 16.594.876/0004-96); o resto do cadastro ficou igual.
+- Backup do Neon autorizado ("pode configurar"), mas ainda NÃO aplicado: o navegador fechou antes de salvar e o console pediu login de novo. Fazer: Settings → Postgres → History window = 7d → Save; Backup & Restore → Edit schedule → diário → Update schedule.
+- Lembrete agendado (tarefa `lembrete-planilha-correios`, 13/11/2026 09:00) para rever com o Gabriel a NF 2446 da Correios.
 - Neon (console logado pelo Gabriel): plano Launch; projeto operacoes-cafe-producao em AWS São Paulo, 1,16 GB. Restauração por histórico só das últimas 6 horas e nenhum snapshot/agenda. Nada alterado; recomendado aumentar a janela e agendar snapshot diário (custo pequeno), aguardando aprovação.
 
 ### 2026-11-12 - Claude (partes restantes: PDF de cobrança, repasses e proposta de dezembro)
