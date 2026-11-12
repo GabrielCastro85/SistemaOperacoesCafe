@@ -111,6 +111,12 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
 - Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
+### 2026-11-12 - Claude (PDF de cobrança: acentos, favorecido e resumo por emitente)
+- Pedido: itens 1, 2 e 3 das sugestões (acentos no PDF, favorecido nos dados de pagamento, resumo por emitente).
+- Feito em `electron/main/services/chargeDocuments.ts`: textos fixos do PDF com acento (Prévia, Serviços, Não emitida, Emissão, Período, cobrança, já, Acréscimos, Deduções, Agência, não informada...). O texto de comparação `charge.notes === "PREVIA INTERNA"` não mudou. Dados para pagamento: "Favorecido" (titular da conta da cobrança, ou a razão social) e "CNPJ/CPF" (do titular; sem ele, a chave PIX se for CNPJ; senão o da empresa), agência e conta na mesma linha. Novo quadro "RESUMO POR EMITENTE" (notas, sacas/unidades e valor por emitente) antes dos dados de pagamento, só das notas desta cobrança.
+- Testado: suíte completa (377), typecheck, build do servidor e PDF de amostra renderizado.
+- Publicado: commit seguinte, nas duas branches.
+
 ### 2026-11-12 - Claude (aviso de saldo no repasse do LUCAS)
 - Pedido: por que o repasse do LUCAS (09/11, 119 notas) dá "O valor informado supera o saldo disponível da nota." ao lançar mais R$ 1.000.000.
 - Feito: só diagnóstico. O repasse 372ab69a, criado em 12/11 às 16:50 (concluído, 13 notas), repete 12 notas do 5b01894f (09/11): NFs 49, 50, 51, 52, 53, 54, 56, 57, 280, 281, 282 e 283. Ao ser concluído, ele consumiu parte do saldo dessas notas, e o repasse de 09/11 não salva mais com o valor cheio delas, seja qual for o pagamento. Nenhum dado alterado.

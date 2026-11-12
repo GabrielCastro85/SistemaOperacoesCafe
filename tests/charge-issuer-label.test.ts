@@ -33,7 +33,7 @@ describe("emitente curto na cobranca", () => {
     });
     const input = {
       organization: { slug: "villa", displayName: "Villa Coffee", appDisplayName: "Villa Coffee Operacoes", logoPath: null },
-      ownLegalEntity: { tradeName: "Villa Coffee Minas Gerais", legalName: "VILLA COFFEE COMERCIO E EXP. LTDA", cnpj: "44963370000523", defaultBankName: "Santander", defaultPixKey: "44.963.370/0004-42" },
+      ownLegalEntity: { tradeName: "Villa Coffee Minas Gerais", legalName: "VILLA COFFEE COMERCIO E EXP. LTDA", cnpj: "44963370000523", defaultBankName: "Santander", defaultBankCode: "033", defaultBankAgency: "2479", defaultBankAccount: "13000793-9", defaultPixKey: "44.963.370/0004-42" },
       client: { displayName: "ALCA" },
       detail: {
         charge: { status: "DRAFT", notes: "PREVIA INTERNA", createdAt: "2026-11-12", dueDate: "2026-11-12", periodStart: "2026-11-01", periodEnd: "2026-11-12", periodicity: "MONTHLY", openAmountCents: 600000, finalAmountCents: 600000, subtotalServicesCents: 600000, additionsCents: 0, deductionsCents: 0, paidAmountCents: 0 },
@@ -48,6 +48,12 @@ describe("emitente curto na cobranca", () => {
     expect(text).toContain("VILLA MG");
     expect(text).toContain("VILLA ES");
     expect(text).not.toContain("Dados podem ser ajustados");
+    expect(text).toContain("RESUMO POR EMITENTE");
+    expect(text).toContain("RESUMO DA COBRANÇA");
+    expect(text).toContain("PRÉVIA INTERNA - FECHAMENTO");
+    // Favorecido e CNPJ da conta (PIX e CNPJ, entao vale o CNPJ do PIX).
+    expect(text).toContain("Favorecido: VILLA COFFEE COMERCIO E EXP. LTDA");
+    expect(text).toContain("CNPJ/CPF: 44.963.370/0004-42");
     expect(buildChargeSummarySvg(input).svg).toContain("VILLA ES");
   });
 });
