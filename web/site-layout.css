@@ -1233,3 +1233,11 @@ html.site .site-ticker__change--flat { color: #b8b0a2; }
   html.site .site-ticker { font-size: 12px; }
   html.site .site-ticker__item { padding: 8px 16px; }
 }
+
+/* A area principal e uma grade topo/conteudo/rodape: a faixa de cotacoes ganha
+   uma linha propria entre o topo e o conteudo (senao ficava com 1px). */
+html.site .app-main:has(> .site-ticker) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto !important;
+}
+
+html.site .site-ticker { flex: 0 0 auto; min-height: 31px; }
