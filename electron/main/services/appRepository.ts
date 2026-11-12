@@ -3916,7 +3916,8 @@ export class AppRepository {
         status: String(row.status) as TransferReconciliationInvoiceUsage["status"],
         referenceDate: this.stringOrNull(row.reference_date),
         createdAt: String(row.reconciliation_created_at ?? ""),
-        sourceAmountCents: Number(row.source_amount_cents ?? 0)
+        sourceAmountCents: Number(row.source_amount_cents ?? 0),
+        totalSourceCents: Number(row.total_source_cents ?? 0)
       });
       usedInByDocument.set(documentId, list);
     }

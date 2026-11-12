@@ -29,7 +29,7 @@ const STATUS_LABEL: Record<TransferReconciliationInvoiceUsage["status"], string>
 // "Nota já está no repasse LUCAS do dia 12/11/2026 (concluído)."
 export function transferUsageLabel(usage: TransferReconciliationInvoiceUsage): string {
   const date = transferUsageDate(usage);
-  return `repasse ${transferUsageName(usage)}${date ? ` do dia ${date}` : ""} (${STATUS_LABEL[usage.status] ?? usage.status.toLowerCase()})`;
+  return `repasse ${transferUsageName(usage)}${date ? ` do dia ${date}` : ""} (${STATUS_LABEL[usage.status] ?? usage.status.toLowerCase()}${usage.totalSourceCents ? `, notas ${money(usage.totalSourceCents)}` : ""})`;
 }
 
 export function transferUsageSummary(usedIn: TransferReconciliationInvoiceUsage[]): string {

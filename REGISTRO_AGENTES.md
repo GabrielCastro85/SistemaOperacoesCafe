@@ -107,7 +107,11 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 ### 2026-11-12 - Claude (aviso de saldo no repasse do LUCAS)
 - Pedido: por que o repasse do LUCAS (09/11, 119 notas) dá "O valor informado supera o saldo disponível da nota." ao lançar mais R$ 1.000.000.
 - Feito: só diagnóstico. O repasse 372ab69a, criado em 12/11 às 16:50 (concluído, 13 notas), repete 12 notas do 5b01894f (09/11): NFs 49, 50, 51, 52, 53, 54, 56, 57, 280, 281, 282 e 283. Ao ser concluído, ele consumiu parte do saldo dessas notas, e o repasse de 09/11 não salva mais com o valor cheio delas, seja qual for o pagamento. Nenhum dado alterado.
-- Pendente: o Gabriel decidir se tira as 12 notas do repasse de 12/11 ou ajusta o de 09/11. Melhoria oferecida: a mensagem dizer qual nota passou do saldo e a tela avisar que a nota já está em outro repasse.
+- Depois: o funcionário já ajustou o repasse de 09/11 (notas caíram para R$ 66.263.663,68 e os pagamentos foram para R$ 6.977.000).
+- Feito em seguida, a pedido: cada nota da conferência traz `usedIn` (outros repasses não cancelados que a usam: nome, dia de criação em Brasília, situação e valor das notas do repasse). A tela mostra a etiqueta amarela "Nota já está no repasse LUCAS do dia 12/11/2026 (concluído, notas R$ …)" e conta, nas selecionadas, quantas já estão em outro repasse; não bloqueia. Ao passar do saldo, a mensagem (tela e servidor) lista as notas, o valor informado, o saldo e o outro repasse. Textos em `src/shared/utils/transferReconciliationUsage.ts`.
+- Testado: suíte completa (372), typecheck, build do site e conferido no site real (Villa ES, repasse LUCAS de 09/11, sem salvar nada).
+- Publicado: commits `f39a3b5`, `617a87e` e o seguinte, nas branches `codex/central-server-neon` e `master`.
+- Observado: a lista de conferências mostra "Nenhuma conferência registrada" por alguns segundos enquanto carrega.
 
 ### 2026-11-12 - Claude (contas a pagar refeitas e folha de controle)
 - Pedido: a operação de contas a pagar estava confusa. O Gabriel quer controlar **despesas gerais** (aluguel, energia, salários, impostos). No acerto de entrada, "nós pagamos" ao fornecedor, mas esse fluxo não é o foco agora.

@@ -2028,6 +2028,8 @@ export interface TransferReconciliationInvoiceUsage {
   referenceDate: string | null;
   createdAt: string;
   sourceAmountCents: number;
+  // Valor das notas do repasse (o mesmo do card da lista), para diferenciar repasses do mesmo dia.
+  totalSourceCents?: number;
 }
 
 export interface TransferReconciliationClientBalance {
