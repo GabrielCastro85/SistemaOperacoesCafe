@@ -1320,3 +1320,11 @@ html.site .cards > .ui-card {
 html.site :is(.cards, .dashboard-grid, .dashboard-workspace, .assistant-sidebar) > .ui-card + .ui-card {
   margin-top: 0 !important;
 }
+
+/* Barra de botoes presa no rodape da secao: fundo solido (com 95% o conteudo
+   aparecia "vazando" por tras e parecia sobreposto). */
+html.site :is(.admin-block, .ui-page-section) > :is(.actions, .toolbar, .inline-actions):last-child:has(> button.primary, > button[data-tone="primary"], > .ui-button--primary, > button[class*="--primary"]) {
+  background: var(--site-surface) !important;
+  backdrop-filter: none;
+  box-shadow: 0 -8px 18px rgb(28 26 23 / 7%);
+}

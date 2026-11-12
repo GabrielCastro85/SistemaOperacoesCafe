@@ -1305,3 +1305,16 @@ html.site td.site-empty::before {
   margin: 0 10px 0 0;
   background-size: 15px;
 }
+
+/* Detalhe da cobranca: tabela de notas com colunas flexiveis (antes tinha
+   largura minima de 920px e cortava a coluna Servico, exigindo rolar). */
+html.site .charge-detail-operation-grid {
+  min-width: 0 !important;
+  column-gap: 8px !important;
+  grid-template-columns: 74px minmax(110px, 1.6fr) 78px minmax(78px, 0.9fr) 62px minmax(96px, 1fr) 92px !important;
+}
+
+html.site .charge-detail-operation-grid > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
