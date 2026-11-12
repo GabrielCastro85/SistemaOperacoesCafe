@@ -104,6 +104,32 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (região da Railway e Clientes mais rápido)
+- **Decisão do Gabriel:** o programa desktop não será mais usado, só o site. Não há mais versão do desktop a publicar.
+- **Railway:** o serviço `mindful-peace` passou de US West (sfo) para **US East (Virgínia, us-east4)**. O volume foi migrado junto, com alguns minutos fora do ar. Feito com o Gabriel logado.
+  - Medido de cá: `/health` foi de ~0,28 para ~0,20 s e `/ready` (com banco) de ~0,47 para ~0,31 s. O Neon fica na costa leste.
+  - O login sobreviveu à troca de região e ao deploy seguinte (volume + `940284a`).
+- **Clientes e empresas** (`9728628`):
+  - Novo canal `partnerLegalEntities:listForPartners` (repository `listPartnerLegalEntitiesForPartners`, uma consulta UNION para todos os clientes), que substitui ~150 chamadas `partnerLegalEntities:list`.
+  - A busca recarrega só a lista de clientes, não mais todas as empresas.
+  - Teste novo confere que o resultado é igual ao das consultas uma a uma; 368 testes passam.
+- **Medição no site real**, depois de tudo, em segundos até a tela ficar completa. Nenhuma tela bloqueia com a tela de carregamento.
+
+  | Tela | Tempo |
+  |---|---|
+  | Entrar | 3,4 (era ~5) |
+  | Clientes | 0,3 (era 2,4) |
+  | Notas | 2,4 a 2,8 (era 3,2) |
+  | Resumo | 1,6 (era 1,9) |
+  | Cobranças | 2,1 |
+  | Conta-corrente | 0,3 |
+  | Confirmações | 0,8 |
+  | Repasses | 0,6 |
+
+- Ainda dá para melhorar:
+  - Notas: `xmlFiles:vulpeDevStatus` (~0,7 s) roda antes da lista.
+  - Cobranças: `legalEntities:list` levou 1,1 s nesta medição.
+
 ### 2026-11-11 - Claude (volume Railway e login persistente)
 - Pedido: criar o volume da Railway junto com o Gabriel (logado no navegador do app).
 - **Railway:** no projeto `proud-delight`, serviço `mindful-peace`, foi criado o volume `mindful-peace-volume`, montado em `/data`, região sfo. Mudanças aplicadas com "Deploy Changes". O `server/src/index.ts` já usava `/data/engine` quando `/data` existe.
