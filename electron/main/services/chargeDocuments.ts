@@ -1,5 +1,6 @@
 import { readChargeCte } from "../../../src/shared/utils/chargeCte.js";
 import { isPackagingChargeLine, packagingUnits } from "../../../src/shared/utils/packagingBilling.js";
+import { chargeIssuerLabelFromNames } from "../../../src/shared/utils/chargeIssuerLabel.js";
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
 import { chargeBankDetails } from "../../../src/shared/utils/chargeBankDetails.js";
 import ExcelJS from "exceljs";
@@ -44,6 +45,11 @@ function chargeOperationCompanyName(operation: ChargeOperationSnapshot): string 
     || operation.issuerNameSnapshot?.trim()
     || operation.ownLegalEntityNameSnapshot?.trim()
     || "-";
+}
+
+// "VILLA MG", "GRAO SP", "PRIME COFFEE": quem emitiu a nota.
+function chargeIssuerLabel(operation: ChargeOperationSnapshot): string {
+  return operation.issuerShortLabel?.trim() || chargeIssuerLabelFromNames(operation.issuerNameSnapshot, operation.ownLegalEntityNameSnapshot);
 }
 
 function isPackagingSnapshot(operation: ChargeOperationSnapshot): boolean {
@@ -147,12 +153,14 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
   y -= 16;
   const sections = summaryImageSections({ ...input, relatedOpenChargeDetails: [] });
   const columns = [
-    { title: "DATA NF", x: margin + 8, width: 68 },
-    { title: "NF", x: margin + 84, width: 38 },
-    { title: "EMPRESA", x: margin + 130, width: 178 },
-    { title: "TIPO", x: margin + 318, width: 60 },
-    { title: "SACAS", x: margin + 390, width: 48 },
-    { title: "VALOR", x: margin + 452, width: 78 }
+    { title: "DATA NF", x: margin + 8, width: 50 },
+    { title: "NF", x: margin + 60, width: 34 },
+    { title: "EMPRESA", x: margin + 166, width: 180 },
+    { title: "TIPO", x: margin + 350, width: 36 },
+    { title: "SACAS", x: margin + 384, width: 52 },
+    { title: "VALOR", x: margin + 452, width: 78 },
+    // Fica no fim da lista para nao mudar os indices usados nos ajustes.
+    { title: "EMITENTE", x: margin + 98, width: 64 }
   ];
   ({ page, y } = drawChargeOperationSectionsPdf(doc, page, sections, detail.adjustments, chargePeriodLabel(charge, true), columns, margin, y, contentWidth, {
     font,
@@ -247,8 +255,8 @@ export async function buildChargeWorkbook(input: ChargeDocumentsInput): Promise<
     ["Aberto", charge.openAmountCents / 100]
   ]);
   const operations = workbook.addWorksheet("Operacoes");
-  operations.addRow(["Empresa", "Data de emissao da NF", "NF", "Serie", "Produto", "Tipo", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
-  input.detail.operations.forEach((item) => operations.addRow([chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatChargeOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
+  operations.addRow(["Emitente", "Empresa", "Data de emissao da NF", "NF", "Serie", "Produto", "Tipo", "Sacas", "R$/saca", "Total", "Contrato", "Observacoes"]);
+  input.detail.operations.forEach((item) => operations.addRow([chargeIssuerLabel(item), chargeOperationCompanyName(item), item.operationDateSnapshot, item.fiscalDocumentNumberSnapshot, item.fiscalDocumentSeriesSnapshot, item.productNameSnapshot, formatChargeOperationScope(item.operationScopeSnapshot), item.quantitySacksDecimalSnapshot, item.serviceRateCentsSnapshot / 100, item.serviceAmountCentsSnapshot / 100, item.contractNumberSnapshot ?? "", item.billingObservationsSnapshot ?? ""]));
   const adjustments = workbook.addWorksheet("Ajustes");
   adjustments.addRow(["Data", "Tipo", "Descricao", "Efeito", "Valor", "Observacoes / notas de referencia"]);
   input.detail.adjustments.forEach((item) => adjustments.addRow([item.ledgerEntryDate ?? "", item.adjustmentType, item.description, item.effect, item.amountCents / 100, item.reason ?? ""]));
@@ -355,6 +363,7 @@ function drawChargeOperationSectionsPdf(
       }
       currentPage.drawText(row.issueDate, { x: columns[0].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
       currentPage.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 6.8, columns[1].width), { x: columns[1].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
+      if (columns[6]) currentPage.drawText(truncate(chargeIssuerLabel(item), style.bold, 6.8, columns[6].width), { x: columns[6].x, y: cursorY, size: 6.8, font: style.bold, color: style.ink });
       currentPage.drawText(truncate(companyName, style.font, 6.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
       currentPage.drawText(formatChargeOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
       drawRightText(currentPage, chargeQuantityText(item), columns[4].x, cursorY, columns[4].width, style.font, 6.8, style.ink);
@@ -370,7 +379,7 @@ function drawChargeOperationSectionsPdf(
     ensureSpace(18);
     const subtotalY = cursorY - 1;
     const subtotalLabel = sectionSubtotalLabel(section);
-    drawRightText(currentPage, subtotalLabel, columns[3].x, subtotalY, columns[5].x - 6 - columns[3].x, style.bold, 5.8, style.gold);
+    drawRightText(currentPage, subtotalLabel, columns[2].x, subtotalY, columns[5].x - 6 - columns[2].x, style.bold, 5.8, style.gold);
     drawRightText(currentPage, `R$ ${formatCents(section.amountCents)}`, columns[5].x, subtotalY, columns[5].width, style.bold, 5.8, style.ink);
     cursorY -= 15;
   });
@@ -489,8 +498,7 @@ function drawPaymentBox(
     bank.bankName ? `Banco: ${bank.bankName}${bank.bankCode ? ` (${bank.bankCode})` : ""}` : "Banco: nao informado",
     bank.bankAgency ? `Agencia: ${bank.bankAgency}` : "Agencia: nao informada",
     bank.bankAccount ? `Conta: ${bank.bankAccount}` : "Conta: nao informada",
-    bank.pixKey ? `PIX: ${bank.pixKey}` : "PIX: nao informado",
-    "Dados podem ser ajustados no cadastro da empresa antes da emissao."
+    bank.pixKey ? `PIX: ${bank.pixKey}` : "PIX: nao informado"
   ];
   page.drawRectangle({ x, y: topY - height, width, height, color: style.paper, borderColor: style.border, borderWidth: 0.55 });
   page.drawText("DADOS PARA PAGAMENTO", { x: x + 10, y: topY - 13, size: 7, font: style.bold, color: style.gold });
@@ -738,7 +746,8 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
       ${contract.map((line, index) => `<text x="236" y="${y + 17 + index * 19}" class="cell">${escapeXml(line)}</text>`).join("")}
       <text x="48" y="${y}" class="cell">${escapeXml(item.issueDate)}</text>
       <text x="166" y="${y}" class="cell">${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
-      <text x="236" y="${y}" class="cell">${escapeXml(clipText(companyName, 46))}</text>
+      <text x="236" y="${y}" class="cell issuer">${escapeXml(clipText(chargeIssuerLabel(operation), 14))}</text>
+      <text x="350" y="${y}" class="cell">${escapeXml(clipText(companyName, 36))}</text>
       <text x="622" y="${y}" class="cell">${escapeXml(formatChargeOperationScope(operation.operationScopeSnapshot))}</text>
       <text x="760" y="${y}" class="cell right">${escapeXml(chargeQuantityText(operation))}</text>
       <text x="${rightX}" y="${y}" class="cell right">R$ ${escapeXml(formatCents(operation.serviceAmountCentsSnapshot))} x NF ${escapeXml(operation.fiscalDocumentNumberSnapshot ?? "-")}</text>
@@ -767,6 +776,7 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
     .value{font:700 20px Arial,sans-serif;fill:#17130f}
     .cell{font:12px Arial,sans-serif;fill:#17130f}
     .head{font:700 12px Arial,sans-serif;fill:#5d5144}
+    .issuer{font-weight:700}
     .section{font:700 13px Arial,sans-serif;fill:#17130f}
     .subtotal{font:700 12px Arial,sans-serif;fill:#17130f}
     .subtotal-label{font:700 11px Arial,sans-serif;fill:#9a7044}
@@ -794,7 +804,8 @@ function buildSummarySvg(input: ChargeDocumentsInput): string {
   <rect x="${innerX}" y="216" width="${innerWidth}" height="1" fill="#d8c8aa"/>
   <text x="48" y="236" class="head">DATA NF</text>
   <text x="166" y="236" class="head">NF</text>
-  <text x="236" y="236" class="head">EMPRESA</text>
+  <text x="236" y="236" class="head">EMITENTE</text>
+  <text x="350" y="236" class="head">EMPRESA</text>
   <text x="622" y="236" class="head">TIPO</text>
   <text x="760" y="236" class="head right">SACAS</text>
   <text x="${rightX}" y="236" class="head right">VALOR X NF</text>

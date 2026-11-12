@@ -1,4 +1,5 @@
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
+import { chargeIssuerLabelFromNames, isOwnBrandName, ownEntityShortLabel } from "../../../src/shared/utils/chargeIssuerLabel.js";
 import { transferOverLimitMessage } from "../../../src/shared/utils/transferReconciliationUsage.js";
 import type Database from "better-sqlite3";
 import log from "electron-log/main.js";
@@ -3716,8 +3717,15 @@ export class AppRepository {
         }
         const issuerName = this.fiscalSnapshotPartyName(document, "issuer");
         if (issuerName) operation.issuerNameSnapshot = issuerName;
+        operation.issuerShortLabel = this.chargeIssuerShortLabel(document, ownLegalEntity, issuerName);
       } catch {
         // Keep the persisted snapshot when the source note is no longer available.
+        operation.issuerShortLabel = chargeIssuerLabelFromNames(operation.issuerNameSnapshot, operation.ownLegalEntityNameSnapshot);
+        try {
+          if (operation.ownLegalEntityIdSnapshot && (!operation.issuerNameSnapshot || isOwnBrandName(operation.issuerNameSnapshot))) {
+            operation.issuerShortLabel = ownEntityShortLabel(this.getLegalEntity(operation.ownLegalEntityIdSnapshot));
+          }
+        } catch { /* fica o rotulo pelo nome */ }
       }
       return operation;
     });
@@ -5807,6 +5815,27 @@ export class AppRepository {
     } catch {
       return null;
     }
+  }
+
+  // Emitente da nota em nome curto para a cobranca: empresa propria pelo CNPJ
+  // do emitente ("VILLA ES"), terceiro pelo nome ("PRIME COFFEE").
+  private chargeIssuerShortLabel(document: FiscalDocument, ownLegalEntity: LegalEntity, issuerName: string | null): string {
+    const issuerDocument = this.fiscalSnapshotPartyDocument(document, "issuer");
+    if (issuerDocument) {
+      const ownIssuer = this.ownEntitiesByCnpj().get(issuerDocument);
+      if (ownIssuer) return ownEntityShortLabel(ownIssuer);
+      if (issuerName) return chargeIssuerLabelFromNames(issuerName, null);
+    }
+    return ownEntityShortLabel(ownLegalEntity);
+  }
+
+  private ownEntitiesByCnpjCache: { at: number; map: Map<string, LegalEntity> } | null = null;
+  private ownEntitiesByCnpj(): Map<string, LegalEntity> {
+    if (this.ownEntitiesByCnpjCache && Date.now() - this.ownEntitiesByCnpjCache.at < 60_000) return this.ownEntitiesByCnpjCache.map;
+    const map = new Map<string, LegalEntity>();
+    for (const entity of this.listLegalEntities({ status: "all" })) { const cnpj = this.onlyDigits(entity.cnpj ?? ""); if (cnpj) map.set(cnpj, entity); }
+    this.ownEntitiesByCnpjCache = { at: Date.now(), map };
+    return map;
   }
 
   private fiscalSnapshotPartyName(document: FiscalDocument, partyKey: "issuer" | "recipient"): string | null {

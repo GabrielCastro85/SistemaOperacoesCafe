@@ -1091,6 +1091,8 @@ export interface ClientChargeOperation {
   fiscalDocumentSeriesSnapshot: string | null;
   issuerNameSnapshot: string | null;
   destinationNameSnapshot: string | null;
+  // Calculado ao ler a cobranca (nao gravado): "VILLA MG", "GRAO SP", "PRIME COFFEE".
+  issuerShortLabel?: string | null;
   productNameSnapshot: string | null;
   operationScopeSnapshot: Exclude<OperationScope, "ALL">;
   quantitySacksDecimalSnapshot: string;

@@ -220,12 +220,13 @@ describe("client charges and ledger", () => {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(issued.charge.excelFilePath!);
       const sheet = workbook.getWorksheet("Operacoes");
-      expect(sheet?.getRow(1).getCell(2).value).toBe("Data de emissao da NF");
-      expect(sheet?.getRow(2).getCell(2).value).toBe("2026-07-16");
-      expect(sheet?.getRow(2).getCell(6).value).toBe("Externo");
-      expect(sheet?.getRow(2).getCell(10).value).toBe("MCU-103265");
-      expect(sheet?.getRow(2).getCell(11).value).toBe("Lote 123\nContrato complementar ABC-456");
-      expect(sheet?.getRow(2).getCell(9).value).toBe(2500);
+      expect(sheet?.getRow(1).getCell(1).value).toBe("Emitente");
+      expect(sheet?.getRow(1).getCell(3).value).toBe("Data de emissao da NF");
+      expect(sheet?.getRow(2).getCell(3).value).toBe("2026-07-16");
+      expect(sheet?.getRow(2).getCell(7).value).toBe("Externo");
+      expect(sheet?.getRow(2).getCell(11).value).toBe("MCU-103265");
+      expect(sheet?.getRow(2).getCell(12).value).toBe("Lote 123\nContrato complementar ABC-456");
+      expect(sheet?.getRow(2).getCell(10).value).toBe(2500);
       if (extname(issued.charge.imageFilePath ?? "") === ".svg") {
         const imageText = readFileSync(issued.charge.imageFilePath!, "utf8");
         expect(imageText).toContain("DATA NF");

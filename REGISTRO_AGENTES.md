@@ -104,6 +104,12 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (PDF de cobrança com emitente)
+- Pedido: no PDF de cobrança, mostrar qual empresa emitiu cada nota (VILLA MG, VILLA ES, GRÃO MG, GRÃO SP, PRIME COFFEE); tirar "Dados podem ser ajustados no cadastro da empresa antes da emissão."; sugerir melhorias.
+- Feito: coluna EMITENTE no PDF, na imagem de resumo e na planilha (primeira coluna da aba Operações). O nome curto é calculado ao ler a cobrança (`issuerShortLabel`, não gravado): emitente com CNPJ de empresa própria vira marca + UF; terceiro vira o começo do nome sem COMERCIO/LTDA etc. (`src/shared/utils/chargeIssuerLabel.ts`). Rotas antigas sem o campo usam o nome gravado. Frase do cadastro removida. TIPO mais estreito para o nome da empresa caber.
+- Testado: suíte completa, typecheck e PDF de amostra renderizado (`outputs/amostra-cobranca-emitente.pdf`).
+- Publicado: ver commit seguinte.
+
 ### 2026-11-12 - Claude (aviso de saldo no repasse do LUCAS)
 - Pedido: por que o repasse do LUCAS (09/11, 119 notas) dá "O valor informado supera o saldo disponível da nota." ao lançar mais R$ 1.000.000.
 - Feito: só diagnóstico. O repasse 372ab69a, criado em 12/11 às 16:50 (concluído, 13 notas), repete 12 notas do 5b01894f (09/11): NFs 49, 50, 51, 52, 53, 54, 56, 57, 280, 281, 282 e 283. Ao ser concluído, ele consumiu parte do saldo dessas notas, e o repasse de 09/11 não salva mais com o valor cheio delas, seja qual for o pagamento. Nenhum dado alterado.
