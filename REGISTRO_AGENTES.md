@@ -104,6 +104,32 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (contas a pagar refeitas e folha de controle)
+- Pedido: a operação de contas a pagar estava confusa. O Gabriel quer controlar **despesas gerais** (aluguel, energia, salários, impostos). No acerto de entrada, "nós pagamos" ao fornecedor, mas esse fluxo não é o foco agora.
+- Diagnóstico: nenhuma conta tinha sido lançada.
+  - **Defeito:** `PayablePaymentsPage` pagava sempre a **primeira conta em aberto**.
+  - O assistente de 5 etapas vinha com valores fictícios ("Fornecedor avulso", R$ 1.000).
+  - A conta nascia como rascunho.
+  - A lista nem estava no menu.
+- Feito:
+  - `AccountsPayablePage.tsx` em `/finance/payables`, com o item "Contas a pagar" no menu Financeiro:
+    - resumos clicáveis: Vencidas, Vencem hoje, Próximos 7 dias e Pago no mês;
+    - abas A pagar, Vencidas, Pagas e Todas, mais busca e filtro de mês;
+    - janela "Nova conta": só esta vez (draft + confirm), todo mês (template recorrente com `autoGenerateOnOpen` + generate) ou parcelado (`createPayableInstallmentGroup`);
+    - categoria obrigatória, com "+ Nova categoria" (`createExpenseCategory`);
+    - botão "Pagar" na linha: `createPayablePayment` + `allocatePayablePayment`, aceita pagamento parcial.
+  - **Mensais:** o servidor gera N meses *depois do último gerado*. A tela pede só o que falta para chegar a 2 meses à frente do mês atual, porque antes cada abertura somava 3 meses.
+  - `PayablePaymentsPage` virou só o histórico. "Visão financeira" aponta para Contas a pagar.
+  - **Folha "Controle de despesas"** (`expenseControlPrint.ts`), no modelo das planilhas NOV/NOV 2 do Gabriel:
+    - faixa verde, colunas DATA | FAVORECIDO | VALOR | STATUS | CHAVE PIX;
+    - parcela em roxo, contas pagas com "PAGO" e parciais com "PAGO x";
+    - TOTAL em amarelo, mais "Já pago" e "Falta pagar";
+    - botão "Imprimir controle" do mês filtrado ou do mês atual; abre uma janela e chama a impressão.
+- Testado no site local: conta avulsa, mensal e parcelada; pagamento parcial e total; categoria nova; abrir 3 vezes não duplica as mensais; prévia da folha. No site real, a página abre (sem lançar nada).
+- Pendente:
+  - os anexos de boleto e comprovante ficam só nos detalhes da conta (tela antiga);
+  - acertos de entrada por saca (Lucas, Leo ES…) seguem no fluxo antigo.
+
 ### 2026-11-12 - Claude (velocidade e polimento, etapa 2)
 - **Velocidade** (`aaefe0d`):
   - 8 telas trocaram "uma consulta por cliente" (`listPartnerLegalEntities` em loop) por `listPartnerLegalEntitiesForPartners`: Cobranças, Conta-corrente, Regras por saca, Regras de entrada, Resumo/AppStates, Acertos de entrada, Confirmações e Notas.
