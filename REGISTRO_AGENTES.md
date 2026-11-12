@@ -112,7 +112,7 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - **Coletor Villa (este PC, VILLACOFFEE)** travado desde 11/11 18:22:
   - Às 08:56 a entrada Run do HKCU e o atalho da pasta Inicializar abriram o coletor como `gabri`. Os arquivos em `C:\ProgramData\GraoBase\Coletor` só aceitam gravação de SISTEMA/Administradores, então ele não gravava nem varria, e a vigilância (SYSTEM) achava que estava rodando.
   - Encerrei os processos do usuário e a vigilância reabriu como SYSTEM às 09:12. Os dois coletores ficaram OK.
-  - **Pendente (perguntei ao Gabriel):** remover a entrada Run "ColetorGraoBase" do HKCU e o atalho "Coletor GraoBase.lnk" da pasta Inicializar, senão volta a travar no próximo logon.
+  - **Feito, com autorização do Gabriel:** removidas a entrada Run "ColetorGraoBase" do HKCU e o atalho "Coletor GraoBase.lnk" da pasta Inicializar. O coletor agora inicia só pelas tarefas do SYSTEM (Inicialização e Vigilância).
 - **Carrossel de cotações em reais** (`e7b5be7`, `3f45e2d`, layout em seguida):
   - O Gabriel pediu igual ao do projeto pessoal dele; foi feito do zero, sem olhar o código de `operacoes-cafe-web` (regra de não compartilhar código).
   - `server/src/market.ts`: `GET /v1/market/quotes`, público, cache de 10 min. Fontes:
