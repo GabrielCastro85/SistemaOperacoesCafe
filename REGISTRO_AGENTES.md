@@ -111,6 +111,14 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
 - Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
+### 2026-11-12 - Claude (preços especiais por empresa de destino)
+- Pedido: cadastrar os preços especiais achados nas planilhas antigas.
+- Conferido no site: VALANI (Grão) já tinha regra INTERNA R$ 4 para PRIMAVERA COFFEE ROBUSTA (CNPJ 12.826.691/0002-47); as 80 notas da Villa ES para a Primavera já estão a R$ 4. Nas planilhas, a Primavera só aparece no bloco "VENDAS PRIMAVERA" a R$ 4 (nunca nos blocos de R$ 13/R$ 5), inclusive notas de WR Comércio e Futura (jul/2026).
+- Feito (dado de produção, pelo site): regra `20ae44fb` VALANI + PRIMAVERA, EXTERNA, R$ 4,00, desde 1900-01-01, para a Primavera não cair nos R$ 13 quando a nota sair de outro estado. Nenhuma nota mudou de preço.
+- Desfeito: criei e apaguei em seguida a regra CORREIOS + CAFE ROCINHA a R$ 7. A planilha "Correios 08-26" cobra a NF 2446 (250 sc) duas vezes: no bloco de R$ 13 e de novo num bloco à parte de R$ 7 (adicional, total R$ 20/saca); a NF 2666 fica só a R$ 13. Não é preço menor. As duas notas continuam a R$ 13 (regra `c564668c`), sem alteração.
+- Sem regra nova: BRUNO + PORTO VERDE (R$ 7 = interno normal), NETO + RANCHEIRO (sem diferença nas planilhas), ABC + VASSULER (R$ 6 já cadastrado; o R$ 1,50 é CT-e).
+- Pendente: o Gabriel dizer o que é o adicional de R$ 7 da NF 2446 da Correios; se for para cobrar, entra como acréscimo na cobrança de agosto (R$ 1.750,00), não como regra.
+
 ### 2026-11-12 - Claude (PDF de cobrança: acentos, favorecido e resumo por emitente)
 - Pedido: itens 1, 2 e 3 das sugestões (acentos no PDF, favorecido nos dados de pagamento, resumo por emitente).
 - Feito em `electron/main/services/chargeDocuments.ts`: textos fixos do PDF com acento (Prévia, Serviços, Não emitida, Emissão, Período, cobrança, já, Acréscimos, Deduções, Agência, não informada...). O texto de comparação `charge.notes === "PREVIA INTERNA"` não mudou. Dados para pagamento: "Favorecido" (titular da conta da cobrança, ou a razão social) e "CNPJ/CPF" (do titular; sem ele, a chave PIX se for CNPJ; senão o da empresa), agência e conta na mesma linha. Novo quadro "RESUMO POR EMITENTE" (notas, sacas/unidades e valor por emitente) antes dos dados de pagamento, só das notas desta cobrança.
