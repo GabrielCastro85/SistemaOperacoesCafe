@@ -14,6 +14,7 @@ import { startSitePage } from "./sitePage";
 import { startSiteTables } from "./siteTables";
 import { startSiteText } from "./siteText";
 import { startSiteToasts } from "./siteToasts";
+import { startSiteTicker } from "./siteTicker";
 
 startSiteEnhancer();
 startSiteText();
@@ -22,3 +23,4 @@ startSitePage();
 startSiteTables();
 startSiteCommand();
 startSiteLayout();
+startSiteTicker();

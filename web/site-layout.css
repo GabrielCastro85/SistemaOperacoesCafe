@@ -1169,3 +1169,67 @@ html.site .transfer-invoice-title-actions .primary {
   max-width: 100%;
   white-space: normal;
 }
+
+/* Carrossel de cotacoes (em reais) logo abaixo do topo */
+html.site .site-ticker {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--site-line, #e3ddd2);
+  background: var(--site-brand, #1c1a17);
+  color: #f4efe6;
+  font-size: 13px;
+  line-height: 1;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
+
+html.site .site-ticker__track {
+  display: flex;
+  width: max-content;
+  animation: site-ticker-scroll var(--site-ticker-duration, 45s) linear infinite;
+}
+
+html.site .site-ticker:hover .site-ticker__track { animation-play-state: paused; }
+
+html.site .site-ticker__group { display: flex; flex: 0 0 auto; }
+
+html.site .site-ticker__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 22px;
+  white-space: nowrap;
+  border-right: 1px solid rgb(255 255 255 / 10%);
+}
+
+html.site .site-ticker__label {
+  color: #c9b48c;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html.site .site-ticker__value { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+html.site .site-ticker__change { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+html.site .site-ticker__change--up { color: #4fd18b; }
+html.site .site-ticker__change--down { color: #ff7b72; }
+html.site .site-ticker__change--flat { color: #b8b0a2; }
+
+@keyframes site-ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Quem prefere menos movimento: faixa parada, arrastavel para o lado. */
+@media (prefers-reduced-motion: reduce) {
+  html.site .site-ticker { overflow-x: auto; -webkit-mask-image: none; mask-image: none; }
+  html.site .site-ticker__track { animation: none; }
+  html.site .site-ticker__group[aria-hidden="true"] { display: none; }
+}
+
+@media (max-width: 760px) {
+  html.site .site-ticker { font-size: 12px; }
+  html.site .site-ticker__item { padding: 8px 16px; }
+}
