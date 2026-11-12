@@ -3743,7 +3743,10 @@ export class AppRepository {
         ORDER BY a.sort_order, a.created_at
       `).all(id) as DbRecord[]).map(mapClientChargeAdjustment),
       creditAllocations: (this.db.prepare("SELECT * FROM client_credit_allocations WHERE client_charge_id = ? AND cancelled_at IS NULL").all(id) as DbRecord[]).map(mapClientCreditAllocation),
-      payments: (this.db.prepare("SELECT * FROM client_payment_allocations WHERE client_charge_id = ? AND cancelled_at IS NULL").all(id) as DbRecord[]).map(mapClientPaymentAllocation),
+      // Data do recebimento junto (o PDF mostra "pago em" nas notas ja pagas).
+      payments: (this.db.prepare(`SELECT a.*, p.payment_date AS payment_date FROM client_payment_allocations a
+        LEFT JOIN client_payments p ON p.id = a.client_payment_id
+        WHERE a.client_charge_id = ? AND a.cancelled_at IS NULL`).all(id) as DbRecord[]).map((row) => ({ ...mapClientPaymentAllocation(row), paymentDate: row.payment_date ? String(row.payment_date) : null })),
       documents: (this.db.prepare("SELECT * FROM charge_document_versions WHERE client_charge_id = ? ORDER BY version").all(id) as DbRecord[]).map(mapChargeDocumentVersion)
     };
   }

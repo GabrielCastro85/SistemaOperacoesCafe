@@ -45,6 +45,9 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
   const [partyFilter, setPartyFilter] = useState("");
   const [invoiceLimit, setInvoiceLimit] = useState(10);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  // Enquanto a primeira busca nao volta, a lista mostra "Carregando" (antes
+  // aparecia "Nenhuma conferencia registrada" por alguns segundos).
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [payments, setPayments] = useState<PaymentDraft[]>([emptyPayment()]);
   const [message, setMessage] = useState<string | null>(null);
@@ -56,17 +59,19 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     // A lista de clientes e' essencial para iniciar uma conferencia. Ela deve
     // continuar disponivel mesmo se o historico ou o resumo ainda estiverem
     // aguardando a primeira sincronizacao/migracao neste computador.
-    try {
-      setPartners(await window.operationsCafe.listBusinessPartners({ role: counterpartyRole, status: "active" }));
-    } catch (error) {
-      setPartners([]);
-      setMessage(`Não foi possível carregar ${counterpartyRole === "SUPPLIER" ? "os fornecedores" : "os clientes"}: ${error instanceof Error ? error.message : "falha inesperada"}`);
-    }
-    const [rowsResult, balancesResult] = await Promise.allSettled([
+    // Clientes, conferencias e saldos ao mesmo tempo (antes: clientes primeiro).
+    const [partnersResult, rowsResult, balancesResult] = await Promise.allSettled([
+      window.operationsCafe.listBusinessPartners({ role: counterpartyRole, status: "active" }),
       window.operationsCafe.listTransferReconciliations({ organizationId, status: "ALL" }),
       window.operationsCafe.listTransferReconciliationClientBalances(organizationId)
     ]);
+    if (partnersResult.status === "fulfilled") setPartners(partnersResult.value);
+    else {
+      setPartners([]);
+      setMessage(`Não foi possível carregar ${counterpartyRole === "SUPPLIER" ? "os fornecedores" : "os clientes"}: ${partnersResult.reason instanceof Error ? partnersResult.reason.message : "falha inesperada"}`);
+    }
     if (rowsResult.status === "fulfilled") setHistory(rowsResult.value);
+    setHistoryLoaded(true);
     if (balancesResult.status === "fulfilled") setBalances(balancesResult.value);
     const failure = rowsResult.status === "rejected" ? rowsResult.reason : balancesResult.status === "rejected" ? balancesResult.reason : null;
     if (failure) setMessage(`Clientes carregados, mas parte das conferências ainda não pôde ser consultada: ${failure instanceof Error ? failure.message : "falha inesperada"}`);
@@ -289,7 +294,7 @@ export function TransferReconciliationsPage({ data }: { data: BootstrapData }): 
     {message && <div className="transfer-message">{message}</div>}
     <div className="settings-tabs"><button className={tab === "LIST" ? "active" : ""} onClick={() => setTab("LIST")}>Conferências</button><button className={tab === "BALANCES" ? "active" : ""} onClick={() => setTab("BALANCES")}>Saldos por cliente</button></div>
     {tab === "LIST" ? <div className="transfer-history">
-      {history.length === 0 ? <p>Nenhuma conferência registrada.</p> : history.map((row) => <article key={row.id}>
+      {!historyLoaded ? <div className="transfer-inline-loading">Carregando conferências…</div> : history.length === 0 ? <p>Nenhuma conferência registrada.</p> : history.map((row) => <article key={row.id}>
         <div><strong>{row.clientName}</strong><small>{row.counterpartyRole === "SUPPLIER" ? "Fornecedor" : "Cliente"} · {row.sourceMode === "MANUAL" ? "Valor manual" : "Notas fiscais"} · {row.title || `Conferência de ${formatDateOnlyBr(row.referenceDate)}`}</small></div>
         <span>{row.status === "DRAFT" ? "Rascunho" : row.status === "COMPLETED" ? "Concluída" : "Cancelada"}</span>
         <span>{row.sourceMode === "MANUAL" ? "Valor inicial" : "Notas"}: <b>{formatCurrencyFromCents(row.totalSourceCents)}</b></span><span>Pagamentos: <b>{formatCurrencyFromCents(row.totalPaymentsCents)}</b></span>

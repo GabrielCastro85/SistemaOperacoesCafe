@@ -56,4 +56,30 @@ describe("emitente curto na cobranca", () => {
     expect(text).toContain("CNPJ/CPF: 44.963.370/0004-42");
     expect(buildChargeSummarySvg(input).svg).toContain("VILLA ES");
   });
+
+  it("notas ja pagas mostram quanto e quando foi pago; resumo conta as notas; TIPO some quando e tudo igual", async () => {
+    const operation = (number: string) => ({
+      operationDateSnapshot: "2026-11-02", fiscalDocumentNumberSnapshot: number, fiscalDocumentSeriesSnapshot: "1", issuerNameSnapshot: "VILLA COFFEE COMERCIO E EXP. LTDA", destinationNameSnapshot: "FRANCA CAFE LTDA",
+      ownLegalEntityNameSnapshot: "VILLA COFFEE COMERCIO E EXP. LTDA", issuerShortLabel: "VILLA MG", productNameSnapshot: "CAFE", operationScopeSnapshot: "INTERNAL", quantitySacksDecimalSnapshot: "430", serviceRateCentsSnapshot: 500,
+      serviceAmountCentsSnapshot: 215000, contractNumberSnapshot: null, billingObservationsSnapshot: null
+    });
+    const charge = (start: string, end: string, paid: number) => ({ status: paid ? "PAID" : "DRAFT", notes: paid ? null : "PREVIA INTERNA", createdAt: end, issueDate: end, dueDate: end, periodStart: start, periodEnd: end, periodicity: "WEEKLY", openAmountCents: paid ? 0 : 430000, finalAmountCents: 430000, subtotalServicesCents: 430000, additionsCents: 0, deductionsCents: 0, paidAmountCents: paid });
+    const input = {
+      organization: { slug: "villa", displayName: "Villa Coffee", appDisplayName: "Villa Coffee Operacoes", logoPath: null },
+      ownLegalEntity: { tradeName: "Villa Coffee Minas Gerais", legalName: "VILLA COFFEE COMERCIO E EXP. LTDA", cnpj: "44963370000523" },
+      client: { displayName: "ALCA" },
+      detail: { charge: charge("2026-11-08", "2026-11-12", 0), operations: [operation("900"), operation("901")], payments: [], adjustments: [] },
+      relatedPaidChargeDetails: [{ charge: charge("2026-11-01", "2026-11-07", 430000), operations: [operation("839"), operation("840")], adjustments: [], payments: [{ amountCents: 430000, paymentDate: "2026-11-10", allocatedAt: "2026-11-10T12:00:00Z" }] }]
+    } as unknown as ChargeDocumentsInput;
+    const draw = vi.spyOn(PDFPage.prototype, "drawText");
+    const bytes = await buildChargePdf(input);
+    if (process.env.CHARGE_PAID_SAMPLE) writeFileSync(process.env.CHARGE_PAID_SAMPLE, bytes);
+    const texts = draw.mock.calls.map(([value]) => String(value));
+    const text = texts.join(" | ");
+    expect(text).toContain("pago em 10/11/2026");
+    expect(text).toContain("TOTAL JÁ PAGO NO PERÍODO: R$ 4.300,00");
+    expect(text).toContain("2 notas · 860 sacas");
+    expect(texts).not.toContain("TIPO");
+    expect(texts).not.toContain("Interno");
+  });
 });

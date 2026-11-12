@@ -1184,6 +1184,8 @@ export interface ClientPaymentAllocation {
   allocatedAt: string;
   cancelledAt: string | null;
   cancellationReason: string | null;
+  // Data do recebimento (client_payments.payment_date), quando carregada com a cobranca.
+  paymentDate?: string | null;
 }
 
 export interface DocumentSequence {

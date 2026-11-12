@@ -163,6 +163,13 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
     // Fica no fim da lista para nao mudar os indices usados nos ajustes.
     { title: "EMITENTE", x: margin + 98, width: 64 }
   ];
+  // TIPO so' aparece quando a cobranca mistura interno e externo (o titulo da
+  // secao ja diz "ALCA INTERNO"); sem ela, a EMPRESA ganha o espaco.
+  const allScopes = new Set([detail, ...(input.relatedPaidChargeDetails ?? [])].flatMap((item) => item.operations.map((operation) => operation.operationScopeSnapshot)));
+  if (allScopes.size <= 1) {
+    columns[3] = { ...columns[3], title: "" };
+    columns[2] = { ...columns[2], width: columns[4].x - columns[2].x - 8 };
+  }
   ({ page, y } = drawChargeOperationSectionsPdf(doc, page, sections, detail.adjustments, chargePeriodLabel(charge, true), columns, margin, y, contentWidth, {
     font,
     bold,
@@ -202,6 +209,24 @@ export async function buildChargePdf(input: ChargeDocumentsInput): Promise<Uint8
       gold,
       green
     }, " - PAGA"));
+    // Quanto ja foi pago e quando, por cobranca.
+    const paidLines = paidChargeDetails.map((paid) => {
+      const dates = [...new Set(paid.payments.map((payment) => payment.paymentDate ?? payment.allocatedAt?.slice(0, 10)).filter(Boolean) as string[])].sort().map((value) => formatDate(value));
+      const paidCents = paid.payments.reduce((sum, payment) => sum + payment.amountCents, 0) || paid.charge.paidAmountCents;
+      return { label: `Cobrança ${chargePeriodLabel(paid.charge, true)}: R$ ${formatCents(paidCents)}${dates.length ? ` pago em ${dates.join(", ")}` : ""}`, paidCents };
+    });
+    const paidTotal = paidLines.reduce((sum, line) => sum + line.paidCents, 0);
+    const linesHeight = 16 + paidLines.length * 11;
+    if (y - linesHeight < 70) {
+      page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
+      y = pageHeight - margin - 70;
+    }
+    paidLines.forEach((line) => {
+      page.drawText(truncate(line.label, font, 6.6, contentWidth - 20), { x: margin + 10, y: y - 2, size: 6.6, font, color: muted });
+      y -= 11;
+    });
+    drawRightText(page, `TOTAL JÁ PAGO NO PERÍODO: R$ ${formatCents(paidTotal)}`, margin + 10, y - 4, contentWidth - 20, bold, 7, green);
+    y -= 14;
   }
   y -= 20;
 
@@ -401,7 +426,7 @@ function drawChargeOperationSectionsPdf(
       currentPage.drawText(truncate(item.fiscalDocumentNumberSnapshot ?? "-", style.font, 6.8, columns[1].width), { x: columns[1].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
       if (columns[6]) currentPage.drawText(truncate(chargeIssuerLabel(item), style.bold, 6.8, columns[6].width), { x: columns[6].x, y: cursorY, size: 6.8, font: style.bold, color: style.ink });
       currentPage.drawText(truncate(companyName, style.font, 6.8, columns[2].width), { x: columns[2].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
-      currentPage.drawText(formatChargeOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
+      if (columns[3].title) currentPage.drawText(formatChargeOperationScope(item.operationScopeSnapshot), { x: columns[3].x, y: cursorY, size: 6.8, font: style.font, color: style.ink });
       drawRightText(currentPage, chargeQuantityText(item), columns[4].x, cursorY, columns[4].width, style.font, 6.8, style.ink);
       drawRightText(currentPage, `R$ ${formatCents(item.serviceAmountCentsSnapshot)}`, columns[5].x, cursorY, columns[5].width, style.bold, 6.8, style.ink);
       cursorY -= 14;
@@ -654,6 +679,10 @@ function drawTotalsBox(
   const openAmountCents = combined && combined.chargeCount > 1 ? combined.totalOpenCents : charge.openAmountCents;
   page.drawRectangle({ x, y: topY - height, width, height, color: style.paper, borderColor: style.border, borderWidth: 0.55 });
   page.drawText("RESUMO DA COBRANÇA", { x: x + 10, y: topY - 13, size: 7, font: style.bold, color: style.gold });
+  // Quantas notas e sacas esta cobranca tem (sacaria em unidades nao soma sacas).
+  const noteCount = new Set(detail.operations.map((operation) => operation.fiscalDocumentNumberSnapshot ?? operation.id)).size;
+  const sacks = detail.operations.filter((operation) => !isPackagingSnapshot(operation)).reduce((sum, operation) => sum + decimalNumber(operation.quantitySacksDecimalSnapshot), 0);
+  if (noteCount) drawRightText(page, `${noteCount} ${noteCount === 1 ? "nota" : "notas"}${sacks ? ` · ${formatDecimal(sacks)} sacas` : ""}`, x + width - 160, topY - 13, 150, style.bold, 6.8, style.muted);
   const rows = [
     ["Subtotal", charge.subtotalServicesCents],
     ["Acréscimos", charge.additionsCents],
