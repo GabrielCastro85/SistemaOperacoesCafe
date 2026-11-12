@@ -104,6 +104,20 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 
 ## Histórico (mais recente primeiro)
 
+### 2026-11-12 - Claude (velocidade e polimento, etapa 2)
+- **Velocidade** (`aaefe0d`):
+  - 8 telas trocaram "uma consulta por cliente" (`listPartnerLegalEntities` em loop) por `listPartnerLegalEntitiesForPartners`: Cobranças, Conta-corrente, Regras por saca, Regras de entrada, Resumo/AppStates, Acertos de entrada, Confirmações e Notas.
+  - Cobranças: o load roda em paralelo.
+  - Notas: duas rodadas paralelas no lugar de uma fila de 8; o status do coletor espera 1,5 s.
+  - Medido no site real: Cobranças de 2,4–2,9 s para 0,9 s; Notas de 2,4–2,8 para 1,2–1,6 s; Confirmações de 0,8 para 0,4 s.
+- **Polimento (CSS e JS só do site):**
+  - Telas vazias: `ensureEmptyStates` (siteLayout.ts) marca mensagens "Nenhum/Nenhuma" sozinhas com `.site-empty` (caixa tracejada e ícone, como a `.ui-empty` do Resumo). Dentro de `td`, alinha à esquerda.
+  - A barra de botões principais no fim da seção **não fica mais presa** (cobria linhas de tabela).
+  - Botão desativado: cinza claro legível, no lugar do verde com 50% de opacidade.
+  - Tabelas: removido o `min-width: 920px` de `.table-row/.table-head` (regra do app para telas ≤1366 px). Detalhe da cobrança com colunas flexíveis.
+  - Auditoria no site real, em 19 telas, sem estouro e sem colunas espremidas: 375, 1024 e 1366 px.
+- Visto às 12:29: o **coletor da Grão** estava sem varredura desde 11:05 (PC da Grão). Provável mesma causa do da Villa: os atalhos HKCU Run e Inicializar abrem o coletor com o usuário e ele trava. Avisei o Gabriel.
+
 ### 2026-11-12 - Claude (desktop aposentado; coletor Villa com entradas)
 - Conferido, antes de aposentar o programa: o SQLite local e o site batem.
   - ENTRADAS NOTAS Grão: 259 notas e 263 operações. ENTRADAS NOTAS Villa: 1.526 notas e 1.528 operações.
