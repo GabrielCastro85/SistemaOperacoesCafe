@@ -181,7 +181,8 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
       // parcela vem na coluna propria (em roxo); tira o "1/3" repetido do nome
       description: payable.description.replace(/\s+\d+\/\d+$/, ""),
       payee: payable.payeeNameSnapshot,
-      installment: payable.installmentNumber && payable.installmentCount ? `${payable.installmentNumber}/${payable.installmentCount}` : null,
+      // Parcelado pelo sistema: numero da parcela; lancado avulso com "17/22" no nome: usa o do nome.
+      installment: payable.installmentNumber && payable.installmentCount ? `${payable.installmentNumber}/${payable.installmentCount}` : /\s(\d+\/\d+)$/.exec(payable.description)?.[1] ?? null,
       amountCents: payable.finalAmountCents ?? 0,
       paidCents: payable.paidAmountCents ?? 0,
       status: payable.status === "PAID" ? "PAID" : (payable.paidAmountCents ?? 0) > 0 ? "PARTIAL" : "OPEN",
@@ -201,9 +202,27 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
     catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "não foi possível cancelar."}`); }
   }
 
+  // Rascunho sem valor (ex.: conta de luz que ainda nao chegou): pede o valor,
+  // grava e abre a conta. Com valor: so confirma.
   async function confirmDraft(payable: AccountPayable): Promise<void> {
-    try { await window.operationsCafe.confirmAccountPayable(payable.id); await reload(); }
-    catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "não foi possível confirmar."}`); }
+    try {
+      if (payable.amountStatus !== "CONFIRMED" || payable.originalAmountCents === null) {
+        const typed = await requestTextInput({ title: `Valor de "${payable.description}"`, label: `Valor da conta (vence em ${formatDateOnlyBr(payable.dueDate)})`, required: true });
+        if (!typed) return;
+        const amountCents = parseCurrencyToCents(typed);
+        if (amountCents <= 0) { setMessage("Informe um valor maior que zero."); return; }
+        await window.operationsCafe.updateAccountPayable(payable.id, {
+          organizationId: payable.organizationId, ownLegalEntityId: payable.ownLegalEntityId, supplierPartnerId: payable.supplierPartnerId ?? null, supplierLegalEntityId: payable.supplierLegalEntityId ?? null,
+          payeeNameSnapshot: payable.payeeNameSnapshot, payeeTaxIdSnapshot: payable.payeeTaxIdSnapshot ?? null, categoryId: payable.categoryId, defaultCostCenterId: payable.defaultCostCenterId ?? null, defaultLocationId: payable.defaultLocationId ?? null,
+          source: payable.source, description: payable.description, documentType: payable.documentType ?? null, documentNumber: payable.documentNumber ?? null, competenceDate: payable.competenceDate, issueDate: payable.issueDate ?? null, dueDate: payable.dueDate,
+          originalAmountCents: amountCents, discountCents: payable.discountCents ?? 0, interestCents: payable.interestCents ?? 0, penaltyCents: payable.penaltyCents ?? 0, otherAdditionsCents: payable.otherAdditionsCents ?? 0,
+          amountStatus: "CONFIRMED", plannedPaymentMethod: payable.plannedPaymentMethod ?? null, pixKey: payable.pixKey ?? null, notes: payable.notes ?? null, internalNotes: payable.internalNotes ?? null
+        });
+      }
+      await window.operationsCafe.confirmAccountPayable(payable.id);
+      setMessage(`"${payable.description}" lançada.`);
+      await reload();
+    } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "não foi possível confirmar."}`); }
   }
 
   const situation = (payable: AccountPayable): { label: string; tone: string } => {
@@ -239,7 +258,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
       </section>
 
       {drafts.length ? <div className="payables-drafts">
-        <strong>{drafts.length} conta{drafts.length === 1 ? "" : "s"} em rascunho</strong> (lançadas pelo jeito antigo e não confirmadas): {drafts.slice(0, 4).map((payable) => <button key={payable.id} type="button" onClick={() => void confirmDraft(payable)}>Confirmar "{payable.description}"</button>)}
+        <strong>{drafts.length} conta{drafts.length === 1 ? "" : "s"} esperando confirmação</strong> (ainda não entram nos totais): {drafts.slice(0, 6).map((payable) => <button key={payable.id} type="button" onClick={() => void confirmDraft(payable)}>{payable.amountStatus !== "CONFIRMED" || payable.originalAmountCents === null ? `Informar valor de "${payable.description}"` : `Confirmar "${payable.description}"`}{" "}<small>({formatDateOnlyBr(payable.dueDate)})</small></button>)}
       </div> : null}
 
       <div className="payables-toolbar">
