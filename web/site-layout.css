@@ -1318,3 +1318,15 @@ html.site .charge-detail-operation-grid > * {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Tabelas: sem a largura minima fixa de 920px (vinda do app para telas ate
+   1366px). Ela obrigava a rolar para o lado e cortava colunas mesmo quando
+   cabia tudo. As colunas flexiveis de cada tabela se ajustam ao espaco. */
+@media (max-width: 1366px) {
+  html.site .table-head,
+  html.site .table-row {
+    min-width: 0;
+  }
+}
+
+html.site :is(.table-head, .table-row) > * { min-width: 0; }
