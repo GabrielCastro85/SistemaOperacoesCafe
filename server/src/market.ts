@@ -77,16 +77,46 @@ async function currencyQuotes(): Promise<MarketQuote[]> {
   return quotes;
 }
 
-async function ibovespaQuote(): Promise<MarketQuote[]> {
-  const data = JSON.parse(await fetchText("https://query1.finance.yahoo.com/v8/finance/chart/%5EBVSP?range=1d&interval=1d")) as {
+async function yahooQuote(symbol: string): Promise<{ price: number; changePercent: number | null; asOf: string | null }> {
+  const data = JSON.parse(await fetchText(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`)) as {
     chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; chartPreviousClose?: number; previousClose?: number; regularMarketTime?: number } }> };
   };
   const meta = data.chart?.result?.[0]?.meta;
   const price = Number(meta?.regularMarketPrice);
-  if (!Number.isFinite(price) || price <= 0) throw new Error("Ibovespa sem valor.");
+  if (!Number.isFinite(price) || price <= 0) throw new Error(`${symbol} sem valor.`);
   const previous = Number(meta?.chartPreviousClose ?? meta?.previousClose);
-  const changePercent = Number.isFinite(previous) && previous > 0 ? ((price - previous) / previous) * 100 : null;
-  return [{ key: "ibov", label: "Ibovespa", value: price, format: "points", unit: "pts", changePercent, asOf: meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : null, source: "Yahoo Finance" }];
+  return {
+    price,
+    changePercent: Number.isFinite(previous) && previous > 0 ? ((price - previous) / previous) * 100 : null,
+    asOf: meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : null
+  };
+}
+
+async function ibovespaQuote(): Promise<MarketQuote[]> {
+  const quote = await yahooQuote("^BVSP");
+  return [{ key: "ibov", label: "Ibovespa", value: quote.price, format: "points", unit: "pts", changePercent: quote.changePercent, asOf: quote.asOf, source: "Yahoo Finance" }];
+}
+
+// Reserva para dolar, euro e ouro: a AwesomeAPI recusa pedidos de servidores
+// de nuvem (Railway). Ouro: contrato futuro em US$/onca convertido para R$/grama.
+async function currencyQuotesFromYahoo(): Promise<MarketQuote[]> {
+  const [usd, eur, gold] = await Promise.all([yahooQuote("BRL=X"), yahooQuote("EURBRL=X"), yahooQuote("GC=F")]);
+  const goldChange = gold.changePercent !== null && usd.changePercent !== null
+    ? ((1 + gold.changePercent / 100) * (1 + usd.changePercent / 100) - 1) * 100
+    : gold.changePercent;
+  return [
+    { key: "usd", label: "Dólar", value: usd.price, format: "brl", unit: null, changePercent: usd.changePercent, asOf: usd.asOf, source: "Yahoo Finance" },
+    { key: "eur", label: "Euro", value: eur.price, format: "brl", unit: null, changePercent: eur.changePercent, asOf: eur.asOf, source: "Yahoo Finance" },
+    { key: "gold", label: "Ouro", value: (gold.price * usd.price) / TROY_OUNCE_GRAMS, format: "brl", unit: "grama", changePercent: goldChange, asOf: gold.asOf, source: "Yahoo Finance" }
+  ];
+}
+
+async function currencyQuotesWithFallback(): Promise<MarketQuote[]> {
+  try {
+    const quotes = await currencyQuotes();
+    if (quotes.length === 3) return quotes;
+  } catch { /* usa a reserva */ }
+  return currencyQuotesFromYahoo();
 }
 
 const ORDER = ["arabica", "conilon", "usd", "eur", "gold", "ibov"];
@@ -95,7 +125,7 @@ let fetchedAt = 0;
 let refreshing: Promise<void> | null = null;
 
 async function refresh(log: FastifyInstance["log"]): Promise<void> {
-  const results = await Promise.allSettled([coffeeQuotes(), currencyQuotes(), ibovespaQuote()]);
+  const results = await Promise.allSettled([coffeeQuotes(), currencyQuotesWithFallback(), ibovespaQuote()]);
   for (const result of results) {
     if (result.status === "fulfilled") result.value.forEach((quote) => lastGood.set(quote.key, quote));
     else log.warn({ err: result.reason instanceof Error ? result.reason.message : String(result.reason) }, "Cotacao indisponivel");
