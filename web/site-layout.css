@@ -1286,3 +1286,22 @@ html.site .table-row.site-empty-row {
 
 html.site td.site-empty { display: table-cell !important; }
 html.site td.site-empty::before { display: block; margin: 0 auto 8px; }
+
+/* Em tabela larga (que rola para o lado) o aviso fica a esquerda, com o icone
+   ao lado do texto -- centralizado ele ficava cortado. */
+html.site td.site-empty {
+  text-align: left !important;
+  padding: 16px 18px !important;
+  border: 0 !important;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--site-gold, #b8863b) 6%, #fff) !important;
+}
+
+html.site td.site-empty::before {
+  display: inline-block;
+  vertical-align: middle;
+  width: 28px;
+  height: 28px;
+  margin: 0 10px 0 0;
+  background-size: 15px;
+}
