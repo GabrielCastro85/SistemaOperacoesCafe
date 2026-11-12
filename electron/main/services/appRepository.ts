@@ -120,6 +120,10 @@ import type {
   TransferReconciliation,
   TransferReconciliationDetail,
   TransferReconciliationAvailableInvoice,
+  InvoiceReceiptDraft,
+  InvoiceReceiptInvoice,
+  InvoiceReceiptMode,
+  InvoiceReceiptParty,
   TransferReconciliationClientBalance,
   TransferReconciliationInvoice,
   TransferReconciliationPayment,
@@ -3987,6 +3991,128 @@ export class AppRepository {
         partyDocument: this.stringOrNull((counterpartyRole === "SUPPLIER" ? issuer?.cnpjCpf : recipient?.cnpjCpf) as string | undefined)
       };
     });
+  }
+
+  // ---------- Recibo de pagamento de notas ----------
+  listInvoiceReceiptInvoices(input: { ownLegalEntityId: string; mode: InvoiceReceiptMode; search?: string | null; periodStart?: string | null; periodEnd?: string | null }): InvoiceReceiptInvoice[] {
+    const own = this.getLegalEntity(input.ownLegalEntityId);
+    this.assertOrganizationWritable(own.organizationId);
+    const params: unknown[] = [own.id, input.mode === "SELLER" ? "OUTBOUND" : "INBOUND"];
+    let where = "f.own_legal_entity_id = ? AND f.direction = ? AND f.status <> 'CANCELED'";
+    if (input.periodStart) { where += " AND f.issue_date >= ?"; params.push(input.periodStart); }
+    if (input.periodEnd) { where += " AND f.issue_date <= ?"; params.push(input.periodEnd); }
+    const rows = this.db.prepare(`
+      SELECT f.id, f.document_number, f.issue_date, f.total_amount_cents, f.fiscal_snapshot_json,
+        ple.legal_name AS partner_name, ple.cnpj AS partner_document,
+        (SELECT GROUP_CONCAT(COALESCE(i.sacks_quantity_decimal, ''), '|') FROM fiscal_document_items i WHERE i.fiscal_document_id = f.id) AS sacks_list
+      FROM fiscal_documents f
+      LEFT JOIN partner_legal_entities ple ON ple.id = f.partner_legal_entity_id
+      WHERE ${where}
+      ORDER BY f.issue_date DESC, CAST(f.document_number AS INTEGER) DESC
+      LIMIT 2000`).all(...params) as DbRecord[];
+    const partyKey = input.mode === "SELLER" ? "recipient" : "issuer";
+    const term = input.search?.trim().toLocaleLowerCase("pt-BR") ?? "";
+    const termDigits = term.replace(/\D/g, "");
+    return rows.map((row) => {
+      let party: Record<string, unknown> = {};
+      try { party = ((JSON.parse(String(row.fiscal_snapshot_json ?? "{}")) as Record<string, unknown>)[partyKey] ?? {}) as Record<string, unknown>; } catch { party = {}; }
+      const sacksValues = String(row.sacks_list ?? "").split("|").filter(Boolean);
+      return {
+        fiscalDocumentId: String(row.id),
+        documentNumber: String(row.document_number),
+        issueDate: String(row.issue_date),
+        totalAmountCents: Number(row.total_amount_cents ?? 0),
+        sacks: sacksValues.length ? sumDecimalTexts(sacksValues) : "0",
+        counterpartyName: this.stringOrNull(party.legalName) ?? this.stringOrNull(row.partner_name),
+        counterpartyDocument: this.stringOrNull(party.cnpjCpf) ?? this.stringOrNull(row.partner_document)
+      };
+    }).filter((item) => !term || item.documentNumber.includes(term) || (item.counterpartyName ?? "").toLocaleLowerCase("pt-BR").includes(term)
+      || (termDigits.length >= 3 && (item.counterpartyDocument ?? "").replace(/\D/g, "").includes(termDigits)));
+  }
+
+  getInvoiceReceiptDraft(input: { ownLegalEntityId: string; fiscalDocumentIds: string[] }): InvoiceReceiptDraft {
+    const own = this.getLegalEntity(input.ownLegalEntityId);
+    this.assertOrganizationWritable(own.organizationId);
+    const ownDigits = (own.cnpj ?? "").replace(/\D/g, "");
+    const problems: string[] = [];
+    if (!input.fiscalDocumentIds.length) throw new Error("Selecione ao menos uma nota.");
+    const details = input.fiscalDocumentIds.map((id) => this.getFiscalDocument(id));
+    const fromSnapshot = (value: unknown): InvoiceReceiptParty | null => {
+      const party = (value ?? null) as Record<string, unknown> | null;
+      if (!party || !this.stringOrNull(party.legalName)) return null;
+      const document = this.stringOrNull(party.cnpjCpf);
+      return {
+        name: String(party.legalName), document, stateRegistration: this.stringOrNull(party.stateRegistration),
+        street: this.stringOrNull(party.street), number: this.stringOrNull(party.number), district: this.stringOrNull(party.district),
+        cep: this.stringOrNull(party.cep), city: this.stringOrNull(party.city), state: this.stringOrNull(party.state),
+        isOwn: Boolean(document && ownDigits && document.replace(/\D/g, "") === ownDigits)
+      };
+    };
+    const ownParty = (): InvoiceReceiptParty => ({
+      name: own.legalName, document: own.cnpj, stateRegistration: own.stateRegistration, street: own.addressLine, number: own.addressNumber,
+      district: own.district, cep: own.postalCode, city: own.city, state: own.state, isOwn: true
+    });
+    const partnerParty = (partnerLegalEntityId: string | null | undefined): InvoiceReceiptParty | null => {
+      if (!partnerLegalEntityId) return null;
+      const row = this.db.prepare("SELECT * FROM partner_legal_entities WHERE id = ?").get(partnerLegalEntityId) as DbRecord | undefined;
+      if (!row) return null;
+      return {
+        name: String(row.legal_name), document: this.stringOrNull(row.cnpj), stateRegistration: this.stringOrNull(row.state_registration),
+        street: this.stringOrNull(row.address_line), number: this.stringOrNull(row.address_number), district: this.stringOrNull(row.district),
+        cep: this.stringOrNull(row.postal_code), city: this.stringOrNull(row.city), state: this.stringOrNull(row.state), isOwn: false
+      };
+    };
+    const key = (party: InvoiceReceiptParty) => (party.document ?? "").replace(/\D/g, "") || party.name.trim().toLocaleUpperCase("pt-BR");
+    let seller: InvoiceReceiptParty | null = null;
+    let buyer: InvoiceReceiptParty | null = null;
+    const sacks: string[] = [];
+    const descriptions: string[] = [];
+    let amountCents = 0;
+    for (const detail of details) {
+      const document = detail.document;
+      if (document.ownLegalEntityId !== own.id) problems.push(`A NF ${document.documentNumber} nao e da empresa em operacao.`);
+      if (document.status === "CANCELED") problems.push(`A NF ${document.documentNumber} esta cancelada.`);
+      let snapshot: Record<string, unknown> = {};
+      try { snapshot = document.fiscalSnapshotJson ? JSON.parse(document.fiscalSnapshotJson) as Record<string, unknown> : {}; } catch { snapshot = {}; }
+      // Vendedor = emitente da nota. Sem XML: nota de saida foi emitida pela empresa em operacao.
+      const outbound = document.direction !== "INBOUND";
+      const docSeller = fromSnapshot(snapshot.issuer) ?? (outbound ? ownParty() : partnerParty(document.partnerLegalEntityId));
+      const docBuyer = fromSnapshot(snapshot.recipient) ?? (outbound ? partnerParty(document.partnerLegalEntityId) : ownParty());
+      if (!docSeller || !docBuyer) { problems.push(`A NF ${document.documentNumber} nao tem os dados do emitente/destinatario (importe o XML ou cadastre a empresa).`); continue; }
+      if (seller && key(seller) !== key(docSeller)) problems.push(`A NF ${document.documentNumber} tem outro vendedor (${docSeller.name}). Um recibo junta notas do mesmo vendedor e comprador.`);
+      if (buyer && key(buyer) !== key(docBuyer)) problems.push(`A NF ${document.documentNumber} tem outro comprador (${docBuyer.name}). Um recibo junta notas do mesmo vendedor e comprador.`);
+      seller ??= docSeller;
+      buyer ??= docBuyer;
+      amountCents += document.totalAmountCents;
+      for (const item of detail.items) {
+        if (item.sacksQuantity) sacks.push(item.sacksQuantity);
+        descriptions.push(item.description);
+      }
+    }
+    if (!seller || !buyer) throw new Error(problems[0] ?? "Nao foi possivel montar o recibo.");
+    // Dados que o XML nao trouxe da empresa em operacao vem do cadastro dela.
+    const fill = (party: InvoiceReceiptParty): InvoiceReceiptParty => {
+      if (!party.isOwn) return party;
+      const base = ownParty();
+      const pick = (value: string | null, fallback: string | null) => (value && value.trim() ? value : fallback);
+      return {
+        name: party.name, isOwn: true, document: pick(party.document, base.document), stateRegistration: pick(party.stateRegistration, base.stateRegistration),
+        street: pick(party.street, base.street), number: pick(party.number, base.number), district: pick(party.district, base.district),
+        cep: pick(party.cep, base.cep), city: pick(party.city, base.city), state: pick(party.state, base.state)
+      };
+    };
+    const kinds = new Set(descriptions.map((text) => /conilon|robusta/i.test(text) ? "conilon" : "arabica"));
+    const goodsDescription = kinds.size === 1 ? (kinds.has("conilon") ? "café em grão cru conilon" : "café em grão cru arábica") : "café em grão cru";
+    const totalSacks = sacks.length ? sumDecimalTexts(sacks) : "0";
+    return {
+      documentNumbers: details.map((detail) => detail.document.documentNumber).sort((left, right) => left.localeCompare(right, "pt-BR", { numeric: true })),
+      sacks: totalSacks.replace(".", ","),
+      goodsDescription,
+      amountCents,
+      seller: fill(seller),
+      buyer: fill(buyer),
+      problems: [...new Set(problems)]
+    };
   }
 
   getTransferReconciliation(id: string): TransferReconciliationDetail {

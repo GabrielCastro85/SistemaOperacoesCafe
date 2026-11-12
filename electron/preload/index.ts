@@ -184,6 +184,9 @@ const IPC_CHANNELS = {
   removeBusinessPartnerRole: "businessPartners:removeRole",
   listPartnerLegalEntities: "partnerLegalEntities:list",
   listPartnerLegalEntitiesForPartners: "partnerLegalEntities:listForPartners",
+  listInvoiceReceiptInvoices: "invoiceReceipts:listInvoices",
+  getInvoiceReceiptDraft: "invoiceReceipts:getDraft",
+  exportInvoiceReceiptPdf: "invoiceReceipts:exportPdf",
   listUnlinkedPartnerLegalEntities: "partnerLegalEntities:listUnlinked",
   resolveIssuerLegalEntityFromPartner: "partnerLegalEntities:resolveIssuer",
   createPartnerLegalEntity: "partnerLegalEntities:create",
@@ -611,6 +614,9 @@ export interface OperationsCafeApi {
   removeBusinessPartnerRole: (id: string, role: BusinessPartnerRole) => Promise<BusinessPartner>;
   listPartnerLegalEntities: (businessPartnerId: string) => Promise<BusinessPartnerLegalEntity[]>;
   listPartnerLegalEntitiesForPartners: (businessPartnerIds: string[]) => Promise<BusinessPartnerLegalEntity[]>;
+  listInvoiceReceiptInvoices: (input: { ownLegalEntityId: string; mode: "SELLER" | "BUYER"; search?: string | null; periodStart?: string | null; periodEnd?: string | null }) => Promise<import("../../src/shared/types/domain.js").InvoiceReceiptInvoice[]>;
+  getInvoiceReceiptDraft: (input: { ownLegalEntityId: string; fiscalDocumentIds: string[] }) => Promise<import("../../src/shared/types/domain.js").InvoiceReceiptDraft>;
+  exportInvoiceReceiptPdf: (input: { ownLegalEntityId: string; fiscalDocumentIds: string[]; sacks: string; goodsDescription: string; amountCents: number; date: string }) => Promise<boolean>;
   listUnlinkedPartnerLegalEntities: (organizationId: string, search?: string) => Promise<BusinessPartnerLegalEntity[]>;
   resolveIssuerLegalEntityFromPartner: (organizationId: string, partnerLegalEntityId: string) => Promise<LegalEntity>;
   createPartnerLegalEntity: (input: unknown) => Promise<BusinessPartnerLegalEntity>;
@@ -1029,6 +1035,9 @@ const api: OperationsCafeApi = {
   removeBusinessPartnerRole: (id, role) => ipcRenderer.invoke(IPC_CHANNELS.removeBusinessPartnerRole, { id, role }) as Promise<BusinessPartner>,
   listPartnerLegalEntities: (businessPartnerId) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerLegalEntities, businessPartnerId) as Promise<BusinessPartnerLegalEntity[]>,
   listPartnerLegalEntitiesForPartners: (businessPartnerIds) => ipcRenderer.invoke(IPC_CHANNELS.listPartnerLegalEntitiesForPartners, businessPartnerIds) as Promise<BusinessPartnerLegalEntity[]>,
+  listInvoiceReceiptInvoices: (input) => ipcRenderer.invoke(IPC_CHANNELS.listInvoiceReceiptInvoices, input) as Promise<import("../../src/shared/types/domain.js").InvoiceReceiptInvoice[]>,
+  getInvoiceReceiptDraft: (input) => ipcRenderer.invoke(IPC_CHANNELS.getInvoiceReceiptDraft, input) as Promise<import("../../src/shared/types/domain.js").InvoiceReceiptDraft>,
+  exportInvoiceReceiptPdf: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportInvoiceReceiptPdf, input) as Promise<boolean>,
   listUnlinkedPartnerLegalEntities: (organizationId, search) => ipcRenderer.invoke(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, { organizationId, search }) as Promise<BusinessPartnerLegalEntity[]>,
   resolveIssuerLegalEntityFromPartner: (organizationId, partnerLegalEntityId) => ipcRenderer.invoke(IPC_CHANNELS.resolveIssuerLegalEntityFromPartner, { organizationId, partnerLegalEntityId }) as Promise<LegalEntity>,
   createPartnerLegalEntity: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPartnerLegalEntity, input) as Promise<BusinessPartnerLegalEntity>,

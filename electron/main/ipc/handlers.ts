@@ -24,6 +24,8 @@ import { BackupService } from "../services/backupService.js";
 import { checkForUpdates, getUpdateStatus, quitAndInstallUpdate } from "../services/updaterService.js";
 import type { CentralSyncService, CollectorMonitorStatus } from "../services/centralSyncService.js";
 import { CentralCredentialStore } from "../services/centralCredentialStore.js";
+import { resolveBrandingLogoBytes } from "../services/chargeDocuments.js";
+import { buildInvoiceReceiptPdf } from "../services/invoiceReceipt.js";
 
 const spreadsheetTokens = new Map<string, string>();
 const xmlTokens = new Map<string, string>();
@@ -419,6 +421,37 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.removeBusinessPartnerRole(data.id, data.role);
   });
   handle(IPC_CHANNELS.listPartnerLegalEntities, (_event, payload: unknown) => repository.listPartnerLegalEntities(z.string().uuid().parse(payload)));
+  // Recibo de pagamento de notas (modelo "Recibo de Pagamento DLG 652").
+  handle(IPC_CHANNELS.listInvoiceReceiptInvoices, (_event, payload: unknown) => repository.listInvoiceReceiptInvoices(z.object({
+    ownLegalEntityId: z.string().uuid(), mode: z.enum(["SELLER", "BUYER"]), search: z.string().trim().max(120).nullable().optional(),
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
+  }).parse(payload)));
+  handle(IPC_CHANNELS.getInvoiceReceiptDraft, (_event, payload: unknown) => repository.getInvoiceReceiptDraft(z.object({
+    ownLegalEntityId: z.string().uuid(), fiscalDocumentIds: z.array(z.string().uuid()).min(1).max(200)
+  }).parse(payload)));
+  handle(IPC_CHANNELS.exportInvoiceReceiptPdf, async (_event, payload: unknown) => {
+    const data = z.object({
+      ownLegalEntityId: z.string().uuid(), fiscalDocumentIds: z.array(z.string().uuid()).min(1).max(200),
+      sacks: z.string().trim().min(1).max(30), goodsDescription: z.string().trim().min(1).max(160),
+      amountCents: z.number().int().positive(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+    }).parse(payload);
+    const draft = repository.getInvoiceReceiptDraft({ ownLegalEntityId: data.ownLegalEntityId, fiscalDocumentIds: data.fiscalDocumentIds });
+    if (draft.problems.length) throw new Error(draft.problems[0]);
+    const own = repository.getLegalEntity(data.ownLegalEntityId);
+    const logo = resolveBrandingLogoBytes(repository.getOrganization(own.organizationId));
+    const bytes = await buildInvoiceReceiptPdf({ ...draft, sacks: data.sacks, goodsDescription: data.goodsDescription, amountCents: data.amountCents, date: data.date }, logo);
+    // Nome curto da outra empresa (ex.: "DLG"), como no arquivo do modelo.
+    const other = draft.seller.isOwn ? draft.buyer : draft.seller;
+    const words = other.name.trim().split(/\s+/);
+    const otherShort = words.find((word) => word.replace(/[^\p{L}\p{N}]/gu, "").length >= 3 && !/^(DE|DA|DO|DOS|DAS|LTDA|EIRELI|COMERCIO|COMERCIAL)$/i.test(word)) ?? words[0] ?? "";
+    const fileName = `Recibo de Pagamento ${otherShort}${draft.documentNumbers.join("-")}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
+    const result = await dialog.showSaveDialog({ title: "Salvar recibo de pagamento", defaultPath: fileName, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (result.canceled || !result.filePath) return false;
+    writeFileSync(result.filePath, bytes);
+    const error = await shell.openPath(result.filePath);
+    if (error) throw new Error(error);
+    return true;
+  });
   handle(IPC_CHANNELS.listPartnerLegalEntitiesForPartners, (_event, payload: unknown) => repository.listPartnerLegalEntitiesForPartners(z.array(z.string().uuid()).max(5000).parse(payload)));
   handle(IPC_CHANNELS.listUnlinkedPartnerLegalEntities, (_event, payload: unknown) => {
     const data = z.object({ organizationId: z.string().uuid(), search: z.string().optional() }).parse(payload);

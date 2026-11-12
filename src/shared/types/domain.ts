@@ -1959,6 +1959,45 @@ export interface TransferReconciliationDetail {
   payments: TransferReconciliationPayment[];
 }
 
+// Recibo de pagamento de nota(s) (modelo "Recibo de Pagamento DLG 652").
+// SELLER: a empresa em operacao vendeu (nota emitida por ela) e recebeu o pagamento.
+// BUYER: a empresa em operacao comprou (nota emitida para ela) e pagou.
+export type InvoiceReceiptMode = "SELLER" | "BUYER";
+
+export interface InvoiceReceiptInvoice {
+  fiscalDocumentId: string;
+  documentNumber: string;
+  issueDate: string;
+  totalAmountCents: number;
+  sacks: string;
+  counterpartyName: string | null;
+  counterpartyDocument: string | null;
+}
+
+export interface InvoiceReceiptParty {
+  name: string;
+  document: string | null;
+  stateRegistration: string | null;
+  street: string | null;
+  number: string | null;
+  district: string | null;
+  cep: string | null;
+  city: string | null;
+  state: string | null;
+  isOwn: boolean;
+}
+
+export interface InvoiceReceiptDraft {
+  documentNumbers: string[];
+  sacks: string;
+  goodsDescription: string;
+  amountCents: number;
+  seller: InvoiceReceiptParty;
+  buyer: InvoiceReceiptParty;
+  /** Avisos que impedem gerar (ex.: notas de compradores diferentes). */
+  problems: string[];
+}
+
 export interface TransferReconciliationAvailableInvoice {
   fiscalDocumentId: string;
   organizationId: string;
