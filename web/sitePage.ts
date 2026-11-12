@@ -124,7 +124,8 @@ function renderNav(sections: Array<{ element: HTMLElement; title: string }>): vo
     });
   }
   const mainBox = main.getBoundingClientRect();
-  const topBox = topbar.getBoundingClientRect();
+  // Abaixo do carrossel de cotacoes (quando existe), senao ele ficava coberto.
+  const topBox = (document.querySelector<HTMLElement>(".app-topbar + .site-ticker") ?? topbar).getBoundingClientRect();
   nav.style.left = `${mainBox.left}px`;
   nav.style.top = `${topBox.bottom}px`;
   nav.style.width = `${mainBox.width}px`;
