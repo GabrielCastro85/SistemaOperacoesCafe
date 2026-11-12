@@ -111,6 +111,13 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
 - Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
+### 2026-11-12 - Claude (contas de novembro importadas)
+- Pedido: lançar no Contas a pagar as contas de novembro das planilhas NOV.pdf e NOV 2.pdf (Downloads).
+- Decisões do Gabriel: todas em aberto (a coluna STATUS da planilha estava vazia; marcam pagas na tela); criar 7 categorias novas; tudo em Grão & Grão Minas Gerais (mesmo lugar das contas de outubro).
+- Feito (produção, pelo site): categorias Imóveis, Veículos, Cartão de crédito, Salários e encargos, Condomínio, Consórcios e Seguros. 88 contas avulsas de novembro, total R$ 608.013,63 (igual ao TOTAL da planilha). Cada uma tem `internal_notes` "IMPORT-NOV-2026 #n (planilhas NOV e NOV 2)" (n = 1..88), o que permite conferir ou desfazer. Parcela fica no nome ("17/22"); chave PIX quando a coluna era chave; nome depois da chave vira favorecido (ISVAIR, ACÁCIO, ANDERSON, MAGDA, SINA); agência/conta do Bradesco em Observações. ENERGIA VILLA, CARTÃO PESSOA FÍSICA ROGERIO e COPASA VILLA vieram sem valor: ficaram em rascunho (amountStatus PENDING). Lista conferida em `outputs/contas-novembro-para-conferir.xlsx`.
+- Código: aviso de rascunhos agora diz "Informar valor de ..." para conta sem valor (pede o valor, grava e abre a conta) e o texto "jeito antigo" saiu; a folha de controle pega a parcela do nome quando a conta não é de grupo parcelado (`114b8a7`).
+- Não feito: contas mensais/parceladas para os próximos meses (só novembro foi lançado).
+
 ### 2026-11-12 - Claude (preços especiais por empresa de destino)
 - Pedido: cadastrar os preços especiais achados nas planilhas antigas.
 - Conferido no site: VALANI (Grão) já tinha regra INTERNA R$ 4 para PRIMAVERA COFFEE ROBUSTA (CNPJ 12.826.691/0002-47); as 80 notas da Villa ES para a Primavera já estão a R$ 4. Nas planilhas, a Primavera só aparece no bloco "VENDAS PRIMAVERA" a R$ 4 (nunca nos blocos de R$ 13/R$ 5), inclusive notas de WR Comércio e Futura (jul/2026).
