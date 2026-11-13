@@ -103,6 +103,13 @@ describe("client charges and ledger", () => {
       expect(Buffer.from(version.bytes).subarray(0, 4).toString()).toBe("%PDF");
       const sheet = await repo.buildChargePartnerVersion({ chargeId: issued.charge.id, excludedOperationIds: [], excludedAdjustmentIds: [], internalRateCents: null, externalRateCents: 1200, format: "xlsx" });
       expect(sheet.detail.charge.finalAmountCents).toBe(150 * 1200 + 200 * 300);
+      // Preco por empresa vale antes do interno/externo (nome sem diferenca de maiuscula/acento).
+      const target = issued.operations.find((operation) => operation.fiscalDocumentNumberSnapshot === "PARC-EXT")!.destinationNameSnapshot!;
+      const byCompany = await repo.buildChargePartnerVersion({ chargeId: issued.charge.id, excludedOperationIds: [out.id], excludedAdjustmentIds: [], internalRateCents: 400, externalRateCents: 1200, companyRates: [{ company: ` ${target.toLowerCase()} `, rateCents: 250 }], format: "pdf" });
+      for (const operation of byCompany.detail.operations) {
+        expect(operation.serviceRateCentsSnapshot).toBe(operation.destinationNameSnapshot === target ? 250 : operation.operationScopeSnapshot === "INTERNAL" ? 400 : 1200);
+      }
+      expect(byCompany.detail.operations.find((operation) => operation.fiscalDocumentNumberSnapshot === "PARC-EXT")!.serviceAmountCentsSnapshot).toBe(25000);
       await expect(repo.buildChargePartnerVersion({ chargeId: issued.charge.id, excludedOperationIds: issued.operations.map((operation) => operation.id), excludedAdjustmentIds: [], internalRateCents: null, externalRateCents: null, format: "pdf" })).rejects.toThrow("pelo menos uma nota");
       // A cobranca original continua exatamente igual.
       expect(JSON.stringify(repo.getClientCharge(issued.charge.id))).toBe(before);

@@ -785,7 +785,7 @@ export interface OperationsCafeApi {
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
   regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
   removeDuplicateFiscalDocumentItems: (input: { fiscalDocumentId: string; dryRun?: boolean }) => Promise<{ fiscalDocumentId: string; documentNumber: string; status: "FIXED" | "WOULD_FIX" | "NOTHING" | "BLOCKED"; removedItems: number; removedOperations: number; reason: string | null }>;
-  exportChargePartnerVersion: (input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; format: "pdf" | "xlsx" }) => Promise<boolean>;
+  exportChargePartnerVersion: (input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; companyRates?: Array<{ company: string; rateCents: number }>; format: "pdf" | "xlsx" }) => Promise<boolean>;
   openChargeDocument: (input: { chargeId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;

@@ -111,6 +111,10 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
 - Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
+### 2026-11-13 - Claude (versão do parceiro: janela por cima e preço por empresa)
+- Pedido: a janela "Versão para o parceiro" ficava cortada pelo topo/cotações/"Nesta página"; e poder cobrar um valor específico para uma empresa.
+- Feito: a janela agora é desenhada no `<body>` (createPortal) com z-index 95, acima do topo e do "Nesta página". Nova seção "Preço por empresa (opcional)": escolhe a empresa de destino das notas da cobrança e informa R$/saca; vale no lugar do interno/externo para as notas daquela empresa (comparação sem maiúscula/acento). Backend aceita `companyRates` em `buildChargePartnerVersion`/`clientCharges:exportPartnerVersion`. Teste estendido.
+
 ### 2026-11-13 - Claude (notas com itens duplicados corrigidas)
 - Pedido: "pode corrigir as notas duplicadas".
 - Causa encontrada: em agosto/2026 (03–18/08), trocar o cliente de uma nota (ou regravá-la) criava um item novo idêntico com nova operação, em vez de substituir. Ex.: NF 5714 tinha vendas para MATHEUS, TERRA e 3× RAFAEL (cliente atual RAFAEL). Nada parecido depois de 18/08.

@@ -1374,7 +1374,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
   handle(IPC_CHANNELS.exportChargePartnerVersion, async (_event, payload: unknown) => {
     const data = z.object({
       chargeId: z.string().uuid(), excludedOperationIds: z.array(z.string().uuid()).max(5000), excludedAdjustmentIds: z.array(z.string().uuid()).max(5000),
-      internalRateCents: z.number().int().min(0).nullable(), externalRateCents: z.number().int().min(0).nullable(), format: z.enum(["pdf", "xlsx"])
+      internalRateCents: z.number().int().min(0).nullable(), externalRateCents: z.number().int().min(0).nullable(),
+      companyRates: z.array(z.object({ company: z.string().trim().min(1).max(300), rateCents: z.number().int().min(0) })).max(500).optional(), format: z.enum(["pdf", "xlsx"])
     }).parse(payload);
     const { bytes, detail } = await repository.buildChargePartnerVersion(data);
     const client = repository.getBusinessPartner(detail.charge.clientPartnerId);

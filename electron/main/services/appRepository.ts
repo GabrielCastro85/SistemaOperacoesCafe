@@ -3486,13 +3486,16 @@ export class AppRepository {
   // Versao para o parceiro (ex.: Neto): mesma cobranca, sem as notas e ajustes
   // desmarcados e com o preco por saca dele (interno/externo). Nada e' gravado:
   // a cobranca original continua igual; so' devolve o arquivo.
-  async buildChargePartnerVersion(input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; format: "pdf" | "xlsx" }): Promise<{ bytes: Uint8Array; detail: ClientChargeDetail }> {
+  async buildChargePartnerVersion(input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; companyRates?: Array<{ company: string; rateCents: number }>; format: "pdf" | "xlsx" }): Promise<{ bytes: Uint8Array; detail: ClientChargeDetail }> {
     const original = this.getClientCharge(input.chargeId);
+    // Preco especifico por empresa (ex.: GAP COFFEE a R$ 3) vale antes do interno/externo.
+    const companyKey = (value: string | null | undefined) => (value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase();
+    const companyRates = new Map((input.companyRates ?? []).map((item) => [companyKey(item.company), item.rateCents]));
     const excludedOperations = new Set(input.excludedOperationIds);
     const excludedAdjustments = new Set(input.excludedAdjustmentIds);
     const operations = original.operations.filter((operation) => !excludedOperations.has(operation.id)).map((operation) => {
       const packaging = Number(operation.quantitySacksDecimalSnapshot ?? 0) === 0 && operation.serviceAmountCentsSnapshot > 0 && operation.serviceRateCentsSnapshot > 0;
-      const rate = packaging ? null : operation.operationScopeSnapshot === "INTERNAL" ? input.internalRateCents : input.externalRateCents;
+      const rate = packaging ? null : companyRates.get(companyKey(operation.destinationNameSnapshot)) ?? (operation.operationScopeSnapshot === "INTERNAL" ? input.internalRateCents : input.externalRateCents);
       if (rate === null || rate === undefined) return { ...operation };
       return { ...operation, serviceRateCentsSnapshot: rate, serviceAmountCentsSnapshot: multiplyDecimalByCents(operation.quantitySacksDecimalSnapshot, rate) };
     });

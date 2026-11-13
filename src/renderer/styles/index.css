@@ -6365,3 +6365,14 @@ table tbody tr:hover {
   .charge-partner__row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .charge-partner__company { grid-column: 2 / 4; grid-row: 2; }
 }
+/* Janela desenhada no body: fica acima do topo, das cotacoes e do "Nesta pagina". */
+.charge-partner-backdrop { z-index: 95; }
+.charge-partner__companies { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed #d8c8aa; border-radius: 10px; background: #fffdf8; }
+.charge-partner__company-add { display: flex; flex-wrap: wrap; gap: 8px; }
+.charge-partner__company-add select { flex: 1 1 260px; min-width: 0; }
+.charge-partner__company-list { display: grid; gap: 6px; }
+.charge-partner__company-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px auto; gap: 10px; align-items: center; }
+.charge-partner__company-row span { font-weight: 700; overflow-wrap: anywhere; }
+.charge-partner__company-row small { display: block; font-weight: 400; color: #786c5c; font-size: 11px; }
+.charge-partner__company-row label { display: grid; gap: 2px; font-size: 12px; }
+@media (max-width: 640px) { .charge-partner__company-row { grid-template-columns: minmax(0, 1fr) 110px; } .charge-partner__company-row button { grid-column: 1 / -1; } }
