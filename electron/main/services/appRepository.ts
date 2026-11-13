@@ -2113,15 +2113,16 @@ export class AppRepository {
         return leftUsed - rightUsed || left.createdAt.localeCompare(right.createdAt);
       });
       const keep = ordered[0];
-      // Nota triangulada: fica UMA operacao por tipo (compra/venda) e parceiro,
-      // presa ao item que fica; as copias saem.
+      // Fica UMA operacao por tipo (uma venda; uma compra na triangulada), presa
+      // ao item que fica: a que ja esta em uso; senao a do cliente atual da nota
+      // (as outras sao sobras de trocas de cliente); senao a mais recente.
+      const currentPartners = new Set([document.responsiblePartnerId, document.secondaryResponsiblePartnerId].filter(Boolean));
       const byKind = new Map<string, typeof groupOperations>();
-      for (const operation of groupOperations) {
-        const key = `${operation.operationType}|${operation.responsiblePartnerId}|${operation.productId ?? ""}`;
-        byKind.set(key, [...(byKind.get(key) ?? []), operation]);
-      }
+      for (const operation of groupOperations) byKind.set(operation.operationType, [...(byKind.get(operation.operationType) ?? []), operation]);
       for (const operations of byKind.values()) {
-        const sorted = [...operations].sort((left, right) => (inUse(left) ? 0 : 1) - (inUse(right) ? 0 : 1) || (left.fiscalDocumentItemId === keep.id ? 0 : 1) - (right.fiscalDocumentItemId === keep.id ? 0 : 1) || left.createdAt.localeCompare(right.createdAt));
+        const sorted = [...operations].sort((left, right) => (inUse(left) ? 0 : 1) - (inUse(right) ? 0 : 1)
+          || (currentPartners.has(left.responsiblePartnerId) ? 0 : 1) - (currentPartners.has(right.responsiblePartnerId) ? 0 : 1)
+          || right.createdAt.localeCompare(left.createdAt));
         const kept = sorted[0];
         if (kept.fiscalDocumentItemId !== keep.id) moveOperations.push({ operationId: kept.id, itemId: keep.id });
         for (const operation of sorted.slice(1)) {

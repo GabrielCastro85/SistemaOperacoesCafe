@@ -75,6 +75,25 @@ describe("notas com itens duplicados", () => {
     } finally { db.close(); }
   });
 
+  it("troca de cliente: fica a venda do cliente atual da nota, a do antigo sai", async () => {
+    const { repo, db, partner } = await setup();
+    try {
+      const old = await repo.createBusinessPartner({ organizationId, displayName: "Matheus Teste", notes: null, roles: ["CLIENT"], isActive: true });
+      const product = repo.listProducts({ organizationId })[0];
+      const doc = repo.createFiscalDocument({ organizationId, ownLegalEntityId, responsiblePartnerId: partner.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "5714", series: "1", issueDate: "2026-08-04", totalAmountCents: 50_000_000, hasPendingIssues: false, pendingNotes: null, notes: null });
+      const item = () => repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "CAFE", quantity: "500", unit: "SACK", unitPriceDecimal: "1000.00", totalAmountCents: 50_000_000, sacksQuantity: "500" });
+      const op = (itemId: string, partnerId: string) => repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: itemId, ownLegalEntityId, responsiblePartnerId: partnerId, productId: product.id, operationType: "SALE", operationScope: "EXTERNAL", operationDate: "2026-08-04", quantitySacks: "500", manualRateValueCents: 1300, manualOverrideReason: "teste", notes: null });
+      const first = item();
+      op(first.id, old.id);
+      const second = item();
+      op(second.id, partner.id);
+      expect(repo.removeDuplicateFiscalDocumentItems(doc.document.id, false)).toMatchObject({ status: "FIXED", removedItems: 1, removedOperations: 1 });
+      const fixed = repo.getFiscalDocument(doc.document.id);
+      expect(fixed.operations.map((operation) => operation.responsiblePartnerId)).toEqual([partner.id]);
+      expect(fixed.operations[0].fiscalDocumentItemId).toBe(fixed.items[0].id);
+    } finally { db.close(); }
+  });
+
   it("bloqueia quando um item repetido ja esta numa cobranca", async () => {
     const { repo, db, partner, note } = await setup();
     try {
