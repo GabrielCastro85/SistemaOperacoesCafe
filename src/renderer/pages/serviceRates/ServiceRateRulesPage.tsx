@@ -13,6 +13,8 @@ import { useAutoScroll } from "../../hooks/useAutoScroll";
 const scopeLabels = OPERATION_SCOPE_LABELS;
 type RateRuleModalMode = "create" | "edit" | null;
 const OPEN_ENDED_EFFECTIVE_FROM = "1900-01-01";
+// UF do destinatario da venda: taxa diferente por estado (ex.: ES R$ 7,00 / MG R$ 5,00).
+const DESTINATION_STATE_OPTIONS: Array<[string, string]> = [["", "Todos os estados"], ...["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"].map((uf) => [uf, uf] as [string, string])];
 
 function currentMonthStart(): string {
   return new Date().toISOString().slice(0, 8) + "01";
@@ -21,6 +23,7 @@ function currentMonthStart(): string {
 const emptyRuleForm = {
   partnerId: "",
   counterpartyPartnerLegalEntityId: "",
+  destinationStateUf: "",
   productId: "",
   scope: "EXTERNAL" as OperationScope,
   value: "5,00",
@@ -112,6 +115,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
     setForm({
       partnerId: rule.businessPartnerId,
       counterpartyPartnerLegalEntityId: rule.counterpartyPartnerLegalEntityId ?? "",
+      destinationStateUf: rule.destinationStateUf ?? "",
       productId: rule.productId ?? "",
       scope: rule.operationScope,
       value: (rule.rateValueCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
@@ -140,6 +144,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
       businessPartnerId: form.partnerId,
       ownLegalEntityId: null,
       counterpartyPartnerLegalEntityId: form.counterpartyPartnerLegalEntityId || null,
+      destinationStateUf: form.destinationStateUf || null,
       productId: form.productId || null,
       operationScope: form.scope,
       rateType: "PER_SACK",
@@ -221,7 +226,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
           {filteredRules.map((item) => (
             <div key={item.id} className="table-row rate-grid rate-grid--with-alert">
               <span>{partnerLabel(item.businessPartnerId)}</span>
-              <span>{counterpartyLabel(item.counterpartyPartnerLegalEntityId)}</span>
+              <span>{counterpartyLabel(item.counterpartyPartnerLegalEntityId)}{item.destinationStateUf ? <small>Destino: {item.destinationStateUf}</small> : null}</span>
               <span>{scopeLabels[item.operationScope]}</span>
               <span>{productLabel(item.productId)}</span>
               <span>{formatCurrencyFromCents(item.rateValueCents)} normal{item.financialRateValueCents !== null ? <small>{formatCurrencyFromCents(item.financialRateValueCents)} com financeiro</small> : null}</span>
@@ -257,6 +262,7 @@ export function ServiceRateRulesPage({ data }: { data: BootstrapData }): JSX.Ele
                 <FormGrid>
                   <PartnerQuickSearch label="Cliente/corretor" value={form.partnerId} onChange={(value) => updateForm("partnerId", value)} partners={partners} legalEntities={partnerLegalEntities} />
                   <SelectField label="Empresa da nota especifica" value={form.counterpartyPartnerLegalEntityId} onChange={(value) => updateForm("counterpartyPartnerLegalEntityId", value)} options={[["", "Todas"], ...counterpartyLegalEntities.map((item) => [item.id, item.tradeName] as [string, string])]} />
+                  <SelectField label="Estado do destinatario (UF)" value={form.destinationStateUf} onChange={(value) => updateForm("destinationStateUf", value)} options={DESTINATION_STATE_OPTIONS} />
                   <SelectField label="UF da venda" value={form.scope} onChange={(value) => updateForm("scope", value)} options={SERVICE_RATE_SCOPE_OPTIONS} />
                   <SelectField label="Produto" value={form.productId} onChange={(value) => updateForm("productId", value)} options={[["", "Todos"], ...products.map((item) => [item.id, item.name] as [string, string])]} />
                   <TextField label="Valor normal por saca" value={form.value} onChange={(value) => updateForm("value", value)} />

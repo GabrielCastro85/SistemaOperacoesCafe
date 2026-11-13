@@ -3628,6 +3628,17 @@ export const migrations: Migration[] = [
       );
     `)
   }
+  ,{
+    // Taxa de servico por UF de destino da venda (ex.: ES R$ 7,00 / MG R$ 5,00).
+    // Coluna nula: regras antigas continuam valendo para qualquer destino.
+    name: "063_service_rate_destination_uf",
+    up: (db) => {
+      const columns = (db.prepare("PRAGMA table_info(service_rate_rules)").all() as Array<{ name: string }>).map((column) => column.name);
+      const added = columns.includes("destination_state_uf") ? [] : ["destination_state_uf"];
+      for (const column of added) db.exec(`ALTER TABLE service_rate_rules ADD COLUMN ${column} TEXT`);
+      rebaselineAddedNullColumns(db, "service_rate_rules", added);
+    }
+  }
 ];
 
 /**

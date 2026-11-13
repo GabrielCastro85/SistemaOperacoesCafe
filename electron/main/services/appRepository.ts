@@ -1346,7 +1346,7 @@ export class AppRepository {
       id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
       counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
       rate_type: data.rateType, rate_value_cents: data.rateValueCents, financial_rate_value_cents: data.financialRateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
-      priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now
+      priority: data.priority, notes: data.notes, is_active: data.isActive, created_at: now, updated_at: now, destination_state_uf: data.destinationStateUf
     };
     this.upsertLocalRow("service_rate_rules", row);
     await this.recomputeServiceRateRuleConflictWarnings(data.businessPartnerId);
@@ -1362,7 +1362,7 @@ export class AppRepository {
       id, organization_id: data.organizationId, business_partner_id: data.businessPartnerId, own_legal_entity_id: data.ownLegalEntityId,
       counterparty_partner_legal_entity_id: data.counterpartyPartnerLegalEntityId, product_id: data.productId, operation_scope: data.operationScope,
       rate_type: data.rateType, rate_value_cents: data.rateValueCents, financial_rate_value_cents: data.financialRateValueCents, effective_from: data.effectiveFrom, effective_to: data.effectiveTo,
-      priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString()
+      priority: data.priority, notes: data.notes, is_active: data.isActive, updated_at: new Date().toISOString(), destination_state_uf: data.destinationStateUf
     };
     this.db.transaction(() => {
       this.patchLocalRow("service_rate_rules", id, row);
@@ -1405,6 +1405,7 @@ export class AppRepository {
       counterpartyPartnerLegalEntityId: string | null;
       productId: string | null;
       operationScope: OperationScope;
+      destinationStateUf?: string | null;
       priority: number;
       effectiveFrom: string;
       effectiveTo: string | null;
@@ -1421,6 +1422,9 @@ export class AppRepository {
       // priority/1000), entao so e' conflito real quando a prioridade tambem empata.
       if (rule.priority !== data.priority) return false;
       if (signature(rule) !== targetSignature) return false;
+      // Regra com UF so conflita com regra da mesma UF; regra sem UF nao empata com regra com UF.
+      if (Boolean(rule.destinationStateUf) !== Boolean(data.destinationStateUf)) return false;
+      if (!compatible(rule.destinationStateUf, data.destinationStateUf ?? null)) return false;
       if (!compatible(rule.ownLegalEntityId, data.ownLegalEntityId)) return false;
       if (!compatible(rule.counterpartyPartnerLegalEntityId, data.counterpartyPartnerLegalEntityId)) return false;
       if (!compatible(rule.productId, data.productId)) return false;
@@ -1466,10 +1470,11 @@ export class AppRepository {
       .filter((rule) => rule.effectiveFrom <= data.operationDate && (!rule.effectiveTo || rule.effectiveTo >= data.operationDate))
       .filter((rule) => !rule.ownLegalEntityId || rule.ownLegalEntityId === data.ownLegalEntityId)
       .filter((rule) => !rule.counterpartyPartnerLegalEntityId || rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId)
-      .filter((rule) => !rule.productId || rule.productId === data.productId);
+      .filter((rule) => !rule.productId || rule.productId === data.productId)
+      .filter((rule) => !rule.destinationStateUf || rule.destinationStateUf === data.destinationStateUf);
     const candidates = activeRules
       .filter((rule) => rule.operationScope === data.operationScope || rule.operationScope === "ALL")
-      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) }));
+      .map((rule) => ({ rule, score: (rule.counterpartyPartnerLegalEntityId ? 8 : 0) + (rule.ownLegalEntityId ? 4 : 0) + (rule.productId ? 2 : 0) + (rule.operationScope === data.operationScope ? 1 : 0) + (rule.destinationStateUf ? 16 : 0) }));
     if (candidates.length === 0) {
       return { status: "missing", rule: null, rateValueCents: null, origin: "none", message: "Nenhuma regra aplicavel encontrada." };
     }
@@ -2016,7 +2021,7 @@ export class AppRepository {
           this.db.prepare("UPDATE operations SET responsible_partner_id = ?, updated_at = ? WHERE id = ?").run(data.responsiblePartnerId, now, op.id);
           continue;
         }
-        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate, hasFinancialService };
+        const input = { organizationId: op.organizationId, businessPartnerId: data.responsiblePartnerId, ownLegalEntityId: op.ownLegalEntityId, counterpartyPartnerLegalEntityId: data.partnerLegalEntityId, productId: op.productId, operationScope: op.operationScope, operationDate: op.operationDate, hasFinancialService, destinationStateUf: this.destinationStateUfForDocument(previous.document.id, op.ownLegalEntityId) };
         const resolved = op.operationType === "PURCHASE" ? this.resolvePurchaseRateRule(input) : this.resolveServiceRateRule(input);
         if (resolved.status === "conflict") throw new Error("O novo responsavel possui tarifas conflitantes. Ajuste as regras antes de trocar.");
         const rate = resolved.rateValueCents ?? 0;
@@ -2236,7 +2241,8 @@ export class AppRepository {
           productId: data.productId,
           operationScope: data.operationScope,
           operationDate: data.operationDate,
-          hasFinancialService: detail.document.hasFinancialService
+          hasFinancialService: detail.document.hasFinancialService,
+          destinationStateUf: this.destinationStateUfForDocument(detail.document.id, data.ownLegalEntityId)
         });
     if (resolved.status === "conflict") throw new Error(isPurchase ? "Conflito ao resolver preco de compra por saca." : "Conflito ao resolver regra por saca.");
     const manual = data.manualRateValueCents !== null;
@@ -3240,7 +3246,8 @@ export class AppRepository {
         productId: operation.productId,
         operationScope: operation.operationScope,
         operationDate: operation.operationDate,
-        hasFinancialService: this.fiscalDocumentHasFinancialService(operation.fiscalDocumentId)
+        hasFinancialService: this.fiscalDocumentHasFinancialService(operation.fiscalDocumentId),
+        destinationStateUf: this.destinationStateUfForDocument(operation.fiscalDocumentId, operation.ownLegalEntityId)
       });
       const backfilled = resolved;
       if (backfilled.status !== "found" || backfilled.rateValueCents === null) continue;
@@ -8897,7 +8904,8 @@ export class AppRepository {
         rule.counterpartyPartnerLegalEntityId === data.counterpartyPartnerLegalEntityId &&
         rule.productId === data.productId &&
         rule.operationScope === data.operationScope &&
-        rule.rateType === data.rateType;
+        rule.rateType === data.rateType &&
+        (rule.destinationStateUf ?? null) === (data.destinationStateUf ?? null);
       if (!sameScope) return false;
       const aEnd = data.effectiveTo ?? "9999-12-31";
       const bEnd = rule.effectiveTo ?? "9999-12-31";
@@ -8938,6 +8946,23 @@ export class AppRepository {
       return secondaryEntity?.id ?? null;
     }
     return row.partner_legal_entity_id ?? null;
+  }
+
+  // UF de destino da venda: destinatario da nota (ou emitente, quando o proprio CNPJ e' o destinatario).
+  // Le o snapshot fiscal direto no banco. Sem snapshot/UF, devolve null e so' regras sem UF se aplicam.
+  private destinationStateUfForDocument(fiscalDocumentId: string, ownLegalEntityId: string | null): string | null {
+    const row = this.db.prepare("SELECT fiscal_snapshot_json FROM fiscal_documents WHERE id = ?").get(fiscalDocumentId) as { fiscal_snapshot_json: string | null } | undefined;
+    if (!row?.fiscal_snapshot_json) return null;
+    let snapshot: Record<string, unknown>;
+    try { snapshot = JSON.parse(row.fiscal_snapshot_json) as Record<string, unknown>; } catch { return null; }
+    const party = (key: "issuer" | "recipient"): Record<string, unknown> | null => {
+      const value = snapshot[key];
+      return value && typeof value === "object" ? value as Record<string, unknown> : null;
+    };
+    const ownDocument = ownLegalEntityId ? this.onlyDigits(this.getLegalEntity(ownLegalEntityId).cnpj ?? "") : "";
+    const recipientDocument = this.onlyDigits(String(party("recipient")?.cnpjCpf ?? ""));
+    const destination = ownDocument && recipientDocument === ownDocument ? party("issuer") : party("recipient");
+    return this.stringOrNull(destination?.state)?.toUpperCase() ?? null;
   }
 
   private fiscalDocumentHasFinancialService(fiscalDocumentId: string): boolean {

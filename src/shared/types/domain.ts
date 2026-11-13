@@ -553,6 +553,8 @@ export interface ServiceRateRule {
   businessPartnerId: string;
   ownLegalEntityId: string | null;
   counterpartyPartnerLegalEntityId: string | null;
+  // UF de destino da venda (ex.: "ES"). Null = vale para qualquer destino.
+  destinationStateUf: string | null;
   productId: string | null;
   operationScope: OperationScope;
   rateType: RateType;
@@ -623,7 +625,8 @@ export interface OperationRateHistoryEntry {
 
 export interface ResolveRateResult {
   status: "found" | "missing" | "conflict";
-  rule: ServiceRateRule | null;
+  // Compras (preco ao fornecedor) devolvem PurchaseRateRule; vendas, ServiceRateRule.
+  rule: ServiceRateRule | PurchaseRateRule | null;
   rateValueCents: number | null;
   origin: string;
   message: string | null;

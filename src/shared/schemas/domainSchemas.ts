@@ -279,6 +279,7 @@ export const billingProfileInputSchema = z.object({
 
 export const serviceRateRuleInputSchema = z
   .object({
+    destinationStateUf: ufSchema.nullable().optional().default(null),
     organizationId: z.string().uuid(),
     businessPartnerId: z.string().uuid(),
     ownLegalEntityId: z.string().uuid().nullable(),
@@ -297,6 +298,7 @@ export const serviceRateRuleInputSchema = z
   .refine((value) => !value.effectiveTo || value.effectiveTo >= value.effectiveFrom, "Data final deve ser posterior ou igual ao inicio.");
 
 export const resolveRateInputSchema = z.object({
+  destinationStateUf: ufSchema.nullable().optional().default(null),
   organizationId: z.string().uuid(),
   businessPartnerId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid().nullable(),

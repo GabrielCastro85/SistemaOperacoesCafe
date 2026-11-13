@@ -282,6 +282,7 @@ export function mapServiceRateRule(row: DbRecord): ServiceRateRule {
     ownLegalEntityId: textOrNull(row.own_legal_entity_id),
     counterpartyPartnerLegalEntityId: textOrNull(row.counterparty_partner_legal_entity_id),
     productId: textOrNull(row.product_id),
+    destinationStateUf: textOrNull(row.destination_state_uf),
     operationScope: String(row.operation_scope) as ServiceRateRule["operationScope"],
     rateType: String(row.rate_type) as ServiceRateRule["rateType"],
     rateValueCents: Number(row.rate_value_cents),
