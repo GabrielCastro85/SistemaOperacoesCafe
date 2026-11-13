@@ -111,6 +111,12 @@ Menu Visão geral > Comparativo, rota `/comparison`. Lógica em `electron/main/s
 - Publicado: `820961b` e `d6fb831` (nome curto mantém DO/DE: "BOM DO GRAOS").
 - Pedido seguinte: planilha (e PDF) com DAE muito repetitivos. Feito: `src/shared/utils/chargeDaeAdjustment.ts` lê os ajustes de DAE gravados (frete, nota, frete + nota). No PDF, os DAE saem num bloco "DAE - N NOTAS", uma linha por nota (data, NF, emitente, tipo e referência), sem a frase "registrado na nota fiscal" e com TOTAL DAE; observação só aparece se alguém escreveu outra coisa. Na planilha, a aba Ajustes virou Data | NF | Emitente | Empresa | Ajuste | Referência DAE | Efeito | Valor | Observações, com tipo/efeito em português, valor com sinal e linha Total. Amostras em `outputs/amostra-cobranca-dae.pdf` e `.xlsx`.
 
+### 2026-11-13 - Claude (cópia dos dados do app desktop antes de desinstalar)
+- Pedido: o Gabriel quer desinstalar o app desktop deste PC.
+- Avisado: arquivos (confirmações assinadas, anexos, XMLs, PDFs) só existem na pasta local; o sistema não envia arquivos ao central. O desinstalador não apaga a pasta (`deleteAppDataOnUninstall: false`).
+- Feito: o Gabriel abriu o app (rodapé "Servidor central sincronizado · revisão 3595") e fechou. Copiado `%APPDATA%\Sistema de Operacoes de Cafe Multiempresa` (database, documents, backups, settings, logs; sem caches) para `C:\Users\gabri\OneDrive\Backup Operacoes Cafe\App desktop 2026-11-13`. Conferido: database 48 arq/1.239 MB, documents 24.657/491 MB, backups 4.303/678 MB, settings 2, logs 2 — iguais à origem.
+- Não desinstalar o Coletor GraoBase.
+
 ### 2026-11-13 - Claude (versão do parceiro: janela por cima e preço por empresa)
 - Pedido: a janela "Versão para o parceiro" ficava cortada pelo topo/cotações/"Nesta página"; e poder cobrar um valor específico para uma empresa.
 - Feito: a janela agora é desenhada no `<body>` (createPortal) com z-index 95, acima do topo e do "Nesta página". Nova seção "Preço por empresa (opcional)": escolhe a empresa de destino das notas da cobrança e informa R$/saca; vale no lugar do interno/externo para as notas daquela empresa (comparação sem maiúscula/acento). Backend aceita `companyRates` em `buildChargePartnerVersion`/`clientCharges:exportPartnerVersion`. Teste estendido.
