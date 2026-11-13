@@ -2072,6 +2072,67 @@ export class AppRepository {
     trx();
   }
 
+  // Notas com o MESMO item gravado varias vezes (ex.: agosto/2026: 4 itens de
+  // 650 sc numa nota de 650 sc). Mantem um item por grupo de itens identicos e
+  // apaga os repetidos e as operacoes deles, so' quando a soma dos itens passa
+  // do valor da nota. Nao mexe se algum repetido estiver em cobranca,
+  // confirmacao ou conta a pagar (devolve o motivo). dryRun: so' relata.
+  removeDuplicateFiscalDocumentItems(fiscalDocumentId: string, dryRun = true): { fiscalDocumentId: string; documentNumber: string; status: "FIXED" | "WOULD_FIX" | "NOTHING" | "BLOCKED"; removedItems: number; removedOperations: number; reason: string | null } {
+    const detail = this.getFiscalDocument(fiscalDocumentId);
+    const document = detail.document;
+    this.assertOrganizationWritable(document.organizationId);
+    const result = (status: "FIXED" | "WOULD_FIX" | "NOTHING" | "BLOCKED", removedItems = 0, removedOperations = 0, reason: string | null = null) => ({ fiscalDocumentId, documentNumber: document.documentNumber, status, removedItems, removedOperations, reason });
+    const itemsTotal = detail.items.reduce((sum, item) => sum + (item.totalAmountCents ?? 0), 0);
+    if (!(itemsTotal > document.totalAmountCents * 1.01)) return result("NOTHING", 0, 0, "Soma dos itens confere com a nota.");
+    const groups = new Map<string, typeof detail.items>();
+    for (const item of detail.items) {
+      const key = [item.productId ?? "", item.description.trim().toUpperCase(), item.quantity, item.unit, item.unitPriceDecimal, item.totalAmountCents, item.sacksQuantity ?? ""].join("|");
+      groups.set(key, [...(groups.get(key) ?? []), item]);
+    }
+    const references = (operationId: string): string[] => {
+      const found: string[] = [];
+      if (this.db.prepare("SELECT 1 FROM client_charge_operations WHERE operation_id = ? LIMIT 1").get(operationId)) found.push("cobrança");
+      if (this.db.prepare("SELECT 1 FROM deal_confirmation_operations WHERE operation_id = ? LIMIT 1").get(operationId)) found.push("confirmação");
+      if (this.db.prepare("SELECT 1 FROM account_payable_operations WHERE operation_id = ? LIMIT 1").get(operationId)) found.push("conta a pagar");
+      return found;
+    };
+    const operationsOf = (itemId: string) => detail.operations.filter((operation) => operation.fiscalDocumentItemId === itemId);
+    const toRemoveItems: string[] = [];
+    const toRemoveOperations: string[] = [];
+    const keptOperationByRemoved = new Map<string, string>();
+    for (const items of groups.values()) {
+      if (items.length < 2) continue;
+      // Fica o item cuja operacao ja esta em uso (cobrada/confirmada); senao o mais antigo.
+      const score = (item: (typeof items)[number]) => operationsOf(item.id).some((operation) => references(operation.id).length > 0 || operation.billingStatus !== "UNBILLED") ? 0 : 1;
+      const ordered = [...items].sort((left, right) => score(left) - score(right) || left.createdAt.localeCompare(right.createdAt));
+      const keep = ordered[0];
+      const keepOperation = operationsOf(keep.id)[0]?.id ?? null;
+      for (const item of ordered.slice(1)) {
+        for (const operation of operationsOf(item.id)) {
+          const used = references(operation.id);
+          if (used.length || operation.billingStatus !== "UNBILLED") return result("BLOCKED", 0, 0, `Item repetido já usado em ${used.length ? used.join(", ") : "cobrança"} (operação ${operation.billingStatus}).`);
+          toRemoveOperations.push(operation.id);
+          if (keepOperation) keptOperationByRemoved.set(operation.id, keepOperation);
+        }
+        toRemoveItems.push(item.id);
+      }
+    }
+    if (!toRemoveItems.length) return result("NOTHING", 0, 0, "Itens diferentes entre si; nada a juntar.");
+    if (dryRun) return result("WOULD_FIX", toRemoveItems.length, toRemoveOperations.length);
+    this.db.transaction(() => {
+      for (const operationId of toRemoveOperations) {
+        const kept = keptOperationByRemoved.get(operationId) ?? null;
+        this.db.prepare("DELETE FROM operation_rate_history WHERE operation_id = ?").run(operationId);
+        this.db.prepare("DELETE FROM billing_alert_ignores WHERE operation_id = ?").run(operationId);
+        this.db.prepare("UPDATE spreadsheet_import_rows SET operation_id = ? WHERE operation_id = ?").run(kept, operationId);
+        this.db.prepare("DELETE FROM operations WHERE id = ?").run(operationId);
+      }
+      for (const itemId of toRemoveItems) this.db.prepare("DELETE FROM fiscal_document_items WHERE id = ?").run(itemId);
+      this.db.prepare("UPDATE fiscal_documents SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), fiscalDocumentId);
+    })();
+    return result("FIXED", toRemoveItems.length, toRemoveOperations.length);
+  }
+
   addFiscalDocumentItem(input: unknown): FiscalDocumentItem {
     const data = fiscalDocumentItemInputSchema.parse(input);
     const detail = this.getFiscalDocument(data.fiscalDocumentId);

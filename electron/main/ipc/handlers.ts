@@ -1367,6 +1367,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       if (!printWindow.isDestroyed()) printWindow.destroy();
     }
   });
+  handle(IPC_CHANNELS.removeDuplicateFiscalDocumentItems, (_event, payload: unknown) => {
+    const data = z.object({ fiscalDocumentId: z.string().uuid(), dryRun: z.boolean().optional() }).parse(payload);
+    return repository.removeDuplicateFiscalDocumentItems(data.fiscalDocumentId, data.dryRun ?? true);
+  });
   handle(IPC_CHANNELS.exportChargePartnerVersion, async (_event, payload: unknown) => {
     const data = z.object({
       chargeId: z.string().uuid(), excludedOperationIds: z.array(z.string().uuid()).max(5000), excludedAdjustmentIds: z.array(z.string().uuid()).max(5000),
