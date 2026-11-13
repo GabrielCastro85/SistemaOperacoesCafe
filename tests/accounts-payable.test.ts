@@ -84,6 +84,28 @@ describe("accounts payable", () => {
     db.close();
   });
 
+  it("continua parcelamento em andamento com o numero certo e leva o PIX; mensal copia o PIX do mes anterior", async () => {
+    const { repo, db } = setup();
+    const category = (await repo.listExpenseCategories(villaId))[0];
+    const base = { organizationId: villaId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: "Loteadora", categoryId: category.id, defaultCostCenterId: null, defaultLocationId: null };
+    // Carne na 17 de 22: lanca 18 a 22, cada uma de R$ 10.000.
+    const lote = repo.createPayableInstallmentGroup({ ...base, description: "LOTE 14", installmentAmountCents: 1_000_000, installmentCount: 22, firstInstallmentNumber: 18, firstDueDate: "2026-12-01", intervalType: "MONTHLY", plannedPaymentMethod: "PIX", pixKey: "27999842417" });
+    expect(lote.payables.map((item) => item.description)).toEqual(["LOTE 14 18/22", "LOTE 14 19/22", "LOTE 14 20/22", "LOTE 14 21/22", "LOTE 14 22/22"]);
+    expect(lote.payables.map((item) => [item.installmentNumber, item.installmentCount, item.originalAmountCents, item.pixKey, item.dueDate])[4]).toEqual([22, 22, 1_000_000, "27999842417", "2027-04-01"]);
+    expect(lote.group.totalAmountCents).toBe(5_000_000);
+    expect(() => repo.createPayableInstallmentGroup({ ...base, description: "X", installmentCount: 3, firstInstallmentNumber: 4, installmentAmountCents: 100, firstDueDate: "2026-12-01", intervalType: "MONTHLY" })).toThrow();
+    expect(() => repo.createPayableInstallmentGroup({ ...base, description: "X", installmentCount: 3, firstDueDate: "2026-12-01", intervalType: "MONTHLY" })).toThrow();
+
+    const salario = repo.createPayableRecurringTemplate({ ...base, payeeNameSnapshot: "THADEU", description: "SALARIO THADEU", amountMode: "FIXED", fixedAmountCents: 600_000, estimatedAmountCents: null, frequency: "MONTHLY", dueDay: 10, generationLeadDays: 7, startDate: "2026-12-01", endDate: null, autoGenerateOnOpen: true, isActive: true });
+    const first = repo.generatePayableRecurringPeriod(salario.id, 2, { plannedPaymentMethod: "PIX", pixKey: "(33) 98457-9588" });
+    expect(first.map((item) => [item.plannedPaymentMethod, item.pixKey])).toEqual([["PIX", "(33) 98457-9588"], ["PIX", "(33) 98457-9588"]]);
+    // Geracao automatica seguinte (sem informar nada) copia do mes anterior.
+    const next = repo.generatePayableRecurringPeriod(salario.id, 3);
+    expect(next.at(-1)?.pixKey).toBe("(33) 98457-9588");
+    expect(next.at(-1)?.plannedPaymentMethod).toBe("PIX");
+    db.close();
+  });
+
   it("copies payable and payment attachments, rejects invalid files and keeps internal copy", async () => {
     const { repo, db } = setup();
     const category = (await repo.listExpenseCategories(villaId))[0];

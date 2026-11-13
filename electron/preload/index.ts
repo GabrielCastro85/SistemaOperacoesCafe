@@ -837,7 +837,7 @@ export interface OperationsCafeApi {
   listPayableRecurringTemplates: (organizationId: string) => Promise<PayableRecurringTemplate[]>;
   createPayableRecurringTemplate: (input: unknown) => Promise<PayableRecurringTemplate>;
   previewPayableRecurringGeneration: (templateId: string, monthsAhead?: number) => Promise<Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: string }>>;
-  generatePayableRecurringPeriod: (templateId: string, monthsAhead?: number) => Promise<AccountPayable[]>;
+  generatePayableRecurringPeriod: (templateId: string, monthsAhead?: number, payment?: { plannedPaymentMethod?: string | null; pixKey?: string | null }) => Promise<AccountPayable[]>;
   createPayableInstallmentGroup: (input: unknown) => Promise<{ group: PayableInstallmentGroup; payables: AccountPayable[] }>;
   getPayableInstallmentGroup: (id: string) => Promise<PayableInstallmentGroup>;
   createPayablePayment: (input: unknown) => Promise<PayablePayment>;
@@ -1268,7 +1268,7 @@ const api: OperationsCafeApi = {
   listPayableRecurringTemplates: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listPayableRecurringTemplates, organizationId) as Promise<PayableRecurringTemplate[]>,
   createPayableRecurringTemplate: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPayableRecurringTemplate, input) as Promise<PayableRecurringTemplate>,
   previewPayableRecurringGeneration: (templateId, monthsAhead) => ipcRenderer.invoke(IPC_CHANNELS.previewPayableRecurringGeneration, { templateId, monthsAhead }) as Promise<Array<{ competenceDate: string; dueDate: string; amountCents: number | null; amountStatus: string }>>,
-  generatePayableRecurringPeriod: (templateId, monthsAhead) => ipcRenderer.invoke(IPC_CHANNELS.generatePayableRecurringPeriod, { templateId, monthsAhead }) as Promise<AccountPayable[]>,
+  generatePayableRecurringPeriod: (templateId, monthsAhead, payment) => ipcRenderer.invoke(IPC_CHANNELS.generatePayableRecurringPeriod, { templateId, monthsAhead, ...(payment ?? {}) }) as Promise<AccountPayable[]>,
   createPayableInstallmentGroup: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPayableInstallmentGroup, input) as Promise<{ group: PayableInstallmentGroup; payables: AccountPayable[] }>,
   getPayableInstallmentGroup: (id) => ipcRenderer.invoke(IPC_CHANNELS.getPayableInstallmentGroup, id) as Promise<PayableInstallmentGroup>,
   createPayablePayment: (input) => ipcRenderer.invoke(IPC_CHANNELS.createPayablePayment, input) as Promise<PayablePayment>,

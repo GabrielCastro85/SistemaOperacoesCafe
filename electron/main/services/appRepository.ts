@@ -6637,10 +6637,18 @@ export class AppRepository {
     return this.buildRecurringOccurrences(template, monthsAhead);
   }
 
-  generatePayableRecurringPeriod(templateId: string, monthsAhead = 3): AccountPayable[] {
+  // payment: forma de pagamento e PIX dos meses gerados. Sem ele, copia do mes
+  // mais recente desta conta mensal (a tabela do modelo nao guarda PIX).
+  generatePayableRecurringPeriod(templateId: string, monthsAhead = 3, payment?: { plannedPaymentMethod?: string | null; pixKey?: string | null }): AccountPayable[] {
     const run = this.db.transaction(() => {
       const template = this.getPayableRecurringTemplate(templateId);
       const created: AccountPayable[] = [];
+      const previous = this.db.prepare(`SELECT planned_payment_method, pix_key FROM accounts_payable
+        WHERE recurring_template_id = ? AND status != 'CANCELLED' AND planned_payment_method IS NOT NULL
+        ORDER BY competence_date DESC LIMIT 1`).get(template.id) as { planned_payment_method: string | null; pix_key: string | null } | undefined;
+      const method = (payment?.plannedPaymentMethod ?? previous?.planned_payment_method ?? null) as AccountPayable["plannedPaymentMethod"];
+      const pixKey = method === "PIX" ? (payment?.pixKey ?? previous?.pix_key ?? null) : null;
+      const plannedPaymentMethod = method === "PIX" && !pixKey ? null : method;
       this.buildRecurringOccurrences(template, monthsAhead).forEach((occurrence) => {
         const existing = this.db.prepare("SELECT id FROM accounts_payable WHERE recurring_template_id = ? AND competence_date = ? AND status != 'CANCELLED'").get(template.id, occurrence.competenceDate);
         if (existing) return;
@@ -6667,6 +6675,8 @@ export class AppRepository {
           penaltyCents: 0,
           otherAdditionsCents: 0,
           amountStatus: occurrence.amountStatus,
+          plannedPaymentMethod,
+          pixKey,
           notes: null,
           internalNotes: null
         });
@@ -6694,11 +6704,16 @@ export class AppRepository {
     const run = this.db.transaction(() => {
       const groupId = randomUUID();
       const now = new Date().toISOString();
+      // Lanca da parcela inicial ate a ultima (ex.: 18 a 22 de 22).
+      const first = data.firstInstallmentNumber;
+      const remaining = data.installmentCount - first + 1;
+      const amounts = data.installmentAmountCents ? Array.from({ length: remaining }, () => data.installmentAmountCents!) : splitCents(data.totalAmountCents!, remaining);
+      const groupTotal = amounts.reduce((sum, amount) => sum + amount, 0);
       this.db.prepare("INSERT INTO payable_installment_groups (id, organization_id, own_legal_entity_id, supplier_partner_id, description, total_amount_cents, installment_count, first_due_date, interval_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(groupId, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.description, data.totalAmountCents, data.installmentCount, data.firstDueDate, data.intervalType, now, now);
-      const amounts = splitCents(data.totalAmountCents, data.installmentCount);
+        .run(groupId, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.description, groupTotal, data.installmentCount, data.firstDueDate, data.intervalType, now, now);
       const payables: AccountPayable[] = [];
       amounts.forEach((amount, index) => {
+        const number = first + index;
         const dueDate = data.intervalType === "DAYS_30" ? addDays(data.firstDueDate, index * 30) : addMonthsSafe(data.firstDueDate, index);
         const detail = this.createAccountPayableDraft({
           organizationId: data.organizationId,
@@ -6711,9 +6726,9 @@ export class AppRepository {
           defaultCostCenterId: data.defaultCostCenterId,
           defaultLocationId: data.defaultLocationId,
           source: "INSTALLMENT",
-          description: `${data.description} ${index + 1}/${data.installmentCount}`,
+          description: `${data.description} ${number}/${data.installmentCount}`,
           documentType: null,
-          documentNumber: `${index + 1}/${data.installmentCount}`,
+          documentNumber: `${number}/${data.installmentCount}`,
           competenceDate: dueDate.slice(0, 8) + "01",
           issueDate: null,
           dueDate,
@@ -6723,10 +6738,12 @@ export class AppRepository {
           penaltyCents: 0,
           otherAdditionsCents: 0,
           amountStatus: "CONFIRMED",
+          plannedPaymentMethod: data.plannedPaymentMethod,
+          pixKey: data.plannedPaymentMethod === "PIX" ? data.pixKey : null,
           notes: null,
           internalNotes: null
         });
-        this.db.prepare("UPDATE accounts_payable SET installment_group_id = ?, installment_number = ?, installment_count = ?, status = 'OPEN' WHERE id = ?").run(groupId, index + 1, data.installmentCount, detail.payable.id);
+        this.db.prepare("UPDATE accounts_payable SET installment_group_id = ?, installment_number = ?, installment_count = ?, status = 'OPEN' WHERE id = ?").run(groupId, number, data.installmentCount, detail.payable.id);
         payables.push(this.getPayable(detail.payable.id));
       });
       return { group: this.getPayableInstallmentGroup(groupId), payables };

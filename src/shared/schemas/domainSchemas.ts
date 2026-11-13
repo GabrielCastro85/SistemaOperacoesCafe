@@ -802,10 +802,20 @@ export const payableInstallmentGroupInputSchema = z.object({
   defaultCostCenterId: z.string().uuid().nullable(),
   defaultLocationId: z.string().uuid().nullable(),
   description: z.string().trim().min(1),
-  totalAmountCents: z.number().int().positive(),
+  // Valor total (dividido entre as parcelas lancadas) OU valor de cada parcela.
+  totalAmountCents: z.number().int().positive().optional(),
+  installmentAmountCents: z.number().int().positive().optional(),
   installmentCount: z.number().int().positive().max(120),
+  // Parcelamento ja em andamento: "17/22" -> comeca na 18 (lanca 18 a 22).
+  firstInstallmentNumber: z.number().int().min(1).optional().default(1),
   firstDueDate: payableDate,
-  intervalType: installmentIntervalTypeSchema
+  intervalType: installmentIntervalTypeSchema,
+  plannedPaymentMethod: payablePaymentMethodSchema.nullable().optional().default(null),
+  pixKey: nullableText.optional().default(null)
+}).superRefine((data, context) => {
+  if (!data.totalAmountCents && !data.installmentAmountCents) context.addIssue({ code: z.ZodIssueCode.custom, path: ["totalAmountCents"], message: "Informe o valor total ou o valor de cada parcela." });
+  if (data.firstInstallmentNumber > data.installmentCount) context.addIssue({ code: z.ZodIssueCode.custom, path: ["firstInstallmentNumber"], message: "A parcela inicial passa do total de parcelas." });
+  if (data.plannedPaymentMethod === "PIX" && !data.pixKey?.trim()) context.addIssue({ code: z.ZodIssueCode.custom, path: ["pixKey"], message: "Informe a chave PIX prevista para o pagamento." });
 });
 
 export const payablePaymentInputSchema = z.object({

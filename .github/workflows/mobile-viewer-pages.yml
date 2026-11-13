@@ -28,17 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: mobile-viewer/package-lock.json
-      - run: npm ci
-        working-directory: mobile-viewer
-      # Site antigo (consulta, melhor no celular) em /consulta/.
-      - run: npx tsc -b && npx vite build --base=/consulta/
-        working-directory: mobile-viewer
-      # Site completo (mesmas telas do app) na raiz.
+      # O site antigo de consulta (/consulta/) foi aposentado em 2026-11-13:
+      # o endereco agora so' redireciona para o site completo, na raiz.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -52,9 +43,9 @@ jobs:
           mkdir -p site
           cp -r dist-web/. site/
           cp mobile-viewer/public/favicon.ico mobile-viewer/public/icon-*.png site/
-          cp -r mobile-viewer/dist site/consulta
-          mkdir -p site/app
+          mkdir -p site/app site/consulta
           printf "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=\"0; url=/\"><script>location.replace(\"/\" + location.hash)</script>" > site/app/index.html
+          printf "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=\"0; url=/\"><script>location.replace(\"/\")</script>" > site/consulta/index.html
       - uses: actions/configure-pages@v5
         with:
           enablement: true

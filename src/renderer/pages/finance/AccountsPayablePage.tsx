@@ -39,7 +39,7 @@ function daysBetween(fromIso: string, toIso: string): number {
 const isClosed = (payable: AccountPayable) => payable.status === "PAID" || payable.status === "CANCELLED";
 const openOf = (payable: AccountPayable) => Math.max(0, payable.openAmountCents ?? payable.finalAmountCents ?? 0);
 
-interface NewForm { description: string; payee: string; amount: string; dueDate: string; categoryId: string; method: PayablePaymentMethod; pixKey: string; repeat: Repeat; installments: string; notes: string }
+interface NewForm { description: string; payee: string; amount: string; dueDate: string; categoryId: string; method: PayablePaymentMethod; pixKey: string; repeat: Repeat; installments: string; firstInstallment: string; perInstallment: boolean; notes: string }
 interface PayForm { payable: AccountPayable; amount: string; date: string; method: PayablePaymentMethod; accountId: string; notes: string }
 
 export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
@@ -50,7 +50,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
   const [month, setMonth] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const emptyNew = (): NewForm => ({ description: "", payee: "", amount: "", dueDate: today, categoryId: "", method: "BOLETO", pixKey: "", repeat: "ONCE", installments: "2", notes: "" });
+  const emptyNew = (): NewForm => ({ description: "", payee: "", amount: "", dueDate: today, categoryId: "", method: "BOLETO", pixKey: "", repeat: "ONCE", installments: "2", firstInstallment: "1", perInstallment: true, notes: "" });
   const [newForm, setNewForm] = useState<NewForm | null>(null);
   const [payForm, setPayForm] = useState<PayForm | null>(null);
 
@@ -115,19 +115,26 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
     if (!newForm.categoryId) { setMessage("Escolha a categoria."); return; }
     const count = Number(newForm.installments);
     if (newForm.repeat === "INSTALLMENTS" && (!Number.isInteger(count) || count < 2 || count > 120)) { setMessage("Informe o número de parcelas (2 a 120)."); return; }
+    const firstNumber = Number(newForm.firstInstallment || "1");
+    if (newForm.repeat === "INSTALLMENTS" && (!Number.isInteger(firstNumber) || firstNumber < 1 || firstNumber > count)) { setMessage(`A parcela inicial tem que estar entre 1 e ${count}.`); return; }
+    const pixKey = newForm.pixKey.trim();
+    if (newForm.method === "PIX" && !pixKey) { setMessage("Informe a chave PIX (ou escolha outra forma de pagamento)."); return; }
+    const payment = { plannedPaymentMethod: newForm.method, pixKey: newForm.method === "PIX" ? pixKey : null };
     setBusy(true);
     setMessage(null);
     const base = { organizationId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: newForm.payee.trim(), categoryId: newForm.categoryId, defaultCostCenterId: null, defaultLocationId: null, description: newForm.description.trim() };
     try {
       if (newForm.repeat === "MONTHLY") {
         const template = await window.operationsCafe.createPayableRecurringTemplate({ ...base, amountMode: "FIXED", fixedAmountCents: amountCents, estimatedAmountCents: null, frequency: "MONTHLY", dueDay: Number(newForm.dueDate.slice(8, 10)), generationLeadDays: 7, startDate: `${newForm.dueDate.slice(0, 8)}01`, endDate: null, autoGenerateOnOpen: true, isActive: true });
-        await window.operationsCafe.generatePayableRecurringPeriod(template.id, 3);
+        await window.operationsCafe.generatePayableRecurringPeriod(template.id, 3, payment);
         setMessage(`Conta mensal "${base.description}" criada: os próximos 3 meses já estão na lista e os seguintes aparecem sozinhos.`);
       } else if (newForm.repeat === "INSTALLMENTS") {
-        await window.operationsCafe.createPayableInstallmentGroup({ ...base, totalAmountCents: amountCents, installmentCount: count, firstDueDate: newForm.dueDate, intervalType: "MONTHLY" });
-        setMessage(`"${base.description}" lançada em ${count} parcelas mensais.`);
+        // Parcelamento em andamento: lanca da parcela inicial ate a ultima, com o numero certo (ex.: 18/22).
+        await window.operationsCafe.createPayableInstallmentGroup({ ...base, ...(newForm.perInstallment ? { installmentAmountCents: amountCents } : { totalAmountCents: amountCents }), installmentCount: count, firstInstallmentNumber: firstNumber, firstDueDate: newForm.dueDate, intervalType: "MONTHLY", ...payment });
+        const launched = count - firstNumber + 1;
+        setMessage(`"${base.description}" lançada: parcelas ${firstNumber}/${count} a ${count}/${count} (${launched} ${launched === 1 ? "mês" : "meses"}).`);
       } else {
-        const detail = await window.operationsCafe.createAccountPayableDraft({ ...base, payeeTaxIdSnapshot: null, source: "MANUAL", documentType: null, documentNumber: null, competenceDate: `${newForm.dueDate.slice(0, 8)}01`, issueDate: null, dueDate: newForm.dueDate, originalAmountCents: amountCents, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", plannedPaymentMethod: newForm.method, pixKey: newForm.method === "PIX" ? newForm.pixKey.trim() || null : null, notes: newForm.notes.trim() || null, internalNotes: null });
+        const detail = await window.operationsCafe.createAccountPayableDraft({ ...base, payeeTaxIdSnapshot: null, source: "MANUAL", documentType: null, documentNumber: null, competenceDate: `${newForm.dueDate.slice(0, 8)}01`, issueDate: null, dueDate: newForm.dueDate, originalAmountCents: amountCents, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", ...payment, notes: newForm.notes.trim() || null, internalNotes: null });
         await window.operationsCafe.confirmAccountPayable(detail.payable.id);
         setMessage(`Conta "${base.description}" lançada para ${formatDateOnlyBr(newForm.dueDate)}.`);
       }
@@ -302,16 +309,20 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
           <div className="partner-modal__body payables-form">
             <label className="payables-form__wide">O que é a conta<input autoFocus value={newForm.description} onChange={(event) => setNewForm({ ...newForm, description: event.target.value })} placeholder="Ex.: Energia elétrica do armazém" /></label>
             <label className="payables-form__wide">Para quem pagar (favorecido)<input value={newForm.payee} onChange={(event) => setNewForm({ ...newForm, payee: event.target.value })} placeholder="Ex.: Cemig" /></label>
-            <label>{newForm.repeat === "INSTALLMENTS" ? "Valor total (R$)" : "Valor (R$)"}<input inputMode="decimal" value={newForm.amount} onChange={(event) => setNewForm({ ...newForm, amount: event.target.value })} placeholder="0,00" /></label>
-            <label>{newForm.repeat === "ONCE" ? "Vencimento" : "Primeiro vencimento"}<input type="date" value={newForm.dueDate} onChange={(event) => setNewForm({ ...newForm, dueDate: event.target.value })} /></label>
+            <label>{newForm.repeat === "INSTALLMENTS" ? (newForm.perInstallment ? "Valor de cada parcela (R$)" : "Valor total (R$)") : "Valor (R$)"}<input inputMode="decimal" value={newForm.amount} onChange={(event) => setNewForm({ ...newForm, amount: event.target.value })} placeholder="0,00" /></label>
+            <label>{newForm.repeat === "ONCE" ? "Vencimento" : newForm.repeat === "INSTALLMENTS" ? "Vencimento da parcela inicial" : "Primeiro vencimento"}<input type="date" value={newForm.dueDate} onChange={(event) => setNewForm({ ...newForm, dueDate: event.target.value })} /></label>
             <label>Categoria<select value={newForm.categoryId} onChange={(event) => { if (event.target.value === "__new__") void createCategory(); else setNewForm({ ...newForm, categoryId: event.target.value }); }}><option value="">Escolha a categoria</option>{finance.categories.filter((category) => category.isActive).sort((left, right) => left.name.localeCompare(right.name, "pt-BR")).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}<option value="__new__">+ Nova categoria...</option></select></label>
             <label>Forma de pagamento<select value={newForm.method} onChange={(event) => setNewForm({ ...newForm, method: event.target.value as PayablePaymentMethod })}>{METHODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-            {newForm.method === "PIX" ? <label className="payables-form__wide">Chave PIX (opcional)<input value={newForm.pixKey} onChange={(event) => setNewForm({ ...newForm, pixKey: event.target.value })} /></label> : null}
+            {newForm.method === "PIX" ? <label className="payables-form__wide">Chave PIX<input value={newForm.pixKey} onChange={(event) => setNewForm({ ...newForm, pixKey: event.target.value })} /></label> : null}
             <fieldset className="payables-form__wide payables-repeat">
               <legend>Repetição</legend>
               {([["ONCE", "Só esta vez"], ["MONTHLY", "Todo mês (mesmo valor)"], ["INSTALLMENTS", "Parcelado"]] as Array<[Repeat, string]>).map(([key, label]) => <label key={key} className={`payables-repeat__option${newForm.repeat === key ? " is-on" : ""}`}><input type="radio" name="payables-repeat" checked={newForm.repeat === key} onChange={() => setNewForm({ ...newForm, repeat: key })} />{label}</label>)}
-              {newForm.repeat === "INSTALLMENTS" ? <label className="payables-repeat__count">Número de parcelas<input inputMode="numeric" value={newForm.installments} onChange={(event) => setNewForm({ ...newForm, installments: event.target.value.replace(/\D/g, "") })} /></label> : null}
-              <small>{newForm.repeat === "MONTHLY" ? "Lança os próximos 3 meses e continua gerando sozinho todo mês, no mesmo dia." : newForm.repeat === "INSTALLMENTS" ? "Divide o valor total em parcelas mensais a partir do primeiro vencimento." : "Uma conta só."}</small>
+              {newForm.repeat === "INSTALLMENTS" ? <>
+                <label className="payables-repeat__count">Total de parcelas<input inputMode="numeric" value={newForm.installments} onChange={(event) => setNewForm({ ...newForm, installments: event.target.value.replace(/\D/g, "") })} /></label>
+                <label className="payables-repeat__count">Começa na parcela<input inputMode="numeric" value={newForm.firstInstallment} onChange={(event) => setNewForm({ ...newForm, firstInstallment: event.target.value.replace(/\D/g, "") })} /></label>
+                <label className="payables-repeat__option payables-repeat__check"><input type="checkbox" checked={!newForm.perInstallment} onChange={(event) => setNewForm({ ...newForm, perInstallment: !event.target.checked })} />O valor informado é o total (dividir entre as parcelas)</label>
+              </> : null}
+              <small>{newForm.repeat === "MONTHLY" ? "Lança os próximos 3 meses e continua gerando sozinho todo mês, no mesmo dia e com a mesma forma de pagamento." : newForm.repeat === "INSTALLMENTS" ? (() => { const total = Number(newForm.installments) || 0; const first = Number(newForm.firstInstallment) || 1; return total >= first ? `Lança as parcelas ${first}/${total} a ${total}/${total}, uma por mês. Ex.: carnê que está na 17 de 22 → total 22, começa na 18.` : "Informe o total de parcelas e em qual começar."; })() : "Uma conta só."}</small>
             </fieldset>
             {newForm.repeat === "ONCE" ? <label className="payables-form__wide">Observação (opcional)<input value={newForm.notes} onChange={(event) => setNewForm({ ...newForm, notes: event.target.value })} /></label> : null}
           </div>

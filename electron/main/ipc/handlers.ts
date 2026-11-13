@@ -1556,8 +1556,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     return repository.previewPayableRecurringGeneration(data.templateId, data.monthsAhead);
   });
   handle(IPC_CHANNELS.generatePayableRecurringPeriod, (_event, payload: unknown) => {
-    const data = z.object({ templateId: z.string().uuid(), monthsAhead: z.number().int().min(1).max(24).optional() }).parse(payload);
-    return repository.generatePayableRecurringPeriod(data.templateId, data.monthsAhead);
+    const data = z.object({ templateId: z.string().uuid(), monthsAhead: z.number().int().min(1).max(24).optional(), plannedPaymentMethod: z.string().nullable().optional(), pixKey: z.string().nullable().optional() }).parse(payload);
+    return repository.generatePayableRecurringPeriod(data.templateId, data.monthsAhead, data.plannedPaymentMethod !== undefined || data.pixKey !== undefined ? { plannedPaymentMethod: data.plannedPaymentMethod ?? null, pixKey: data.pixKey ?? null } : undefined);
   });
   handle(IPC_CHANNELS.createPayableInstallmentGroup, (_event, payload: unknown) => repository.createPayableInstallmentGroup(payload));
   handle(IPC_CHANNELS.getPayableInstallmentGroup, (_event, payload: unknown) => repository.getPayableInstallmentGroup(z.string().uuid().parse(payload)));
