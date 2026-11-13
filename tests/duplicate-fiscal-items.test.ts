@@ -54,6 +54,27 @@ describe("notas com itens duplicados", () => {
     } finally { db.close(); }
   });
 
+  it("nota triangulada: fica uma compra e uma venda no item que sobra", async () => {
+    const { repo, db, partner } = await setup();
+    try {
+      const supplier = await repo.createBusinessPartner({ organizationId, displayName: "Cereais Teste", notes: null, roles: ["SUPPLIER"], isActive: true });
+      const product = repo.listProducts({ organizationId })[0];
+      const doc = repo.createFiscalDocument({ organizationId, ownLegalEntityId, responsiblePartnerId: partner.id, partnerLegalEntityId: null, accessKey: null, documentNumber: "238", series: "1", issueDate: "2026-08-05", totalAmountCents: 11_611_000, hasPendingIssues: false, pendingNotes: null, notes: null });
+      const item = () => repo.addFiscalDocumentItem({ fiscalDocumentId: doc.document.id, productId: product.id, description: "CAFE", quantity: "683", unit: "SACK", unitPriceDecimal: "170.00", totalAmountCents: 11_611_000, sacksQuantity: "683" });
+      const op = (itemId: string, type: "SALE" | "PURCHASE", partnerId: string) => repo.addOperation({ fiscalDocumentId: doc.document.id, fiscalDocumentItemId: itemId, ownLegalEntityId, responsiblePartnerId: partnerId, productId: product.id, operationType: type, operationScope: "EXTERNAL", operationDate: "2026-08-05", quantitySacks: "683", manualRateValueCents: 100, manualOverrideReason: "teste", notes: null });
+      const first = item();
+      const second = item();
+      op(first.id, "PURCHASE", supplier.id);
+      op(second.id, "SALE", partner.id);
+      op(second.id, "PURCHASE", supplier.id);
+      expect(repo.removeDuplicateFiscalDocumentItems(doc.document.id, false)).toMatchObject({ status: "FIXED", removedItems: 1, removedOperations: 1 });
+      const fixed = repo.getFiscalDocument(doc.document.id);
+      expect(fixed.items).toHaveLength(1);
+      expect(fixed.operations.map((operation) => operation.operationType).sort()).toEqual(["PURCHASE", "SALE"]);
+      expect(new Set(fixed.operations.map((operation) => operation.fiscalDocumentItemId))).toEqual(new Set([fixed.items[0].id]));
+    } finally { db.close(); }
+  });
+
   it("bloqueia quando um item repetido ja esta numa cobranca", async () => {
     const { repo, db, partner, note } = await setup();
     try {
