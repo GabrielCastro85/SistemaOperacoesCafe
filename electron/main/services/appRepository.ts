@@ -226,7 +226,7 @@ import {
   mapDealPaymentTerm
 } from "../database/mappers.js";
 import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, multiplyDecimalText, normalizeDecimalText, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
-import { generateChargeDocuments } from "./chargeDocuments.js";
+import { buildChargePdf, buildChargeWorkbook, generateChargeDocuments } from "./chargeDocuments.js";
 import { generatePaymentReceiptDocuments } from "./paymentReceiptDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
@@ -3398,6 +3398,39 @@ export class AppRepository {
     trx();
     const generated = await this.regenerateChargeDocuments(id);
     return generated;
+  }
+
+  // Versao para o parceiro (ex.: Neto): mesma cobranca, sem as notas e ajustes
+  // desmarcados e com o preco por saca dele (interno/externo). Nada e' gravado:
+  // a cobranca original continua igual; so' devolve o arquivo.
+  async buildChargePartnerVersion(input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; format: "pdf" | "xlsx" }): Promise<{ bytes: Uint8Array; detail: ClientChargeDetail }> {
+    const original = this.getClientCharge(input.chargeId);
+    const excludedOperations = new Set(input.excludedOperationIds);
+    const excludedAdjustments = new Set(input.excludedAdjustmentIds);
+    const operations = original.operations.filter((operation) => !excludedOperations.has(operation.id)).map((operation) => {
+      const packaging = Number(operation.quantitySacksDecimalSnapshot ?? 0) === 0 && operation.serviceAmountCentsSnapshot > 0 && operation.serviceRateCentsSnapshot > 0;
+      const rate = packaging ? null : operation.operationScopeSnapshot === "INTERNAL" ? input.internalRateCents : input.externalRateCents;
+      if (rate === null || rate === undefined) return { ...operation };
+      return { ...operation, serviceRateCentsSnapshot: rate, serviceAmountCentsSnapshot: multiplyDecimalByCents(operation.quantitySacksDecimalSnapshot, rate) };
+    });
+    if (!operations.length) throw new Error("Deixe pelo menos uma nota na versão do parceiro.");
+    const adjustments = original.adjustments.filter((adjustment) => !excludedAdjustments.has(adjustment.id));
+    const subtotal = operations.reduce((sum, operation) => sum + operation.serviceAmountCentsSnapshot, 0);
+    const additions = adjustments.filter((adjustment) => adjustment.effect === "INCREASE_RECEIVABLE").reduce((sum, adjustment) => sum + adjustment.amountCents, 0);
+    const deductions = adjustments.filter((adjustment) => adjustment.effect !== "INCREASE_RECEIVABLE").reduce((sum, adjustment) => sum + adjustment.amountCents, 0);
+    const finalAmount = subtotal + additions - deductions;
+    const detail: ClientChargeDetail = {
+      ...original,
+      charge: { ...original.charge, subtotalServicesCents: subtotal, additionsCents: additions, deductionsCents: deductions, finalAmountCents: finalAmount, paidAmountCents: 0, openAmountCents: Math.max(0, finalAmount) },
+      operations, adjustments, payments: [], creditAllocations: []
+    };
+    const organization = this.getOrganization(detail.charge.organizationId);
+    const ownLegalEntity = this.getLegalEntity(detail.charge.ownLegalEntityId);
+    const client = this.getBusinessPartner(detail.charge.clientPartnerId);
+    const clientLegalEntity = this.listPartnerLegalEntities(client.id).find((entity) => entity.isPrimary && entity.isActive) ?? this.listPartnerLegalEntities(client.id).find((entity) => entity.isActive) ?? null;
+    const documentsInput = { directories: this.directories!, organization, ownLegalEntity, client, clientLegalEntity, detail, relatedOpenChargeDetails: [], relatedPaidChargeDetails: [] };
+    const bytes = input.format === "pdf" ? await buildChargePdf(documentsInput) : new Uint8Array(await buildChargeWorkbook(documentsInput));
+    return { bytes, detail };
   }
 
   async regenerateChargeDocuments(id: string): Promise<ClientChargeDetail> {

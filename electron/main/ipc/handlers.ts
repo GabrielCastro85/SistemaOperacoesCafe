@@ -1367,6 +1367,22 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
       if (!printWindow.isDestroyed()) printWindow.destroy();
     }
   });
+  handle(IPC_CHANNELS.exportChargePartnerVersion, async (_event, payload: unknown) => {
+    const data = z.object({
+      chargeId: z.string().uuid(), excludedOperationIds: z.array(z.string().uuid()).max(5000), excludedAdjustmentIds: z.array(z.string().uuid()).max(5000),
+      internalRateCents: z.number().int().min(0).nullable(), externalRateCents: z.number().int().min(0).nullable(), format: z.enum(["pdf", "xlsx"])
+    }).parse(payload);
+    const { bytes, detail } = await repository.buildChargePartnerVersion(data);
+    const client = repository.getBusinessPartner(detail.charge.clientPartnerId);
+    const baseName = buildChargeExportFileName(client.displayName, detail.charge.periodStart, detail.charge.periodEnd, "pdf").replace(/\.pdf$/i, "");
+    const fileName = `${baseName} - versao parceiro.${data.format}`;
+    const result = await dialog.showSaveDialog({ title: "Salvar versão para o parceiro", defaultPath: fileName, filters: [{ name: data.format === "pdf" ? "PDF" : "Planilha Excel", extensions: [data.format] }] });
+    if (result.canceled || !result.filePath) return false;
+    writeFileSync(result.filePath, bytes);
+    const error = await shell.openPath(result.filePath);
+    if (error) throw new Error(error);
+    return true;
+  });
   handle(IPC_CHANNELS.openChargeDocument, async (event, payload: unknown) => {
     const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);
     const regenerated = await repository.regenerateChargeDocuments(data.chargeId);

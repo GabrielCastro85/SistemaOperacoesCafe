@@ -17,6 +17,7 @@ import { calculateChargeCte, defaultsToCte, type ChargeCteNote } from "../../../
 import { chargeCompanyClass } from "../../../shared/utils/chargeCompanyClass";
 import { isPackagingChargeLine, packagingUnits } from "../../../shared/utils/packagingBilling";
 import { CHARGE_BANK_FIELD_LABELS, chargeBankFormValues } from "../../../shared/utils/chargeBankDetails";
+import { ChargePartnerVersionModal } from "./ChargePartnerVersionModal";
 
 // Sacaria (big bag vazio) entra por unidade e nao soma sacas.
 function chargeQuantityLabel(quantitySacks: string, rateCents: number, amountCents: number): string {
@@ -1050,6 +1051,9 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
+  // Versao para o parceiro (precos dele, sem as notas que ele tirou); nao grava nada.
+  const [partnerVersionOpen, setPartnerVersionOpen] = useState(false);
+
   async function openDocument(kind: "pdf" | "image"): Promise<void> {
     if (!detail) return;
     try {
@@ -1439,6 +1443,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   <button onClick={() => void openDocument("image")}>Salvar imagem</button>
                 </div>
               )}
+              {detail ? <button type="button" className="charge-partner-open" onClick={() => setPartnerVersionOpen(true)} title="PDF ou planilha com os preços do parceiro, sem mudar esta cobrança">Versão para o parceiro</button> : null}
+              {detail && partnerVersionOpen ? <ChargePartnerVersionModal detail={detail} onClose={() => setPartnerVersionOpen(false)} /> : null}
             </div>
           </div>
         </div>

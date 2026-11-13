@@ -334,6 +334,7 @@ const IPC_CHANNELS = {
   listClientCharges: "clientCharges:list",
   getClientCharge: "clientCharges:get",
   regenerateChargeDocuments: "clientCharges:regenerateDocuments",
+  exportChargePartnerVersion: "clientCharges:exportPartnerVersion",
   openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",
   createLedgerEntry: "clientLedger:createEntry",
@@ -782,6 +783,7 @@ export interface OperationsCafeApi {
   listClientCharges: (filters?: { organizationId?: string; clientPartnerId?: string; status?: string }) => Promise<ClientCharge[]>;
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
   regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
+  exportChargePartnerVersion: (input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; format: "pdf" | "xlsx" }) => Promise<boolean>;
   openChargeDocument: (input: { chargeId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<ClientLedgerEntry[]>;
   createLedgerEntry: (input: unknown) => Promise<ClientLedgerEntry>;
@@ -1213,6 +1215,7 @@ const api: OperationsCafeApi = {
   listClientCharges: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listClientCharges, filters) as Promise<ClientCharge[]>,
   getClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.getClientCharge, id) as Promise<ClientChargeDetail>,
   regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail>,
+  exportChargePartnerVersion: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargePartnerVersion, input) as Promise<boolean>,
   openChargeDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.openChargeDocument, input) as Promise<boolean>,
   listLedgerEntries: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLedgerEntries, filters) as Promise<ClientLedgerEntry[]>,
   createLedgerEntry: (input) => ipcRenderer.invoke(IPC_CHANNELS.createLedgerEntry, input) as Promise<ClientLedgerEntry>,

@@ -240,6 +240,7 @@ export const IPC_CHANNELS = {
   listClientCharges: "clientCharges:list",
   getClientCharge: "clientCharges:get",
   regenerateChargeDocuments: "clientCharges:regenerateDocuments",
+  exportChargePartnerVersion: "clientCharges:exportPartnerVersion",
   openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",
   createLedgerEntry: "clientLedger:createEntry",

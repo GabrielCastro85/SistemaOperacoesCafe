@@ -82,6 +82,33 @@ describe("client charges and ledger", () => {
     } finally { db.close(); }
   });
 
+  it("gera a versao para o parceiro (notas tiradas e precos dele) sem mexer na cobranca original", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, productId, operationScope: "INTERNAL", rateType: "PER_SACK", rateValueCents: 300, effectiveFrom: "2026-07-01", effectiveTo: null, priority: 10, notes: null, isActive: true });
+      createConfirmedOperation(repo, partnerId, productId, "PARC-EXT", "100");
+      createConfirmedOperation(repo, partnerId, productId, "PARC-INT", "200", "INTERNAL");
+      createConfirmedOperation(repo, partnerId, productId, "PARC-FORA", "50");
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-07-01", periodEnd: "2026-07-31" };
+      const operations = repo.findEligibleOperations(filters);
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-08-05", notes: null, internalNotes: null, operationIds: operations.map((operation) => operation.id) });
+      const issued = await repo.issueClientCharge(draft.charge.id);
+      const before = JSON.stringify(repo.getClientCharge(issued.charge.id));
+      const out = issued.operations.find((operation) => operation.fiscalDocumentNumberSnapshot === "PARC-FORA")!;
+
+      const version = await repo.buildChargePartnerVersion({ chargeId: issued.charge.id, excludedOperationIds: [out.id], excludedAdjustmentIds: [], internalRateCents: 400, externalRateCents: 1200, format: "pdf" });
+      expect(version.detail.operations.map((operation) => [operation.fiscalDocumentNumberSnapshot, operation.serviceRateCentsSnapshot, operation.serviceAmountCentsSnapshot]).sort())
+        .toEqual([["PARC-EXT", 1200, 120000], ["PARC-INT", 400, 80000]]);
+      expect(version.detail.charge.finalAmountCents).toBe(200000);
+      expect(Buffer.from(version.bytes).subarray(0, 4).toString()).toBe("%PDF");
+      const sheet = await repo.buildChargePartnerVersion({ chargeId: issued.charge.id, excludedOperationIds: [], excludedAdjustmentIds: [], internalRateCents: null, externalRateCents: 1200, format: "xlsx" });
+      expect(sheet.detail.charge.finalAmountCents).toBe(150 * 1200 + 200 * 300);
+      await expect(repo.buildChargePartnerVersion({ chargeId: issued.charge.id, excludedOperationIds: issued.operations.map((operation) => operation.id), excludedAdjustmentIds: [], internalRateCents: null, externalRateCents: null, format: "pdf" })).rejects.toThrow("pelo menos uma nota");
+      // A cobranca original continua exatamente igual.
+      expect(JSON.stringify(repo.getClientCharge(issued.charge.id))).toBe(before);
+    } finally { db.close(); }
+  });
+
   it("reverses an accidental client payment and reopens the charge", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {
