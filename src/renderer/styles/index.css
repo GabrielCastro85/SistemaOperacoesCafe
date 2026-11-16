@@ -2600,6 +2600,26 @@ table tbody tr:hover {
   font-size: 12px;
 }
 
+.xml-queue-list li button.xml-defer-toggle {
+  width: fit-content;
+  margin: 4px 0 2px auto;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.xml-detail-card--total > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.xml-detail-card--total .xml-detail-label {
+  display: block;
+}
+.xml-detail-card--total .xml-detail-total .xml-detail-label {
+  display: block;
+}
+
 .operation-warning-card.operation-warning-card--inline {
   display: flex;
   flex-direction: row;
