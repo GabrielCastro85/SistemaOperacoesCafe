@@ -1184,15 +1184,19 @@ export async function buildChargeCtePdf(input: ChargeDocumentsInput, data: Charg
   y -= 54 + 14;
 
   const columns = [
-    { title: "DATA", x: margin + 8 },
-    { title: "EMPRESA", x: margin + 70 },
-    { title: "NF", x: margin + 262 },
-    { title: "DESTINO", x: margin + 324 },
-    { title: "SACAS", x: margin + 462 }
+    { title: "DATA", x: margin + 8, width: 60, right: false },
+    { title: "EMPRESA", x: margin + 74, width: 170, right: false },
+    { title: "NF", x: margin + 250, width: 44, right: false },
+    { title: "DESTINO", x: margin + 300, width: 120, right: false },
+    { title: "SACAS", x: margin + 400, width: 70, right: true },
+    { title: "VALOR CT-e", x: margin + contentWidth - 100, width: 90, right: true }
   ];
   const drawTableHeader = (): void => {
-    page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: soft, borderColor: border, borderWidth: 0.45 });
-    columns.forEach((column) => page.drawText(column.title, { x: column.x, y: y - 13, size: 6.5, font: bold, color: muted }));
+    page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: headerColor });
+    columns.forEach((column) => {
+      if (column.right) drawRightText(page, column.title, column.x, y - 13, column.width, bold, 6.5, headerText);
+      else page.drawText(column.title, { x: column.x, y: y - 13, size: 6.5, font: bold, color: headerText });
+    });
     y -= 26;
   };
   drawSectionTitle(page, "Notas de referência do CT-e", margin, y, bold, ink, green);
@@ -1206,24 +1210,32 @@ export async function buildChargeCtePdf(input: ChargeDocumentsInput, data: Charg
     }
     if (index % 2 === 1) page.drawRectangle({ x: margin, y: y - 14, width: contentWidth, height: 16, color: paper });
     const [year, month, day] = row.date.split("-");
+    const rowCents = multiplyDecimalByCents(row.sacks, data.unitValueCents);
     page.drawText(`${day}/${month}/${year}`, { x: columns[0].x, y: y - 10, size: 7.5, font, color: ink });
-    page.drawText(truncate(row.company, font, 7.5, 186), { x: columns[1].x, y: y - 10, size: 7.5, font, color: ink });
+    page.drawText(truncate(row.company, font, 7.5, 166), { x: columns[1].x, y: y - 10, size: 7.5, font, color: ink });
     page.drawText(row.nf, { x: columns[2].x, y: y - 10, size: 7.5, font: bold, color: ink });
-    page.drawText(truncate(row.destination, font, 7.5, 132), { x: columns[3].x, y: y - 10, size: 7.5, font, color: ink });
-    page.drawText(formatDecimal(decimalNumber(row.sacks)), { x: columns[4].x, y: y - 10, size: 7.5, font, color: ink });
+    page.drawText(truncate(row.destination, font, 7.5, 116), { x: columns[3].x, y: y - 10, size: 7.5, font, color: ink });
+    drawRightText(page, formatDecimal(decimalNumber(row.sacks)), columns[4].x, y - 10, columns[4].width, font, 7.5, ink);
+    drawRightText(page, `R$ ${formatCents(rowCents)}`, columns[5].x, y - 10, columns[5].width, font, 7.5, ink);
     y -= 16;
   });
 
   const totalSacks = sumDecimalTexts(data.rows.map((row) => row.sacks));
   const totalCents = multiplyDecimalByCents(totalSacks, data.unitValueCents);
+  page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: headerColor });
+  page.drawText("TOTAL", { x: columns[0].x, y: y - 13, size: 8.5, font: bold, color: headerText });
+  drawRightText(page, formatDecimal(decimalNumber(totalSacks)), columns[4].x, y - 13, columns[4].width, bold, 8.5, headerText);
+  drawRightText(page, `R$ ${formatCents(totalCents)}`, columns[5].x, y - 13, columns[5].width, bold, 8.5, headerText);
+  y -= 20;
   y -= 14;
   drawInfoBox(page, "CT-e", ["Frete (transporte por saca) referente às notas listadas acima."], margin, y, contentWidth - 260 - boxGap, 60, style);
-  drawInfoBox(page, "TOTAL DO CT-e", [
-    `Notas: ${data.rows.length}`,
-    `Total de sacas: ${formatDecimal(decimalNumber(totalSacks))}`,
-    `Valor por saca: R$ ${formatCents(data.unitValueCents)}`,
-    `Total: R$ ${formatCents(totalCents)}`
-  ], margin + contentWidth - 260, y, 260, 80, style);
+  // Caixa de destaque do valor total (mesmo destaque das linhas de total das planilhas).
+  const totalBoxX = margin + contentWidth - 260;
+  page.drawRectangle({ x: totalBoxX, y: y - 84, width: 260, height: 84, color: headerColor });
+  page.drawRectangle({ x: totalBoxX, y: y - 84, width: 260, height: 2, color: gold });
+  page.drawText("VALOR TOTAL DO CT-e", { x: totalBoxX + 12, y: y - 20, size: 7, font: bold, color: gold });
+  page.drawText(`R$ ${formatCents(totalCents)}`, { x: totalBoxX + 12, y: y - 50, size: 22, font: bold, color: headerText });
+  page.drawText(`${data.rows.length} notas · ${formatDecimal(decimalNumber(totalSacks))} sacas × R$ ${formatCents(data.unitValueCents)}`, { x: totalBoxX + 12, y: y - 72, size: 7.5, font, color: headerText });
 
   page.drawText(`Gerado pelo Sistema de Operações de Café em ${formatDateTime(new Date().toISOString())}`, { x: margin, y: 22, size: 6.5, font, color: muted });
   page.drawText(`${organization.appDisplayName} | PHT - notas do CT-e`, { x: pageWidth - margin - 250, y: 22, size: 6.5, font: bold, color: gold });
