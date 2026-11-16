@@ -2128,6 +2128,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             )}
           </div>
         </div>
+            {xmlQueue.length ? (
             <div className="xml-action-footer">
               <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
               <div className="xml-action-footer__buttons">
@@ -2138,6 +2139,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </button>
               </div>
             </div>
+            ) : null}
         {xmlQueue.length ? (
           <div className="xml-batch-review">
             <div className="section-title-row">

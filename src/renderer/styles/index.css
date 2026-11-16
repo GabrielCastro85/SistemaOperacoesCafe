@@ -2737,9 +2737,12 @@ table tbody tr:hover {
   color: var(--text-accent);
 }
 .xml-action-footer {
-  margin-top: 12px;
+  position: static;
+  margin-top: 16px;
   width: 100%;
   box-sizing: border-box;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--border);
 }
 
 .xml-queue-file {
