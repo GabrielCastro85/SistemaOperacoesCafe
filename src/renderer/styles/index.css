@@ -2640,8 +2640,8 @@ table tbody tr:hover {
   margin-bottom: 10px;
 }
 .xml-detail-card {
-  background: var(--surface-2);
-  border: 0.5px solid var(--border);
+  background: var(--color-surface-muted, #f2f4f1);
+  border: 0.5px solid var(--color-border, #ded8cc);
   border-radius: 12px;
   padding: 12px;
   margin-bottom: 10px;
@@ -2657,7 +2657,7 @@ table tbody tr:hover {
 }
 .xml-detail-label {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: #6b6558;
 }
 .xml-detail-total {
   text-align: right;
@@ -2667,7 +2667,7 @@ table tbody tr:hover {
   font-weight: 500;
 }
 .xml-detail-key {
-  font-family: var(--font-mono);
+  font-family: ui-monospace, Consolas, monospace;
   font-size: 11px;
   word-break: break-all;
 }
@@ -2683,7 +2683,7 @@ table tbody tr:hover {
   flex-wrap: wrap;
   margin-top: 12px;
   padding: 10px 14px;
-  background: var(--surface-1);
+  background: var(--color-surface, #ffffff);
   border-radius: 12px;
 }
 .xml-action-footer__buttons {
@@ -2716,12 +2716,12 @@ table tbody tr:hover {
 }
 .xml-segment__label {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: #6b6558;
 }
 .xml-segment__options {
   display: flex;
-  border: 0.5px solid var(--border-strong);
-  border-radius: var(--radius);
+  border: 0.5px solid var(--color-border, #ded8cc);
+  border-radius: 8px;
   overflow: hidden;
 }
 .xml-segment__options button {
@@ -2733,14 +2733,14 @@ table tbody tr:hover {
   font-size: 13px;
 }
 .xml-segment__options button.active {
-  background: var(--bg-accent) !important;
-  color: var(--text-accent) !important;
+  background: var(--color-accent, #3c7d54) !important;
+  color: var(--color-accent-text, #ffffff) !important;
   font-weight: 500;
-  box-shadow: inset 0 -2px 0 var(--border-accent);
+  box-shadow: inset 0 -2px 0 var(--color-accent, #3c7d54);
 }
 .xml-segment__options button:not(.active) {
-  background: var(--surface-2) !important;
-  color: var(--text-secondary) !important;
+  background: var(--color-surface-muted, #f2f4f1) !important;
+  color: #6b6558 !important;
 }
 .xml-action-footer {
   position: static;
@@ -2748,7 +2748,7 @@ table tbody tr:hover {
   width: 100%;
   box-sizing: border-box;
   padding-top: 12px;
-  border-top: 0.5px solid var(--border);
+  border-top: 0.5px solid var(--color-border, #ded8cc);
 }
 
 .xml-queue-file {
