@@ -1179,6 +1179,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     await Promise.allSettled(resolutions);
     return result;
   });
+  handle(IPC_CHANNELS.setXmlImportFileDeferred, (_event, payload: unknown) => {
+    const data = z.object({ jobId: z.string().uuid(), fileId: z.string().uuid(), deferred: z.boolean() }).parse(payload);
+    return repository.setXmlImportFileDeferred(data.jobId, data.fileId, data.deferred);
+  });
   handle(IPC_CHANNELS.getXmlImportJobProgress, (_event, payload: unknown) => repository.getXmlImportJobProgress(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.listXmlImportJobs, (_event, payload: unknown) => repository.listXmlImportJobs(z.string().uuid().parse(payload)));
   handle(IPC_CHANNELS.getXmlImportJob, (_event, payload: unknown) => repository.getXmlImportJob(z.string().uuid().parse(payload)));

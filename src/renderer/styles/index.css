@@ -2584,6 +2584,11 @@ table tbody tr:hover {
   outline-offset: -1.5px;
 }
 
+.table-row.xml-row--deferred {
+  background: #f4f1ea;
+  color: #6b6558;
+}
+
 .import-grid {
   grid-template-columns: 1fr 1.4fr;
 }

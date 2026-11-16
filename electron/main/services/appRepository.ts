@@ -2809,6 +2809,17 @@ export class AppRepository {
     return this.getXmlImportJob(jobId);
   }
 
+  // Ignorar por enquanto: a nota fica fora da importacao, mas nao vira ignorada de forma permanente.
+  setXmlImportFileDeferred(jobId: string, fileId: string, deferred: boolean): { job: XmlImportJob; files: XmlImportFile[] } {
+    this.getXmlImportJob(jobId);
+    const row = this.db.prepare("SELECT status, resolution_data_json FROM xml_import_files WHERE id = ? AND import_job_id = ?").get(fileId, jobId) as DbRecord | undefined;
+    if (!row) throw new Error("Nota nao encontrada neste lote.");
+    if (!["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(String(row.status))) throw new Error("Somente notas pendentes podem ser adiadas.");
+    const current = row.resolution_data_json ? JSON.parse(String(row.resolution_data_json)) as Record<string, unknown> : {};
+    this.db.prepare("UPDATE xml_import_files SET resolution_data_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({ ...current, deferred }), new Date().toISOString(), fileId);
+    return this.getXmlImportJob(jobId);
+  }
+
   async executeXmlImportJob(id: string): Promise<{ job: XmlImportJob; files: XmlImportFile[] }> {
     const current = this.getXmlImportJob(id);
     const settings = JSON.parse(current.job.settingsJson) as Record<string, unknown>;
@@ -2818,6 +2829,8 @@ export class AppRepository {
       if (!["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(file.status)) continue;
       const fileResolution = file.resolutionDataJson ? JSON.parse(file.resolutionDataJson) as Record<string, unknown> : {};
       const resolution = { ...settings, ...fileResolution };
+      // Adiada por enquanto: fica no lote, sem mudar o status, ate ser restaurada.
+      if (fileResolution.deferred === true) continue;
       if (resolution.ignore === true) {
         this.db.prepare("UPDATE xml_import_files SET status = 'SKIPPED', updated_at = ? WHERE id = ?").run(new Date().toISOString(), file.id);
         continue;

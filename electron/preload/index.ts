@@ -289,6 +289,7 @@ const IPC_CHANNELS = {
   updateXmlImportFileResolution: "xmlImports:updateFileResolution",
   applyXmlBulkResolution: "xmlImports:applyBulkResolution",
   executeXmlImportJob: "xmlImports:execute",
+  setXmlImportFileDeferred: "xmlImports:setFileDeferred",
   getXmlImportJobProgress: "xmlImports:progress",
   listXmlImportJobs: "xmlImports:list",
   getXmlImportJob: "xmlImports:get",
@@ -740,6 +741,7 @@ export interface OperationsCafeApi {
   updateXmlImportFileResolution: (id: string, resolution: unknown) => Promise<XmlImportFile>;
   applyXmlBulkResolution: (jobId: string, fileIds: string[], resolution: unknown) => Promise<{ job: XmlImportJob; files: XmlImportFile[] }>;
   executeXmlImportJob: (input: { jobId: string; tokens?: string[] }) => Promise<{ job: XmlImportJob; files: XmlImportFile[] }>;
+  setXmlImportFileDeferred: (input: { jobId: string; fileId: string; deferred: boolean }) => Promise<{ job: XmlImportJob; files: XmlImportFile[] }>;
   getXmlImportJobProgress: (id: string) => Promise<XmlImportJob>;
   listXmlImportJobs: (organizationId: string) => Promise<XmlImportJob[]>;
   getXmlImportJob: (id: string) => Promise<{ job: XmlImportJob; files: XmlImportFile[] }>;
@@ -1174,6 +1176,7 @@ const api: OperationsCafeApi = {
   updateXmlImportFileResolution: (id, resolution) => ipcRenderer.invoke(IPC_CHANNELS.updateXmlImportFileResolution, { id, resolution }) as Promise<XmlImportFile>,
   applyXmlBulkResolution: (jobId, fileIds, resolution) => ipcRenderer.invoke(IPC_CHANNELS.applyXmlBulkResolution, { jobId, fileIds, resolution }) as Promise<{ job: XmlImportJob; files: XmlImportFile[] }>,
   executeXmlImportJob: (input) => ipcRenderer.invoke(IPC_CHANNELS.executeXmlImportJob, input) as Promise<{ job: XmlImportJob; files: XmlImportFile[] }>,
+  setXmlImportFileDeferred: (input) => ipcRenderer.invoke(IPC_CHANNELS.setXmlImportFileDeferred, input) as Promise<{ job: XmlImportJob; files: XmlImportFile[] }>,
   getXmlImportJobProgress: (id) => ipcRenderer.invoke(IPC_CHANNELS.getXmlImportJobProgress, id) as Promise<XmlImportJob>,
   listXmlImportJobs: (organizationId) => ipcRenderer.invoke(IPC_CHANNELS.listXmlImportJobs, organizationId) as Promise<XmlImportJob[]>,
   getXmlImportJob: (id) => ipcRenderer.invoke(IPC_CHANNELS.getXmlImportJob, id) as Promise<{ job: XmlImportJob; files: XmlImportFile[] }>,

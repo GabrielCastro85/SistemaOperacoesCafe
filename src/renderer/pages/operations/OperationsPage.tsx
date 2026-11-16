@@ -927,6 +927,23 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   }
 
+  // Nota adiada por enquanto (fica fora da importacao, sem ser ignorada de forma permanente).
+  function xmlFileDeferred(file: XmlImportFile): boolean {
+    if (!file.resolutionDataJson) return false;
+    try { return (JSON.parse(file.resolutionDataJson) as { deferred?: boolean }).deferred === true; } catch { return false; }
+  }
+
+  async function setXmlFileDeferred(file: XmlImportFile, deferred: boolean): Promise<void> {
+    if (!xmlJob) return;
+    try {
+      const updated = await window.operationsCafe.setXmlImportFileDeferred({ jobId: xmlJob.job.id, fileId: file.id, deferred });
+      setXmlJob(updated);
+      setMessage(deferred ? `${file.originalFileName} ignorada por enquanto. Restaure quando quiser lançar.` : `${file.originalFileName} voltou para a fila de lançamento.`);
+    } catch (errorValue) {
+      setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao adiar a nota."}`);
+    }
+  }
+
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
     const requiresCommercialPartner = xmlQueue.some((file) =>
@@ -2145,7 +2162,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {visibleXmlJob ? (
           <div className="table">
             <div className="table-head xml-files-grid"><span>Arquivo</span><span>Status</span><span>Tipo</span><span>Chave</span><span>Detalhe</span><span>Acoes</span></div>
-            {visibleXmlJob.files.map((file) => (
+            {visibleXmlJob.files.filter((file) => !xmlFileDeferred(file)).map((file) => (
               <div key={file.id} className="table-row xml-files-grid">
                 <span>{file.originalFileName}</span>
                 <span><StatusBadge status={file.status} label={xmlFileStatusLabel(file)} /></span>
@@ -2153,6 +2170,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <span>{file.accessKey ?? "-"}</span>
                 <span>{xmlFileDetailMessage(file)}</span>
                 <span className="row-actions">
+                  {["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(file.status) ? <button onClick={() => void setXmlFileDeferred(file, true)}>Ignorar por enquanto</button> : null}
                   {file.fiscalDocumentId ? <button onClick={() => void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then((opened) => { setDetail(opened); setPageTab("documents"); scrollTo(manualDetailRef); })}>Abrir nota</button> : <small className="muted">Nota ainda nao salva</small>}
                   {file.fiscalDocumentId ? <button className="danger" onClick={() => {
                     const doc = documents.find((item) => item.id === file.fiscalDocumentId);
@@ -2164,10 +2182,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             ))}
           </div>
         ) : null}
-        {visibleXmlJob && visibleXmlJob.files.some((file) => file.status === "PENDING_REVIEW") ? (
+        {visibleXmlJob && visibleXmlJob.files.some((file) => xmlFileDeferred(file)) ? (
+          <div className="table xml-deferred-block">
+            <p className="muted">Ignoradas por enquanto ({visibleXmlJob.files.filter((file) => xmlFileDeferred(file)).length}). Restaure para voltar à fila de lançamento.</p>
+            <div className="table-head xml-files-grid"><span>Arquivo</span><span>Status</span><span>Tipo</span><span>Chave</span><span>Detalhe</span><span>Acoes</span></div>
+            {visibleXmlJob.files.filter((file) => xmlFileDeferred(file)).map((file) => (
+              <div key={file.id} className="table-row xml-files-grid xml-row--deferred">
+                <span>{file.originalFileName}</span>
+                <span><StatusBadge status={file.status} label={xmlFileStatusLabel(file)} /></span>
+                <span>{file.xmlType}</span>
+                <span>{file.accessKey ?? "-"}</span>
+                <span>{xmlFileDetailMessage(file)}</span>
+                <span className="row-actions"><button onClick={() => void setXmlFileDeferred(file, false)}>Restaurar</button></span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {visibleXmlJob && visibleXmlJob.files.some((file) => file.status === "PENDING_REVIEW" && !xmlFileDeferred(file)) ? (
           <div className="table">
             <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente/corretor</span><span>Segundo parceiro (nota triangulada)</span><span>Acoes</span></div>
-            {visibleXmlJob.files.filter((file) => file.status === "PENDING_REVIEW").map((file) => {
+            {visibleXmlJob.files.filter((file) => file.status === "PENDING_REVIEW" && !xmlFileDeferred(file)).map((file) => {
               const { issuer, recipient } = xmlFileParty(file);
               return (
                 <div key={file.id} className="table-row xml-resolution-grid">

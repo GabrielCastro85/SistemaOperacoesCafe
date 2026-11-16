@@ -95,6 +95,31 @@ describe("xml imports", () => {
     expect(items[0].commercialQuantity).toBe("350");
   });
 
+  it("adiar pula a nota na importacao e restaurar a devolve para lancar", async () => {
+    const { repo, db, partnerId, productId, dir } = await setup();
+    try {
+      const key = makeAccessKey();
+      const filePath = join(dir, "nfe-adiada.xml");
+      writeFileSync(filePath, nfeXml(key), "utf8");
+      const inspection = inspectXmlFile(filePath, "11111111-1111-4111-8111-111111111111");
+      const job = repo.createXmlImportDraft({ organizationId: villaId, sourceType: "FILE", selectedFolder: null, includeSubfolders: false, settings: { clientPartnerId: partnerId, operationScope: "EXTERNAL", operationType: "SALE", productId, createOperations: true } });
+      const file = repo.addXmlImportFile({ importJobId: job.id, originalFileName: inspection.originalFileName, fileHash: inspection.fileHash, fileSize: inspection.fileSize, xmlType: inspection.xmlType, accessKey: inspection.accessKey, status: inspection.status, errorCode: null, errorMessage: null, warningCodes: inspection.warnings, extractedData: inspection.extractedData, resolutionData: null });
+      repo.setXmlImportFileStoredPath(file.id, filePath);
+      repo.updateXmlImportFileResolution(file.id, { clientPartnerId: partnerId });
+      repo.setXmlImportFileDeferred(job.id, file.id, true);
+
+      const deferred = await repo.executeXmlImportJob(job.id);
+      expect(deferred.job.importedNotes).toBe(0);
+      expect(deferred.files[0].status).not.toBe("IMPORTED");
+      expect(deferred.files[0].resolutionDataJson).toContain("\"deferred\":true");
+
+      repo.setXmlImportFileDeferred(job.id, file.id, false);
+      const result = await repo.executeXmlImportJob(job.id);
+      expect(result.job.importedNotes).toBe(1);
+      expect(result.files[0].status).toBe("IMPORTED");
+    } finally { db.close(); }
+  });
+
   it("imports a valid XML into fiscal documents, items and operations", async () => {
     const { repo, db, partnerId, productId, dir } = await setup();
     const key = makeAccessKey();

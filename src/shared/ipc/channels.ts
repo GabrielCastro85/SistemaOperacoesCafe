@@ -195,6 +195,7 @@ export const IPC_CHANNELS = {
   updateXmlImportFileResolution: "xmlImports:updateFileResolution",
   applyXmlBulkResolution: "xmlImports:applyBulkResolution",
   executeXmlImportJob: "xmlImports:execute",
+  setXmlImportFileDeferred: "xmlImports:setFileDeferred",
   getXmlImportJobProgress: "xmlImports:progress",
   listXmlImportJobs: "xmlImports:list",
   getXmlImportJob: "xmlImports:get",
