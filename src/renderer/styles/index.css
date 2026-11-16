@@ -2652,6 +2652,26 @@ table tbody tr:hover {
   word-break: break-all;
 }
 
+.xml-action-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--surface-1);
+  border-radius: 12px;
+}
+.xml-action-footer__buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .xml-queue-file {
   display: block;
   overflow: hidden;

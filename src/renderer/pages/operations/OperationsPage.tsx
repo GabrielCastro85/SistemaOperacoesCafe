@@ -942,6 +942,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   // Nota adiada por enquanto (fica fora da importacao, sem ser ignorada de forma permanente).
+  function xmlFileDeferredSelected(file: { token: string }): boolean {
+    return xmlDeferredSelections[file.token] === true;
+  }
+
   function xmlFileDeferred(file: XmlImportFile): boolean {
     if (!file.resolutionDataJson) return false;
     try { return (JSON.parse(file.resolutionDataJson) as { deferred?: boolean }).deferred === true; } catch { return false; }
@@ -2115,11 +2119,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 ) : null}
               </>
             )}
-            <div className="toolbar">
+            <div className="xml-action-footer">
+              <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
+              <div className="xml-action-footer__buttons">
+              {selectedXmlFile ? <button onClick={() => setXmlDeferredSelections((current) => ({ ...current, [selectedXmlFile.token]: !current[selectedXmlFile.token] }))}>{xmlDeferredSelections[selectedXmlFile.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button> : null}
               <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentacao" : "Importar XMLs"}
               </button>
+              </div>
             </div>
           </div>
         </div>
