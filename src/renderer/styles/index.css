@@ -2672,6 +2672,23 @@ table tbody tr:hover {
   flex-wrap: wrap;
 }
 
+.xml-stepper-top {
+  margin-bottom: 12px;
+}
+.xml-stepper-top .ui-stepper {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.xml-stepper-top .ui-stepper__item {
+  flex: 1;
+  min-width: 140px;
+}
+
 .xml-queue-file {
   display: block;
   overflow: hidden;

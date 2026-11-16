@@ -1876,6 +1876,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             ) : null}
           </div>
         ) : null}
+        <div className="xml-stepper-top">
+          <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
+        </div>
         <div className="import-columns">
           <div className="import-column" ref={xmlDataRef}>
             <h3>{pageTab === "received" ? "Adicionar nota recebida por XML" : "Adicionar nota emitida por XML"}</h3>
@@ -2042,7 +2045,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
               </>
             )}
-            <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
             {selectedXmlIsEvent ? (
               <div className="operation-warning-card operation-warning-card--neutral">
                 <strong>Evento de cancelamento</strong>
