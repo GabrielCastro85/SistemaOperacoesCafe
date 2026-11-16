@@ -1898,7 +1898,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
                       <span className="xml-queue-party"><strong>{party.title}</strong><small>{xmlQueueSummaryLine(file)}</small></span>
                       <StatusBadge status={file.status} />
-                      <small className="xml-queue-file" title={file.accessKey ? `${file.originalFileName} · chave ${file.accessKey}` : file.originalFileName}>{file.errorMessage ?? formatFileSize(file.fileSize)}</small>
+                      {file.errorMessage ? <small className="xml-queue-file" title={file.errorMessage}>{file.errorMessage}</small> : null}
                     </button>
                     <button type="button" className="xml-defer-toggle" onClick={() => setXmlDeferredSelections((current) => ({ ...current, [file.token]: !current[file.token] }))}>{xmlDeferredSelections[file.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button>
                   </li>
