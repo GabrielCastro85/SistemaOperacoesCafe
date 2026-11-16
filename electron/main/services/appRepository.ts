@@ -2174,7 +2174,6 @@ export class AppRepository {
   }
 
   listOperations(filters: { organizationId?: string; ownLegalEntityId?: string; responsiblePartnerId?: string; periodStart?: string; periodEnd?: string; status?: FiscalDocumentStatus | "all"; billingStatus?: Operation["billingStatus"] | "all" } = {}): Operation[] {
-    const cteOperationIds = this.activeCteOperationIds();
     return (this.db.prepare("SELECT * FROM operations ORDER BY operation_date DESC, created_at DESC").all() as DbRecord[])
       .map(mapOperation)
       .filter((item) => this.isOrganizationAllowed(item.organizationId))
@@ -2185,8 +2184,7 @@ export class AppRepository {
       .filter((item) => !filters.periodEnd || item.operationDate <= filters.periodEnd)
       .filter((item) => !filters.status || filters.status === "all" || item.status === filters.status)
       .filter((item) => !filters.billingStatus || filters.billingStatus === "all" || item.billingStatus === filters.billingStatus)
-      // Notas do CT-e (planilha PHT) nao contam como "sem cobranca".
-      .filter((item) => filters.billingStatus !== "UNBILLED" || !cteOperationIds.has(item.id));
+
   }
 
   addOperation(input: unknown): Operation {
@@ -3072,7 +3070,6 @@ export class AppRepository {
         AND EXISTS (SELECT 1 FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id AND fd.status IN ('DRAFT', 'CONFIRMED') AND fd.has_pending_issues = 0
           AND (COALESCE(fd.contract_number, '') <> '' OR NOT EXISTS (SELECT 1 FROM business_partners bp WHERE bp.id = operations.responsible_partner_id AND bp.requires_contract = 1)))
         AND billing_status = 'UNBILLED'
-        AND id NOT IN (SELECT n.operation_id FROM cte_sheet_notes n JOIN cte_sheets s ON s.id = n.cte_sheet_id WHERE s.status = 'ACTIVE')
         AND applied_rate_value_cents > 0
         AND service_amount_cents > 0
       ORDER BY operation_date,
@@ -3097,7 +3094,7 @@ export class AppRepository {
     }
     const billingStatusClause = data.includeAlreadyBilled
       ? ""
-      : "AND ((operations.billing_status = 'UNBILLED' AND operations.id NOT IN (SELECT n.operation_id FROM cte_sheet_notes n JOIN cte_sheets s ON s.id = n.cte_sheet_id WHERE s.status = 'ACTIVE')) OR (operations.billing_status = 'BILLED' AND client_charges.open_amount_cents > 0 AND client_charges.status NOT IN ('PAID', 'CANCELLED', 'REPLACED')))";
+      : "AND ((operations.billing_status = 'UNBILLED') OR (operations.billing_status = 'BILLED' AND client_charges.open_amount_cents > 0 AND client_charges.status NOT IN ('PAID', 'CANCELLED', 'REPLACED')))";
     const organizationClause = data.includeAllCompanies ? "" : "AND operations.organization_id = ?";
     const ownLegalEntityClause = data.includeAllCompanies || !data.ownLegalEntityId ? "" : "AND operations.own_legal_entity_id = ?";
     const params: unknown[] = [];
@@ -3332,8 +3329,8 @@ export class AppRepository {
     return this.getClientCharge(clientChargeId);
   }
 
-  // Notas do CT-e saem da cobranca: ficam numa planilha PHT propria (cte_sheets) com
-  // os dados gravados da nota, e nao entram em cobranca nem em totais.
+  // Notas marcadas para o CT-e continuam cobradas da cobranca normalmente. A planilha PHT
+  // (cte_sheets / cte_sheet_notes) so registra essas notas, com os dados gravados na cobranca.
   private createCteSheetForCharge(chargeId: string, data: { organizationId: string; ownLegalEntityId: string; clientPartnerId: string; periodStart: string; periodEnd: string; cteOperationIds: string[]; cteUnitValueCents: number | null }): void {
     if (!data.cteOperationIds.length) return;
     if (!data.cteUnitValueCents || data.cteUnitValueCents <= 0) throw new Error("Informe o valor por saca do CT-e.");
@@ -3341,13 +3338,9 @@ export class AppRepository {
     const placeholders = ids.map(() => "?").join(",");
     const alreadyInSheet = this.db.prepare(`SELECT 1 FROM cte_sheet_notes n JOIN cte_sheets s ON s.id = n.cte_sheet_id WHERE s.status = 'ACTIVE' AND n.operation_id IN (${placeholders}) LIMIT 1`).get(...ids);
     if (alreadyInSheet) throw new Error("Alguma nota ja esta numa planilha PHT (CT-e).");
-    // Reserva as notas so' para copiar os snapshots (destino, empresa, NF, data, sacas) e desfaz a reserva.
-    this.reserveOperationsForCharge(chargeId, ids);
     const snapshots = this.db.prepare(`SELECT operation_id, operation_date_snapshot, fiscal_document_number_snapshot, own_legal_entity_name_snapshot, destination_name_snapshot, quantity_sacks_decimal_snapshot FROM client_charge_operations WHERE client_charge_id = ? AND operation_id IN (${placeholders})`).all(chargeId, ...ids) as DbRecord[];
+    if (snapshots.length !== ids.length) throw new Error("As notas do CT-e precisam estar na cobranca.");
     const now = new Date().toISOString();
-    this.db.prepare(`DELETE FROM client_charge_operations WHERE client_charge_id = ? AND operation_id IN (${placeholders})`).run(chargeId, ...ids);
-    this.db.prepare(`UPDATE operations SET billing_status = 'UNBILLED', client_charge_id = NULL, updated_at = ? WHERE client_charge_id = ? AND id IN (${placeholders})`).run(now, chargeId, ...ids);
-    if (snapshots.length !== ids.length) throw new Error("Alguma nota do CT-e nao pode ser usada (confira se esta confirmada e sem cobranca).");
     const sheetId = randomUUID();
     this.db.prepare("INSERT INTO cte_sheets (id, organization_id, own_legal_entity_id, client_partner_id, client_charge_id, period_start, period_end, unit_value_cents, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)")
       .run(sheetId, data.organizationId, data.ownLegalEntityId, data.clientPartnerId, chargeId, data.periodStart, data.periodEnd, data.cteUnitValueCents, now, now);
@@ -3355,11 +3348,6 @@ export class AppRepository {
       this.db.prepare("INSERT INTO cte_sheet_notes (id, cte_sheet_id, operation_id, fiscal_document_number, operation_date, company, destination, sacks_decimal, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(randomUUID(), sheetId, String(row.operation_id), row.fiscal_document_number_snapshot ? String(row.fiscal_document_number_snapshot) : null, String(row.operation_date_snapshot), row.own_legal_entity_name_snapshot ? String(row.own_legal_entity_name_snapshot) : null, row.destination_name_snapshot ? String(row.destination_name_snapshot) : null, String(row.quantity_sacks_decimal_snapshot), now, now);
     }
-  }
-
-  // Ids das operacoes que estao numa planilha PHT ativa (fora de cobrancas).
-  private activeCteOperationIds(): Set<string> {
-    return new Set((this.db.prepare("SELECT n.operation_id FROM cte_sheet_notes n JOIN cte_sheets s ON s.id = n.cte_sheet_id WHERE s.status = 'ACTIVE'").all() as DbRecord[]).map((row) => String(row.operation_id)));
   }
 
   releaseOperations(clientChargeId: string, operationIds?: string[]): ClientChargeDetail {
@@ -4498,7 +4486,6 @@ export class AppRepository {
         AND operations.operation_type = 'SALE'
         AND operations.status IN ('DRAFT', 'CONFIRMED')
         AND operations.billing_status = 'UNBILLED'
-        AND operations.id NOT IN (SELECT n.operation_id FROM cte_sheet_notes n JOIN cte_sheets s ON s.id = n.cte_sheet_id WHERE s.status = 'ACTIVE')
         AND operations.applied_rate_value_cents > 0
         AND operations.service_amount_cents > 0
         AND fiscal_documents.status IN ('DRAFT', 'CONFIRMED')

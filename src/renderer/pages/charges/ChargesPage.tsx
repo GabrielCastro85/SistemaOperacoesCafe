@@ -573,16 +573,14 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const cteCalculation = calculateChargeCte(selectedCteNotes, cteUnitValueCents);
   const cteQuantity = decimalTextBr(cteCalculation.sacks);
   const cteTotalCents = cteCalculation.amountCents;
-  // Notas marcadas para o CT-e nao entram na cobranca: viram a planilha PHT desta cobranca.
+  // Notas marcadas para o CT-e continuam na cobranca da ABC e tambem entram na planilha PHT.
   const cteOperations = detail ? [] : selectedOperations.filter((operation) => {
     const note = cteNotes.find((item) => item.id === operation.fiscalDocumentId);
     return note ? isCteNoteSelected(note) : false;
   });
-  const cteOperationIds = new Set(cteOperations.map((operation) => operation.id));
-  const billableOperations = selectedOperations.filter((operation) => !cteOperationIds.has(operation.id));
-  const eligibleSubtotalCents = billableOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
+  const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
   // DAE de frete e DAE da nota fiscal: cada um vira uma linha na previa.
-  const selectedFreightDaes = Array.from(new Set(billableOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
+  const selectedFreightDaes = Array.from(new Set(selectedOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
     const document = operationDocuments[documentId];
     if (!document) return [];
     const rows: Array<{ key: string; title: string; documentNumber: string; reference: string | null; amountCents: number; fallback: string }> = [];
@@ -592,7 +590,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   });
   const selectedFreightDaeCents = selectedFreightDaes.reduce((total, row) => total + row.amountCents, 0);
   const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
-  const eligibleSacks = billableOperations.length ? sumDecimalTexts(billableOperations.map((operation) => operation.quantitySacks)) : "0";
+  const eligibleSacks = selectedOperations.length ? sumDecimalTexts(selectedOperations.map((operation) => operation.quantitySacks)) : "0";
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const paidSacks = paidOperations.length ? sumDecimalTexts(paidOperations.map((operation) => operation.quantitySacks)) : "0";
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + selectedFreightDaeCents;
@@ -654,9 +652,9 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function createDraft(): Promise<void> {
-    if (!billableOperations.length && !cteOperations.length) { setMessage("Marque pelo menos uma nota para cobrar ou para o CT-e."); return; }
+    if (!selectedOperations.length) { setMessage("Marque pelo menos uma nota para gerar a cobranca."); return; }
     try {
-      const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: billableOperations.map((item) => item.id), cteOperationIds: cteOperations.map((item) => item.id), cteUnitValueCents: cteOperations.length ? cteUnitValueCents : null });
+      const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: selectedOperations.map((item) => item.id), cteOperationIds: cteOperations.map((item) => item.id), cteUnitValueCents: cteOperations.length ? cteUnitValueCents : null });
 
       setCteNoteSelection({});
       setDetail(draft);

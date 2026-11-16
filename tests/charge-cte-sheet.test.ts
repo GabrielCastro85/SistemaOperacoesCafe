@@ -52,8 +52,8 @@ describe("grupo de notas do CT-e", () => {
   });
 });
 
-describe("PHT (CT-e) separada da cobranca", () => {
-  it("tira as notas do CT-e da cobranca da ABC e gera a planilha PHT a partir delas", async () => {
+describe("PHT (CT-e) junto com a cobranca da ABC", () => {
+  it("cobra todas as notas da ABC normalmente e gera a PHT so com as marcadas para o CT-e", async () => {
     const { repo, db, partnerId, productId } = await setup();
     try {
       await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 600, effectiveFrom: "2026-10-01", effectiveTo: null, priority: 1, isActive: true, notes: null, destinationStateUf: null } as never);
@@ -62,27 +62,26 @@ describe("PHT (CT-e) separada da cobranca", () => {
       const billDoc = createSale(repo, db, partnerId, productId, "8000");
       const operationsByDoc = (documentId: string) => repo.listOperations({ responsiblePartnerId: partnerId }).filter((item) => item.fiscalDocumentId === documentId).map((item) => item.id);
       const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
-      const eligible = repo.findEligibleOperations(filters);
-      expect(eligible.length).toBe(3);
+      expect(repo.findEligibleOperations(filters).length).toBe(3);
 
+      const cteIds = [...operationsByDoc(cteDoc), ...operationsByDoc(cteDoc2)];
       const draft = repo.createClientChargeDraft({
         ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-11-05", notes: null, internalNotes: null,
-        operationIds: operationsByDoc(billDoc),
-        cteOperationIds: [...operationsByDoc(cteDoc), ...operationsByDoc(cteDoc2)],
+        operationIds: [...operationsByDoc(billDoc), ...cteIds],
+        cteOperationIds: cteIds,
         cteUnitValueCents: 150
       } as never);
 
-      // A ABC so tem a nota que nao e do CT-e, e nenhum ajuste de CT-e.
+      // A ABC cobra as 3 notas a R$ 6,00/saca (6.000 centavos cada), inclusive as do CT-e; o CT-e nao soma no total.
       const charge = repo.getClientCharge(draft.charge.id);
-      expect(charge.operations.map((item) => item.fiscalDocumentNumberSnapshot)).toEqual(["8000"]);
+      expect(charge.operations.map((item) => item.fiscalDocumentNumberSnapshot).sort()).toEqual(["7438", "7439", "8000"]);
       expect(charge.adjustments.some((item) => item.description.startsWith("CT-e"))).toBe(false);
-      expect(charge.charge.finalAmountCents).toBe(6000);
+      expect(charge.charge.finalAmountCents).toBe(18000);
 
-      // As notas do CT-e nao aparecem mais como pendentes de cobranca.
-      const afterDraft = repo.findEligibleOperations(filters).map((item) => item.fiscalDocumentId);
-      expect(afterDraft).toEqual([]);
+      // As notas ficam na cobranca: nao aparecem mais como elegiveis.
+      expect(repo.findEligibleOperations(filters)).toEqual([]);
 
-      // A planilha PHT sai das notas gravadas: 2 NFs, 20 sacas, R$ 1,50 por saca = R$ 30,00.
+      // A planilha PHT sai das notas marcadas: 2 NFs, 20 sacas, R$ 1,50 por saca = R$ 30,00.
       const bytes = await repo.buildChargeCteDocument(draft.charge.id, "xlsx");
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(bytes.bytes as unknown as ArrayBuffer);
@@ -97,7 +96,7 @@ describe("PHT (CT-e) separada da cobranca", () => {
       const pdf = await repo.buildChargeCteDocument(draft.charge.id, "pdf");
       expect(Buffer.from(pdf.bytes.slice(0, 4)).toString()).toBe("%PDF");
 
-      // Cancelar a cobranca solta as notas do CT-e e a planilha deixa de existir.
+      // Cancelar a cobranca solta as notas e a planilha PHT deixa de existir.
       repo.cancelClientCharge(draft.charge.id, "teste");
       expect(repo.findEligibleOperations(filters).length).toBe(3);
       await expect(repo.buildChargeCteDocument(draft.charge.id, "pdf")).rejects.toThrow(/nao tem notas de CT-e/);
@@ -113,23 +112,6 @@ describe("PHT (CT-e) separada da cobranca", () => {
       const ops = repo.listOperations({ responsiblePartnerId: partnerId }).filter((item) => item.fiscalDocumentId === doc).map((item) => item.id);
       const draft = repo.createClientChargeDraft({ organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-10-01", periodEnd: "2026-10-31", billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-11-05", notes: null, internalNotes: null, operationIds: ops } as never);
       await expect(repo.buildChargeCteDocument(draft.charge.id, "pdf")).rejects.toThrow(/nao tem notas de CT-e/);
-    } finally { db.close(); }
-  });
-});
-
-describe("PHT com todas as notas do CT-e", () => {
-  it("cria a cobranca sem nenhuma nota da ABC so para carregar a planilha PHT", async () => {
-    const { repo, db, partnerId, productId } = await setup();
-    try {
-      await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 600, effectiveFrom: "2026-10-01", effectiveTo: null, priority: 1, isActive: true, notes: null, destinationStateUf: null } as never);
-      const docs = [createSale(repo, db, partnerId, productId, "953"), createSale(repo, db, partnerId, productId, "954")];
-      const ops = repo.listOperations({ responsiblePartnerId: partnerId }).filter((item) => docs.includes(item.fiscalDocumentId)).map((item) => item.id);
-      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
-      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-12-05", notes: null, internalNotes: null, operationIds: [], cteOperationIds: ops, cteUnitValueCents: 150 } as never);
-      expect(repo.getClientCharge(draft.charge.id).operations).toEqual([]);
-      const pdf = await repo.buildChargeCteDocument(draft.charge.id, "pdf");
-      expect(Buffer.from(pdf.bytes.slice(0, 4)).toString()).toBe("%PDF");
-      expect(repo.findEligibleOperations(filters)).toEqual([]);
     } finally { db.close(); }
   });
 });
