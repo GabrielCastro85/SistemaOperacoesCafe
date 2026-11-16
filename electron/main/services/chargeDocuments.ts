@@ -1253,7 +1253,7 @@ export async function buildChargeCteWorkbook(input: ChargeDocumentsInput, data: 
   sheet.getCell("A1").value = "NOTAS DO CT-e (FRETE)";
   sheet.getCell("A1").font = { bold: true, size: 13, color: { argb: "FF08503D" } };
   sheet.mergeCells("A2:E2");
-  sheet.getCell("A2").value = `${input.client.displayName} · ${chargePeriodLabel(charge, true)}`;
+  sheet.getCell("A2").value = `PHT · ${chargePeriodLabel(charge, true)}`;
   sheet.getCell("A2").font = { italic: true, color: { argb: "FF5C5242" } };
 
   const headerRow = sheet.getRow(4);
