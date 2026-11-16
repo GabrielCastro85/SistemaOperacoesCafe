@@ -2597,6 +2597,21 @@ table tbody tr:hover {
   font-size: 12px;
 }
 
+.operation-warning-card--inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+}
+
+.xml-queue-file {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .import-grid {
   grid-template-columns: 1fr 1.4fr;
 }

@@ -52,6 +52,15 @@ function formatCnpjCompact(value: string | null | undefined): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
 }
 
+function xmlQueueSummaryLine(file: XmlFileInspection): string {
+  const extracted = file.extractedData as Record<string, unknown> | null;
+  const totals = extracted?.totals as Record<string, unknown> | undefined;
+  const number = extracted?.number ? `NF ${String(extracted.number)}` : "NF sem numero";
+  const date = typeof extracted?.issuedAt === "string" ? extracted.issuedAt.split("-").reverse().join("/") : null;
+  const amount = typeof totals?.invoiceAmountCents === "number" ? formatCurrencyFromCents(totals.invoiceAmountCents) : null;
+  return [number, date, amount].filter(Boolean).join(" · ");
+}
+
 function xmlPartySummary(file: XmlFileInspection, direction: "INBOUND" | "OUTBOUND"): { title: string; subtitle: string } {
   const extracted = file.extractedData as Record<string, unknown> | null;
   const counterparty = extracted?.[direction === "INBOUND" ? "issuer" : "recipient"] as Record<string, unknown> | undefined;
@@ -1887,9 +1896,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     return (
                   <li key={file.token} className={xmlDeferredSelections[file.token] ? "xml-queue-item--deferred" : undefined}>
                     <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
-                      <span className="xml-queue-party"><strong>{party.title}</strong><small>{party.subtitle}</small></span>
+                      <span className="xml-queue-party"><strong>{party.title}</strong><small>{xmlQueueSummaryLine(file)}</small></span>
                       <StatusBadge status={file.status} />
-                      <small>{file.originalFileName} · {formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
+                      <small className="xml-queue-file" title={file.accessKey ? `${file.originalFileName} · chave ${file.accessKey}` : file.originalFileName}>{file.errorMessage ?? formatFileSize(file.fileSize)}</small>
                     </button>
                     <button type="button" className="xml-defer-toggle" onClick={() => setXmlDeferredSelections((current) => ({ ...current, [file.token]: !current[file.token] }))}>{xmlDeferredSelections[file.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button>
                   </li>
@@ -1924,9 +1933,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             ) : selectedXmlPreview ? (
               <>
                 {selectedXmlOwnMismatch ? (
-                  <div className="operation-warning-card">
-                    <strong>Atencao: XML de outro CNPJ</strong>
-                    <span>O XML parece ser de {selectedXmlParties.ownEntityLabel}, mas o topo esta operando em {ownLegalEntity ? (ownLegalEntity.legalName || ownLegalEntity.tradeName) : "-"}. A nota sera salva na empresa correta do XML para entrar nas cobrancas.</span>
+                  <div className="operation-warning-card operation-warning-card--inline">
+                    <strong>Outro CNPJ</strong>
+                    <span>Esta nota sera salva na empresa do XML ({selectedXmlParties.ownEntityLabel}).</span>
                   </div>
                 ) : null}
                 {selectedXmlParties.isThirdPartyOrigin ? (
