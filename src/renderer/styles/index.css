@@ -2567,6 +2567,23 @@ table tbody tr:hover {
   box-shadow: inset 4px 0 0 #7a5cc2;
 }
 
+/* Estados da nota: cancelada (vermelho), duplicada (ambar) e com pendencia (contorno). */
+.table-row.invoice-row--state-canceled {
+  background: #fdecec;
+  color: #8a2424;
+}
+.table-row.invoice-row--state-canceled > span:first-child {
+  text-decoration: line-through;
+}
+.table-row.invoice-row--state-duplicate {
+  background: #fff6e0;
+  color: #7a4d06;
+}
+.table-row.invoice-row--state-pending {
+  outline: 1.5px solid #c0392b;
+  outline-offset: -1.5px;
+}
+
 .import-grid {
   grid-template-columns: 1fr 1.4fr;
 }
