@@ -2733,8 +2733,8 @@ table tbody tr:hover {
   font-size: 13px;
 }
 .xml-segment__options button.active {
-  background: var(--color-accent, #3c7d54) !important;
-  color: var(--color-accent-text, #ffffff) !important;
+  background: var(--color-primary, #263238) !important;
+  color: var(--color-primary-text, #ffffff) !important;
   font-weight: 500;
   box-shadow: inset 0 -2px 0 var(--color-accent, #3c7d54);
 }
