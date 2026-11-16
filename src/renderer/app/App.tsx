@@ -162,7 +162,8 @@ function RoutedApp(): JSX.Element {
 
   const activeOrganizations = data.organizations.filter((item) => item.isActive);
   const canPickOrganization = profile.appVariant === "multiempresa" && activeOrganizations.length > 1;
-  if (canPickOrganization && !orgPickerDismissed) {
+  // Sessao bloqueada: a tela de senha (LockScreen) vem antes do seletor de empresa.
+  if (canPickOrganization && !orgPickerDismissed && session.status !== "LOCKED") {
     return (
       <OrganizationPickerPage
         organizations={data.organizations}
