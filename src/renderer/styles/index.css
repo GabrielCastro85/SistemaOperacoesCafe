@@ -6561,3 +6561,67 @@ table tbody tr:hover {
 .charge-partner__company-row small { display: block; font-weight: 400; color: #786c5c; font-size: 11px; }
 .charge-partner__company-row label { display: grid; gap: 2px; font-size: 12px; }
 @media (max-width: 640px) { .charge-partner__company-row { grid-template-columns: minmax(0, 1fr) 110px; } .charge-partner__company-row button { grid-column: 1 / -1; } }
+
+/* Polimento da importacao de XML: paineis, espacamento e linhas de dados. */
+.import-columns > .import-column {
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface) 86%, transparent);
+}
+.xml-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.xml-queue-list > li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.xml-queue-list > li > button.xml-defer-toggle {
+  margin: 0 0 0 auto;
+}
+.xml-detail-card {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.xml-detail-card .kv-list {
+  display: grid;
+  gap: 0;
+  margin-top: var(--space-2);
+}
+.xml-detail-card .kv-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+.xml-detail-card .kv-list > div:last-child {
+  border-bottom: 0;
+}
+.xml-detail-card .kv-list dt {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+.xml-detail-card .kv-list dd {
+  margin: 0;
+  text-align: right;
+  font-size: 13px;
+}
+.xml-action-footer {
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.xml-action-footer__buttons {
+  gap: var(--space-2);
+}
+.xml-action-footer__buttons button,
+.xml-segment__options button {
+  min-height: 34px;
+}
