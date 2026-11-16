@@ -502,6 +502,7 @@ export const xmlImportFileInputSchema = z.object({
 });
 
 export const xmlImportResolutionSchema = z.object({
+  deferred: z.boolean().optional(),
   billingObservations: z.string().trim().max(500).nullable().optional(),
   contractNumber: z.string().trim().max(200).nullable().optional(),
   freightDaeReference: z.string().trim().max(120).nullable().optional(),

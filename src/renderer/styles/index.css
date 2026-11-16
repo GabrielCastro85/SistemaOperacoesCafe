@@ -2589,6 +2589,14 @@ table tbody tr:hover {
   color: #6b6558;
 }
 
+.xml-queue-item--deferred {
+  background: #f4f1ea;
+}
+
+.xml-defer-toggle {
+  font-size: 12px;
+}
+
 .import-grid {
   grid-template-columns: 1fr 1.4fr;
 }

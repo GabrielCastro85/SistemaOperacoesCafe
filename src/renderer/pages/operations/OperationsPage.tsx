@@ -231,6 +231,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
   const [xmlPartnerOverrides, setXmlPartnerOverrides] = useState<Record<string, string>>({});
   const [xmlIgnoredSelections, setXmlIgnoredSelections] = useState<Record<string, boolean>>({});
+  const [xmlDeferredSelections, setXmlDeferredSelections] = useState<Record<string, boolean>>({});
   const [xmlContractNumbers, setXmlContractNumbers] = useState<Record<string, string>>({});
   const [xmlBillingObservations, setXmlBillingObservations] = useState<Record<string, string>>({});
   const [xmlFreightDaeEnabled, setXmlFreightDaeEnabled] = useState<Record<string, boolean>>({});
@@ -821,7 +822,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlJob(null);
     setXmlScopeOverrides({});
     setXmlPartnerOverrides({});
-    setXmlIgnoredSelections({});
+    setXmlIgnoredSelections({}); setXmlDeferredSelections({});
     setXmlContractNumbers({});
     setXmlBillingObservations({});
     setXmlFreightDaeEnabled({});
@@ -848,6 +849,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         && !file.xmlType.startsWith("EVENT_")
         && !xmlInspectionIsWarehouse(file)
         && !xmlIgnoredSelections[file.token]
+        && !xmlDeferredSelections[file.token]
         && !xmlPartnerOverrides[file.token]
       );
       if (missingPartner) {
@@ -861,6 +863,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       file.status !== "ERROR"
       && !file.xmlType.startsWith("EVENT_")
       && !xmlInspectionIsWarehouse(file)
+      && !xmlDeferredSelections[file.token]
     );
     if (!partnerId && !vulpeScan && requiresCommercialPartner) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
@@ -884,6 +887,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         const billingObservations = xmlBillingObservations[inspected.token]?.trim() || null;
         const selectedPartnerId = vulpeScan ? xmlPartnerOverrides[inspected.token] || null : null;
         const ignore = vulpeScan ? xmlIgnoredSelections[inspected.token] === true : false;
+        const deferred = xmlDeferredSelections[inspected.token] === true;
         const freightDaeEnabled = xmlFreightDaeEnabled[inspected.token] === true;
         const freightDaeAmountCents = freightDaeEnabled ? parseCurrency(xmlFreightDaeAmounts[inspected.token] ?? "") : 0;
         const freightDaeReference = freightDaeEnabled ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null;
@@ -903,7 +907,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           scrollTo(xmlDataRef);
           return;
         }
-        if (contractNumber || billingObservations || selectedPartnerId || ignore || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService) {
+        if (contractNumber || billingObservations || selectedPartnerId || ignore || deferred || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService) {
           await window.operationsCafe.updateXmlImportFileResolution(file.id, {
             contractNumber,
             billingObservations,
@@ -913,7 +917,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             invoiceDaeAmountCents,
             hasFinancialService,
             clientPartnerId: selectedPartnerId,
-            ignore
+            ignore,
+            deferred
           });
         }
       }
@@ -950,6 +955,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       file.status !== "ERROR"
       && !file.xmlType.startsWith("EVENT_")
       && !xmlInspectionIsWarehouse(file)
+      && !xmlDeferredSelections[file.token]
     );
     if (!partnerId && !vulpeScan && requiresCommercialPartner) {
       setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
@@ -1104,6 +1110,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     file.status !== "ERROR"
     && !file.xmlType.startsWith("EVENT_")
     && !xmlInspectionIsWarehouse(file)
+    && !xmlDeferredSelections[file.token]
   );
   const xmlQueueHasWarehouseMovement = xmlQueue.some((file) => file.status !== "ERROR" && xmlInspectionIsWarehouse(file));
   const xmlBatchRows = xmlQueue.map((file) => {
@@ -1878,12 +1885,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   {xmlQueue.map((file) => {
                     const party = xmlPartySummary(file, pageTab === "received" ? "INBOUND" : "OUTBOUND");
                     return (
-                  <li key={file.token}>
+                  <li key={file.token} className={xmlDeferredSelections[file.token] ? "xml-queue-item--deferred" : undefined}>
                     <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
                       <span className="xml-queue-party"><strong>{party.title}</strong><small>{party.subtitle}</small></span>
                       <StatusBadge status={file.status} />
                       <small>{file.originalFileName} · {formatFileSize(file.fileSize)}{file.errorMessage ? ` - ${file.errorMessage}` : file.accessKey ? ` - chave ${file.accessKey}` : ""}</small>
                     </button>
+                    <button type="button" className="xml-defer-toggle" onClick={() => setXmlDeferredSelections((current) => ({ ...current, [file.token]: !current[file.token] }))}>{xmlDeferredSelections[file.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button>
                   </li>
                     );
                   })}
@@ -2092,7 +2100,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </>
             )}
             <div className="toolbar">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentacao" : "Importar XMLs"}
               </button>
