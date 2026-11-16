@@ -2613,6 +2613,45 @@ table tbody tr:hover {
   font-size: 13px;
 }
 
+.xml-detail-parties {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.xml-detail-card {
+  background: var(--surface-2);
+  border: 0.5px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.xml-detail-card--total {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+}
+.xml-detail-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.xml-detail-total {
+  text-align: right;
+}
+.xml-detail-total strong {
+  font-size: 20px;
+  font-weight: 500;
+}
+.xml-detail-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
 .xml-queue-file {
   display: block;
   overflow: hidden;

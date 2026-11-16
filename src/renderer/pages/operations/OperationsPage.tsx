@@ -1944,32 +1944,39 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <span>Este XML nao pertence aos CNPJs Villa ou Grao cadastrados como proprios. Ele pode ser salvo para entrar nas cobrancas do cliente/corretor responsavel. Se o emitente e o destinatario ja estiverem cadastrados como empresas vinculadas (um a um fornecedor, outro a um cliente/corretor), o sistema reconhece automaticamente e gera as duas operacoes — compra e venda — a partir da mesma remessa. Se nao reconhecer sozinho, associe o segundo parceiro manualmente na tabela de revisao abaixo apos validar a fila.</span>
                   </div>
                 ) : null}
-                <dl className="kv-list">
-                  <div><dt>Origem reconhecida</dt><dd>{selectedXmlParties.originLabel}</dd></div>
-                  <div><dt>Emitente da nota</dt><dd>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</dd></div>
-                  <div><dt>Destinatario da nota</dt><dd>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</dd></div>
-                  <div><dt>Produto</dt><dd>{selectedXmlItem?.description ?? "-"}</dd></div>
-                  <div>
-                    <dt>Quantidade</dt>
-                    <dd>
-                      {decimalTextBr(selectedXmlSacks)} sacas
-                      {selectedXmlItem?.commercialQuantity && selectedXmlItem?.commercialUnit
-                        ? ` (${decimalTextBr(selectedXmlItem.commercialQuantity)} ${selectedXmlItem.commercialUnit})`
-                        : ""}
-                    </dd>
+                <div className="xml-detail-parties">
+                  <div className="xml-detail-card">
+                    <span className="xml-detail-label">Emitente</span>
+                    <strong>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</strong>
+                    <small>Origem: {selectedXmlParties.originLabel}</small>
                   </div>
-                  <div><dt>Preco do cafe por unidade do XML</dt><dd>{selectedXmlItem?.commercialUnitValue ? formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100)) : "-"}</dd></div>
-                  <div><dt>Valor fiscal dos produtos</dt><dd>{selectedXmlPreview.productsAmountCents != null ? formatCurrencyFromCents(selectedXmlPreview.productsAmountCents) : "-"}</dd></div>
-                </dl>
-                <h4>Informacoes complementares</h4>
-                <dl className="kv-list">
-                  <div><dt>Chave da NF-e</dt><dd>{selectedXmlPreview.accessKey ?? "-"}</dd></div>
-                  <div><dt>Emissao</dt><dd>{selectedXmlPreview.issuedAt ? formatDateBr(selectedXmlPreview.issuedAt) : "-"}</dd></div>
-                  <div><dt>Numero/Serie</dt><dd>{selectedXmlPreview.number ?? "-"}/{selectedXmlPreview.series ?? "-"}</dd></div>
-                  <div><dt>Modelo</dt><dd>{selectedXmlPreview.model ?? "-"}</dd></div>
-                  <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
-                  <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
-                </dl>
+                  <div className="xml-detail-card">
+                    <span className="xml-detail-label">Destinatario</span>
+                    <strong>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</strong>
+                  </div>
+                </div>
+                <div className="xml-detail-card xml-detail-card--total">
+                  <div>
+                    <span className="xml-detail-label">Produto</span>
+                    <strong>{selectedXmlItem?.description ?? "-"}</strong>
+                    <small>{decimalTextBr(selectedXmlSacks)} sacas{selectedXmlItem?.commercialUnitValue ? ` · ${formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100))} por saca` : ""}</small>
+                  </div>
+                  <div className="xml-detail-total">
+                    <span className="xml-detail-label">Total dos produtos</span>
+                    <strong>{selectedXmlPreview.productsAmountCents != null ? formatCurrencyFromCents(selectedXmlPreview.productsAmountCents) : "-"}</strong>
+                  </div>
+                </div>
+                <div className="xml-detail-card">
+                  <span className="xml-detail-label">Documento</span>
+                  <dl className="kv-list">
+                    <div><dt>Emissao</dt><dd>{selectedXmlPreview.issuedAt ? formatDateBr(selectedXmlPreview.issuedAt) : "-"}</dd></div>
+                    <div><dt>Numero/Serie</dt><dd>{selectedXmlPreview.number ?? "-"}/{selectedXmlPreview.series ?? "-"}</dd></div>
+                    <div><dt>Modelo</dt><dd>{selectedXmlPreview.model ?? "-"}</dd></div>
+                    <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
+                    <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
+                    <div><dt>Chave da NF-e</dt><dd className="xml-detail-key">{selectedXmlPreview.accessKey ?? "-"}</dd></div>
+                  </dl>
+                </div>
                 {selectedXmlFile && !selectedWarehouseMovement ? (
                   <FormGrid>
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
