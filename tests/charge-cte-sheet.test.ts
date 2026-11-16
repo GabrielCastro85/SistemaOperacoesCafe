@@ -116,3 +116,20 @@ describe("PHT (CT-e) separada da cobranca", () => {
     } finally { db.close(); }
   });
 });
+
+describe("PHT com todas as notas do CT-e", () => {
+  it("cria a cobranca sem nenhuma nota da ABC so para carregar a planilha PHT", async () => {
+    const { repo, db, partnerId, productId } = await setup();
+    try {
+      await repo.createServiceRateRule({ organizationId: villaId, businessPartnerId: partnerId, ownLegalEntityId: null, counterpartyPartnerLegalEntityId: null, productId: null, operationScope: "ALL", rateType: "PER_SACK", rateValueCents: 600, effectiveFrom: "2026-10-01", effectiveTo: null, priority: 1, isActive: true, notes: null, destinationStateUf: null } as never);
+      const docs = [createSale(repo, db, partnerId, productId, "953"), createSale(repo, db, partnerId, productId, "954")];
+      const ops = repo.listOperations({ responsiblePartnerId: partnerId }).filter((item) => docs.includes(item.fiscalDocumentId)).map((item) => item.id);
+      const filters = { organizationId: villaId, ownLegalEntityId, clientPartnerId: partnerId, periodStart: "2026-10-01", periodEnd: "2026-10-31" };
+      const draft = repo.createClientChargeDraft({ ...filters, billingProfileId: null, periodicity: "MONTHLY", dueDate: "2026-12-05", notes: null, internalNotes: null, operationIds: [], cteOperationIds: ops, cteUnitValueCents: 150 } as never);
+      expect(repo.getClientCharge(draft.charge.id).operations).toEqual([]);
+      const pdf = await repo.buildChargeCteDocument(draft.charge.id, "pdf");
+      expect(Buffer.from(pdf.bytes.slice(0, 4)).toString()).toBe("%PDF");
+      expect(repo.findEligibleOperations(filters)).toEqual([]);
+    } finally { db.close(); }
+  });
+});

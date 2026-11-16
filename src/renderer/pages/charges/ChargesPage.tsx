@@ -654,7 +654,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function createDraft(): Promise<void> {
-    if (!billableOperations.length) { setMessage("Marque pelo menos uma nota para cobrar da ABC."); return; }
+    if (!billableOperations.length && !cteOperations.length) { setMessage("Marque pelo menos uma nota para cobrar ou para o CT-e."); return; }
     try {
       const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: billableOperations.map((item) => item.id), cteOperationIds: cteOperations.map((item) => item.id), cteUnitValueCents: cteOperations.length ? cteUnitValueCents : null });
 
