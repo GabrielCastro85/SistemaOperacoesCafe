@@ -2092,17 +2092,22 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     partners={partners}
                     legalEntities={partnerLegalEntities}
                   />
-                  <SelectField label="Compra/venda" value={operationType} onChange={(value) => setOperationType(value as "PURCHASE" | "SALE")} options={[["PURCHASE", "Compra"], ["SALE", "Venda"]]} />
-                  <SelectField
-                    label="UF da venda"
-                    value={selectedXmlScope}
-                    onChange={(value) => {
-                      const nextScope = value as OperationScope;
-                      if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: nextScope }));
-                      setScope(nextScope);
-                    }}
-                    options={OPERATION_SCOPE_OPTIONS}
-                  />
+                  <div className="xml-segment">
+                    <span className="xml-segment__label">Compra/venda</span>
+                    <div className="xml-segment__options" role="group" aria-label="Compra ou venda">
+                      {(["PURCHASE", "SALE"] as const).map((value) => (
+                        <button key={value} type="button" className={operationType === value ? "active" : ""} onClick={() => setOperationType(value)}>{value === "PURCHASE" ? "Compra" : "Venda"}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="xml-segment">
+                    <span className="xml-segment__label">UF da venda</span>
+                    <div className="xml-segment__options" role="group" aria-label="UF da venda">
+                      {OPERATION_SCOPE_OPTIONS.filter(([value]) => value !== "ALL").map(([value, label]) => (
+                        <button key={value} type="button" className={selectedXmlScope === value ? "active" : ""} onClick={() => { if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: value })); setScope(value); }}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
                 </FormGrid>
                 {vulpeScan && selectedXmlFile ? (
                   <label className="inline-check">
@@ -2121,6 +2126,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 ) : null}
               </>
             )}
+          </div>
+        </div>
             <div className="xml-action-footer">
               <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
               <div className="xml-action-footer__buttons">
@@ -2131,8 +2138,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </button>
               </div>
             </div>
-          </div>
-        </div>
         {xmlQueue.length ? (
           <div className="xml-batch-review">
             <div className="section-title-row">
