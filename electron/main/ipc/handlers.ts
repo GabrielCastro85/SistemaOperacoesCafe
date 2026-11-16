@@ -1388,6 +1388,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
     if (error) throw new Error(error);
     return true;
   });
+  handle(IPC_CHANNELS.exportChargeCteSheet, async (_event, payload: unknown) => {
+    const data = z.object({ chargeId: z.string().uuid(), format: z.enum(["pdf", "xlsx"]) }).parse(payload);
+    const { bytes } = await repository.buildChargeCteDocument(data.chargeId, data.format);
+    const isPdf = data.format === "pdf";
+    const result = await dialog.showSaveDialog({ title: isPdf ? "Salvar PDF PHT (CT-e)" : "Salvar planilha PHT (CT-e)", defaultPath: isPdf ? "PHT.pdf" : "PHT.xlsx", filters: [{ name: isPdf ? "PDF" : "Planilha Excel", extensions: [data.format] }] });
+    if (result.canceled || !result.filePath) return false;
+    writeFileSync(result.filePath, bytes);
+    const error = await shell.openPath(result.filePath);
+    if (error) throw new Error(error);
+    return true;
+  });
   handle(IPC_CHANNELS.openChargeDocument, async (event, payload: unknown) => {
     const data = z.object({ chargeId: z.string().uuid(), kind: z.enum(["pdf", "image"]) }).parse(payload);
     const regenerated = await repository.regenerateChargeDocuments(data.chargeId);

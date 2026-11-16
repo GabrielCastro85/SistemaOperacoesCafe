@@ -226,7 +226,7 @@ import {
   mapDealPaymentTerm
 } from "../database/mappers.js";
 import { decimalTextToScaled, divideDecimalText, multiplyDecimalByCents, multiplyDecimalText, normalizeDecimalText, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
-import { buildChargePdf, buildChargeWorkbook, generateChargeDocuments } from "./chargeDocuments.js";
+import { buildChargeCtePdf, buildChargeCteWorkbook, buildChargePdf, buildChargeWorkbook, generateChargeDocuments } from "./chargeDocuments.js";
 import { generatePaymentReceiptDocuments } from "./paymentReceiptDocuments.js";
 import { generateFinancialReportFile, storePayableAttachment } from "./financialFiles.js";
 import { generateDealConfirmationPdf, generateDealConfirmationReportFile, storeSignedDealConfirmationPdf } from "./dealConfirmationFiles.js";
@@ -3493,6 +3493,18 @@ export class AppRepository {
   // Versao para o parceiro (ex.: Neto): mesma cobranca, sem as notas e ajustes
   // desmarcados e com o preco por saca dele (interno/externo). Nada e' gravado:
   // a cobranca original continua igual; so' devolve o arquivo.
+  // PHT: notas do CT-e da cobranca em PDF ou planilha, no mesmo padrao das cobrancas.
+  async buildChargeCteDocument(chargeId: string, format: "pdf" | "xlsx"): Promise<{ bytes: Uint8Array; detail: ClientChargeDetail }> {
+    const detail = this.getClientCharge(chargeId);
+    const organization = this.getOrganization(detail.charge.organizationId);
+    const ownLegalEntity = this.getLegalEntity(detail.charge.ownLegalEntityId);
+    const client = this.getBusinessPartner(detail.charge.clientPartnerId);
+    const clientLegalEntity = this.listPartnerLegalEntities(client.id).find((entity) => entity.isPrimary && entity.isActive) ?? this.listPartnerLegalEntities(client.id).find((entity) => entity.isActive) ?? null;
+    const documentsInput = { directories: this.directories!, organization, ownLegalEntity, client, clientLegalEntity, detail, relatedOpenChargeDetails: [], relatedPaidChargeDetails: [] };
+    const bytes = format === "pdf" ? await buildChargeCtePdf(documentsInput) : new Uint8Array(await buildChargeCteWorkbook(documentsInput));
+    return { bytes, detail };
+  }
+
   async buildChargePartnerVersion(input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; companyRates?: Array<{ company: string; rateCents: number }>; format: "pdf" | "xlsx" }): Promise<{ bytes: Uint8Array; detail: ClientChargeDetail }> {
     const original = this.getClientCharge(input.chargeId);
     // Preco especifico por empresa (ex.: GAP COFFEE a R$ 3) vale antes do interno/externo.

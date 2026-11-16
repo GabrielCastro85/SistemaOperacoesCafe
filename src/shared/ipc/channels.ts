@@ -241,6 +241,7 @@ export const IPC_CHANNELS = {
   getClientCharge: "clientCharges:get",
   regenerateChargeDocuments: "clientCharges:regenerateDocuments",
   exportChargePartnerVersion: "clientCharges:exportPartnerVersion",
+  exportChargeCteSheet: "clientCharges:exportCteSheet",
   removeDuplicateFiscalDocumentItems: "fiscalDocuments:removeDuplicateItems",
   openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",

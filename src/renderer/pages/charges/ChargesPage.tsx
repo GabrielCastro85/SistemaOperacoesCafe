@@ -13,7 +13,7 @@ import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentRecipientName
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
-import { calculateChargeCte, defaultsToCte, type ChargeCteNote } from "../../../shared/utils/chargeCte";
+import { calculateChargeCte, defaultsToCte, readChargeCte, type ChargeCteNote } from "../../../shared/utils/chargeCte";
 import { chargeCompanyClass } from "../../../shared/utils/chargeCompanyClass";
 import { isPackagingChargeLine, packagingUnits } from "../../../shared/utils/packagingBilling";
 import { CHARGE_BANK_FIELD_LABELS, chargeBankFormValues } from "../../../shared/utils/chargeBankDetails";
@@ -350,6 +350,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const periodRequestRef = useRef(0);
   const dashboardPrefillHandledRef = useRef(false);
   const [loadingPeriod, setLoadingPeriod] = useState(false);
+  async function exportCteSheet(format: "pdf" | "xlsx"): Promise<void> {
+    if (!detail) return;
+    try {
+      const saved = await window.operationsCafe.exportChargeCteSheet({ chargeId: detail.charge.id, format });
+      if (saved) setMessage(format === "pdf" ? "PDF PHT salvo." : "Planilha PHT salva.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Nao foi possivel gerar o PHT.");
+    }
+  }
+
   async function findOperationsForRange(nextPeriodStart: string, nextPeriodEnd: string, selectedClientId = clientId): Promise<void> {
     const request = ++periodRequestRef.current;
     setDetail(null);
@@ -1443,6 +1453,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   <button onClick={() => void openDocument("image")}>Salvar imagem</button>
                 </div>
               )}
+              {detail ? <button type="button" className="charge-partner-open" disabled={!detail.adjustments.some((adjustment) => readChargeCte(adjustment))} onClick={() => void exportCteSheet("xlsx")} title={detail.adjustments.some((adjustment) => readChargeCte(adjustment)) ? "Planilha PHT: so as notas do CT-e, no padrao do site" : "Esta cobranca nao tem CT-e"}>Planilha PHT (CT-e)</button> : null}
+              {detail ? <button type="button" className="charge-partner-open" disabled={!detail.adjustments.some((adjustment) => readChargeCte(adjustment))} onClick={() => void exportCteSheet("pdf")} title={detail.adjustments.some((adjustment) => readChargeCte(adjustment)) ? "PDF PHT: notas do CT-e para enviar ao cliente" : "Esta cobranca nao tem CT-e"}>PDF PHT (CT-e)</button> : null}
               {detail ? <button type="button" className="charge-partner-open" onClick={() => setPartnerVersionOpen(true)} title="PDF ou planilha com os preços do parceiro, sem mudar esta cobrança">Versão para o parceiro</button> : null}
               {detail && partnerVersionOpen ? <ChargePartnerVersionModal detail={detail} onClose={() => setPartnerVersionOpen(false)} /> : null}
             </div>

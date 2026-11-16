@@ -3,6 +3,8 @@ import { isPackagingChargeLine, packagingUnits } from "../../../src/shared/utils
 import { chargeIssuerLabelFromNames } from "../../../src/shared/utils/chargeIssuerLabel.js";
 import { chargeAdjustmentEffectLabel, chargeAdjustmentTypeLabel, chargeDaeLines, isGeneratedDaeReason, parseChargeDaeAdjustment } from "../../../src/shared/utils/chargeDaeAdjustment.js";
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
+import { chargeCteSheetRows, CTE_SHEET_EMPTY_MESSAGE } from "./chargeCteSheet.js";
+import { multiplyDecimalByCents, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
 import { chargeBankDetails } from "../../../src/shared/utils/chargeBankDetails.js";
 import ExcelJS from "exceljs";
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
@@ -1131,4 +1133,161 @@ function escapeXml(value: string): string {
 function clipText(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, Math.max(1, maxLength - 3))}...`;
+}
+
+// PHT: notas do CT-e (frete) da cobranca, no padrao visual da cobranca (PDF e planilha).
+export async function buildChargeCtePdf(input: ChargeDocumentsInput): Promise<Uint8Array> {
+  const data = chargeCteSheetRows(input.detail);
+  if (!data) throw new Error(CTE_SHEET_EMPTY_MESSAGE);
+  const { organization, ownLegalEntity, client, clientLegalEntity, detail } = input;
+  const { charge } = detail;
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const margin = 28;
+  const contentWidth = pageWidth - margin * 2;
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const dark = rgb(0.07, 0.055, 0.04);
+  const ink = rgb(0.1, 0.08, 0.06);
+  const muted = rgb(0.36, 0.32, 0.26);
+  const border = rgb(0.73, 0.63, 0.49);
+  const soft = rgb(0.965, 0.94, 0.885);
+  const paper = rgb(1, 0.99, 0.965);
+  const gold = rgb(0.69, 0.49, 0.29);
+  const green = rgb(0.035, 0.36, 0.24);
+  const headerText = rgb(1, 0.96, 0.88);
+  const isGraoBrand = `${organization.slug} ${organization.displayName} ${ownLegalEntity.tradeName}`.toLowerCase().includes("grao");
+  const headerColor = isGraoBrand ? rgb(0.015, 0.19, 0.13) : dark;
+  const style = { font, bold, ink, muted, border, paper, gold, green };
+
+  let page = doc.addPage([pageWidth, pageHeight]);
+  page.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: rgb(0.985, 0.965, 0.925) });
+  page.drawRectangle({ x: margin, y: pageHeight - margin - 88, width: contentWidth, height: 88, color: headerColor });
+  page.drawRectangle({ x: margin, y: pageHeight - margin - 90, width: contentWidth, height: 2, color: gold });
+  const logo = await embedLogo(doc, organization);
+  if (logo) {
+    const logoBox = fitImage(logo.width, logo.height, 58, 58);
+    page.drawImage(logo.image, { x: margin + 12, y: pageHeight - margin - 72, width: logoBox.width, height: logoBox.height });
+  }
+  const headerX = margin + 82;
+  page.drawText("NOTAS DO CT-e (FRETE)", { x: headerX, y: pageHeight - margin - 24, size: 14, font: bold, color: headerText });
+  page.drawText(ownLegalEntity.tradeName, { x: headerX, y: pageHeight - margin - 42, size: 9, font: bold, color: rgb(0.84, 0.75, 0.63) });
+  drawTextBox(page, `${ownLegalEntity.legalName}\nCNPJ: ${formatTaxId(ownLegalEntity.cnpj)}`, headerX, pageHeight - margin - 49, 265, 30, { font, bold, size: 7.1, minSize: 5.8, lineHeight: 1.14, maxLines: 2, color: headerText });
+  drawRightText(page, chargePeriodLabel(charge, true), pageWidth - margin - 145, pageHeight - margin - 24, 130, bold, 9, headerText);
+  drawRightText(page, `Emissão: ${formatDate(charge.issueDate ?? charge.createdAt)}`, pageWidth - margin - 145, pageHeight - margin - 42, 130, font, 7, rgb(0.82, 0.76, 0.67));
+
+  let y = pageHeight - margin - 110;
+  const boxGap = 10;
+  const boxWidth = (contentWidth - boxGap) / 2;
+  drawInfoBox(page, "CLIENTE", clientLines(client, clientLegalEntity), margin, y, boxWidth, 54, style);
+  drawInfoBox(page, "PERÍODO", [`${formatDate(charge.periodStart)} a ${formatDate(charge.periodEnd)}`, `Periodicidade: ${translatePeriodicity(charge.periodicity)}`], margin + boxWidth + boxGap, y, boxWidth, 54, style);
+  y -= 54 + 14;
+
+  const columns = [
+    { title: "DATA", x: margin + 8 },
+    { title: "EMPRESA", x: margin + 70 },
+    { title: "NF", x: margin + 262 },
+    { title: "DESTINO", x: margin + 324 },
+    { title: "SACAS", x: margin + 462 }
+  ];
+  const drawTableHeader = (): void => {
+    page.drawRectangle({ x: margin, y: y - 20, width: contentWidth, height: 20, color: soft, borderColor: border, borderWidth: 0.45 });
+    columns.forEach((column) => page.drawText(column.title, { x: column.x, y: y - 13, size: 6.5, font: bold, color: muted }));
+    y -= 26;
+  };
+  drawSectionTitle(page, "Notas de referência do CT-e", margin, y, bold, ink, green);
+  y -= 16;
+  drawTableHeader();
+  data.rows.forEach((row, index) => {
+    if (y - 16 < 190) {
+      page = addChargeContinuationPage(doc, pageWidth, pageHeight, margin, contentWidth, headerColor, gold, bold, headerText);
+      y = pageHeight - margin - 70;
+      drawTableHeader();
+    }
+    if (index % 2 === 1) page.drawRectangle({ x: margin, y: y - 14, width: contentWidth, height: 16, color: paper });
+    const [year, month, day] = row.date.split("-");
+    page.drawText(`${day}/${month}/${year}`, { x: columns[0].x, y: y - 10, size: 7.5, font, color: ink });
+    page.drawText(truncate(row.company, font, 7.5, 186), { x: columns[1].x, y: y - 10, size: 7.5, font, color: ink });
+    page.drawText(row.nf, { x: columns[2].x, y: y - 10, size: 7.5, font: bold, color: ink });
+    page.drawText(truncate(row.destination, font, 7.5, 132), { x: columns[3].x, y: y - 10, size: 7.5, font, color: ink });
+    page.drawText(formatDecimal(decimalNumber(row.sacks)), { x: columns[4].x, y: y - 10, size: 7.5, font, color: ink });
+    y -= 16;
+  });
+
+  const totalSacks = sumDecimalTexts(data.rows.map((row) => row.sacks));
+  const totalCents = multiplyDecimalByCents(totalSacks, data.unitValueCents);
+  y -= 14;
+  drawInfoBox(page, "CT-e", ["Frete (transporte por saca) referente às notas listadas acima."], margin, y, contentWidth - 260 - boxGap, 60, style);
+  drawInfoBox(page, "TOTAL DO CT-e", [
+    `Notas: ${data.rows.length}`,
+    `Total de sacas: ${formatDecimal(decimalNumber(totalSacks))}`,
+    `Valor por saca: R$ ${formatCents(data.unitValueCents)}`,
+    `Total: R$ ${formatCents(totalCents)}`
+  ], margin + contentWidth - 260, y, 260, 80, style);
+
+  page.drawText(`Gerado pelo Sistema de Operações de Café em ${formatDateTime(new Date().toISOString())}`, { x: margin, y: 22, size: 6.5, font, color: muted });
+  page.drawText(`${organization.appDisplayName} | PHT - notas do CT-e`, { x: pageWidth - margin - 250, y: 22, size: 6.5, font: bold, color: gold });
+  await addGraonexPdfFooter(doc, font);
+  doc.getPages().forEach((currentPage, index, pages) => {
+    drawRightText(currentPage, `${index + 1} / ${pages.length}`, pageWidth - margin - 60, 7.2, 60, font, 6.5, muted);
+  });
+  return doc.save();
+}
+
+// Planilha PHT no padrao das planilhas de cobranca: cabecalho escuro, linhas listradas,
+// rodape Grãonex, e no fim o total de sacas x valor por saca (formulas).
+export async function buildChargeCteWorkbook(input: ChargeDocumentsInput): Promise<Buffer> {
+  const data = chargeCteSheetRows(input.detail);
+  if (!data) throw new Error(CTE_SHEET_EMPTY_MESSAGE);
+  const charge = input.detail.charge;
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Grãonex";
+  const sheet = workbook.addWorksheet("PHT");
+  sheet.columns = [
+    { key: "date", width: 14 },
+    { key: "company", width: 26 },
+    { key: "nf", width: 12 },
+    { key: "destination", width: 26 },
+    { key: "sacks", width: 14 }
+  ];
+  sheet.mergeCells("A1:E1");
+  sheet.getCell("A1").value = "NOTAS DO CT-e (FRETE)";
+  sheet.getCell("A1").font = { bold: true, size: 13, color: { argb: "FF08503D" } };
+  sheet.mergeCells("A2:E2");
+  sheet.getCell("A2").value = `${input.client.displayName} · ${chargePeriodLabel(charge, true)}`;
+  sheet.getCell("A2").font = { italic: true, color: { argb: "FF5C5242" } };
+
+  const headerRow = sheet.getRow(4);
+  headerRow.values = ["DATA", "EMPRESA", "NF", "DESTINO", "SACAS"];
+  headerRow.font = { bold: true, color: { argb: "FFFFF5E0" } };
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF08503D" } };
+    cell.alignment = { vertical: "middle" };
+  });
+  data.rows.forEach((row, index) => {
+    const [year, month, day] = row.date.split("-").map(Number);
+    const added = sheet.addRow({ date: new Date(Date.UTC(year, month - 1, day)), company: row.company, nf: Number(row.nf), destination: row.destination, sacks: Number(row.sacks) });
+    added.getCell("date").numFmt = "dd/mm/yyyy";
+    added.getCell("sacks").numFmt = "#,##0.00";
+    if (index % 2 === 1) added.eachCell((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFBF6EA" } }; });
+  });
+  const first = 5;
+  const last = data.rows.length + 4;
+  const totalSacks = data.rows.reduce((sum, row) => sum + Number(row.sacks), 0);
+  const totalValue = (totalSacks * data.unitValueCents) / 100;
+  sheet.addRow([]);
+  const totalLabel = sheet.addRow(["TOTAL DE SACAS", "", "", "", { formula: `SUM(E${first}:E${last})`, result: totalSacks }]);
+  totalLabel.font = { bold: true };
+  totalLabel.getCell("E").numFmt = "#,##0.00";
+  const unitRow = sheet.addRow(["VALOR POR SACA", "", "", "", data.unitValueCents / 100]);
+  unitRow.getCell("E").numFmt = "R$ #,##0.00";
+  const valueRow = sheet.addRow(["VALOR DO CT-e", "", "", "", { formula: `E${totalLabel.number}*E${unitRow.number}`, result: totalValue }]);
+  valueRow.font = { bold: true };
+  valueRow.getCell("E").numFmt = "R$ #,##0.00";
+  valueRow.eachCell((cell) => { cell.border = { top: { style: "thin", color: { argb: "FF08503D" } } }; });
+  sheet.views = [{ state: "frozen", ySplit: 4 }];
+  sheet.headerFooter.oddFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
+  sheet.headerFooter.evenFooter = `&L${GRAONEX_FOOTER_TEXT}&RPagina &P de &N`;
+  return Buffer.from(await workbook.xlsx.writeBuffer());
 }

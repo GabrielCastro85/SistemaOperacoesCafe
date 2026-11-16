@@ -335,6 +335,7 @@ const IPC_CHANNELS = {
   getClientCharge: "clientCharges:get",
   regenerateChargeDocuments: "clientCharges:regenerateDocuments",
   exportChargePartnerVersion: "clientCharges:exportPartnerVersion",
+  exportChargeCteSheet: "clientCharges:exportCteSheet",
   removeDuplicateFiscalDocumentItems: "fiscalDocuments:removeDuplicateItems",
   openChargeDocument: "clientCharges:openDocument",
   listLedgerEntries: "clientLedger:listEntries",
@@ -785,6 +786,7 @@ export interface OperationsCafeApi {
   getClientCharge: (id: string) => Promise<ClientChargeDetail>;
   regenerateChargeDocuments: (id: string) => Promise<ClientChargeDetail>;
   removeDuplicateFiscalDocumentItems: (input: { fiscalDocumentId: string; dryRun?: boolean }) => Promise<{ fiscalDocumentId: string; documentNumber: string; status: "FIXED" | "WOULD_FIX" | "NOTHING" | "BLOCKED"; removedItems: number; removedOperations: number; reason: string | null }>;
+  exportChargeCteSheet: (input: { chargeId: string; format: "pdf" | "xlsx" }) => Promise<boolean>;
   exportChargePartnerVersion: (input: { chargeId: string; excludedOperationIds: string[]; excludedAdjustmentIds: string[]; internalRateCents: number | null; externalRateCents: number | null; companyRates?: Array<{ company: string; rateCents: number }>; format: "pdf" | "xlsx" }) => Promise<boolean>;
   openChargeDocument: (input: { chargeId: string; kind: "pdf" | "image" }) => Promise<boolean>;
   listLedgerEntries: (filters: { organizationId: string; ownLegalEntityId?: string; clientPartnerId?: string; periodStart?: string | null; periodEnd?: string | null }) => Promise<ClientLedgerEntry[]>;
@@ -1218,6 +1220,7 @@ const api: OperationsCafeApi = {
   getClientCharge: (id) => ipcRenderer.invoke(IPC_CHANNELS.getClientCharge, id) as Promise<ClientChargeDetail>,
   regenerateChargeDocuments: (id) => ipcRenderer.invoke(IPC_CHANNELS.regenerateChargeDocuments, id) as Promise<ClientChargeDetail>,
   removeDuplicateFiscalDocumentItems: (input) => ipcRenderer.invoke(IPC_CHANNELS.removeDuplicateFiscalDocumentItems, input) as Promise<{ fiscalDocumentId: string; documentNumber: string; status: "FIXED" | "WOULD_FIX" | "NOTHING" | "BLOCKED"; removedItems: number; removedOperations: number; reason: string | null }>,
+  exportChargeCteSheet: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargeCteSheet, input) as Promise<boolean>,
   exportChargePartnerVersion: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportChargePartnerVersion, input) as Promise<boolean>,
   openChargeDocument: (input) => ipcRenderer.invoke(IPC_CHANNELS.openChargeDocument, input) as Promise<boolean>,
   listLedgerEntries: (filters) => ipcRenderer.invoke(IPC_CHANNELS.listLedgerEntries, filters) as Promise<ClientLedgerEntry[]>,
