@@ -3638,6 +3638,41 @@ export const migrations: Migration[] = [
       for (const column of added) db.exec(`ALTER TABLE service_rate_rules ADD COLUMN ${column} TEXT`);
       rebaselineAddedNullColumns(db, "service_rate_rules", added);
     }
+  },
+  {
+    // Notas do CT-e (PHT): saem da cobranca da ABC e ficam numa planilha propria.
+    name: "064_cte_sheets",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cte_sheets (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          own_legal_entity_id TEXT,
+          client_partner_id TEXT NOT NULL,
+          client_charge_id TEXT,
+          period_start TEXT,
+          period_end TEXT,
+          unit_value_cents INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'ACTIVE',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS cte_sheet_notes (
+          id TEXT PRIMARY KEY,
+          cte_sheet_id TEXT NOT NULL REFERENCES cte_sheets(id),
+          operation_id TEXT NOT NULL,
+          fiscal_document_number TEXT,
+          operation_date TEXT NOT NULL,
+          company TEXT,
+          destination TEXT,
+          sacks_decimal TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cte_sheet_notes_operation ON cte_sheet_notes(operation_id);
+        CREATE INDEX IF NOT EXISTS idx_cte_sheets_charge ON cte_sheets(client_charge_id);
+      `);
+    }
   }
 ];
 

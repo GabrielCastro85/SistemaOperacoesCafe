@@ -11,7 +11,7 @@ const SYNCED_TABLES = [
   "products", "product_aliases", "service_rate_rules", "purchase_rate_rules", "operation_rate_history",
   "operation_classification_rules", "fiscal_documents", "fiscal_document_items", "fiscal_document_events",
   "fiscal_document_returns", "fiscal_document_invoice_daes", "fiscal_document_merge_history", "warehouse_movements", "operations", "third_party_operations",
-  "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history",
+  "client_charges", "client_charge_operations", "client_charge_adjustments", "charge_status_history", "cte_sheets", "cte_sheet_notes",
   "billing_alert_ignores",
   "client_ledger_entries", "client_credit_allocations", "client_payments", "client_payment_allocations",
   "transfer_reconciliations", "transfer_reconciliation_invoices", "transfer_reconciliation_payments",

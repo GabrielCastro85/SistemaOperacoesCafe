@@ -13,7 +13,7 @@ import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentRecipientName
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
-import { calculateChargeCte, defaultsToCte, readChargeCte, type ChargeCteNote } from "../../../shared/utils/chargeCte";
+import { calculateChargeCte, defaultsToCte, type ChargeCteNote } from "../../../shared/utils/chargeCte";
 import { chargeCompanyClass } from "../../../shared/utils/chargeCompanyClass";
 import { isPackagingChargeLine, packagingUnits } from "../../../shared/utils/packagingBilling";
 import { CHARGE_BANK_FIELD_LABELS, chargeBankFormValues } from "../../../shared/utils/chargeBankDetails";
@@ -573,9 +573,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const cteCalculation = calculateChargeCte(selectedCteNotes, cteUnitValueCents);
   const cteQuantity = decimalTextBr(cteCalculation.sacks);
   const cteTotalCents = cteCalculation.amountCents;
-  const eligibleSubtotalCents = selectedOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
+  // Notas marcadas para o CT-e nao entram na cobranca: viram a planilha PHT desta cobranca.
+  const cteOperations = detail ? [] : selectedOperations.filter((operation) => {
+    const note = cteNotes.find((item) => item.id === operation.fiscalDocumentId);
+    return note ? isCteNoteSelected(note) : false;
+  });
+  const cteOperationIds = new Set(cteOperations.map((operation) => operation.id));
+  const billableOperations = selectedOperations.filter((operation) => !cteOperationIds.has(operation.id));
+  const eligibleSubtotalCents = billableOperations.reduce((total, operation) => total + operation.serviceAmountCents, 0);
   // DAE de frete e DAE da nota fiscal: cada um vira uma linha na previa.
-  const selectedFreightDaes = Array.from(new Set(selectedOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
+  const selectedFreightDaes = Array.from(new Set(billableOperations.map((operation) => operation.fiscalDocumentId))).flatMap((documentId) => {
     const document = operationDocuments[documentId];
     if (!document) return [];
     const rows: Array<{ key: string; title: string; documentNumber: string; reference: string | null; amountCents: number; fallback: string }> = [];
@@ -585,11 +592,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   });
   const selectedFreightDaeCents = selectedFreightDaes.reduce((total, row) => total + row.amountCents, 0);
   const clientPeriodSacks = clientPeriodOperations.length ? sumDecimalTexts(clientPeriodOperations.map((operation) => operation.quantitySacks)) : "0";
-  const eligibleSacks = selectedOperations.length ? sumDecimalTexts(selectedOperations.map((operation) => operation.quantitySacks)) : "0";
+  const eligibleSacks = billableOperations.length ? sumDecimalTexts(billableOperations.map((operation) => operation.quantitySacks)) : "0";
   const openBilledSacks = openBilledOperations.length ? sumDecimalTexts(openBilledOperations.map((operation) => operation.quantitySacks)) : "0";
   const paidSacks = paidOperations.length ? sumDecimalTexts(paidOperations.map((operation) => operation.quantitySacks)) : "0";
   const chargeBaseCents = detail?.charge.finalAmountCents ?? eligibleSubtotalCents + selectedFreightDaeCents;
-  const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents + cteTotalCents, discountCents, advanceCents);
+  const previewFinalCents = adjustedChargeTotal(chargeBaseCents, surchargeCents, discountCents, advanceCents);
   const hasPendingManualAdjustments = advanceCents > 0 || discountCents > 0 || surchargeCents > 0;
   // O que vem da conta-corrente ja tem a observacao do lancamento (sai no PDF);
   // so a parte digitada alem disso precisa de observacao propria.
@@ -598,8 +605,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const advanceNeedsReason = advanceCents > ledgerCreditCents;
   const surchargeNeedsReason = surchargeCents > ledgerSurchargeCents;
   const missingAdjustmentReason = (advanceNeedsReason && !reasonFor("advance")) || (discountCents > 0 && !reasonFor("discount")) || (surchargeNeedsReason && !reasonFor("surcharge"));
-  const hasPendingCte = cteTotalCents > 0;
-  const hasPendingAdjustments = hasPendingManualAdjustments || hasPendingCte;
+  const hasPendingAdjustments = hasPendingManualAdjustments;
   const visibleFinalCents = previewFinalCents;
   const draftDisabledReason = draftGenerationBlockedReason();
   const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
@@ -648,17 +654,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   async function createDraft(): Promise<void> {
-    if (!selectedOperations.length) { setMessage("Marque pelo menos uma nota."); return; }
+    if (!billableOperations.length) { setMessage("Marque pelo menos uma nota para cobrar da ABC."); return; }
     try {
-      const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: selectedOperations.map((item) => item.id) });
-      const draftCteSelection: Record<string, boolean> = {};
-      for (const operation of draft.operations) {
-        const source = selectedOperations.find((item) => item.id === operation.operationId);
-        const note = cteNotes.find((item) => item.id === source?.fiscalDocumentId);
-        const key = JSON.stringify([operation.fiscalDocumentNumberSnapshot, operation.fiscalDocumentSeriesSnapshot, chargeDetailCompanyLabel(operation), operation.operationDateSnapshot]);
-        draftCteSelection[key] = note ? isCteNoteSelected(note) : false;
-      }
-      setCteNoteSelection(draftCteSelection);
+      const draft = await window.operationsCafe.createClientChargeDraft({ organizationId, ownLegalEntityId, clientPartnerId: clientId, billingProfileId: null, periodicity, periodStart, periodEnd, dueDate, notes: null, internalNotes: null, operationIds: billableOperations.map((item) => item.id), cteOperationIds: cteOperations.map((item) => item.id), cteUnitValueCents: cteOperations.length ? cteUnitValueCents : null });
+
+      setCteNoteSelection({});
       setDetail(draft);
       setMessage("Rascunho gerado e operacoes reservadas.");
       await load();
@@ -767,18 +767,6 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
       if (consumed.remainingCents > 0) {
         current = await window.operationsCafe.addChargeAdjustment({ clientChargeId: current.charge.id, ledgerEntryId: null, adjustmentType: "SURCHARGE", effect: "INCREASE_RECEIVABLE", description: "Acrescimo", amountCents: consumed.remainingCents, sortOrder: 30, reason: reasonFor("surcharge") || "Ajuste manual" });
       }
-    }
-    if (hasPendingCte) {
-      current = await window.operationsCafe.addChargeAdjustment({
-        clientChargeId: current.charge.id,
-        ledgerEntryId: null,
-        adjustmentType: "SURCHARGE",
-        effect: "INCREASE_RECEIVABLE",
-        description: cteCalculation.description,
-        amountCents: cteTotalCents,
-        sortOrder: 40,
-        reason: cteCalculation.reason
-      });
     }
     return shouldRegenerateDocuments && hasPendingAdjustments ? window.operationsCafe.regenerateChargeDocuments(current.charge.id) : current;
   }
@@ -1366,14 +1354,6 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                       <span>Previa</span><span>Aumenta o valor final</span>
                     </div>
                   ) : null}
-                  {!detail && hasPendingCte ? (
-                    <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>CT-e</strong><small>{cteQuantity} sacas x {formatCurrencyFromCents(cteUnitValueCents)}</small></span>
-                      <span>CT-E</span><span>Transporte</span>
-                      <span>+ {formatCurrencyFromCents(cteTotalCents)}</span>
-                      <span>Previa</span><span>Aumenta o valor final</span>
-                    </div>
-                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1394,6 +1374,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               {surchargeCents > 0 && ledgerSurchargeCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientSurcharges.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
               {surchargeNeedsReason ? <div className="charge-adjustment-reason"><dt>Observação do acréscimo</dt><dd><input value={adjustmentReasons.surcharge} onChange={(event) => setReason("surcharge", event.target.value)} placeholder="Ex.: salário Gustavo" aria-label="Observação do acréscimo" /></dd></div> : null}
             </div>
+            {!detail ? <>
             <div className="charge-cte-card">
               <div>
                 <strong>CT-e por saca</strong>
@@ -1420,8 +1401,9 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 </label>
               ))}
               {cteNotes.length === 0 ? <small>Selecione as notas da cobranca para calcular o CT-e.</small> : null}
-              {cteAlreadyApplied ? <small>Esta cobranca ja possui ajuste de CT-e. Marque somente notas para uma cobranca adicional.</small> : null}
+              {cteAlreadyApplied ? <small>Esta cobranca ja possui ajuste de CT-e (cobranca antiga).</small> : null}
             </div>
+            </> : null}
             <div className="toolbar">
               <button onClick={() => void applyAdjustments()}>Aplicar ajustes</button>
             </div>
@@ -1429,7 +1411,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <span>Valor final a cobrar</span>
               <strong aria-live="polite">{loadingPeriod ? "Calculando..." : formatCurrencyFromCents(visibleFinalCents)}</strong>
               {!loadingPeriod && visibleFinalCents < 0 ? <small>Saldo a favor do cliente: ao emitir, vira crédito na conta-corrente e desconta na próxima cobrança.</small> : null}
-              {!detail && clientPeriodOperations.length > 0 && hasPendingAdjustments ? <small>Notas lancadas no periodo + CT-e e acrescimos - descontos - adiantamentos.</small> : null}
+              {!detail && clientPeriodOperations.length > 0 && hasPendingAdjustments ? <small>Notas lancadas no periodo e acrescimos - descontos - adiantamentos.</small> : null}
               {!detail && clientPeriodOperations.length > 0 && !hasPendingAdjustments ? <small>Soma das notas lancadas no periodo, incluindo rascunhos.</small> : null}
               {!detail ? <small>Somente notas selecionadas, com os ajustes informados.</small> : null}
               {detail && hasPendingAdjustments ? <small>Apos ajustes digitados: {formatCurrencyFromCents(previewFinalCents)}</small> : null}
@@ -1453,8 +1435,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   <button onClick={() => void openDocument("image")}>Salvar imagem</button>
                 </div>
               )}
-              {detail ? <button type="button" className="charge-partner-open" disabled={!detail.adjustments.some((adjustment) => readChargeCte(adjustment))} onClick={() => void exportCteSheet("xlsx")} title={detail.adjustments.some((adjustment) => readChargeCte(adjustment)) ? "Planilha PHT: so as notas do CT-e, no padrao do site" : "Esta cobranca nao tem CT-e"}>Planilha PHT (CT-e)</button> : null}
-              {detail ? <button type="button" className="charge-partner-open" disabled={!detail.adjustments.some((adjustment) => readChargeCte(adjustment))} onClick={() => void exportCteSheet("pdf")} title={detail.adjustments.some((adjustment) => readChargeCte(adjustment)) ? "PDF PHT: notas do CT-e para enviar ao cliente" : "Esta cobranca nao tem CT-e"}>PDF PHT (CT-e)</button> : null}
+              {detail ? <button type="button" className="charge-partner-open" onClick={() => void exportCteSheet("xlsx")} title="Planilha PHT: so as notas do CT-e, no padrao do site">Planilha PHT (CT-e)</button> : null}
+              {detail ? <button type="button" className="charge-partner-open" onClick={() => void exportCteSheet("pdf")} title="PDF PHT: notas do CT-e para enviar ao cliente">PDF PHT (CT-e)</button> : null}
               {detail ? <button type="button" className="charge-partner-open" onClick={() => setPartnerVersionOpen(true)} title="PDF ou planilha com os preços do parceiro, sem mudar esta cobrança">Versão para o parceiro</button> : null}
               {detail && partnerVersionOpen ? <ChargePartnerVersionModal detail={detail} onClose={() => setPartnerVersionOpen(false)} /> : null}
             </div>

@@ -3,7 +3,7 @@ import { isPackagingChargeLine, packagingUnits } from "../../../src/shared/utils
 import { chargeIssuerLabelFromNames } from "../../../src/shared/utils/chargeIssuerLabel.js";
 import { chargeAdjustmentEffectLabel, chargeAdjustmentTypeLabel, chargeDaeLines, isGeneratedDaeReason, parseChargeDaeAdjustment } from "../../../src/shared/utils/chargeDaeAdjustment.js";
 import { chargePeriodLabel } from "../../../src/shared/utils/chargeLabel.js";
-import { chargeCteSheetRows, CTE_SHEET_EMPTY_MESSAGE } from "./chargeCteSheet.js";
+import { CTE_SHEET_EMPTY_MESSAGE, type ChargeCteData } from "./chargeCteSheet.js";
 import { multiplyDecimalByCents, sumDecimalTexts } from "../../../src/shared/utils/decimal.js";
 import { chargeBankDetails } from "../../../src/shared/utils/chargeBankDetails.js";
 import ExcelJS from "exceljs";
@@ -1136,9 +1136,8 @@ function clipText(value: string, maxLength: number): string {
 }
 
 // PHT: notas do CT-e (frete) da cobranca, no padrao visual da cobranca (PDF e planilha).
-export async function buildChargeCtePdf(input: ChargeDocumentsInput): Promise<Uint8Array> {
-  const data = chargeCteSheetRows(input.detail);
-  if (!data) throw new Error(CTE_SHEET_EMPTY_MESSAGE);
+export async function buildChargeCtePdf(input: ChargeDocumentsInput, data: ChargeCteData): Promise<Uint8Array> {
+  if (!data.rows.length) throw new Error(CTE_SHEET_EMPTY_MESSAGE);
   const { organization, ownLegalEntity, client, clientLegalEntity, detail } = input;
   const { charge } = detail;
   const pageWidth = 595.28;
@@ -1237,9 +1236,8 @@ export async function buildChargeCtePdf(input: ChargeDocumentsInput): Promise<Ui
 
 // Planilha PHT no padrao das planilhas de cobranca: cabecalho escuro, linhas listradas,
 // rodape Grãonex, e no fim o total de sacas x valor por saca (formulas).
-export async function buildChargeCteWorkbook(input: ChargeDocumentsInput): Promise<Buffer> {
-  const data = chargeCteSheetRows(input.detail);
-  if (!data) throw new Error(CTE_SHEET_EMPTY_MESSAGE);
+export async function buildChargeCteWorkbook(input: ChargeDocumentsInput, data: ChargeCteData): Promise<Buffer> {
+  if (!data.rows.length) throw new Error(CTE_SHEET_EMPTY_MESSAGE);
   const charge = input.detail.charge;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Grãonex";

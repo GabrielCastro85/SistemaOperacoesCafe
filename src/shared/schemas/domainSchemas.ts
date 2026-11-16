@@ -620,7 +620,10 @@ export const clientChargeDraftInputSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   notes: nullableText,
   internalNotes: nullableText,
-  operationIds: z.array(z.string().uuid())
+  operationIds: z.array(z.string().uuid()),
+  // Notas do CT-e: saem da cobranca e viram a planilha PHT desta cobranca.
+  cteOperationIds: z.array(z.string().uuid()).default([]),
+  cteUnitValueCents: z.number().int().min(0).nullable().default(null)
 });
 
 export const clientChargeAdjustmentInputSchema = z.object({
