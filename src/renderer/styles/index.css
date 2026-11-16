@@ -6625,3 +6625,7 @@ table tbody tr:hover {
 .xml-segment__options button {
   min-height: 34px;
 }
+
+.xml-detail-card .kv-list dt {
+  white-space: nowrap;
+}
