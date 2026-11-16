@@ -19,6 +19,10 @@ const MAX_FAILED_ATTEMPTS = 5;
 
 type DbRecord = Record<string, unknown>;
 
+// Sessao do app: expira 12h depois do login e bloqueia (pede senha) apos 30 min parado.
+const SESSION_MAX_HOURS = 12;
+const IDLE_LOCK_MINUTES = 30;
+
 export const AUTH_PUBLIC_CHANNELS = new Set([
   "auth:needsBootstrap",
   "auth:centralConnectionStatus",
@@ -199,7 +203,36 @@ export class AuthService {
 
   getCurrentSession(): AuthSession | null {
     if (!this.currentSessionId) return null;
+    const row = this.db.prepare("SELECT status, created_at, last_activity_at, expires_at FROM local_sessions WHERE id = ?").get(this.currentSessionId) as DbRecord | undefined;
+    if (!row) return null;
+    const now = Date.now();
+    const status = String(row.status);
+    // Expiracao fixa: 12h desde o login (sessoes antigas sem expires_at usam created_at).
+    const expiresAt = Date.parse(String(row.expires_at ?? "")) || Date.parse(String(row.created_at)) + SESSION_MAX_HOURS * 3600_000;
+    if (status !== "LOGGED_OUT" && status !== "EXPIRED" && now >= expiresAt) {
+      const iso = new Date(now).toISOString();
+      this.db.prepare("UPDATE local_sessions SET status = 'EXPIRED', logout_at = ?, last_activity_at = ? WHERE id = ?").run(iso, iso, this.currentSessionId);
+      this.writeAudit({ actorUserId: this.getUserIdOfSession(this.currentSessionId), sessionId: this.currentSessionId, action: "auth.session_expired", result: "SUCCESS", severity: "INFO" });
+      this.currentSessionId = null;
+      return null;
+    }
+    if (status === "ACTIVE") {
+      const lastActivity = Date.parse(String(row.last_activity_at));
+      const iso = new Date(now).toISOString();
+      if (Number.isFinite(lastActivity) && now - lastActivity >= IDLE_LOCK_MINUTES * 60_000) {
+        // Parado ha 30 min (ex.: fechou o navegador): pede a senha de novo.
+        this.db.prepare("UPDATE local_sessions SET status = 'LOCKED', locked_at = ?, last_activity_at = ? WHERE id = ?").run(iso, iso, this.currentSessionId);
+        this.writeAudit({ actorUserId: this.getUserIdOfSession(this.currentSessionId), sessionId: this.currentSessionId, action: "auth.lock", result: "SUCCESS", severity: "INFO", reason: "IDLE_TIMEOUT" });
+      } else {
+        this.db.prepare("UPDATE local_sessions SET last_activity_at = ? WHERE id = ?").run(iso, this.currentSessionId);
+      }
+    }
     return this.sessionFromId(this.currentSessionId);
+  }
+
+  private getUserIdOfSession(sessionId: string): string | null {
+    const row = this.db.prepare("SELECT user_id FROM local_sessions WHERE id = ?").get(sessionId) as DbRecord | undefined;
+    return row ? String(row.user_id) : null;
   }
 
   requireSession(permission?: string): AuthSession {
@@ -425,8 +458,9 @@ export class AuthService {
   private openSession(userId: string, action: string): AuthSession {
     const now = new Date().toISOString();
     const sessionId = randomUUID();
-    this.db.prepare("INSERT INTO local_sessions (id, user_id, status, created_at, last_activity_at, locked_at, logout_at, expires_at, machine_name) VALUES (?, ?, 'ACTIVE', ?, ?, NULL, NULL, NULL, NULL)")
-      .run(sessionId, userId, now, now);
+    const expiresAt = new Date(Date.now() + SESSION_MAX_HOURS * 3600_000).toISOString();
+    this.db.prepare("INSERT INTO local_sessions (id, user_id, status, created_at, last_activity_at, locked_at, logout_at, expires_at, machine_name) VALUES (?, ?, 'ACTIVE', ?, ?, NULL, NULL, ?, NULL)")
+      .run(sessionId, userId, now, now, expiresAt);
     this.currentSessionId = sessionId;
     this.writeAudit({ actorUserId: userId, sessionId, action, result: "SUCCESS", severity: "INFO" });
     return this.sessionFromId(sessionId) as AuthSession;

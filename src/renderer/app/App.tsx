@@ -118,6 +118,28 @@ function RoutedApp(): JSX.Element {
     void refresh().catch((error) => console.warn("Falha ao carregar dados iniciais (organizacoes/CNPJs) -- telas de login usarao a marca padrao", error));
   }, [refresh]);
 
+  // Site: bloqueia (pede senha) depois de 30 min sem uso e confere a sessao a cada minuto
+  // (expirada em 12h ou bloqueada pelo servidor). A sessao so' e' considerada usada quando
+  // o usuario mexe na tela, entao a checagem nao impede o bloqueio.
+  useEffect(() => {
+    if (!session || session.status !== "ACTIVE" || !isWebSite()) return;
+    let timer: number | undefined;
+    const lockForIdle = (): void => { void window.operationsCafe.authLock().then((next) => setSession(next)).catch(() => undefined); };
+    const arm = (): void => { window.clearTimeout(timer); timer = window.setTimeout(lockForIdle, 30 * 60 * 1000); };
+    const events = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
+    events.forEach((name) => window.addEventListener(name, arm, { passive: true }));
+    arm();
+    return () => { window.clearTimeout(timer); events.forEach((name) => window.removeEventListener(name, arm)); };
+  }, [session?.status]);
+
+  useEffect(() => {
+    if (!session || !isWebSite()) return;
+    const id = window.setInterval(() => {
+      void window.operationsCafe.authCurrentSession().then((current) => setSession(current)).catch(() => undefined);
+    }, 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [session?.id]);
+
   useEffect(() => {
     const handlePopState = (): void => setPath(currentPath());
     window.addEventListener("popstate", handlePopState);
