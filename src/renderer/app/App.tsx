@@ -169,14 +169,13 @@ function RoutedApp(): JSX.Element {
         legalEntities={data.legalEntities}
         defaultOrganizationId={profile.defaultOrganizationId}
         defaultLegalEntityId={profile.defaultLegalEntityId}
-        onSelect={(organizationId, legalEntityId) => {
-          void window.operationsCafe.setActiveOrganization(organizationId).then(async () => {
-            const nextProfile = await window.operationsCafe.setActiveLegalEntity(legalEntityId);
-            setProfile(nextProfile);
-            setRememberedOrganizationId(null);
-            setOrgPickerDismissed(true);
-            await refresh();
-          });
+        onSelect={async (organizationId, legalEntityId) => {
+          await window.operationsCafe.setActiveOrganization(organizationId);
+          const nextProfile = await window.operationsCafe.setActiveLegalEntity(legalEntityId);
+          setProfile(nextProfile);
+          setRememberedOrganizationId(null);
+          setOrgPickerDismissed(true);
+          await refresh();
         }}
       />
     );

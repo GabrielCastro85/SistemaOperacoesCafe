@@ -37,19 +37,27 @@ export function OrganizationPickerPage({
   legalEntities: LegalEntity[];
   defaultOrganizationId: string | null;
   defaultLegalEntityId: string | null;
-  onSelect: (organizationId: string, legalEntityId: string) => void;
+  onSelect: (organizationId: string, legalEntityId: string) => Promise<void> | void;
 }): JSX.Element {
   const activeLegalEntities = legalEntities.filter((entity) => entity.isActive && isOperationalLegalEntity(entity));
   const firstEntity = activeLegalEntities.find((entity) => entity.id === defaultLegalEntityId) ?? activeLegalEntities.find((entity) => entity.organizationId === defaultOrganizationId) ?? activeLegalEntities[0] ?? null;
   const [selectedId, setSelectedId] = useState(firstEntity?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  function submit(): void {
+  async function submit(): Promise<void> {
     if (!selectedId || submitting) return;
     const entity = activeLegalEntities.find((item) => item.id === selectedId);
     if (!entity) return;
     setSubmitting(true);
-    onSelect(entity.organizationId, entity.id);
+    setErrorMessage(null);
+    try {
+      await onSelect(entity.organizationId, entity.id);
+    } catch (errorValue) {
+      // Sem isso o botao ficava travado (desabilitado) ate recarregar a pagina.
+      setErrorMessage(errorValue instanceof Error ? errorValue.message : "Não foi possível entrar na empresa.");
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -83,7 +91,8 @@ export function OrganizationPickerPage({
             );
           })}
         </div>
-        <button className="primary" type="button" disabled={!selectedId || submitting} onClick={submit}>
+        {errorMessage ? <p role="alert" style={{ color: "#b42318", margin: "0 0 12px" }}>{errorMessage}</p> : null}
+        <button className="primary" type="button" disabled={!selectedId || submitting} onClick={() => void submit()}>
           Entrar no sistema
         </button>
       </section>
