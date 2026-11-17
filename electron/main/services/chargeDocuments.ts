@@ -764,7 +764,8 @@ function drawRightText(page: PDFPage, value: string, x: number, y: number, width
 function chargeBrandKey(value: string | null | undefined): "grao" | "villa" | "thirdParty" | null {
   const normalized = (value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (!normalized.trim()) return null;
-  if (/grao\s*(?:&|e)\s*grao/.test(normalized)) return "grao";
+  // "Grao & Grao", "GRAO MG", "Grão SP" etc. sao do grupo Grao (a regra antiga so pegava "Grao & Grao").
+  if (/\bgrao\b/.test(normalized)) return "grao";
   if (normalized.includes("villa")) return "villa";
   return "thirdParty";
 }
