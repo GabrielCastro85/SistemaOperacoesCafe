@@ -6746,62 +6746,7 @@ table tbody tr:hover {
   box-sizing: border-box;
 }
 
-/* Tela de lancamento de notas em duas colunas: fila a esquerda, abas de detalhe a direita. */
-.import-columns {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
-  grid-template-rows: auto 1fr;
-  align-items: start;
-}
-.import-column--queue {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-}
-.xml-detail-tabs {
-  grid-column: 2;
-  grid-row: 1;
-  display: flex;
-  gap: 6px;
-  padding: 4px;
-  border-radius: 12px;
-  background: var(--color-surface-muted, #f2f4f1);
-}
-.xml-detail-tabs button {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 34px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: #6b6558;
-  font-size: 13px;
-  cursor: pointer;
-}
-.xml-detail-tabs button.active {
-  background: var(--color-primary, #263238);
-  color: var(--color-primary-text, #ffffff);
-  font-weight: 500;
-}
-.xml-detail-tabs__alert {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #b43d36;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-}
-.import-column--panel {
-  grid-column: 2;
-  grid-row: 2;
-}
-.import-column--panel.is-hidden {
-  display: none;
-}
+/* Tela de lancamento de notas: tres colunas (fila, dados e fluxo), com visual de cartoes. */
 .xml-dropzone-wrap.is-compact .ui-dropzone {
   display: flex;
   flex-wrap: wrap;
@@ -6820,106 +6765,152 @@ table tbody tr:hover {
   margin: 0 0 0 auto;
 }
 .xml-validate-hint {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: 10px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
   background: #fbf3e4;
   color: #6b5a2e;
   font-size: 13px;
-}
-@media (max-width: 1100px) {
-  .import-columns {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .import-column--queue,
-  .import-column--panel,
-  .xml-detail-tabs {
-    grid-column: 1;
-    grid-row: auto;
-  }
+  line-height: 1.4;
 }
 
-/* Fila fixa enquanto o detalhe da nota rola: evita o espaco vazio embaixo da fila. */
-.import-column--queue {
-  position: sticky;
-  top: 12px;
-  align-self: start;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
-}
-@media (max-width: 1100px) {
-  .import-column--queue {
-    position: static;
-    max-height: none;
-    overflow: visible;
-  }
-}
-
-/* Tela de lancamento de notas: tabela principal, com painel lateral de detalhe quando uma nota esta selecionada. */
-.import-columns:not(.has-drawer) {
-  grid-template-columns: minmax(0, 1fr);
-}
-.import-columns.has-drawer {
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+/* Cartoes das colunas da importacao. */
+.import-columns {
+  gap: 16px;
   align-items: start;
 }
-.import-column--queue {
-  grid-column: auto;
-  grid-row: auto;
-  position: static;
-  max-height: none;
-  overflow: visible;
+.import-columns > .import-column {
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(20, 16, 10, 0.04), 0 8px 24px -12px rgba(20, 16, 10, 0.12);
+  gap: 14px;
 }
-.xml-drawer {
-  position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--color-border, #ded8cc);
-  border-radius: 14px;
-  background: var(--color-surface, #ffffff);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-}
-.xml-drawer__head {
+.import-column > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 8px;
-  min-width: 0;
 }
-.xml-drawer__head > strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.import-column--queue > .inline-check {
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
-.xml-drawer__actions {
-  display: flex;
+
+/* Fila: cartoes com estado de selecao e de adiada. */
+.xml-queue-list {
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.xml-queue-list > li {
   gap: 6px;
-  flex: 0 0 auto;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  border-radius: 14px;
+  background: var(--color-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
-.xml-drawer .xml-detail-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  grid-column: auto;
-  grid-row: auto;
+.xml-queue-list > li:hover {
+  border-color: color-mix(in srgb, var(--color-primary, #263238) 35%, var(--color-border));
+  box-shadow: 0 6px 18px -10px rgba(20, 16, 10, 0.25);
+  transform: translateY(-1px);
 }
-.xml-drawer .import-column--panel {
-  grid-column: auto;
-  grid-row: auto;
+.xml-queue-list > li > button:first-child.active {
+  box-shadow: inset 3px 0 0 var(--color-primary, #263238);
 }
+.xml-queue-item--deferred {
+  background: color-mix(in srgb, var(--color-surface-muted) 80%, transparent);
+  opacity: 0.85;
+}
+
+/* Detalhe: blocos com fundo suave e rotulos discretos. */
+.xml-detail-card {
+  border-radius: 14px;
+  background: var(--color-surface-muted, #f7f4ee);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  box-shadow: none;
+}
+.xml-detail-card .kv-list > div {
+  padding: 8px 0;
+}
+.xml-notes-block {
+  gap: 14px;
+}
+.xml-notes-block > label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  gap: 6px;
+}
+.xml-notes-block input,
+.xml-notes-block textarea {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
+  background: var(--color-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.xml-notes-block input:focus,
+.xml-notes-block textarea:focus {
+  outline: none;
+  border-color: var(--color-primary, #263238);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #263238) 15%, transparent);
+}
+
+/* Segmentados (compra/venda, UF) com cantos suaves. */
+.xml-segment__options {
+  border-radius: 12px;
+  padding: 3px;
+  gap: 3px;
+  background: var(--color-surface-muted, #f2f4f1);
+  border: 0;
+}
+.xml-segment__options button {
+  border-radius: 9px;
+  min-height: 34px;
+}
+.xml-segment__label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Barra de acoes e tabela de revisao. */
+.xml-action-footer {
+  border-radius: 16px;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px -12px rgba(20, 16, 10, 0.12);
+}
+.xml-batch-review {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(20, 16, 10, 0.04), 0 8px 24px -12px rgba(20, 16, 10, 0.12);
+}
+.xml-batch-row {
+  transition: background-color 0.15s ease;
+}
+.xml-batch-row:hover {
+  background: color-mix(in srgb, var(--color-surface-muted) 70%, transparent);
+}
+.xml-batch-row.active {
+  background: color-mix(in srgb, var(--color-primary, #263238) 8%, transparent);
+}
+
 @media (max-width: 1100px) {
-  .import-columns.has-drawer {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .xml-drawer {
-    position: static;
-    max-height: none;
-    overflow: visible;
+  .import-columns > .import-column {
+    padding: 14px;
   }
 }
