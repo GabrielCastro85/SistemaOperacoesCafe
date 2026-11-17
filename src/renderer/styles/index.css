@@ -6683,3 +6683,45 @@ table tbody tr:hover {
   padding: 2px 8px;
   font-size: 12px;
 }
+
+/* Anexo de boleto no modal "Nova conta" (contas a pagar). */
+.payables-attach {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border, #ded8cc);
+  border-radius: 10px;
+  background: var(--color-surface, #ffffff);
+}
+.payables-attach__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.payables-attach__head strong,
+.payables-attach__head small {
+  display: block;
+}
+.payables-attach__head small {
+  color: #6b6558;
+  font-size: 12px;
+}
+.payables-attach__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.payables-attach__list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.payables-attach__list small {
+  color: #6b6558;
+}

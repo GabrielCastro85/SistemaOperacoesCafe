@@ -5,6 +5,7 @@ import { PageHeader } from "../../design-system";
 import { requestTextInput } from "../../utils/dialogs";
 import { buildExpenseControlHtml } from "./expenseControlPrint";
 import { useFinanceData } from "./hooks/useFinanceData";
+import type { PendingPayableAttachment } from "./hooks/usePayableDraftForm";
 import type { FinancePageProps } from "./types";
 
 // Contas a pagar (despesas gerais) numa tela so: lista com o que vence, lancar
@@ -39,7 +40,7 @@ function daysBetween(fromIso: string, toIso: string): number {
 const isClosed = (payable: AccountPayable) => payable.status === "PAID" || payable.status === "CANCELLED";
 const openOf = (payable: AccountPayable) => Math.max(0, payable.openAmountCents ?? payable.finalAmountCents ?? 0);
 
-interface NewForm { description: string; payee: string; amount: string; dueDate: string; categoryId: string; method: PayablePaymentMethod; pixKey: string; repeat: Repeat; installments: string; firstInstallment: string; perInstallment: boolean; notes: string }
+interface NewForm { description: string; payee: string; amount: string; dueDate: string; categoryId: string; method: PayablePaymentMethod; pixKey: string; repeat: Repeat; installments: string; firstInstallment: string; perInstallment: boolean; notes: string; attachments: PendingPayableAttachment[] }
 interface PayForm { payable: AccountPayable; amount: string; date: string; method: PayablePaymentMethod; accountId: string; notes: string }
 
 export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
@@ -50,7 +51,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
   const [month, setMonth] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const emptyNew = (): NewForm => ({ description: "", payee: "", amount: "", dueDate: today, categoryId: "", method: "BOLETO", pixKey: "", repeat: "ONCE", installments: "2", firstInstallment: "1", perInstallment: true, notes: "" });
+  const emptyNew = (): NewForm => ({ description: "", payee: "", amount: "", dueDate: today, categoryId: "", method: "BOLETO", pixKey: "", repeat: "ONCE", installments: "2", firstInstallment: "1", perInstallment: true, notes: "", attachments: [] });
   const [newForm, setNewForm] = useState<NewForm | null>(null);
   const [payForm, setPayForm] = useState<PayForm | null>(null);
 
@@ -106,6 +107,16 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
   const months = useMemo(() => [...new Set(finance.payables.map((payable) => payable.dueDate.slice(0, 7)))].sort(), [finance.payables]);
   const monthLabel = (value: string) => new Date(`${value}-15T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
+  async function pickNewAttachment(): Promise<void> {
+    if (!newForm) return;
+    try {
+      const selected = await window.operationsCafe.selectPayableAttachment();
+      if (selected) setNewForm((current) => current ? { ...current, attachments: [...current.attachments, selected] } : current);
+    } catch (error) {
+      setMessage(`Erro: ${error instanceof Error ? error.message : "não foi possível selecionar o arquivo."}`);
+    }
+  }
+
   async function saveNew(): Promise<void> {
     if (!newForm) return;
     const amountCents = parseCurrencyToCents(newForm.amount || "0");
@@ -135,6 +146,10 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
         setMessage(`"${base.description}" lançada: parcelas ${firstNumber}/${count} a ${count}/${count} (${launched} ${launched === 1 ? "mês" : "meses"}).`);
       } else {
         const detail = await window.operationsCafe.createAccountPayableDraft({ ...base, payeeTaxIdSnapshot: null, source: "MANUAL", documentType: null, documentNumber: null, competenceDate: `${newForm.dueDate.slice(0, 8)}01`, issueDate: null, dueDate: newForm.dueDate, originalAmountCents: amountCents, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", ...payment, notes: newForm.notes.trim() || null, internalNotes: null });
+        // Boleto/PDF/foto escolhido no lancamento: anexado a conta antes de confirmar.
+        for (const attachment of newForm.attachments) {
+          await window.operationsCafe.addPayableAttachment({ token: attachment.token, accountPayableId: detail.payable.id, attachmentType: "BILL", description: "Boleto anexado no lancamento da conta" });
+        }
         await window.operationsCafe.confirmAccountPayable(detail.payable.id);
         setMessage(`Conta "${base.description}" lançada para ${formatDateOnlyBr(newForm.dueDate)}.`);
       }
@@ -325,6 +340,10 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
               <small>{newForm.repeat === "MONTHLY" ? "Lança os próximos 3 meses e continua gerando sozinho todo mês, no mesmo dia e com a mesma forma de pagamento." : newForm.repeat === "INSTALLMENTS" ? (() => { const total = Number(newForm.installments) || 0; const first = Number(newForm.firstInstallment) || 1; return total >= first ? `Lança as parcelas ${first}/${total} a ${total}/${total}, uma por mês. Ex.: carnê que está na 17 de 22 → total 22, começa na 18.` : "Informe o total de parcelas e em qual começar."; })() : "Uma conta só."}</small>
             </fieldset>
             {newForm.repeat === "ONCE" ? <label className="payables-form__wide">Observação (opcional)<input value={newForm.notes} onChange={(event) => setNewForm({ ...newForm, notes: event.target.value })} /></label> : null}
+            {newForm.repeat === "ONCE" ? <div className="payables-form__wide payables-attach">
+              <div className="payables-attach__head"><div><strong>Boleto ou comprovante</strong><small>PDF ou foto (JPG, PNG, WEBP). Fica anexado à conta.</small></div><button type="button" disabled={busy} onClick={() => void pickNewAttachment()}>Anexar arquivo</button></div>
+              {newForm.attachments.length ? <ul className="payables-attach__list">{newForm.attachments.map((item) => <li key={item.token}><span>{item.fileName} <small>{Math.max(1, Math.round(item.sizeBytes / 1024))} KB</small></span><button type="button" onClick={() => setNewForm({ ...newForm, attachments: newForm.attachments.filter((attachment) => attachment.token !== item.token) })}>Remover</button></li>)}</ul> : null}
+            </div> : null}
           </div>
           <footer className="partner-modal__footer"><button type="button" onClick={() => setNewForm(null)} disabled={busy}>Cancelar</button><button type="button" className="primary" disabled={busy} onClick={() => void saveNew()}>{busy ? "Lançando..." : "Lançar conta"}</button></footer>
         </section>
