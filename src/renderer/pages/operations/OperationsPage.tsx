@@ -283,6 +283,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const spreadsheetHistoryRef = useRef<HTMLDivElement | null>(null);
   const xmlDataRef = useRef<HTMLDivElement | null>(null);
   const xmlResultRef = useRef<HTMLDivElement | null>(null);
+  const [xmlDetailTab, setXmlDetailTab] = useState<"nota" | "cliente">("nota");
+  // Rola so se a secao nao estiver visivel na tela; nao leva a pagina para o topo.
+  function scrollXmlIntoView(target: { current: HTMLElement | null }): void {
+    const element = target.current;
+    if (!element) return;
+    const rect = element.getBoundingClientRect();
+    if (rect.top >= 0 && rect.bottom <= window.innerHeight) return;
+    element.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
   const xmlHistoryRef = useRef<HTMLDivElement | null>(null);
 
   const sendCollectorCommand = async (collector: CollectorMonitorStatus, command: "SCAN_NOW" | "UPDATE_NOW" | "RESTART" | "BACKFILL") => {
@@ -604,7 +613,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setXmlJob(xmlImportIsVisuallyDeleted(openedJob.job) || visibleFiles.length === 0 ? null : { ...openedJob, files: visibleFiles });
       setSelectedXmlToken(null);
       setMessage(visibleFiles.length && !xmlImportIsVisuallyDeleted(openedJob.job) ? "Detalhes da importacao XML carregados." : "Importacao XML excluida. Ela nao aparece mais na tela.");
-      if (visibleFiles.length && !xmlImportIsVisuallyDeleted(openedJob.job)) scrollTo(xmlResultRef);
+      if (visibleFiles.length && !xmlImportIsVisuallyDeleted(openedJob.job)) scrollXmlIntoView(xmlResultRef);
     } catch (errorValue) {
       setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao detalhar importacao XML."}`);
     }
@@ -850,7 +859,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ? `${inspections.length} XML(s) inspecionado(s). ${invalidCount} arquivo(s) com erro.`
         : `${inspections.length} XML(s) inspecionado(s).`
     );
-    scrollTo(xmlDataRef);
   }
 
   async function validateXmlImport(): Promise<void> {
@@ -866,8 +874,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       );
       if (missingPartner) {
         setSelectedXmlToken(missingPartner.token);
-        setMessage("Escolha o cliente/corretor desta nota ou marque 'Nao cadastrar'. Cada nota precisa de uma decisao propria.");
-        scrollTo(xmlDataRef);
+        setMessage("Escolha o cliente/corretor desta nota ou marque 'Não cadastrar'. Cada nota precisa de uma decisão própria.");
+        setXmlDetailTab("cliente");
+        scrollXmlIntoView(xmlDataRef);
         return;
       }
     }
@@ -878,8 +887,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       && !xmlDeferredSelections[file.token]
     );
     if (!partnerId && !vulpeScan && requiresCommercialPartner) {
-      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de validar o XML." : "Selecione o cliente/corretor responsavel pela cobranca antes de validar o XML.");
-      scrollTo(xmlDataRef);
+      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsável antes de validar o XML." : "Selecione o cliente/corretor responsável pela cobrança antes de validar o XML.");
+      setXmlDetailTab("cliente");
+      scrollXmlIntoView(xmlDataRef);
       return;
     }
     try {
@@ -910,13 +920,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         if (!ignore && freightDaeEnabled && freightDaeAmountCents <= 0) {
           setSelectedXmlToken(inspected.token);
           setMessage(`Informe um valor de DAE de frete maior que zero para a NF ${inspected.extractedData?.number ?? inspected.originalFileName}.`);
-          scrollTo(xmlDataRef);
+          scrollXmlIntoView(xmlDataRef);
           return;
         }
         if (!ignore && invoiceDaeEnabled && invoiceDaeAmountCents <= 0) {
           setSelectedXmlToken(inspected.token);
           setMessage(`Informe um valor de DAE da nota maior que zero para a NF ${inspected.extractedData?.number ?? inspected.originalFileName}.`);
-          scrollTo(xmlDataRef);
+          scrollXmlIntoView(xmlDataRef);
           return;
         }
         const fileOperationType = xmlFileOperationType(inspected.token, inspected.extractedData);
@@ -940,7 +950,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       setXmlJob(validated);
       setMessage("Fila XML validada.");
       await load();
-      scrollTo(xmlResultRef);
+      scrollXmlIntoView(xmlResultRef);
     } catch (errorValue) {
       setMessage(`Erro XML: ${errorValue instanceof Error ? errorValue.message : "falha ao validar XML."}`);
     }
@@ -976,8 +986,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       && !xmlDeferredSelections[file.token]
     );
     if (!partnerId && !vulpeScan && requiresCommercialPartner) {
-      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsavel antes de salvar a nota." : "Selecione o cliente/corretor responsavel pela cobranca antes de salvar a nota.");
-      scrollTo(xmlDataRef);
+      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsável antes de salvar a nota." : "Selecione o cliente/corretor responsável pela cobrança antes de salvar a nota.");
+      setXmlDetailTab("cliente");
+      scrollXmlIntoView(xmlDataRef);
       return;
     }
     try {
@@ -1152,11 +1163,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       classificationLabel: file.xmlType.startsWith("EVENT_")
         ? "Cancelamento"
         : xmlIgnoredSelections[file.token] && warehouseMovement
-          ? "Nao cadastrar"
+          ? "Não cadastrar"
         : warehouseMovement
           ? `${warehouseMovement.movementType === "RETURN" ? "Retorno" : "Remessa"} ${warehouseMovement.movementKind === "SYMBOLIC" ? "simbolica" : "fisica"}`
         : xmlIgnoredSelections[file.token]
-          ? "Nao cadastrar"
+          ? "Não cadastrar"
           : assignedPartner?.displayName ?? "Escolher cliente"
     };
   });
@@ -1890,12 +1901,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
         </div>
         <div className="import-columns">
-          <div className="import-column" ref={xmlDataRef}>
-            <h3>{pageTab === "received" ? "Adicionar nota recebida por XML" : "Adicionar nota emitida por XML"}</h3>
+          <div className="import-column import-column--queue" ref={xmlDataRef}>
+            <h3>{pageTab === "received" ? "Importar XMLs recebidos" : "Importar XMLs"}</h3>
+            <div className={`xml-dropzone-wrap${xmlQueue.length ? " is-compact" : ""}`}>
             <FileDropzone
               title="Arraste XMLs aqui ou selecione os arquivos"
-              description="Solte um ou mais XMLs da NF-e nesta area para inspecionar automaticamente."
-              dropHint="Tambem e possivel usar os botoes abaixo para escolher arquivo, varios XMLs ou uma pasta inteira."
+              description="Solte um ou mais XMLs da NF-e nesta área para inspecionar automaticamente."
+              dropHint="Também é possível usar os botões abaixo para escolher arquivo, vários XMLs ou uma pasta inteira."
               onDropFiles={(files) => void prepareDroppedXmlImport(files)}
               actions={
                 <>
@@ -1905,6 +1917,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 </>
               }
             />
+            </div>
             <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
             {xmlQueue.length ? (
               <ul className="xml-queue-list">
@@ -1923,17 +1936,27 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   })}
               </ul>
             ) : (
-              <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para comecar." />
+              <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para começar." />
             )}
+            {xmlQueue.length && !partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner ? (
+              <p className="xml-validate-hint">Falta escolher o cliente/corretor da cobrança na aba "Cliente e operação", ou marcar "Ignorar por enquanto" nas notas que não entram.</p>
+            ) : null}
             <div className="toolbar">
               <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
-                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentacao" : "Validar fila"}
+                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentação" : "Validar fila"}
               </button>
             </div>
           </div>
 
-          <div className="import-column">
-            <h3>Dados extraidos</h3>
+          <div className="xml-detail-tabs" role="tablist" aria-label="Detalhes da importação">
+            <button type="button" role="tab" aria-selected={xmlDetailTab === "nota"} className={xmlDetailTab === "nota" ? "active" : ""} onClick={() => setXmlDetailTab("nota")}>Nota</button>
+            <button type="button" role="tab" aria-selected={xmlDetailTab === "cliente"} className={xmlDetailTab === "cliente" ? "active" : ""} onClick={() => setXmlDetailTab("cliente")}>
+              Cliente e operação
+              {xmlQueue.length && !partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner ? <span className="xml-detail-tabs__alert" aria-label="Falta escolher o cliente">!</span> : null}
+            </button>
+          </div>
+          <div className={`import-column import-column--panel${xmlDetailTab === "nota" ? "" : " is-hidden"}`}>
+            <h3>Dados extraídos</h3>
             {selectedXmlEvent ? (
               <>
                 <div className="operation-warning-card operation-warning-card--neutral">
@@ -1944,7 +1967,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   <div><dt>Chave da NF-e</dt><dd>{String(selectedXmlEvent.accessKey ?? selectedXmlFile?.accessKey ?? "-")}</dd></div>
                   <div><dt>Data do evento</dt><dd>{selectedXmlEvent.eventDate ? formatDateBr(String(selectedXmlEvent.eventDate)) : "-"}</dd></div>
                   <div><dt>Protocolo</dt><dd>{String(selectedXmlEvent.protocolNumber ?? "-")}</dd></div>
-                  <div><dt>Situacao SEFAZ</dt><dd>{String(selectedXmlEvent.statusCode ?? "-")} - {String(selectedXmlEvent.statusMessage ?? "-")}</dd></div>
+                  <div><dt>Situação SEFAZ</dt><dd>{String(selectedXmlEvent.statusCode ?? "-")} - {String(selectedXmlEvent.statusMessage ?? "-")}</dd></div>
                 </dl>
               </>
             ) : selectedXmlPreview ? (
@@ -1958,18 +1981,18 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 {selectedXmlParties.isThirdPartyOrigin ? (
                   <div className="operation-warning-card operation-warning-card--neutral operation-warning-card--inline">
                     <strong>Empresa externa</strong>
-                    <span>Nao e um CNPJ Villa ou Grao. Se emitente e destinatario ja estiverem cadastrados, gera compra e venda automaticamente.</span>
+                    <span>Não é um CNPJ Villa ou Grão. Se emitente e destinatario ja estiverem cadastrados, gera compra e venda automaticamente.</span>
                   </div>
                 ) : null}
                 <div className="xml-detail-parties">
                   <div className="xml-detail-card">
                     <span className="xml-detail-label">Emitente</span>
-                    <strong title={selectedXmlParties.issuerLabel ?? undefined}>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</strong>
+                    <strong title={selectedXmlParties.issuerLabel ?? undefined}>{selectedXmlParties.issuerLabel ?? "Não identificado"}</strong>
                     <small>Origem: {selectedXmlParties.originLabel}</small>
                   </div>
                   <div className="xml-detail-card">
-                    <span className="xml-detail-label">Destinatario</span>
-                    <strong title={selectedXmlParties.recipientLabel ?? undefined}>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</strong>
+                    <span className="xml-detail-label">Destinatário</span>
+                    <strong title={selectedXmlParties.recipientLabel ?? undefined}>{selectedXmlParties.recipientLabel ?? "Não identificado"}</strong>
                   </div>
                 </div>
                 <div className="xml-detail-card xml-detail-card--total">
@@ -1986,10 +2009,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <div className="xml-detail-card">
                   <span className="xml-detail-label">Documento</span>
                   <dl className="kv-list">
-                    <div><dt>Emissao</dt><dd>{selectedXmlPreview.issuedAt ? formatDateBr(selectedXmlPreview.issuedAt) : "-"}</dd></div>
-                    <div><dt>Numero/Serie</dt><dd>{selectedXmlPreview.number ?? "-"}/{selectedXmlPreview.series ?? "-"}</dd></div>
+                    <div><dt>Emissão</dt><dd>{selectedXmlPreview.issuedAt ? formatDateBr(selectedXmlPreview.issuedAt) : "-"}</dd></div>
+                    <div><dt>Número/Série</dt><dd>{selectedXmlPreview.number ?? "-"}/{selectedXmlPreview.series ?? "-"}</dd></div>
                     <div><dt>Modelo</dt><dd>{selectedXmlPreview.model ?? "-"}</dd></div>
-                    <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
+                    <div><dt>Natureza da operação</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
                     <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
                     <div><dt>Chave da NF-e</dt><dd className="xml-detail-key">
                       <span title={selectedXmlPreview.accessKey ?? undefined}>{selectedXmlPreview.accessKey ?? "-"}</span>
@@ -2000,7 +2023,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 {selectedXmlFile && !selectedWarehouseMovement ? (
                   <div className="xml-notes-block">
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
-                    <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
+                    <label>Observações desta nota (saem na cobrança)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
                     <div className="note-options" role="group" aria-label="Itens desta nota que entram na cobranca">
                       <span className="note-options__title">O que esta nota tem</span>
                       <div className={`note-option${xmlFinancialServiceEnabled[selectedXmlFile.token] ? " is-on" : ""}`}>
@@ -2014,7 +2037,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                       </div>
                       {([
                         { key: "freight", title: "DAE de frete", hint: "Valor do DAE de frete cobrado junto com a nota", enabled: xmlFreightDaeEnabled, setEnabled: setXmlFreightDaeEnabled, refs: xmlFreightDaeReferences, setRefs: setXmlFreightDaeReferences, amounts: xmlFreightDaeAmounts, setAmounts: setXmlFreightDaeAmounts },
-                        { key: "invoice", title: "DAE da nota fiscal", hint: "Valor do DAE referente a nota, cobrado junto com ela", enabled: xmlInvoiceDaeEnabled, setEnabled: setXmlInvoiceDaeEnabled, refs: xmlInvoiceDaeReferences, setRefs: setXmlInvoiceDaeReferences, amounts: xmlInvoiceDaeAmounts, setAmounts: setXmlInvoiceDaeAmounts }
+                        { key: "invoice", title: "DAE da nota fiscal", hint: "Valor do DAE referente à nota, cobrado junto com ela", enabled: xmlInvoiceDaeEnabled, setEnabled: setXmlInvoiceDaeEnabled, refs: xmlInvoiceDaeReferences, setRefs: setXmlInvoiceDaeReferences, amounts: xmlInvoiceDaeAmounts, setAmounts: setXmlInvoiceDaeAmounts }
                       ] as const).map((option) => {
                         const token = selectedXmlFile.token;
                         const on = option.enabled[token] === true;
@@ -2033,7 +2056,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                           </label>
                           {on ? <div className="note-option__fields">
                             <label>Valor a cobrar (R$)<input value={option.amounts[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setAmounts((current) => ({ ...current, [token]: event.target.value })); }} placeholder="R$ 0,00" /></label>
-                            <label>Numero do DAE (opcional)<input maxLength={120} value={option.refs[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setRefs((current) => ({ ...current, [token]: event.target.value })); }} placeholder="Ex.: 12345" /></label>
+                            <label>Número do DAE (opcional)<input maxLength={120} value={option.refs[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setRefs((current) => ({ ...current, [token]: event.target.value })); }} placeholder="Ex.: 12345" /></label>
                           </div> : null}
                         </div>;
                       })}
@@ -2042,20 +2065,20 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 ) : null}
               </>
             ) : selectedXmlFile?.status === "ERROR" ? (
-              <EmptyState title="XML nao lido" description={selectedXmlFile.errorMessage ?? "O arquivo selecionado nao pode ser lido. Confira se ele nao esta vazio ou corrompido."} />
+              <EmptyState title="XML não lido" description={selectedXmlFile.errorMessage ?? "O arquivo selecionado não pode ser lido. Confira se ele não está vazio ou corrompido."} />
             ) : (
-              <EmptyState title="Sem dados ainda" description="Selecione um arquivo na lista ao lado para ver os dados extraidos automaticamente." />
+              <EmptyState title="Sem dados ainda" description="Selecione um arquivo na lista ao lado para ver os dados extraídos automaticamente." />
             )}
           </div>
 
-          <div className="import-column">
-            <h3><ListStepsIcon /> Fluxo de importacao</h3>
+          <div className={`import-column import-column--panel${xmlDetailTab === "cliente" ? "" : " is-hidden"}`}>
+            <h3><ListStepsIcon /> Cliente e operação</h3>
             {selectedWarehouseMovement ? (
-              <p className="muted">Movimentacoes de armazem sao registradas somente no controle de cafes armazenados e nao passam pelas regras comerciais.</p>
+              <p className="muted">Movimentações de armazém são registradas somente no controle de cafés armazenados e não passam pelas regras comerciais.</p>
             ) : (
               <>
-                <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissao e contrato antes de confirmar</label>
-                <p className="muted">A revisao e opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobranca sem confirmacao individual.</p>
+                <label><input type="checkbox" checked={reviewBeforeConfirm} onChange={(event) => { setReviewBeforeConfirm(event.target.checked); setXmlJob(null); }} /> Revisar comissão e contrato antes de confirmar</label>
+                <p className="muted">A revisão é opcional. Notas com cliente, tarifa e contrato exigido preenchidos entram na cobrança sem confirmação individual.</p>
               </>
             )}
             {selectedXmlIsEvent ? (
@@ -2083,7 +2106,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                         setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: checked }));
                       }}
                     />
-                    Nao cadastrar esta nota (nao mexe no estoque do armazem) nem mostrar novamente nas buscas
+                    Não cadastrar esta nota (nao mexe no estoque do armazem) nem mostrar novamente nas buscas
                   </label>
                 ) : null}
               </div>
@@ -2091,7 +2114,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <>
                 <FormGrid>
                   <PartnerQuickSearch
-                    label={operationType === "PURCHASE" ? "Fornecedor responsavel pela nota" : "Cliente/corretor responsavel pela cobranca"}
+                    label={operationType === "PURCHASE" ? "Fornecedor responsável pela nota" : "Cliente/corretor responsável pela cobrança"}
                     value={selectedXmlPartnerId}
                     onChange={(value) => {
                       setXmlJob(null);
@@ -2114,8 +2137,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     </div>
                   </div>
                   <div className="xml-segment">
-                    <span className="xml-segment__label">UF da venda</span>
-                    <div className="xml-segment__options" role="group" aria-label="UF da venda">
+                    <span className="xml-segment__label">UF da operação</span>
+                    <div className="xml-segment__options" role="group" aria-label="UF da operação">
                       {OPERATION_SCOPE_OPTIONS.filter(([value]) => value !== "ALL").map(([value, label]) => (
                         <button key={value} type="button" className={selectedXmlScope === value ? "active" : ""} onClick={() => { if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: value })); setScope(value); }}>{label}</button>
                       ))}
@@ -2134,7 +2157,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                         if (checked) setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: "" }));
                       }}
                     />
-                    Nao cadastrar esta nota nem mostrar novamente nas buscas da Vulpe
+                    Não cadastrar esta nota nem mostrar novamente nas buscas da Vulpe
                   </label>
                 ) : null}
               </>
@@ -2145,10 +2168,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="xml-action-footer">
               <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
               <div className="xml-action-footer__buttons">
-              {selectedXmlFile ? <button onClick={() => setXmlDeferredSelections((current) => ({ ...current, [selectedXmlFile.token]: !current[selectedXmlFile.token] }))}>{xmlDeferredSelections[selectedXmlFile.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button> : null}
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importacao</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importação</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
-                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentacao" : "Importar XMLs"}
+                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentação" : "Importar XMLs"}
               </button>
               </div>
             </div>
@@ -2157,7 +2179,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <div className="xml-batch-review">
             <div className="section-title-row">
               <div>
-                <h3>Revisao da fila</h3>
+                <h3>Revisão da fila</h3>
                 <p className="muted">Confira todos os XMLs antes de validar e salvar. Clique em uma linha para ver os detalhes completos ao lado.</p>
               </div>
               <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
@@ -2167,12 +2189,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <button type="button" onClick={() => setSymbolicWarehouseIgnored(!allSymbolicIgnored)}>
                   {allSymbolicIgnored
                     ? `Voltar a cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`
-                    : `Nao cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`}
+                    : `Não cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`}
                 </button>
               </div>
             ) : null}
             <div className="table">
-              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatario fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
+              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatário fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
               {xmlBatchRows.map((row) => (
                 <button
                   key={row.file.token}
@@ -2182,7 +2204,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 >
                   <span><strong>{row.file.originalFileName}</strong><small>NF {row.preview?.number ?? "-"} · {row.preview?.issuedAt ? formatDateBr(row.preview.issuedAt) : "data nao lida"}</small></span>
                   <span><strong>{row.parties.originLabel}</strong><small>{row.parties.isThirdPartyOrigin ? "Terceirizada/externa" : "CNPJ proprio"}</small></span>
-                  <span>{row.parties.recipientLabel ?? row.parties.issuerLabel ?? "Nao identificado"}</span>
+                  <span>{row.parties.recipientLabel ?? row.parties.issuerLabel ?? "Não identificado"}</span>
                   <span>{row.firstItem?.description ?? "-"}</span>
                   <span>
                     {decimalTextBr(
@@ -2203,11 +2225,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         {visibleXmlJob ? (
           <div className="section-title-row xml-result-actions">
             <div>
-              <h3>Resultado da importacao XML</h3>
+              <h3>Resultado da importação XML</h3>
               <p className="muted">Use o historico para revisar importacoes anteriores. Se o XML ainda nao virou nota, exclua a importacao inteira.</p>
             </div>
             <div className="actions">
-              <button onClick={() => scrollTo(xmlHistoryRef)}>Ver historico</button>
+              <button onClick={() => scrollTo(xmlHistoryRef)}>Ver histórico</button>
               <button className="danger" disabled={!xmlImportCanBeReverted(visibleXmlJob.job)} onClick={() => void removeXmlImportJob()}>Excluir/Reverter importacao</button>
             </div>
           </div>
@@ -2225,7 +2247,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <span>{xmlFileDetailMessage(file)}</span>
                 <span className="row-actions">
                   {["VALID", "WARNING", "PENDING_REVIEW", "DUPLICATE"].includes(file.status) ? <button onClick={() => void setXmlFileDeferred(file, true)}>Ignorar por enquanto</button> : null}
-                  {file.fiscalDocumentId ? <button onClick={() => void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then((opened) => { setDetail(opened); setPageTab("documents"); scrollTo(manualDetailRef); })}>Abrir nota</button> : <small className="muted">Nota ainda nao salva</small>}
+                  {file.fiscalDocumentId ? <button onClick={() => void window.operationsCafe.getFiscalDocument(file.fiscalDocumentId as string).then((opened) => { setDetail(opened); setPageTab("documents"); scrollTo(manualDetailRef); })}>Abrir nota</button> : <small className="muted">Nota ainda não salva</small>}
                   {file.fiscalDocumentId ? <button className="danger" onClick={() => {
                     const doc = documents.find((item) => item.id === file.fiscalDocumentId);
                     if (doc) void deleteDocument(doc);
@@ -2254,7 +2276,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         {visibleXmlJob && visibleXmlJob.files.some((file) => file.status === "PENDING_REVIEW" && !xmlFileDeferred(file)) ? (
           <div className="table">
-            <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatario</span><span>Associar cliente/corretor</span><span>Segundo parceiro (nota triangulada)</span><span>Acoes</span></div>
+            <div className="table-head xml-resolution-grid"><span>Arquivo</span><span>Status</span><span>Emitente</span><span>Destinatário</span><span>Associar cliente/corretor</span><span>Segundo parceiro (nota triangulada)</span><span>Acoes</span></div>
             {visibleXmlJob.files.filter((file) => file.status === "PENDING_REVIEW" && !xmlFileDeferred(file)).map((file) => {
               const { issuer, recipient } = xmlFileParty(file);
               return (

@@ -6745,3 +6745,96 @@ table tbody tr:hover {
   width: 100%;
   box-sizing: border-box;
 }
+
+/* Tela de lancamento de notas em duas colunas: fila a esquerda, abas de detalhe a direita. */
+.import-columns {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  grid-template-rows: auto 1fr;
+  align-items: start;
+}
+.import-column--queue {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.xml-detail-tabs {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--color-surface-muted, #f2f4f1);
+}
+.xml-detail-tabs button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #6b6558;
+  font-size: 13px;
+  cursor: pointer;
+}
+.xml-detail-tabs button.active {
+  background: var(--color-primary, #263238);
+  color: var(--color-primary-text, #ffffff);
+  font-weight: 500;
+}
+.xml-detail-tabs__alert {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b43d36;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.import-column--panel {
+  grid-column: 2;
+  grid-row: 2;
+}
+.import-column--panel.is-hidden {
+  display: none;
+}
+.xml-dropzone-wrap.is-compact .ui-dropzone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+}
+.xml-dropzone-wrap.is-compact .ui-dropzone > strong {
+  font-size: 13px;
+}
+.xml-dropzone-wrap.is-compact .ui-dropzone > p,
+.xml-dropzone-wrap.is-compact .ui-dropzone > span {
+  display: none;
+}
+.xml-dropzone-wrap.is-compact .ui-dropzone .inline-actions {
+  margin: 0 0 0 auto;
+}
+.xml-validate-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fbf3e4;
+  color: #6b5a2e;
+  font-size: 13px;
+}
+@media (max-width: 1100px) {
+  .import-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .import-column--queue,
+  .import-column--panel,
+  .xml-detail-tabs {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
