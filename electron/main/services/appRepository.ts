@@ -6102,7 +6102,7 @@ export class AppRepository {
       const doc = this.getFiscalDocument(operation.fiscalDocumentId).document;
       if (!["DRAFT", "CONFIRMED"].includes(doc.status) || doc.hasPendingIssues) throw new Error("Nota com pendencias ou cancelada nao pode ser cobrada.");
       if (this.documentRequiresContract(doc) && !doc.contractNumber) throw new Error("Contrato obrigatorio ausente.");
-      if (operation.operationType !== "SALE" || operation.appliedRateValueCents <= 0) throw new Error("Operacao sem tarifa de venda valida.");
+      if (operation.operationType !== "SALE" || (operation.appliedRateValueCents <= 0 && !operation.rateWasManuallyOverridden)) throw new Error("Operacao sem tarifa de venda valida.");
       const product = operation.productId ? this.getProduct(operation.productId) : null;
       const ownLegalEntity = this.getLegalEntity(operation.ownLegalEntityId);
       const issuerName = this.fiscalSnapshotPartyName(doc, "issuer") ?? (ownLegalEntity.legalName || ownLegalEntity.tradeName);

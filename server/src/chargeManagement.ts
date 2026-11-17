@@ -224,7 +224,7 @@ async function reserveOperations(pool: pg.Pool, work: ChargeWork, operationIds: 
     if (!document || !["DRAFT", "CONFIRMED"].includes(text(document.status)) || Boolean(Number(document.has_pending_issues ?? 0))) fail("Nota com pendencias ou cancelada nao pode ser cobrada.");
     const doc = document!;
     if (requiresContract(doc) && !blank(doc.contract_number)) fail("Contrato obrigatorio ausente.");
-    if (text(op.operation_type) !== "SALE" || cents(op.applied_rate_value_cents) <= 0) fail("Operacao sem tarifa de venda valida.");
+    if (text(op.operation_type) !== "SALE" || (cents(op.applied_rate_value_cents) <= 0 && !Number(op.rate_was_manually_overridden ?? 0))) fail("Operacao sem tarifa de venda valida.");
     const own = entityMap.get(text(op.own_legal_entity_id));
     const ownName = text(own?.legal_name) || text(own?.trade_name);
     const linkId = randomUUID();
