@@ -6914,3 +6914,27 @@ table tbody tr:hover {
     padding: 14px;
   }
 }
+
+/* Ajustes de espaco: estado vazio mais baixo nas colunas de detalhe e dropzone mais baixa sem notas na fila. */
+.import-columns > .import-column .ui-empty {
+  padding: 12px 10px;
+  min-height: 0;
+}
+.import-columns > .import-column .ui-empty p {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.xml-dropzone-wrap:not(.is-compact) .ui-dropzone {
+  padding: 16px 18px;
+  gap: 6px;
+}
+.xml-dropzone-wrap:not(.is-compact) .ui-dropzone > p {
+  margin: 0;
+  font-size: 13px;
+}
+.xml-dropzone-wrap:not(.is-compact) .ui-dropzone > span {
+  font-size: 12px;
+}
+.xml-dropzone-wrap:not(.is-compact) .ui-dropzone .inline-actions {
+  margin-top: 6px;
+}
