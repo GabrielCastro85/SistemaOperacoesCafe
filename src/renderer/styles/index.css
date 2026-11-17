@@ -6725,3 +6725,23 @@ table tbody tr:hover {
 .payables-attach__list small {
   color: #6b6558;
 }
+
+/* Bloco de contrato, observacoes e itens da nota: uma coluna, alinhado pela borda esquerda. */
+.xml-notes-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.xml-notes-block > label,
+.xml-notes-block > .note-options {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+}
+.xml-notes-block textarea,
+.xml-notes-block input {
+  width: 100%;
+  box-sizing: border-box;
+}

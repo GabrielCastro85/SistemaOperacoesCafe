@@ -1956,9 +1956,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   </div>
                 ) : null}
                 {selectedXmlParties.isThirdPartyOrigin ? (
-                  <div className="operation-warning-card operation-warning-card--neutral">
-                    <strong>Nota de empresa externa/terceirizada</strong>
-                    <span>Este XML nao pertence aos CNPJs Villa ou Grao cadastrados como proprios. Ele pode ser salvo para entrar nas cobrancas do cliente/corretor responsavel. Se o emitente e o destinatario ja estiverem cadastrados como empresas vinculadas (um a um fornecedor, outro a um cliente/corretor), o sistema reconhece automaticamente e gera as duas operacoes — compra e venda — a partir da mesma remessa. Se nao reconhecer sozinho, associe o segundo parceiro manualmente na tabela de revisao abaixo apos validar a fila.</span>
+                  <div className="operation-warning-card operation-warning-card--neutral operation-warning-card--inline">
+                    <strong>Empresa externa</strong>
+                    <span>Nao e um CNPJ Villa ou Grao. Se emitente e destinatario ja estiverem cadastrados, gera compra e venda automaticamente.</span>
                   </div>
                 ) : null}
                 <div className="xml-detail-parties">
@@ -1998,7 +1998,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   </dl>
                 </div>
                 {selectedXmlFile && !selectedWarehouseMovement ? (
-                  <FormGrid>
+                  <div className="xml-notes-block">
                     <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
                     <label>Observacoes desta nota (saem na cobranca)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
                     <div className="note-options" role="group" aria-label="Itens desta nota que entram na cobranca">
@@ -2038,7 +2038,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                         </div>;
                       })}
                     </div>
-                  </FormGrid>
+                  </div>
                 ) : null}
               </>
             ) : selectedXmlFile?.status === "ERROR" ? (
