@@ -48,6 +48,8 @@ export function showToast(text: string, tone: "success" | "error" | "warning" = 
   close.addEventListener("click", dismiss);
   toast.append(icon, body, close);
   const list = host();
+  // Um erro novo substitui o anterior (evita varios avisos iguais empilhados).
+  if (tone === "error") list.querySelectorAll(".site-toast--error").forEach((old) => old.remove());
   list.appendChild(toast);
   while (list.children.length > 4) list.firstElementChild?.remove();
   if (tone !== "error") window.setTimeout(dismiss, tone === "warning" ? 9000 : 6000);

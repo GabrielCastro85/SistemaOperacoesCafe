@@ -1270,6 +1270,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <span>{selectedNoteCount} de {availableNoteIds.length} nota(s) selecionada(s)</span>
             </div> : null}
             {eligible.length ? (
+              <div className="charge-legend" aria-label="Legenda das cores por empresa">
+                <span><i style={{ background: "#2a8f5a" }} />Grão & Grão</span>
+                <span><i style={{ background: "#9b6b3c" }} />Villa Coffee</span>
+                <span><i style={{ background: "#476f9f" }} />Terceiros</span>
+              </div>
+            ) : null}
+            {eligible.length ? (
               <div className="table">
                 <div className="table-head charge-operation-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status</span><span>Acoes</span></div>
                 {eligible.map((op) => {
@@ -1283,7 +1290,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{chargeQuantityLabel(op.quantitySacks, op.appliedRateValueCents, op.serviceAmountCents)}</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
                       <span>{formatStatusLabel(op.billingStatus)}</span>
-                      <span className="row-actions"><button onClick={() => void settleSingleOperation(op)}>Receber NF</button></span>
+                      <span className="row-actions"><button className="charge-receive-button" onClick={() => void settleSingleOperation(op)}>Receber NF</button></span>
                     </div>
                   );
                 })}
@@ -1308,8 +1315,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <div className="charge-diagnostics">
                 <h4>Operacoes encontradas fora da cobranca atual</h4>
                 <p className="muted">Notas em cobrancas abertas entram no total a receber do cliente/corretor. Notas pagas ou canceladas aparecem apenas como referencia do periodo.</p>
-                <div className="table">
-                  <div className="table-head charge-diagnostic-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status</span><span>Motivo</span></div>
+                <div className="table charge-diagnostic-table">
+                  <div className="table-head charge-diagnostic-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status e motivo</span></div>
                   {diagnosticOperations.map((op) => {
                     const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                     const issuerLabel = triangulatedIssuerLabel(op);
@@ -1323,14 +1330,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                           <strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong>
                           <small>{op.serviceAmountCents <= 0 ? "Nao entra no total ate ter regra" : isOperationInOpenCharge(op) ? openChargeLabel(op) : operationValueByNote(op)}</small>
                         </span>
-                        <span>{formatCombinedStatusLabel(op.status, op.billingStatus)}</span>
-                        <span>{operationBillingReason(op)}</span>
+                        <span><strong>{operationBillingReason(op)}</strong><small>{formatCombinedStatusLabel(op.status, op.billingStatus)}</small></span>
                       </div>
                     );
                   })}
                   {!detail && advanceCents > 0 ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>Adiantamento</strong><small>{reasonFor("advance") || "Ajuste informado"}</small></span>
+                      <span><strong>Adiantamento</strong><small>{reasonFor("advance") || "Motivo nao informado"}</small></span>
                       <span>AJUSTE</span><span>Abatimento</span>
                       <span>- {formatCurrencyFromCents(advanceCents)}</span>
                       <span>Previa</span><span>Reduz o valor final</span>
@@ -1338,7 +1344,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   ) : null}
                   {!detail && discountCents > 0 ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>Desconto</strong><small>{reasonFor("discount") || "Ajuste informado"}</small></span>
+                      <span><strong>Desconto</strong><small>{reasonFor("discount") || "Motivo nao informado"}</small></span>
                       <span>AJUSTE</span><span>Desconto</span>
                       <span>- {formatCurrencyFromCents(discountCents)}</span>
                       <span>Previa</span><span>Reduz o valor final</span>
@@ -1346,7 +1352,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   ) : null}
                   {!detail && surchargeCents > 0 ? (
                     <div className="table-row charge-operation-grid charge-row--adjustment">
-                      <span><strong>Acrescimo</strong><small>{reasonFor("surcharge") || "Ajuste informado"}</small></span>
+                      <span><strong>Acrescimo</strong><small>{reasonFor("surcharge") || "Motivo nao informado"}</small></span>
                       <span>AJUSTE</span><span>Acrescimo</span>
                       <span>+ {formatCurrencyFromCents(surchargeCents)}</span>
                       <span>Previa</span><span>Aumenta o valor final</span>
@@ -1362,6 +1368,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             {(clientCredits.length > 0 || clientSurcharges.length > 0) ? (
               <p className="muted">Adiantamentos e acrescimos abaixo vieram da conta-corrente deste cliente/corretor. Eles ja entram na previa. Voce pode gerar PDF ou imagem interna antes da cobranca definitiva.</p>
             ) : null}
+            <section className="charge-panel">
+            <h4 className="charge-panel__title">Ajustes</h4>
             <div className="kv-list">
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
               {advanceCents > 0 && ledgerCreditCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientCredits.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
@@ -1372,7 +1380,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               {surchargeCents > 0 && ledgerSurchargeCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientSurcharges.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
               {surchargeNeedsReason ? <div className="charge-adjustment-reason"><dt>Observação do acréscimo</dt><dd><input value={adjustmentReasons.surcharge} onChange={(event) => setReason("surcharge", event.target.value)} placeholder="Ex.: salário Gustavo" aria-label="Observação do acréscimo" /></dd></div> : null}
             </div>
+            </section>
             {!detail ? <>
+            <section className="charge-panel">
+            <h4 className="charge-panel__title">CT-e por saca</h4>
             <div className="charge-cte-card">
               <div>
                 <strong>CT-e por saca</strong>
@@ -1398,13 +1409,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   <span>NF {note.number} - {note.company} - {decimalTextBr(note.sacks)} sacas</span>
                 </label>
               ))}
-              {cteNotes.length === 0 ? <small>Selecione as notas da cobranca para calcular o CT-e.</small> : null}
+              {cteNotes.length === 0 ? <small>Nenhuma nota selecionada.</small> : null}
               {cteAlreadyApplied ? <small>Esta cobranca ja possui ajuste de CT-e (cobranca antiga).</small> : null}
             </div>
+            </section>
             </> : null}
             <div className="toolbar">
               <button onClick={() => void applyAdjustments()}>Aplicar ajustes</button>
             </div>
+            <section className="charge-panel charge-panel--total">
+            <h4 className="charge-panel__title">Total e documentos</h4>
             <div className="charges-final-card">
               <span>Valor final a cobrar</span>
               <strong aria-live="polite">{loadingPeriod ? "Calculando..." : formatCurrencyFromCents(visibleFinalCents)}</strong>
@@ -1419,6 +1433,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     <button onClick={() => void generateInternalPreview("pdf")} disabled={Boolean(draftDisabledReason) || Boolean(generatingPreview)}>{generatingPreview === "pdf" ? "Gerando PDF..." : "Previa interna PDF"}</button>
                     <button onClick={() => void generateInternalPreview("image")} disabled={Boolean(draftDisabledReason) || Boolean(generatingPreview)}>{generatingPreview === "image" ? "Gerando imagem..." : "Previa interna imagem"}</button>
                   </div>
+                  {draftDisabledReason ? <small className="charge-disabled-reason">Previas indisponiveis: {draftDisabledReason}</small> : null}
                   {generatingPreview ? <small role="status">Preparando o arquivo. A janela para escolher onde salvar aparecera em seguida.</small> : null}
                   <span className="disabled-action-tip" tabIndex={draftDisabledReason ? 0 : -1}>
                     <button className="primary" onClick={() => void createDraft()} disabled={Boolean(draftDisabledReason)}>Preparar cobranca definitiva</button>
@@ -1438,6 +1453,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               {detail ? <button type="button" className="charge-partner-open" onClick={() => setPartnerVersionOpen(true)} title="PDF ou planilha com os preços do parceiro, sem mudar esta cobrança">Versão para o parceiro</button> : null}
               {detail && partnerVersionOpen ? <ChargePartnerVersionModal detail={detail} onClose={() => setPartnerVersionOpen(false)} /> : null}
             </div>
+            </section>
           </div>
         </div>
       </AdminBlock>
