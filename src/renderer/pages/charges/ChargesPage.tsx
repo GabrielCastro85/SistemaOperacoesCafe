@@ -1366,18 +1366,18 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           <div className="charges-column">
             <h3>Ajustes e valores</h3>
             {(clientCredits.length > 0 || clientSurcharges.length > 0) ? (
-              <p className="muted">Adiantamentos e acrescimos abaixo vieram da conta-corrente deste cliente/corretor. Eles ja entram na previa. Voce pode gerar PDF ou imagem interna antes da cobranca definitiva.</p>
+              <p className="muted">Vieram da conta-corrente deste cliente/corretor e já entram na prévia.</p>
             ) : null}
             <section className="charge-panel">
             <h4 className="charge-panel__title">Ajustes</h4>
             <div className="kv-list">
               <div><dt>Adiantamento (R$)</dt><dd><input value={advanceInput} onChange={(event) => setAdvanceInput(event.target.value)} onBlur={() => formatMoneyState(advanceInput, setAdvanceInput)} placeholder="R$ 0,00" /></dd></div>
-              {advanceCents > 0 && ledgerCreditCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientCredits.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
+              {advanceCents > 0 && ledgerCreditCents > 0 ? <p className="muted charge-ledger-origin" title={clientCredits.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}>Da conta-corrente: {clientCredits.length} lançamento(s), {formatCurrencyFromCents(ledgerCreditCents)}</p> : null}
               {advanceNeedsReason ? <div className="charge-adjustment-reason"><dt>Observação do adiantamento</dt><dd><input value={adjustmentReasons.advance} onChange={(event) => setReason("advance", event.target.value)} placeholder="Sai no PDF ao lado do adiantamento" aria-label="Observação do adiantamento" /></dd></div> : null}
               <div><dt>Descontos (R$)</dt><dd><input value={discountInput} onChange={(event) => setDiscountInput(event.target.value)} onBlur={() => formatMoneyState(discountInput, setDiscountInput)} placeholder="R$ 0,00" /></dd></div>
               {discountCents > 0 ? <div className="charge-adjustment-reason"><dt>Observação do desconto</dt><dd><input value={adjustmentReasons.discount} onChange={(event) => setReason("discount", event.target.value)} placeholder="Ex.: pago ao advogado" aria-label="Observação do desconto" /></dd></div> : null}
               <div><dt>Acrescimos (R$)</dt><dd><input value={surchargeInput} onChange={(event) => setSurchargeInput(event.target.value)} onBlur={() => formatMoneyState(surchargeInput, setSurchargeInput)} placeholder="R$ 0,00" /></dd></div>
-              {surchargeCents > 0 && ledgerSurchargeCents > 0 ? <p className="muted charge-ledger-origin">Da conta-corrente: {clientSurcharges.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}</p> : null}
+              {surchargeCents > 0 && ledgerSurchargeCents > 0 ? <p className="muted charge-ledger-origin" title={clientSurcharges.map((entry) => `${formatDateOnlyBr(entry.entryDate)} ${entry.notes || entry.description} ${formatCurrencyFromCents(entry.availableAmountCents ?? 0)}`).join(" · ")}>Da conta-corrente: {clientSurcharges.length} lançamento(s), {formatCurrencyFromCents(ledgerSurchargeCents)}</p> : null}
               {surchargeNeedsReason ? <div className="charge-adjustment-reason"><dt>Observação do acréscimo</dt><dd><input value={adjustmentReasons.surcharge} onChange={(event) => setReason("surcharge", event.target.value)} placeholder="Ex.: salário Gustavo" aria-label="Observação do acréscimo" /></dd></div> : null}
             </div>
             </section>
