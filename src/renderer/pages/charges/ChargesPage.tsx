@@ -441,7 +441,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     if (operationDocument(operation)?.hasPendingIssues) return "Nota com pendencias de cadastro";
     if (isOperationInOpenCharge(operation)) return "Ja esta em cobranca aberta";
     if (operation.billingStatus !== "UNBILLED") return operation.billingStatus === "RESERVED" ? "Ja reservada em rascunho" : "Ja cobrada";
-    if (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0) return `Falta regra por saca para ${formatOperationScope(operation.operationScope)}`;
+    if (!operation.rateWasManuallyOverridden && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0)) return `Falta regra por saca para ${formatOperationScope(operation.operationScope)}`;
     return "Elegivel";
   }
 
@@ -606,7 +606,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const hasPendingAdjustments = hasPendingManualAdjustments;
   const visibleFinalCents = previewFinalCents;
   const draftDisabledReason = draftGenerationBlockedReason();
-  const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
+  const missingRateOperations = diagnosticOperations.filter((operation) => operation.status === "CONFIRMED" && operation.billingStatus === "UNBILLED" && !isOperationInOpenCharge(operation) && !operation.rateWasManuallyOverridden && (operation.appliedRateValueCents === 0 || operation.serviceAmountCents === 0));
   const missingRateScopes = Array.from(new Set(missingRateOperations.map((operation) => formatOperationScope(operation.operationScope))));
   const detailSacks = detail?.operations.length ? sumDecimalTexts(detail.operations.map((operation) => operation.quantitySacksDecimalSnapshot)) : "0";
   const normalizedPartnerSummarySearch = partnerSummarySearch

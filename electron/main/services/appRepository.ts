@@ -3083,8 +3083,8 @@ export class AppRepository {
         AND EXISTS (SELECT 1 FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id AND fd.status IN ('DRAFT', 'CONFIRMED') AND fd.has_pending_issues = 0
           AND (COALESCE(fd.contract_number, '') <> '' OR NOT EXISTS (SELECT 1 FROM business_partners bp WHERE bp.id = operations.responsible_partner_id AND bp.requires_contract = 1)))
         AND billing_status = 'UNBILLED'
-        AND applied_rate_value_cents > 0
-        AND service_amount_cents > 0
+        AND (applied_rate_value_cents > 0 OR rate_was_manually_overridden = 1)
+        AND (service_amount_cents > 0 OR rate_was_manually_overridden = 1)
       ORDER BY operation_date,
         CAST((SELECT fd.document_number FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id) AS INTEGER),
         (SELECT fd.document_number FROM fiscal_documents fd WHERE fd.id = operations.fiscal_document_id),
@@ -4499,8 +4499,8 @@ export class AppRepository {
         AND operations.operation_type = 'SALE'
         AND operations.status IN ('DRAFT', 'CONFIRMED')
         AND operations.billing_status = 'UNBILLED'
-        AND operations.applied_rate_value_cents > 0
-        AND operations.service_amount_cents > 0
+        AND (operations.applied_rate_value_cents > 0 OR operations.rate_was_manually_overridden = 1)
+        AND (operations.service_amount_cents > 0 OR operations.rate_was_manually_overridden = 1)
         AND fiscal_documents.status IN ('DRAFT', 'CONFIRMED')
         AND fiscal_documents.has_pending_issues = 0
         AND billing_alert_ignores.id IS NULL
