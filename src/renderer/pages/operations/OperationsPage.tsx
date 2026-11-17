@@ -936,8 +936,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         }
         const fileOperationType = xmlFileOperationType(inspected.token, inspected.extractedData);
         const manualRateText = xmlManualRates[inspected.token];
-        const parsedManualRate = manualRateText?.trim() ? parseCurrency(manualRateText) : NaN;
-        const manualRateValueCents = Number.isFinite(parsedManualRate) && parsedManualRate > 0 ? parsedManualRate : null;
+        // O campo guarda so os digitos, em centavos (ex.: "150000" = R$ 1.500,00).
+        const parsedManualRate = manualRateText?.trim() ? Number(manualRateText) : NaN;
+        // Zero e um valor valido (ex.: nota sem cobranca); so vazio conta como "usar a regra do cliente".
+        const manualRateValueCents = Number.isFinite(parsedManualRate) && parsedManualRate >= 0 ? parsedManualRate : null;
         const manualOverrideReason = manualRateValueCents !== null ? xmlManualReasons[inspected.token]?.trim() || null : null;
         if (contractNumber || billingObservations || selectedPartnerId || ignore || deferred || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService || fileOperationType !== operationType || manualRateText !== undefined) {
           await window.operationsCafe.updateXmlImportFileResolution(file.id, {
@@ -2150,7 +2152,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                   </div>
                   <div className="xml-segment xml-manual-rate">
                     <span className="xml-segment__label">Valor por saca desta nota</span>
-                    <input inputMode="decimal" disabled={!selectedXmlFile} placeholder="Vazio = valor da regra do cliente" value={selectedXmlFile ? xmlManualRates[selectedXmlFile.token] ?? "" : ""} onChange={(event) => { if (!selectedXmlFile) return; setXmlJob(null); setXmlManualRates((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} />
+                    <input inputMode="numeric" disabled={!selectedXmlFile} placeholder="Vazio = valor da regra do cliente" value={selectedXmlFile && xmlManualRates[selectedXmlFile.token] ? formatCurrencyFromCents(Number(xmlManualRates[selectedXmlFile.token])) : ""} onChange={(event) => { if (!selectedXmlFile) return; setXmlJob(null); const digits = event.target.value.replace(/\D/g, "").replace(/^0+(?=\d)/, ""); setXmlManualRates((current) => ({ ...current, [selectedXmlFile.token]: digits })); }} />
                     {selectedXmlFile && xmlManualRates[selectedXmlFile.token]?.trim() ? (
                       <input placeholder="Motivo (obrigatório), ex.: acordo com o cliente" value={xmlManualReasons[selectedXmlFile.token] ?? ""} onChange={(event) => { setXmlJob(null); setXmlManualReasons((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} />
                     ) : null}
