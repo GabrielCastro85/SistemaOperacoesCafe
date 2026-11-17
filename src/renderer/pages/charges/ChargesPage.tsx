@@ -30,6 +30,30 @@ function decimalTextBr(value: string | null | undefined): string {
   return value ? value.replace(".", ",") : "0";
 }
 
+// Sacas do resumo com no maximo duas casas: "1502.533334" -> "1.502,53".
+function formatSackAmount(value: string | number | null | undefined): string {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed.toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "0";
+}
+
+// Data curta para o historico: "17/11 16:59".
+function shortDateTime(value: string): string {
+  return formatDateTimeBr(value).replace(/\/\d{4}, /, " ").replace(/:\d{2}$/, "");
+}
+
+// Duas cobrancas do mesmo cliente e periodo criadas com menos de 10 minutos de diferenca.
+function isLikelyDuplicateCharge(
+  charge: { id: string; clientPartnerId: string; periodStart: string; periodEnd: string; createdAt: string },
+  others: Array<{ id: string; clientPartnerId: string; periodStart: string; periodEnd: string; createdAt: string }>
+): boolean {
+  const time = Date.parse(charge.createdAt);
+  return others.some((other) => other.id !== charge.id
+    && other.clientPartnerId === charge.clientPartnerId
+    && other.periodStart === charge.periodStart
+    && other.periodEnd === charge.periodEnd
+    && Math.abs(Date.parse(other.createdAt) - time) < 10 * 60 * 1000);
+}
+
 function normalizeSearchText(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").trim();
 }
@@ -97,8 +121,6 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [exportingChargeControl, setExportingChargeControl] = useState(false);
   const [printingChargeControl, setPrintingChargeControl] = useState(false);
-  const [controlPeriodStart, setControlPeriodStart] = useState(() => currentBillingRange("MONTHLY").periodStart);
-  const [controlPeriodEnd, setControlPeriodEnd] = useState(() => localDateInputValue(new Date()));
   const [controlIncludeAllOpen, setControlIncludeAllOpen] = useState(false);
   const [bankEditor, setBankEditor] = useState<LegalEntity | null>(null);
   const [savingBank, setSavingBank] = useState(false);
@@ -137,6 +159,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [partnerSummary, setPartnerSummary] = useState<PartnerRateSummaryRow[]>([]);
   const [partnerSummarySearch, setPartnerSummarySearch] = useState("");
   const [includeAlreadyBilled, setIncludeAlreadyBilled] = useState(false);
+  const [showEmptyPartners, setShowEmptyPartners] = useState(false);
   const [clientId, setClientId] = useState(() => chargeHashParam("clientId"));
   const [periodicity, setPeriodicity] = useState<BillingPeriodicity>("MONTHLY");
   const [periodStart, setPeriodStart] = useState(() => chargeHashParam("periodStart") || currentBillingRange("MONTHLY").periodStart);
@@ -193,11 +216,11 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const visibleHistoryCharges = filteredHistoryCharges.slice(0, historyVisibleCount);
   const hiddenHistoryCharges = Math.max(0, filteredHistoryCharges.length - visibleHistoryCharges.length);
   const printableCharges = useMemo(() => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(controlPeriodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(controlPeriodEnd) || controlPeriodStart > controlPeriodEnd) return [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd) return [];
     return charges
       .filter((charge) => {
         if (["DRAFT", "CANCELLED", "REPLACED"].includes(charge.status)) return false;
-        const isInPeriod = charge.periodStart <= controlPeriodEnd && charge.periodEnd >= controlPeriodStart;
+        const isInPeriod = charge.periodStart <= periodEnd && charge.periodEnd >= periodStart;
         const isOpen = charge.openAmountCents > 0;
         return isOpen && (isInPeriod || controlIncludeAllOpen);
       })
@@ -206,7 +229,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         const rightName = partners.find((item) => item.id === right.clientPartnerId)?.displayName ?? "";
         return leftName.localeCompare(rightName, "pt-BR") || left.periodStart.localeCompare(right.periodStart);
       });
-  }, [charges, controlIncludeAllOpen, controlPeriodEnd, controlPeriodStart, partners]);
+  }, [charges, controlIncludeAllOpen, periodEnd, periodStart, partners]);
 
   useEffect(() => {
     setHistoryVisibleCount(HISTORY_PAGE_SIZE);
@@ -615,6 +638,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     .trim()
     .toLocaleLowerCase("pt-BR");
   const visiblePartnerSummary = partnerSummary
+    .filter((row) => showEmptyPartners || row.totalAmountCents !== 0 || Number(row.internalSacks) > 0 || Number(row.externalSacks) > 0)
     .filter((row) => row.partnerDisplayName
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
@@ -1093,7 +1117,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   function chargeControlFilterDescription(): string {
-    const period = `Período das cobranças: ${formatDateOnlyBr(controlPeriodStart)} a ${formatDateOnlyBr(controlPeriodEnd)}`;
+    const period = `Período das cobranças: ${formatDateOnlyBr(periodStart)} a ${formatDateOnlyBr(periodEnd)}`;
     return controlIncludeAllOpen ? `${period} | Inclui todas as cobranças em aberto` : period;
   }
 
@@ -1473,19 +1497,20 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           onChange={(event) => setPartnerSummarySearch(event.target.value)}
         />
         <label className="inline-check"><input type="checkbox" checked={includeAlreadyBilled} onChange={(event) => setIncludeAlreadyBilled(event.target.checked)} /> Incluir operacoes ja cobradas</label>
+        <label className="inline-check"><input type="checkbox" checked={showEmptyPartners} onChange={(event) => setShowEmptyPartners(event.target.checked)} /> Mostrar clientes sem movimento</label>
         <div className="table">
           <div className="table-head partner-summary-grid"><span>Cliente/corretor</span><span>Sacas mesma UF</span><span>Sacas outra UF</span><span>Valor mesma UF</span><span>Valor outra UF</span><span>Total</span><span>Acoes</span></div>
           {visiblePartnerSummary.map((row) => (
             <div key={row.partnerId} className="table-row partner-summary-grid">
               <span>{row.partnerDisplayName}</span>
-              <span>{decimalTextBr(row.internalSacks)}</span>
-              <span>{decimalTextBr(row.externalSacks)}</span>
+              <span>{formatSackAmount(row.internalSacks)}</span>
+              <span>{formatSackAmount(row.externalSacks)}</span>
               <span>{formatCurrencyFromCents(row.internalAmountCents)}</span>
               <span>{formatCurrencyFromCents(row.externalAmountCents)}</span>
               <span>{formatCurrencyFromCents(row.totalAmountCents)}</span>
               <span>
                 <span className="disabled-action-tip" tabIndex={summaryDraftBlockedReason(row) ? 0 : -1}>
-                  <button disabled={Boolean(summaryDraftBlockedReason(row)) || exportingPartnerId !== null} onClick={() => void exportReportForPartner(row)}>{exportingPartnerId === row.partnerId ? "Gerando..." : "Gerar relatorio PDF"}</button>
+                  <button className="charge-row-action" title="Gerar relatorio PDF" disabled={Boolean(summaryDraftBlockedReason(row)) || exportingPartnerId !== null} onClick={() => void exportReportForPartner(row)}>{exportingPartnerId === row.partnerId ? "Gerando..." : "PDF"}</button>
                   {summaryDraftBlockedReason(row) ? <span className="disabled-action-tip__card" role="tooltip">{summaryDraftBlockedReason(row)}</span> : null}
                 </span>
               </span>
@@ -1628,8 +1653,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <p className="muted">O arquivo inclui somente cobranças com saldo em aberto dentro do período escolhido.</p>
           </div>
           <FormGrid>
-            <DateInput label="Período inicial" value={controlPeriodStart} onChange={(event) => setControlPeriodStart(event.target.value)} />
-            <DateInput label="Período final" value={controlPeriodEnd} onChange={(event) => setControlPeriodEnd(event.target.value)} />
+            <DateInput label="Período inicial" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
+            <DateInput label="Período final" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
             <label className="checkbox"><input type="checkbox" checked={controlIncludeAllOpen} onChange={(event) => setControlIncludeAllOpen(event.target.checked)} /> Incluir também cobranças em aberto fora do período</label>
           </FormGrid>
           <div className="toolbar charge-control-export">
@@ -1648,13 +1673,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             const deleteBlockedReason = deleteChargeBlockedReason(charge);
             return (
               <div key={charge.id} className="table-row charge-grid">
-                <span>{formatDateTimeBr(charge.createdAt)}</span>
+                <span>{shortDateTime(charge.createdAt)}</span>
                 <span>{partners.find((item) => item.id === charge.clientPartnerId)?.displayName ?? charge.clientPartnerId}</span>
                 <span>{formatDateOnlyBr(charge.periodStart)} a {formatDateOnlyBr(charge.periodEnd)}</span>
                 <span>{formatCurrencyFromCents(charge.finalAmountCents)}</span>
                 <span>{formatCurrencyFromCents(charge.paidAmountCents)}</span>
                 <span>{formatCurrencyFromCents(charge.openAmountCents)}</span>
-                <span>{charge.finalAmountCents < 0 ? "Saldo a favor do cliente" : formatStatusLabel(charge.status)}</span>
+                <span>{charge.finalAmountCents < 0 ? "Saldo a favor do cliente" : formatStatusLabel(charge.status)}{isLikelyDuplicateCharge(charge, filteredHistoryCharges) ? <small className="charge-dup-tag">Possível duplicada</small> : null}</span>
                 <span className="row-actions">
                   <button onClick={() => void openCharge(charge)}>Abrir</button>
                   <span className="disabled-action-tip" tabIndex={deleteBlockedReason ? 0 : -1}>

@@ -7025,3 +7025,26 @@ table tbody tr:hover {
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* Cobrancas: abas de resumo e historico. */
+.partner-summary-grid .charge-row-action.charge-row-action {
+  background: transparent !important;
+  color: var(--color-primary, #263238) !important;
+  border: 1px solid var(--color-border, #ded8cc) !important;
+  border-radius: 999px !important;
+  padding: 3px 12px !important;
+  font-size: 12px !important;
+  box-shadow: none !important;
+}
+.partner-summary-grid .charge-row-action.charge-row-action:hover:not(:disabled) {
+  border-color: var(--color-primary, #263238) !important;
+}
+.charge-dup-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fbf3e4;
+  color: #8a5a1f;
+  font-size: 11px;
+}
