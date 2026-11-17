@@ -6854,3 +6854,72 @@ table tbody tr:hover {
     overflow: visible;
   }
 }
+
+/* Tela de lancamento de notas: tabela principal, com painel lateral de detalhe quando uma nota esta selecionada. */
+.import-columns:not(.has-drawer) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.import-columns.has-drawer {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
+  align-items: start;
+}
+.import-column--queue {
+  grid-column: auto;
+  grid-row: auto;
+  position: static;
+  max-height: none;
+  overflow: visible;
+}
+.xml-drawer {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border, #ded8cc);
+  border-radius: 14px;
+  background: var(--color-surface, #ffffff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+.xml-drawer__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.xml-drawer__head > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xml-drawer__actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.xml-drawer .xml-detail-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  grid-column: auto;
+  grid-row: auto;
+}
+.xml-drawer .import-column--panel {
+  grid-column: auto;
+  grid-row: auto;
+}
+@media (max-width: 1100px) {
+  .import-columns.has-drawer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .xml-drawer {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}

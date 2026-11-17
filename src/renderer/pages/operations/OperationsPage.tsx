@@ -1900,7 +1900,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         <div className="xml-stepper-top">
           <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
         </div>
-        <div className="import-columns">
+        <div className={`import-columns${selectedXmlFile ? " has-drawer" : ""}`}>
           <div className="import-column import-column--queue" ref={xmlDataRef}>
             <h3>{pageTab === "received" ? "Importar XMLs recebidos" : "Importar XMLs"}</h3>
             <div className={`xml-dropzone-wrap${xmlQueue.length ? " is-compact" : ""}`}>
@@ -1919,25 +1919,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             />
             </div>
             <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
-            {xmlQueue.length ? (
-              <ul className="xml-queue-list">
-                  {xmlQueue.map((file) => {
-                    const party = xmlPartySummary(file, pageTab === "received" ? "INBOUND" : "OUTBOUND");
-                    return (
-                  <li key={file.token} className={xmlDeferredSelections[file.token] ? "xml-queue-item--deferred" : undefined}>
-                    <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
-                      <span className="xml-queue-party"><strong>{party.title}</strong><small>{xmlQueueSummaryLine(file)}</small></span>
-                      <StatusBadge status={file.status} />
-                      {file.errorMessage ? <small className="xml-queue-file" title={file.errorMessage}>{file.errorMessage}</small> : null}
-                    </button>
-                    <button type="button" className="xml-defer-toggle" onClick={() => setXmlDeferredSelections((current) => ({ ...current, [file.token]: !current[file.token] }))}>{xmlDeferredSelections[file.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button>
-                  </li>
-                    );
-                  })}
-              </ul>
-            ) : (
+            {!xmlQueue.length ? (
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para começar." />
-            )}
+            ) : null}
             {xmlQueue.length && !partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner ? (
               <p className="xml-validate-hint">Falta escolher o cliente/corretor da cobrança na aba "Cliente e operação", ou marcar "Ignorar por enquanto" nas notas que não entram.</p>
             ) : null}
@@ -1946,8 +1930,64 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentação" : "Validar fila"}
               </button>
             </div>
+        {xmlQueue.length ? (
+          <div className="xml-batch-review">
+            <div className="section-title-row">
+              <div>
+                <h3>Revisão da fila</h3>
+                <p className="muted">Confira todos os XMLs antes de validar e salvar. Clique em uma linha para ver os detalhes completos ao lado.</p>
+              </div>
+              <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
+            </div>
+            {vulpeScan && symbolicWarehouseTokens.length > 0 ? (
+              <div className="toolbar">
+                <button type="button" onClick={() => setSymbolicWarehouseIgnored(!allSymbolicIgnored)}>
+                  {allSymbolicIgnored
+                    ? `Voltar a cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`
+                    : `Não cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`}
+                </button>
+              </div>
+            ) : null}
+            <div className="table">
+              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatário fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
+              {xmlBatchRows.map((row) => (
+                <button
+                  key={row.file.token}
+                  type="button"
+                  className={`table-row xml-batch-grid xml-batch-row ${row.file.token === selectedXmlFile?.token ? "active" : ""}`}
+                  onClick={() => setSelectedXmlToken(row.file.token)}
+                >
+                  <span><strong>{row.file.originalFileName}</strong><small>NF {row.preview?.number ?? "-"} · {row.preview?.issuedAt ? formatDateBr(row.preview.issuedAt) : "data nao lida"}</small></span>
+                  <span><strong>{row.parties.originLabel}</strong><small>{row.parties.isThirdPartyOrigin ? "Terceirizada/externa" : "CNPJ proprio"}</small></span>
+                  <span>{row.parties.recipientLabel ?? row.parties.issuerLabel ?? "Não identificado"}</span>
+                  <span>{row.firstItem?.description ?? "-"}</span>
+                  <span>
+                    {decimalTextBr(
+                      xmlQuantityInSacks(
+                        row.firstItem?.commercialQuantity,
+                        row.firstItem?.commercialUnit
+                      )
+                    )}
+                  </span>
+                  <span>{formatOperationScope(row.operationScope)}</span>
+                  <span><strong>{row.classificationLabel}</strong><small><StatusBadge status={row.file.status} /></small></span>
+                </button>
+              ))}
+            </div>
           </div>
+        ) : null}
+          </div>
+        </div>
 
+        {selectedXmlFile ? (
+        <aside className="xml-drawer" aria-label="Detalhes da nota">
+          <div className="xml-drawer__head">
+            <strong>{selectedXmlFile.originalFileName}</strong>
+            <span className="xml-drawer__actions">
+              <button type="button" className="xml-defer-toggle" onClick={() => setXmlDeferredSelections((current) => ({ ...current, [selectedXmlFile.token]: !current[selectedXmlFile.token] }))}>{xmlDeferredSelections[selectedXmlFile.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button>
+              <button type="button" onClick={() => setSelectedXmlToken(null)}>Fechar</button>
+            </span>
+          </div>
           <div className="xml-detail-tabs" role="tablist" aria-label="Detalhes da importação">
             <button type="button" role="tab" aria-selected={xmlDetailTab === "nota"} className={xmlDetailTab === "nota" ? "active" : ""} onClick={() => setXmlDetailTab("nota")}>Nota</button>
             <button type="button" role="tab" aria-selected={xmlDetailTab === "cliente"} className={xmlDetailTab === "cliente" ? "active" : ""} onClick={() => setXmlDetailTab("cliente")}>
@@ -2163,7 +2203,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </>
             )}
           </div>
-        </div>
+        </aside>
+        ) : null}
             {xmlQueue.length ? (
             <div className="xml-action-footer">
               <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
@@ -2175,52 +2216,6 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </div>
             </div>
             ) : null}
-        {xmlQueue.length ? (
-          <div className="xml-batch-review">
-            <div className="section-title-row">
-              <div>
-                <h3>Revisão da fila</h3>
-                <p className="muted">Confira todos os XMLs antes de validar e salvar. Clique em uma linha para ver os detalhes completos ao lado.</p>
-              </div>
-              <span className="summary-pill">{validXmlBatchRows.length} de {xmlQueue.length} pronto(s)</span>
-            </div>
-            {vulpeScan && symbolicWarehouseTokens.length > 0 ? (
-              <div className="toolbar">
-                <button type="button" onClick={() => setSymbolicWarehouseIgnored(!allSymbolicIgnored)}>
-                  {allSymbolicIgnored
-                    ? `Voltar a cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`
-                    : `Não cadastrar as ${symbolicWarehouseTokens.length} remessa(s) simbolica(s)`}
-                </button>
-              </div>
-            ) : null}
-            <div className="table">
-              <div className="table-head xml-batch-grid"><span>Arquivo / NF</span><span>Origem</span><span>Destinatário fiscal</span><span>Produto</span><span>Sacas</span><span>UF</span><span>Classificacao</span></div>
-              {xmlBatchRows.map((row) => (
-                <button
-                  key={row.file.token}
-                  type="button"
-                  className={`table-row xml-batch-grid xml-batch-row ${row.file.token === selectedXmlFile?.token ? "active" : ""}`}
-                  onClick={() => setSelectedXmlToken(row.file.token)}
-                >
-                  <span><strong>{row.file.originalFileName}</strong><small>NF {row.preview?.number ?? "-"} · {row.preview?.issuedAt ? formatDateBr(row.preview.issuedAt) : "data nao lida"}</small></span>
-                  <span><strong>{row.parties.originLabel}</strong><small>{row.parties.isThirdPartyOrigin ? "Terceirizada/externa" : "CNPJ proprio"}</small></span>
-                  <span>{row.parties.recipientLabel ?? row.parties.issuerLabel ?? "Não identificado"}</span>
-                  <span>{row.firstItem?.description ?? "-"}</span>
-                  <span>
-                    {decimalTextBr(
-                      xmlQuantityInSacks(
-                        row.firstItem?.commercialQuantity,
-                        row.firstItem?.commercialUnit
-                      )
-                    )}
-                  </span>
-                  <span>{formatOperationScope(row.operationScope)}</span>
-                  <span><strong>{row.classificationLabel}</strong><small><StatusBadge status={row.file.status} /></small></span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
         <div ref={xmlResultRef}>
         {visibleXmlJob ? (
           <div className="section-title-row xml-result-actions">
