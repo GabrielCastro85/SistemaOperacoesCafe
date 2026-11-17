@@ -1964,12 +1964,12 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                 <div className="xml-detail-parties">
                   <div className="xml-detail-card">
                     <span className="xml-detail-label">Emitente</span>
-                    <strong>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</strong>
+                    <strong title={selectedXmlParties.issuerLabel ?? undefined}>{selectedXmlParties.issuerLabel ?? "Nao identificado"}</strong>
                     <small>Origem: {selectedXmlParties.originLabel}</small>
                   </div>
                   <div className="xml-detail-card">
                     <span className="xml-detail-label">Destinatario</span>
-                    <strong>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</strong>
+                    <strong title={selectedXmlParties.recipientLabel ?? undefined}>{selectedXmlParties.recipientLabel ?? "Nao identificado"}</strong>
                   </div>
                 </div>
                 <div className="xml-detail-card xml-detail-card--total">
@@ -1991,7 +1991,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <div><dt>Modelo</dt><dd>{selectedXmlPreview.model ?? "-"}</dd></div>
                     <div><dt>Natureza da operacao</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
                     <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
-                    <div><dt>Chave da NF-e</dt><dd className="xml-detail-key">{selectedXmlPreview.accessKey ?? "-"}</dd></div>
+                    <div><dt>Chave da NF-e</dt><dd className="xml-detail-key">
+                      <span title={selectedXmlPreview.accessKey ?? undefined}>{selectedXmlPreview.accessKey ?? "-"}</span>
+                      {selectedXmlPreview.accessKey ? <button type="button" className="xml-copy-key" onClick={() => void navigator.clipboard.writeText(selectedXmlPreview.accessKey ?? "").then(() => setMessage("Chave da NF-e copiada.")).catch(() => setMessage("Nao foi possivel copiar a chave."))}>Copiar</button> : null}
+                    </dd></div>
                   </dl>
                 </div>
                 {selectedXmlFile && !selectedWarehouseMovement ? (
