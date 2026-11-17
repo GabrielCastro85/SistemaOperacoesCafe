@@ -6838,3 +6838,19 @@ table tbody tr:hover {
     grid-row: auto;
   }
 }
+
+/* Fila fixa enquanto o detalhe da nota rola: evita o espaco vazio embaixo da fila. */
+.import-column--queue {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+@media (max-width: 1100px) {
+  .import-column--queue {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
