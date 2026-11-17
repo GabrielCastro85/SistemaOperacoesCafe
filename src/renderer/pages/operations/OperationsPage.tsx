@@ -12,7 +12,7 @@ import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { isPackagingDocument, PACKAGING_OVERRIDE_PREFIX } from "../../../shared/utils/packagingBilling";
 import { NumberingAudit } from "./NumberingAudit";
-import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
+import { classifyWarehouseXml, inferXmlOperationType, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
@@ -238,6 +238,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
   const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
+  // Compra/venda por nota: o XML define (empresa propria emitente = venda, destinataria = compra); o usuario pode trocar.
+  const [xmlOperationTypeOverrides, setXmlOperationTypeOverrides] = useState<Record<string, "PURCHASE" | "SALE">>({});
   const [xmlPartnerOverrides, setXmlPartnerOverrides] = useState<Record<string, string>>({});
   const [xmlIgnoredSelections, setXmlIgnoredSelections] = useState<Record<string, boolean>>({});
   const [xmlDeferredSelections, setXmlDeferredSelections] = useState<Record<string, boolean>>({});
@@ -830,6 +832,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlQueue(inspections);
     setXmlJob(null);
     setXmlScopeOverrides({});
+    setXmlOperationTypeOverrides({});
     setXmlPartnerOverrides({});
     setXmlIgnoredSelections({}); setXmlDeferredSelections({});
     setXmlContractNumbers({});
@@ -916,8 +919,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           scrollTo(xmlDataRef);
           return;
         }
-        if (contractNumber || billingObservations || selectedPartnerId || ignore || deferred || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService) {
+        const fileOperationType = xmlFileOperationType(inspected.token, inspected.extractedData);
+        if (contractNumber || billingObservations || selectedPartnerId || ignore || deferred || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService || fileOperationType !== operationType) {
           await window.operationsCafe.updateXmlImportFileResolution(file.id, {
+            operationType: fileOperationType,
             contractNumber,
             billingObservations,
             freightDaeReference,
@@ -1028,6 +1033,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       await window.operationsCafe.updateXmlImportFileResolution(fileId, {
         clientPartnerId,
         secondaryPartnerId,
+        operationType: inspected ? xmlFileOperationType(inspected.token, inspected.extractedData) : null,
         contractNumber: inspected ? xmlContractNumbers[inspected.token]?.trim() || null : null,
         billingObservations: inspected ? xmlBillingObservations[inspected.token]?.trim() || null : null,
         freightDaeReference: inspected && xmlFreightDaeEnabled[inspected.token] ? xmlFreightDaeReferences[inspected.token]?.trim() || null : null,
@@ -1113,6 +1119,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   );
   const selectedXmlInferredScope = inferXmlOperationScope(selectedXmlPreview);
   const selectedXmlScope = selectedXmlFile ? selectedXmlInferredScope ?? xmlScopeOverrides[selectedXmlFile.token] ?? scope : scope;
+  // Tipo da nota: escolha do usuario > o que o XML indica > o botao geral.
+  const xmlFileOperationType = (token: string, extractedData: XmlFileInspection["extractedData"]): "PURCHASE" | "SALE" =>
+    xmlOperationTypeOverrides[token] ?? inferXmlOperationType(parseNfeExtractedPreview(extractedData ?? null), data.legalEntities) ?? operationType;
+  const selectedXmlOperationType = selectedXmlFile ? xmlFileOperationType(selectedXmlFile.token, selectedXmlFile.extractedData) : operationType;
   const selectedXmlOwnMismatch = Boolean(
     selectedXmlParties.ownEntityLabel &&
     ownLegalEntity &&
@@ -2096,7 +2106,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <span className="xml-segment__label">Compra/venda</span>
                     <div className="xml-segment__options" role="group" aria-label="Compra ou venda">
                       {(["PURCHASE", "SALE"] as const).map((value) => (
-                        <button key={value} type="button" className={operationType === value ? "active" : ""} onClick={() => setOperationType(value)}>{value === "PURCHASE" ? "Compra" : "Venda"}</button>
+                        <button key={value} type="button" className={selectedXmlOperationType === value ? "active" : ""} onClick={() => { if (selectedXmlFile) setXmlOperationTypeOverrides((current) => ({ ...current, [selectedXmlFile.token]: value })); setOperationType(value); }}>{value === "PURCHASE" ? "Compra" : "Venda"}</button>
                       ))}
                     </div>
                   </div>

@@ -222,3 +222,21 @@ function cnpjFromAccessKey(accessKey: string | null): string | null {
   const key = accessKey ? onlyDigits(accessKey) : null;
   return key && key.length === 44 ? key.slice(6, 20) : null;
 }
+
+// Compra ou venda definida pelo proprio XML: se a empresa propria emitiu a nota, e venda;
+// se ela e a destinataria, e compra. Null quando nenhuma empresa propria bate com o XML.
+export function inferXmlOperationType(
+  preview: NfeExtractedPreview | null,
+  legalEntities: LegalEntity[]
+): "PURCHASE" | "SALE" | null {
+  if (!preview) return null;
+  const issuerCnpj = preview.issuer?.cnpjCpf
+    ? onlyDigits(preview.issuer.cnpjCpf)
+    : cnpjFromAccessKey(preview.accessKey);
+  const recipientCnpj = preview.recipient?.cnpjCpf ? onlyDigits(preview.recipient.cnpjCpf) : null;
+  const ownLegalEntities = legalEntities.filter((entity) => entity.documentPrefix !== "TERC-XML");
+  const isOwn = (cnpj: string | null): boolean => Boolean(cnpj) && ownLegalEntities.some((entity) => onlyDigits(entity.cnpj) === cnpj);
+  if (isOwn(issuerCnpj)) return "SALE";
+  if (isOwn(recipientCnpj)) return "PURCHASE";
+  return null;
+}
