@@ -6938,3 +6938,20 @@ table tbody tr:hover {
 .xml-dropzone-wrap:not(.is-compact) .ui-dropzone .inline-actions {
   margin-top: 6px;
 }
+
+/* Valor por saca especifico da nota (campo novo na coluna de cliente e operacao). */
+.xml-manual-rate {
+  gap: 6px;
+}
+.xml-manual-rate input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
+  background: var(--color-surface);
+  font-size: 13px;
+}
+.xml-manual-rate input:disabled {
+  opacity: 0.6;
+}

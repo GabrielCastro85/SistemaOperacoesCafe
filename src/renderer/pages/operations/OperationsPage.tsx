@@ -240,6 +240,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
   // Compra/venda por nota: o XML define (empresa propria emitente = venda, destinataria = compra); o usuario pode trocar.
   const [xmlOperationTypeOverrides, setXmlOperationTypeOverrides] = useState<Record<string, "PURCHASE" | "SALE">>({});
+  // Valor por saca so desta nota (texto digitado e motivo); vazio = usa a regra do cliente.
+  const [xmlManualRates, setXmlManualRates] = useState<Record<string, string>>({});
+  const [xmlManualReasons, setXmlManualReasons] = useState<Record<string, string>>({});
   const [xmlPartnerOverrides, setXmlPartnerOverrides] = useState<Record<string, string>>({});
   const [xmlIgnoredSelections, setXmlIgnoredSelections] = useState<Record<string, boolean>>({});
   const [xmlDeferredSelections, setXmlDeferredSelections] = useState<Record<string, boolean>>({});
@@ -842,6 +845,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     setXmlJob(null);
     setXmlScopeOverrides({});
     setXmlOperationTypeOverrides({});
+    setXmlManualRates({});
+    setXmlManualReasons({});
     setXmlPartnerOverrides({});
     setXmlIgnoredSelections({}); setXmlDeferredSelections({});
     setXmlContractNumbers({});
@@ -930,9 +935,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           return;
         }
         const fileOperationType = xmlFileOperationType(inspected.token, inspected.extractedData);
-        if (contractNumber || billingObservations || selectedPartnerId || ignore || deferred || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService || fileOperationType !== operationType) {
+        const manualRateText = xmlManualRates[inspected.token];
+        const parsedManualRate = manualRateText?.trim() ? parseCurrency(manualRateText) : NaN;
+        const manualRateValueCents = Number.isFinite(parsedManualRate) && parsedManualRate > 0 ? parsedManualRate : null;
+        const manualOverrideReason = manualRateValueCents !== null ? xmlManualReasons[inspected.token]?.trim() || null : null;
+        if (contractNumber || billingObservations || selectedPartnerId || ignore || deferred || freightDaeAmountCents > 0 || invoiceDaeAmountCents > 0 || hasFinancialService || fileOperationType !== operationType || manualRateText !== undefined) {
           await window.operationsCafe.updateXmlImportFileResolution(file.id, {
             operationType: fileOperationType,
+            manualRateValueCents,
+            manualOverrideReason,
             contractNumber,
             billingObservations,
             freightDaeReference,
@@ -2137,6 +2148,13 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                       ))}
                     </div>
                   </div>
+                  <div className="xml-segment xml-manual-rate">
+                    <span className="xml-segment__label">Valor por saca desta nota</span>
+                    <input inputMode="decimal" disabled={!selectedXmlFile} placeholder="Vazio = valor da regra do cliente" value={selectedXmlFile ? xmlManualRates[selectedXmlFile.token] ?? "" : ""} onChange={(event) => { if (!selectedXmlFile) return; setXmlJob(null); setXmlManualRates((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} />
+                    {selectedXmlFile && xmlManualRates[selectedXmlFile.token]?.trim() ? (
+                      <input placeholder="Motivo (obrigatório), ex.: acordo com o cliente" value={xmlManualReasons[selectedXmlFile.token] ?? ""} onChange={(event) => { setXmlJob(null); setXmlManualReasons((current) => ({ ...current, [selectedXmlFile.token]: event.target.value })); }} />
+                    ) : null}
+                  </div>
                 </FormGrid>
                 {vulpeScan && selectedXmlFile ? (
                   <label className="inline-check">
@@ -2161,7 +2179,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <div className="xml-action-footer">
               <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
               <div className="xml-action-footer__buttons">
-              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importação</button>
+              <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlManualRates({}); setXmlManualReasons({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importação</button>
               <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentação" : "Importar XMLs"}
               </button>
