@@ -1736,9 +1736,9 @@ table tbody tr:hover {
 
 .import-columns {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.2fr) minmax(240px, 0.9fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
-  align-items: start;
+  align-items: stretch;
   margin-top: var(--space-4);
   min-width: 0;
 }
@@ -5143,7 +5143,7 @@ table tbody tr:hover {
   }
 
   .import-columns {
-    grid-template-columns: minmax(280px, 0.95fr) minmax(360px, 1.1fr) minmax(270px, 0.85fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
   }
 
