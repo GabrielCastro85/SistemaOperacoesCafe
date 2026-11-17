@@ -32,11 +32,15 @@ function firstOfMonth(): string {
 // Conferencia de numeracao: as notas emitidas por uma empresa propria sao
 // numeradas em sequencia; qualquer numero que falta no sistema e uma nota nao
 // lancada, cancelada ou inutilizada. Mostra quais sao para conferir.
-export function NumberingAudit({ legalEntities }: { legalEntities: LegalEntity[] }): JSX.Element {
+export function NumberingAudit({ legalEntities, periodStart: sharedStart, periodEnd: sharedEnd, onPeriodChange }: { legalEntities: LegalEntity[]; periodStart?: string; periodEnd?: string; onPeriodChange?: (start: string, end: string) => void }): JSX.Element {
   const ownEntities = legalEntities.filter((entity) => entity.cnpj && entity.documentPrefix !== "TERC-XML");
   const [entityId, setEntityId] = useState(ownEntities[0]?.id ?? "");
-  const [periodStart, setPeriodStart] = useState(firstOfMonth);
-  const [periodEnd, setPeriodEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const [ownStart, setOwnStart] = useState(firstOfMonth);
+  const [ownEnd, setOwnEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const periodStart = sharedStart ?? ownStart;
+  const periodEnd = sharedEnd ?? ownEnd;
+  const setPeriodStart = (value: string) => (onPeriodChange ? onPeriodChange(value, periodEnd) : setOwnStart(value));
+  const setPeriodEnd = (value: string) => (onPeriodChange ? onPeriodChange(periodStart, value) : setOwnEnd(value));
   const [audit, setAudit] = useState<Audit | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,8 +63,10 @@ export function NumberingAudit({ legalEntities }: { legalEntities: LegalEntity[]
             {ownEntities.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName || entity.legalName} - {formatCnpj(entity.cnpj)}</option>)}
           </select>
         </label>
+        {onPeriodChange ? <small className="numbering-period-note">Período: {periodStart.split("-").reverse().join("/")} a {periodEnd.split("-").reverse().join("/")} (definido na busca acima)</small> : <>
         <label>Data inicial<input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
         <label>Data final<input type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
+        </>}
         <button className="primary" disabled={!entityId || !periodStart || !periodEnd} onClick={() => void run()}>Conferir numeração</button>
       </div>
       {error ? <p className="muted">{error}</p> : null}

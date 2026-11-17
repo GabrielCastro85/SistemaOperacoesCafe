@@ -233,6 +233,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [xmlQueue, setXmlQueue] = useState<XmlFileInspection[]>([]);
   const [xmlJob, setXmlJob] = useState<{ job: XmlImportJob; files: XmlImportFile[] } | null>(null);
   const [xmlHistory, setXmlHistory] = useState<XmlImportJob[]>([]);
+  const [xmlHistoryLimit, setXmlHistoryLimit] = useState(15);
   const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
   const [xmlSelectionSource, setXmlSelectionSource] = useState<"FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP">("FILE");
   const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
@@ -1374,7 +1375,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
           <div>
             <span className="notes-flow-intro__eyebrow">Alternativa ao XML</span>
             <strong>Use este formulario somente quando a nota nao estiver disponivel na busca automatica.</strong>
-            <small>Primeiro escolha se e compra ou venda, depois o responsavel e o CNPJ exato que aparece na NF-e.</small>
+            <details className="notes-flow-intro__details"><summary>Como preencher</summary><small>Primeiro escolha se e compra ou venda, depois o responsavel e o CNPJ exato que aparece na NF-e.</small></details>
           </div>
         </div>
         <div className="operation-context-note">
@@ -2322,9 +2323,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         ) : null}
         </div>
       </AdminBlock>
-      {pageTab === "issued" ? <NumberingAudit legalEntities={data.legalEntities} /> : null}
+      {pageTab === "issued" ? <NumberingAudit legalEntities={data.legalEntities} periodStart={vulpePeriodStart} periodEnd={vulpePeriodEnd} onPeriodChange={(start, end) => { setVulpePeriodStart(start); setVulpePeriodEnd(end); setVulpeScan(null); }} /> : null}
       <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{visibleXmlHistory.map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span className="row-actions"><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button className="danger" disabled={!xmlImportCanBeReverted(job)} onClick={() => void removeXmlImportJob(job.id)}>Excluir/Reverter</button></span></div>)}</div>
+        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{visibleXmlHistory.slice(0, xmlHistoryLimit).map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span className="row-actions"><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button className="danger" disabled={!xmlImportCanBeReverted(job)} onClick={() => void removeXmlImportJob(job.id)}>Excluir/Reverter</button></span></div>)}</div>
+        {visibleXmlHistory.length > xmlHistoryLimit ? <div className="toolbar"><button onClick={() => setXmlHistoryLimit((current) => current + 15)}>Mostrar mais ({visibleXmlHistory.length - xmlHistoryLimit} restantes)</button></div> : null}
       </AdminBlock></div>
       </>}
       <Feedback message={message} />
