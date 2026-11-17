@@ -953,7 +953,8 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             invoiceDaeReference,
             invoiceDaeAmountCents,
             hasFinancialService,
-            clientPartnerId: selectedPartnerId,
+            // Sem associacao por nota, a nota usa o cliente escolhido no painel (nao grava null por cima).
+            clientPartnerId: selectedPartnerId ?? (vulpeScan ? null : partnerId || null),
             ignore,
             deferred
           });
