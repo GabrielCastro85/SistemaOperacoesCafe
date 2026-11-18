@@ -1327,6 +1327,7 @@ export interface AccountPayable {
   id: string;
   organizationId: string;
   ownLegalEntityId: string;
+  isPersonal: boolean;
   supplierPartnerId: string | null;
   supplierLegalEntityId: string | null;
   payeeNameSnapshot: string;

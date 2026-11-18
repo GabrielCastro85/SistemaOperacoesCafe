@@ -7066,3 +7066,22 @@ table tbody tr:hover {
   color: var(--color-text-muted, #6b6558);
   font-size: 12px;
 }
+
+/* Contas a pagar: marcacao de conta pessoal e checkbox no modal. */
+.payable-personal-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef0f6;
+  color: #3d4a6b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+}
+.payables-personal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}

@@ -6502,6 +6502,7 @@ export class AppRepository {
       final_amount_cents, paid_amount_cents, open_amount_cents, amount_status, planned_payment_method, pix_key, status, notes, internal_notes, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, data.organizationId, data.ownLegalEntityId, data.supplierPartnerId, data.supplierLegalEntityId, data.payeeNameSnapshot, this.cleanOptionalTaxId(data.payeeTaxIdSnapshot), data.categoryId, data.defaultCostCenterId, data.defaultLocationId, data.source, data.description, data.documentType, data.documentNumber, data.competenceDate, data.issueDate, data.dueDate, data.originalAmountCents, data.discountCents, data.interestCents, data.penaltyCents, data.otherAdditionsCents, totals.finalAmountCents, totals.openAmountCents, data.amountStatus, data.plannedPaymentMethod, data.plannedPaymentMethod === "PIX" ? data.pixKey : null, status, data.notes, data.internalNotes, now, now);
+    if (data.isPersonal) this.db.prepare("UPDATE accounts_payable SET is_personal = 1 WHERE id = ?").run(id);
     this.recordPayableStatus(id, null, status, "Rascunho criado");
     return this.getAccountPayable(id);
   }

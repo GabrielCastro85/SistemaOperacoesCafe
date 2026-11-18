@@ -737,6 +737,7 @@ export const financialAccountInputSchema = z.object({
 export const accountPayableInputSchema = z.object({
   organizationId: z.string().uuid(),
   ownLegalEntityId: z.string().uuid(),
+  isPersonal: z.boolean().optional(),
   supplierPartnerId: z.string().uuid().nullable(),
   supplierLegalEntityId: z.string().uuid().nullable(),
   payeeNameSnapshot: z.string().trim().min(1),

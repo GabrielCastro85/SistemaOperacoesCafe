@@ -40,7 +40,7 @@ function daysBetween(fromIso: string, toIso: string): number {
 const isClosed = (payable: AccountPayable) => payable.status === "PAID" || payable.status === "CANCELLED";
 const openOf = (payable: AccountPayable) => Math.max(0, payable.openAmountCents ?? payable.finalAmountCents ?? 0);
 
-interface NewForm { description: string; payee: string; amount: string; dueDate: string; categoryId: string; method: PayablePaymentMethod; pixKey: string; repeat: Repeat; installments: string; firstInstallment: string; perInstallment: boolean; notes: string; attachments: PendingPayableAttachment[] }
+interface NewForm { isPersonal: boolean; ownLegalEntityId: string; description: string; payee: string; amount: string; dueDate: string; categoryId: string; method: PayablePaymentMethod; pixKey: string; repeat: Repeat; installments: string; firstInstallment: string; perInstallment: boolean; notes: string; attachments: PendingPayableAttachment[] }
 interface PayForm { payable: AccountPayable; amount: string; date: string; method: PayablePaymentMethod; accountId: string; notes: string }
 
 export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
@@ -49,9 +49,11 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
   const [tab, setTab] = useState<Tab>("OPEN");
   const [search, setSearch] = useState("");
   const [month, setMonth] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState("ALL");
+  const ownerOptions = data.legalEntities.filter((entity) => entity.isActive && entity.organizationId === organizationId && entity.documentPrefix !== "TERC-XML");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const emptyNew = (): NewForm => ({ description: "", payee: "", amount: "", dueDate: today, categoryId: "", method: "BOLETO", pixKey: "", repeat: "ONCE", installments: "2", firstInstallment: "1", perInstallment: true, notes: "", attachments: [] });
+  const emptyNew = (): NewForm => ({ isPersonal: false, ownLegalEntityId: ownLegalEntityId ?? "", description: "", payee: "", amount: "", dueDate: today, categoryId: "", method: "BOLETO", pixKey: "", repeat: "ONCE", installments: "2", firstInstallment: "1", perInstallment: true, notes: "", attachments: [] });
   const [newForm, setNewForm] = useState<NewForm | null>(null);
   const [payForm, setPayForm] = useState<PayForm | null>(null);
 
@@ -100,6 +102,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
         return true;
       })
       .filter((payable) => !month || payable.dueDate.startsWith(month))
+      .filter((payable) => ownerFilter === "ALL" || (ownerFilter === "PERSONAL" ? payable.isPersonal : !payable.isPersonal && payable.ownLegalEntityId === ownerFilter))
       .filter((payable) => !term || [payable.description, payable.payeeNameSnapshot, categoryName[payable.categoryId] ?? ""].some((text) => text.toLocaleLowerCase("pt-BR").includes(term)))
       .sort((left, right) => tab === "PAID" ? right.dueDate.localeCompare(left.dueDate) : left.dueDate.localeCompare(right.dueDate));
   }, [finance.payables, tab, month, search, today, categoryName]);
@@ -133,7 +136,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
     const payment = { plannedPaymentMethod: newForm.method, pixKey: newForm.method === "PIX" ? pixKey : null };
     setBusy(true);
     setMessage(null);
-    const base = { organizationId, ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: newForm.payee.trim(), categoryId: newForm.categoryId, defaultCostCenterId: null, defaultLocationId: null, description: newForm.description.trim() };
+    const base = { organizationId, ownLegalEntityId: newForm.ownLegalEntityId || ownLegalEntityId, supplierPartnerId: null, supplierLegalEntityId: null, payeeNameSnapshot: newForm.payee.trim(), categoryId: newForm.categoryId, defaultCostCenterId: null, defaultLocationId: null, description: newForm.description.trim() };
     try {
       if (newForm.repeat === "MONTHLY") {
         const template = await window.operationsCafe.createPayableRecurringTemplate({ ...base, amountMode: "FIXED", fixedAmountCents: amountCents, estimatedAmountCents: null, frequency: "MONTHLY", dueDay: Number(newForm.dueDate.slice(8, 10)), generationLeadDays: 7, startDate: `${newForm.dueDate.slice(0, 8)}01`, endDate: null, autoGenerateOnOpen: true, isActive: true });
@@ -145,7 +148,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
         const launched = count - firstNumber + 1;
         setMessage(`"${base.description}" lançada: parcelas ${firstNumber}/${count} a ${count}/${count} (${launched} ${launched === 1 ? "mês" : "meses"}).`);
       } else {
-        const detail = await window.operationsCafe.createAccountPayableDraft({ ...base, payeeTaxIdSnapshot: null, source: "MANUAL", documentType: null, documentNumber: null, competenceDate: `${newForm.dueDate.slice(0, 8)}01`, issueDate: null, dueDate: newForm.dueDate, originalAmountCents: amountCents, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", ...payment, notes: newForm.notes.trim() || null, internalNotes: null });
+        const detail = await window.operationsCafe.createAccountPayableDraft({ ...base, isPersonal: newForm.isPersonal, payeeTaxIdSnapshot: null, source: "MANUAL", documentType: null, documentNumber: null, competenceDate: `${newForm.dueDate.slice(0, 8)}01`, issueDate: null, dueDate: newForm.dueDate, originalAmountCents: amountCents, discountCents: 0, interestCents: 0, penaltyCents: 0, otherAdditionsCents: 0, amountStatus: "CONFIRMED", ...payment, notes: newForm.notes.trim() || null, internalNotes: null });
         // Boleto/PDF/foto escolhido no lancamento: anexado a conta antes de confirmar.
         for (const attachment of newForm.attachments) {
           await window.operationsCafe.addPayableAttachment({ token: attachment.token, accountPayableId: detail.payable.id, attachmentType: "BILL", description: "Boleto anexado no lancamento da conta" });
@@ -288,6 +291,11 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
           {([["OPEN", "A pagar"], ["OVERDUE", "Vencidas"], ["PAID", "Pagas"], ["ALL", "Todas"]] as Array<[Tab, string]>).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
         </div>
         <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por descrição, favorecido ou categoria" />
+        <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} aria-label="Empresa">
+          <option value="ALL">Todas as empresas</option>
+          {ownerOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName || entity.legalName}</option>)}
+          <option value="PERSONAL">Pessoais</option>
+        </select>
         <select value={month} onChange={(event) => setMonth(event.target.value)} aria-label="Mês do vencimento">
           <option value="">Todos os meses</option>
           {months.map((value) => <option key={value} value={value}>{monthLabel(value)}</option>)}
@@ -304,7 +312,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
           const open = openOf(payable);
           return <div key={payable.id} className={`payables-row payables-row--${state.tone}`}>
             <span data-label="Vencimento"><strong>{formatDateOnlyBr(payable.dueDate)}</strong></span>
-            <span data-label="Conta"><strong>{payable.description}</strong><small>{payable.payeeNameSnapshot}{payable.installmentNumber && payable.installmentCount ? ` · parcela ${payable.installmentNumber}/${payable.installmentCount}` : ""}{payable.recurringTemplateId ? " · mensal" : ""}{payable.plannedPaymentMethod ? ` · ${methodLabel(payable.plannedPaymentMethod)}` : ""}</small></span>
+            <span data-label="Conta"><strong>{payable.description}{payable.isPersonal ? <em className="payable-personal-tag">Pessoal</em> : null}</strong><small>{payable.payeeNameSnapshot}{payable.installmentNumber && payable.installmentCount ? ` · parcela ${payable.installmentNumber}/${payable.installmentCount}` : ""}{payable.recurringTemplateId ? " · mensal" : ""}{payable.plannedPaymentMethod ? ` · ${methodLabel(payable.plannedPaymentMethod)}` : ""}</small></span>
             <span data-label="Categoria">{categoryName[payable.categoryId] ?? "—"}</span>
             <span data-label="Valor">{formatCurrencyFromCents(payable.finalAmountCents ?? 0)}</span>
             <span data-label="Saldo"><strong>{formatCurrencyFromCents(open)}</strong></span>
@@ -322,6 +330,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
         <section className="partner-modal payables-modal" role="dialog" aria-modal="true" aria-label="Nova conta a pagar">
           <header className="partner-modal__header"><div><span>Contas a pagar</span><strong>Nova conta</strong></div><button type="button" className="partner-modal__close" onClick={() => setNewForm(null)} aria-label="Fechar">x</button></header>
           <div className="partner-modal__body payables-form">
+            <label className="payables-form__wide">Empresa dona da conta<select value={newForm.ownLegalEntityId} onChange={(event) => setNewForm({ ...newForm, ownLegalEntityId: event.target.value })}>{data.legalEntities.filter((entity) => entity.isActive && entity.organizationId === organizationId && entity.documentPrefix !== "TERC-XML").map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName || entity.legalName}</option>)}</select></label>
             <label className="payables-form__wide">O que é a conta<input autoFocus value={newForm.description} onChange={(event) => setNewForm({ ...newForm, description: event.target.value })} placeholder="Ex.: Energia elétrica do armazém" /></label>
             <label className="payables-form__wide">Para quem pagar (favorecido)<input value={newForm.payee} onChange={(event) => setNewForm({ ...newForm, payee: event.target.value })} placeholder="Ex.: Cemig" /></label>
             <label>{newForm.repeat === "INSTALLMENTS" ? (newForm.perInstallment ? "Valor de cada parcela (R$)" : "Valor total (R$)") : "Valor (R$)"}<input inputMode="decimal" value={newForm.amount} onChange={(event) => setNewForm({ ...newForm, amount: event.target.value })} placeholder="0,00" /></label>
@@ -340,6 +349,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
               <small>{newForm.repeat === "MONTHLY" ? "Lança os próximos 3 meses e continua gerando sozinho todo mês, no mesmo dia e com a mesma forma de pagamento." : newForm.repeat === "INSTALLMENTS" ? (() => { const total = Number(newForm.installments) || 0; const first = Number(newForm.firstInstallment) || 1; return total >= first ? `Lança as parcelas ${first}/${total} a ${total}/${total}, uma por mês. Ex.: carnê que está na 17 de 22 → total 22, começa na 18.` : "Informe o total de parcelas e em qual começar."; })() : "Uma conta só."}</small>
             </fieldset>
             {newForm.repeat === "ONCE" ? <label className="payables-form__wide">Observação (opcional)<input value={newForm.notes} onChange={(event) => setNewForm({ ...newForm, notes: event.target.value })} /></label> : null}
+            {newForm.repeat === "ONCE" ? <label className="payables-form__wide payables-personal-check"><input type="checkbox" checked={newForm.isPersonal} onChange={(event) => setNewForm({ ...newForm, isPersonal: event.target.checked })} /> Conta pessoal (fica fora das exportações das empresas)</label> : null}
             {newForm.repeat === "ONCE" ? <div className="payables-form__wide payables-attach">
               <div className="payables-attach__head"><div><strong>Boleto ou comprovante</strong><small>PDF ou foto (JPG, PNG, WEBP). Fica anexado à conta.</small></div><button type="button" disabled={busy} onClick={() => void pickNewAttachment()}>Anexar arquivo</button></div>
               {newForm.attachments.length ? <ul className="payables-attach__list">{newForm.attachments.map((item) => <li key={item.token}><span>{item.fileName} <small>{Math.max(1, Math.round(item.sizeBytes / 1024))} KB</small></span><button type="button" onClick={() => setNewForm({ ...newForm, attachments: newForm.attachments.filter((attachment) => attachment.token !== item.token) })}>Remover</button></li>)}</ul> : null}

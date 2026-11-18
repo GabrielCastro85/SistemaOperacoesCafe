@@ -3673,6 +3673,13 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_cte_sheets_charge ON cte_sheets(client_charge_id);
       `);
     }
+  },
+  {
+    // Conta pessoal: fica fora das exportacoes das empresas (contador).
+    name: "065_account_payable_personal",
+    up: (db) => {
+      db.exec("ALTER TABLE accounts_payable ADD COLUMN is_personal INTEGER NOT NULL DEFAULT 0 CHECK (is_personal IN (0, 1));");
+    }
   }
 ];
 

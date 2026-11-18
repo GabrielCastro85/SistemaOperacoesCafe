@@ -904,6 +904,7 @@ export function mapAccountPayable(row: DbRecord): AccountPayable {
     id: String(row.id),
     organizationId: String(row.organization_id),
     ownLegalEntityId: String(row.own_legal_entity_id),
+    isPersonal: Number(row.is_personal ?? 0) === 1,
     supplierPartnerId: textOrNull(row.supplier_partner_id),
     supplierLegalEntityId: textOrNull(row.supplier_legal_entity_id),
     payeeNameSnapshot: String(row.payee_name_snapshot),
