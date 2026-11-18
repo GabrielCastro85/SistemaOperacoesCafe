@@ -444,7 +444,7 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
   const remainingOverdueCharges = Math.max(0, (alerts?.overdueCharges.length ?? 0) - overdueChargePreview.length);
   const payablePreview = alerts?.payablesDueSoon.slice(0, 4) ?? [];
   const remainingPayables = Math.max(0, (alerts?.payablesDueSoon.length ?? 0) - payablePreview.length);
-  const hasAlerts = Boolean(alerts && (alerts.previousPeriodUnbilled.length || alerts.payablesDueSoon.length || alerts.overdueCharges.length || alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
+  const hasAlerts = Boolean(alerts && (alerts.previousPeriodUnbilled.length || alerts.payablesDueSoon.length || alerts.overdueCharges.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length));
 
   async function ignorePreviousPeriodAlert(item: DashboardAlerts["previousPeriodUnbilled"][number]): Promise<void> {
     const reason = await requestTextInput({
@@ -599,16 +599,10 @@ export function Dashboard({ organizations, legalEntities, locations, organizatio
               </section>
             ) : null}
 
-            {(alerts.waitingSignatureConfirmations.length || alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length) ? (
+            {(alerts.partnersNearCreditLimit.length || alerts.loansDueForCollection.length) ? (
               <section className="dashboard-alert-section">
                 <div className="dashboard-alert-section__heading"><div><span className="ui-eyebrow">Acompanhamento</span><h3>Outros alertas</h3></div></div>
                 <div className="alert-list">
-            {alerts.waitingSignatureConfirmations.map((item) => (
-              <button key={item.confirmationId} className="alert-item" onClick={() => { window.location.hash = "#/confirmations"; }}>
-                <Badge tone="warning">Aguardando assinatura</Badge>
-                <span>{item.confirmationNumber} - {item.buyerName}, ha {item.daysWaiting} dia(s)</span>
-              </button>
-            ))}
             {alerts.partnersNearCreditLimit.map((item) => (
               <button key={item.partnerId} className="alert-item" onClick={() => { window.location.hash = "#/partners"; }}>
                 <Badge tone="warning">Limite de credito</Badge>
