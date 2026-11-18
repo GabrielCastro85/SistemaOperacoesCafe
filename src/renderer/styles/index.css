@@ -3533,14 +3533,20 @@ table tbody tr:hover {
 
 .confirmation-company-result-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   min-width: 0;
 }
 
 .confirmation-company-result-row .partner-action-button {
   justify-content: flex-start;
-  width: min(100%, 520px);
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  padding: 8px 12px;
   text-align: left;
+  white-space: normal;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .confirmation-company-selected {
