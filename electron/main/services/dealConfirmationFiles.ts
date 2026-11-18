@@ -356,7 +356,7 @@ async function buildCompactConfirmationPdf(input: Parameters<typeof generateDeal
   const commercialHeight = 82;
   const colWidth = (contentWidth - 10) / 2;
   const commercialLines = [
-    `Pagamento: ${confirmation.paymentTermsSnapshot ?? "Nao informado"}`,
+    ...paymentLinesFor(input.detail, true),
     confirmation.deliveryLocationSnapshot ? `Entrega: ${confirmation.deliveryLocationSnapshot}` : null,
     `Corretagem: ${confirmation.brokeragePercentageBasisPoints != null ? `${(confirmation.brokeragePercentageBasisPoints / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "Nao informada"}`
   ].filter((item): item is string => Boolean(item));
@@ -649,7 +649,7 @@ export async function buildConfirmationPdf(input: Parameters<typeof generateDeal
   const blockTop = y;
   page.drawRectangle({ x: margin, y: blockTop - commercialBlockHeight, width: paymentColWidth, height: commercialBlockHeight, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
   page.drawText("Pagamento", { x: margin + 8, y: blockTop - 12, size: 6.8, font: bold, color: gold });
-  drawWrappedAt(confirmation.paymentTermsSnapshot ?? "Nao informado", margin + 8, blockTop - 25, paymentColWidth - 16, { size: 6.8, lineGap: 0.6 });
+  paymentLinesFor(input.detail, false).reduce((paymentY, line) => drawWrappedAt(line, margin + 8, paymentY, paymentColWidth - 16, { size: 6.8, lineGap: 0.6 }), blockTop - 25);
 
   const bankX = margin + paymentColWidth + 20;
   page.drawRectangle({ x: bankX, y: blockTop - commercialBlockHeight, width: paymentColWidth, height: commercialBlockHeight, color: rgb(1, 0.985, 0.95), borderColor: border, borderWidth: 0.6 });
@@ -1058,6 +1058,15 @@ function formatDecimalCurrency(value: string): string {
     return parsed.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   }
   return value.replace(".", ",");
+}
+
+// Sem condicao de pagamento preenchida, o PDF mostra o padrao combinado;
+// com ela preenchida, mostra exatamente o que foi negociado.
+function paymentLinesFor(detail: DealConfirmationDetail, withLabel: boolean): string[] {
+  const negotiated = detail.confirmation.paymentTermsSnapshot?.trim()
+    || detail.paymentTerms.map((term) => term.description?.trim()).filter(Boolean).join("; ");
+  if (negotiated) return [withLabel ? `Pagamento: ${negotiated}` : negotiated];
+  return ["Forma de pagamento: A definir", "Prazo de pagamento: Não informado"];
 }
 
 function formatDate(value: string | null | undefined): string {
