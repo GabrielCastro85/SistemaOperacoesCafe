@@ -5283,7 +5283,11 @@ export class AppRepository {
     const secondaryOperationType: "PURCHASE" | "SALE" | null = secondaryResponsiblePartnerId ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null;
     const pending: string[] = [];
     if (!operationScope) pending.push("UF da venda nao definida.");
-    const counterpartyLegalEntityId = this.resolveCounterpartyLegalEntityForXml(extracted, own.ownLegalEntityId, own.direction);
+    // Nota terceirizada: a contraparte que define a tarifa e' o comprador (destinatario),
+    // nao o emitente (ex.: Futura emitindo para Primavera). Senao a regra da Primavera nao casa.
+    const counterpartyLegalEntityId = isThirdPartyDocument
+      ? this.resolveRecipientLegalEntityForXml(extracted)
+      : this.resolveCounterpartyLegalEntityForXml(extracted, own.ownLegalEntityId, own.direction);
     const totals = extracted.totals as Record<string, unknown> | undefined;
     const doc = this.createFiscalDocument({
       organizationId: documentOrganizationId,
@@ -5716,6 +5720,14 @@ export class AppRepository {
       if (aliasMatch) return aliasMatch.businessPartnerId;
     }
     return null;
+  }
+
+  private resolveRecipientLegalEntityForXml(extracted: Record<string, unknown>): string | null {
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    if (recipientDoc.length !== 14) return null;
+    const row = this.db.prepare("SELECT id FROM partner_legal_entities WHERE cnpj = ? AND is_active = 1").get(recipientDoc) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   private resolveCounterpartyLegalEntityForXml(extracted: Record<string, unknown>, ownLegalEntityId: string, direction: "INBOUND" | "OUTBOUND" | "UNKNOWN"): string | null {
