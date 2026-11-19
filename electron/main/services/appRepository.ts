@@ -5283,9 +5283,10 @@ export class AppRepository {
     const secondaryOperationType: "PURCHASE" | "SALE" | null = secondaryResponsiblePartnerId ? (operationType === "PURCHASE" ? "SALE" : "PURCHASE") : null;
     const pending: string[] = [];
     if (!operationScope) pending.push("UF da venda nao definida.");
-    // Nota terceirizada: a contraparte que define a tarifa e' o comprador (destinatario),
-    // nao o emitente (ex.: Futura emitindo para Primavera). Senao a regra da Primavera nao casa.
-    const counterpartyLegalEntityId = isThirdPartyDocument
+    // Nota de terceiros (empresa propria e' so' intermediaria: nao e' emitente nem destinatario),
+    // ou nota terceirizada: a contraparte que define a tarifa e' o destinatario (ex.: Futura
+    // emitindo para Primavera). Senao a regra da Primavera nao casa e o emitente vira contraparte.
+    const counterpartyLegalEntityId = isThirdPartyDocument || this.ownIsNeitherPartyOfXml(extracted, own.ownLegalEntityId)
       ? this.resolveRecipientLegalEntityForXml(extracted)
       : this.resolveCounterpartyLegalEntityForXml(extracted, own.ownLegalEntityId, own.direction);
     const totals = extracted.totals as Record<string, unknown> | undefined;
@@ -5720,6 +5721,18 @@ export class AppRepository {
       if (aliasMatch) return aliasMatch.businessPartnerId;
     }
     return null;
+  }
+
+  // True quando o CNPJ da empresa propria nao aparece nem como emitente nem como destinatario da nota.
+  private ownIsNeitherPartyOfXml(extracted: Record<string, unknown>, ownLegalEntityId: string): boolean {
+    const ownEntity = this.getLegalEntity(ownLegalEntityId);
+    const ownCnpj = this.onlyDigits(String(ownEntity?.cnpj ?? ""));
+    if (ownCnpj.length !== 14) return false;
+    const issuer = extracted.issuer as Record<string, unknown> | undefined;
+    const recipient = extracted.recipient as Record<string, unknown> | undefined;
+    const issuerDoc = this.onlyDigits(String(issuer?.cnpjCpf ?? "")) || this.issuerCnpjFromAccessKey(this.stringOrNull(extracted.accessKey)) || "";
+    const recipientDoc = this.onlyDigits(String(recipient?.cnpjCpf ?? ""));
+    return issuerDoc !== ownCnpj && recipientDoc !== ownCnpj;
   }
 
   private resolveRecipientLegalEntityForXml(extracted: Record<string, unknown>): string | null {
