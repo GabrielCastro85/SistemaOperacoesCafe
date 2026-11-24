@@ -185,20 +185,27 @@ function repairScheduledTaskSettings() {
 // CNPJs que uma versao nova acrescenta sozinha a configuracao de um perfil ja instalado,
 // sem precisar mexer no PC. Hoje: a Villa MG passou a ser coletada pelo PC do Grao (GRAO_GRAO).
 const CONFIG_EXTRA_EMITTER_CNPJS = { GRAO_GRAO: ["44963370000523"] };
+// Pastas extras da Vulpe que um perfil ja instalado passa a ler (Villa MG, no PC do Grao).
+const CONFIG_EXTRA_XML_ROOTS = { GRAO_GRAO: ["C:\\Vulpe\\Vulpe\\NFe\\VILLA_COFFEE_MG"] };
 
-// Roda uma vez por inicializacao: acrescenta os CNPJs que faltam em emitterCnpjs e grava o arquivo.
+// Roda uma vez por inicializacao: acrescenta os CNPJs e as pastas que faltam e grava o arquivo.
 // Nao remove nada e nao mexe em outros campos (credencial, pastas, intervalos).
 function applyConfigMigrations() {
   try {
     if (!existsSync(configPath)) return;
     const value = JSON.parse(readFileSync(configPath, "utf8"));
-    const extras = CONFIG_EXTRA_EMITTER_CNPJS[value.sourceCode] || [];
-    const current = (Array.isArray(value.emitterCnpjs) ? value.emitterCnpjs : []).map(digits);
-    const missing = extras.filter((cnpj) => !current.includes(cnpj));
-    if (missing.length === 0) return;
-    value.emitterCnpjs = [...(Array.isArray(value.emitterCnpjs) ? value.emitterCnpjs : []), ...missing];
-    writeFileSync(configPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    log("Configuracao atualizada: CNPJs acrescentados", { sourceCode: value.sourceCode, added: missing });
+    const cnpjExtras = CONFIG_EXTRA_EMITTER_CNPJS[value.sourceCode] || [];
+    const rootExtras = CONFIG_EXTRA_XML_ROOTS[value.sourceCode] || [];
+    const currentCnpjs = (Array.isArray(value.emitterCnpjs) ? value.emitterCnpjs : []).map(digits);
+    const missingCnpjs = cnpjExtras.filter((cnpj) => !currentCnpjs.includes(cnpj));
+    const currentRoots = Array.isArray(value.xmlRoots) ? value.xmlRoots : [];
+    const missingRoots = rootExtras.filter((root) => !currentRoots.includes(root));
+    if (missingCnpjs.length === 0 && missingRoots.length === 0) return;
+    if (missingCnpjs.length) value.emitterCnpjs = [...(Array.isArray(value.emitterCnpjs) ? value.emitterCnpjs : []), ...missingCnpjs];
+    if (missingRoots.length) value.xmlRoots = [...currentRoots, ...missingRoots];
+    writeFileSync(configPath, `${JSON.stringify(value, null, 2)}
+`, "utf8");
+    log("Configuracao atualizada", { sourceCode: value.sourceCode, addedCnpjs: missingCnpjs, addedXmlRoots: missingRoots });
   } catch (error) {
     log("Falha ao atualizar a configuracao", { error: error instanceof Error ? error.message : String(error) });
   }
