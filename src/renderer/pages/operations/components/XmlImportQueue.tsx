@@ -5,7 +5,7 @@ import { xmlPartySummary, xmlQueueSummaryLine, type VulpeDevScanResult } from ".
 
 // Coluna da fila de importacao de XML: arrastar/selecionar arquivos, a fila e o botao de validar.
 // Estado e acoes continuam na pagina (ou no hook de XML); aqui so se desenha.
-export function XmlImportQueue({ pageTab, partnerId, includeXmlSubfolders, setIncludeXmlSubfolders, xmlQueue, xmlDeferredSelections, setXmlDeferredSelections, selectedXmlFile, setSelectedXmlToken, xmlQueueHasWarehouseMovement, xmlQueueRequiresCommercialPartner, hasValidXmlSelection, vulpeScan, onPrepareDropped, onPrepare, onValidate }: {
+export function XmlImportQueue({ pageTab, includeXmlSubfolders, setIncludeXmlSubfolders, xmlQueue, xmlDeferredSelections, setXmlDeferredSelections, selectedXmlFile, setSelectedXmlToken, xmlQueueHasWarehouseMovement, xmlQueueRequiresCommercialPartner, xmlQueueMissingPartner, hasValidXmlSelection, vulpeScan, onPrepareDropped, onPrepare, onValidate }: {
   pageTab: "received" | "issued" | "documents" | "spreadsheets";
   partnerId: string;
   includeXmlSubfolders: boolean;
@@ -17,6 +17,7 @@ export function XmlImportQueue({ pageTab, partnerId, includeXmlSubfolders, setIn
   setSelectedXmlToken: React.Dispatch<React.SetStateAction<string | null>>;
   xmlQueueHasWarehouseMovement: boolean;
   xmlQueueRequiresCommercialPartner: boolean;
+  xmlQueueMissingPartner: boolean;
   hasValidXmlSelection: boolean;
   vulpeScan: VulpeDevScanResult | null;
   onPrepareDropped: (files: File[]) => unknown;
@@ -61,11 +62,11 @@ export function XmlImportQueue({ pageTab, partnerId, includeXmlSubfolders, setIn
             ) : (
               <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para começar." />
             )}
-            {xmlQueue.length && !partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner ? (
-              <p className="xml-validate-hint">Falta escolher o cliente/corretor da cobrança na aba "Cliente e operação", ou marcar "Ignorar por enquanto" nas notas que não entram.</p>
+            {xmlQueue.length && xmlQueueMissingPartner ? (
+              <p className="xml-validate-hint">Falta escolher o cliente/corretor de uma ou mais notas na aba "Cliente e operação", ou marcar "Ignorar por enquanto" nas notas que não entram.</p>
             ) : null}
             <div className="toolbar">
-              <button onClick={() => void onValidate()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
+              <button onClick={() => void onValidate()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || xmlQueueMissingPartner}>
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentação" : "Validar fila"}
               </button>
             </div>

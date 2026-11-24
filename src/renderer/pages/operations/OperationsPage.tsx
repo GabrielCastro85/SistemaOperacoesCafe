@@ -760,14 +760,17 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         return;
       }
     }
-    const requiresCommercialPartner = xmlQueue.some((file) =>
+    // Sem Vulpe, cada nota precisa do proprio cliente ou do cliente padrao.
+    const noteWithoutPartner = vulpeScan ? undefined : xmlQueue.find((file) =>
       file.status !== "ERROR"
       && !file.xmlType.startsWith("EVENT_")
       && !xmlInspectionIsWarehouse(file)
       && !xmlDeferredSelections[file.token]
+      && !(xmlPartnerOverrides[file.token] || partnerId)
     );
-    if (!partnerId && !vulpeScan && requiresCommercialPartner) {
-      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsável antes de validar o XML." : "Selecione o cliente/corretor responsável pela cobrança antes de validar o XML.");
+    if (noteWithoutPartner) {
+      setSelectedXmlToken(noteWithoutPartner.token);
+      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsável desta nota antes de validar." : "Selecione o cliente/corretor responsável pela cobrança desta nota antes de validar.");
       setXmlDetailTab("cliente");
       scrollXmlIntoView(xmlDataRef);
       return;
@@ -787,7 +790,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         if (!inspected) continue;
         const contractNumber = xmlContractNumbers[inspected.token]?.trim() || null;
         const billingObservations = xmlBillingObservations[inspected.token]?.trim() || null;
-        const selectedPartnerId = vulpeScan ? xmlPartnerOverrides[inspected.token] || null : null;
+        const selectedPartnerId = xmlPartnerOverrides[inspected.token] || null;
         const ignore = vulpeScan ? xmlIgnoredSelections[inspected.token] === true : false;
         const deferred = xmlDeferredSelections[inspected.token] === true;
         const freightDaeEnabled = xmlFreightDaeEnabled[inspected.token] === true;
@@ -1012,6 +1015,14 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     && !file.xmlType.startsWith("EVENT_")
     && !xmlInspectionIsWarehouse(file)
     && !xmlDeferredSelections[file.token]
+  );
+  // Alguma nota que exige cliente ficou sem cliente (nem o proprio, nem o padrao).
+  const xmlQueueMissingPartner = !vulpeScan && xmlQueue.some((file) =>
+    file.status !== "ERROR"
+    && !file.xmlType.startsWith("EVENT_")
+    && !xmlInspectionIsWarehouse(file)
+    && !xmlDeferredSelections[file.token]
+    && !(xmlPartnerOverrides[file.token] || partnerId)
   );
   const xmlQueueHasWarehouseMovement = xmlQueue.some((file) => file.status !== "ERROR" && xmlInspectionIsWarehouse(file));
   const xmlBatchRows = xmlQueue.map((file) => {
@@ -1319,7 +1330,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
         <div className="import-columns">
           <div className="import-column import-column--queue" ref={xmlDataRef}>
-            <XmlImportQueue pageTab={pageTab} partnerId={partnerId} includeXmlSubfolders={includeXmlSubfolders} setIncludeXmlSubfolders={setIncludeXmlSubfolders} xmlQueue={xmlQueue} xmlDeferredSelections={xmlDeferredSelections} setXmlDeferredSelections={setXmlDeferredSelections} selectedXmlFile={selectedXmlFile} setSelectedXmlToken={setSelectedXmlToken} xmlQueueHasWarehouseMovement={xmlQueueHasWarehouseMovement} xmlQueueRequiresCommercialPartner={xmlQueueRequiresCommercialPartner} hasValidXmlSelection={hasValidXmlSelection} vulpeScan={vulpeScan} onPrepareDropped={prepareDroppedXmlImport} onPrepare={prepareXmlImport} onValidate={validateXmlImport} />
+            <XmlImportQueue pageTab={pageTab} partnerId={partnerId} includeXmlSubfolders={includeXmlSubfolders} setIncludeXmlSubfolders={setIncludeXmlSubfolders} xmlQueue={xmlQueue} xmlDeferredSelections={xmlDeferredSelections} setXmlDeferredSelections={setXmlDeferredSelections} selectedXmlFile={selectedXmlFile} setSelectedXmlToken={setSelectedXmlToken} xmlQueueHasWarehouseMovement={xmlQueueHasWarehouseMovement} xmlQueueRequiresCommercialPartner={xmlQueueRequiresCommercialPartner} xmlQueueMissingPartner={xmlQueueMissingPartner} hasValidXmlSelection={hasValidXmlSelection} vulpeScan={vulpeScan} onPrepareDropped={prepareDroppedXmlImport} onPrepare={prepareXmlImport} onValidate={validateXmlImport} />
           </div>
 
           <div className="import-column">
@@ -1373,9 +1384,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     value={selectedXmlPartnerId}
                     onChange={(value) => {
                       setXmlJob(null);
-                      if (vulpeScan && selectedXmlFile) {
+                      if (selectedXmlFile) {
+                        // Cliente por nota: a escolha vale so para o XML selecionado.
                         setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: value }));
-                        if (value) setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: false }));
+                        if (vulpeScan && value) setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: false }));
                       } else {
                         setPartnerId(value);
                       }
@@ -1431,7 +1443,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               <span className="muted">{xmlQueue.length} nota(s) na fila{selectedXmlFile && xmlFileDeferredSelected(selectedXmlFile) ? " · nota selecionada adiada por enquanto" : ""}</span>
               <div className="xml-action-footer__buttons">
               <button onClick={() => { setXmlSelections([]); setXmlQueue([]); setXmlJob(null); setXmlScopeOverrides({}); setXmlManualRates({}); setXmlManualReasons({}); setXmlPartnerOverrides({}); setXmlIgnoredSelections({}); setXmlDeferredSelections({}); setXmlContractNumbers({}); setXmlBillingObservations({}); setXmlFreightDaeEnabled({}); setXmlFreightDaeReferences({}); setXmlFreightDaeAmounts({}); setXmlFinancialServiceEnabled({}); setXmlInvoiceDaeEnabled({}); setXmlInvoiceDaeReferences({}); setXmlInvoiceDaeAmounts({}); setSelectedXmlToken(null); setVulpeScan(null); }} disabled={xmlQueue.length === 0}>Cancelar importação</button>
-              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
+              <button className="primary" onClick={() => void executeXmlImport()} disabled={!xmlJob || xmlQueueMissingPartner}>
                 {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Importar movimentação" : "Importar XMLs"}
               </button>
               </div>

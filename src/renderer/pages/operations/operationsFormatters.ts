@@ -175,9 +175,12 @@ export function buildSelectedXmlView(input: {
   const selectedXmlFile = input.selectedXmlFile;
   const selectedXmlIsEvent = selectedXmlFile?.xmlType.startsWith("EVENT_") === true;
   const selectedXmlEvent = selectedXmlIsEvent ? selectedXmlFile?.extractedData ?? null : null;
+  // Cada nota pode ter o proprio cliente (override por arquivo). Sem override, usa o cliente padrao.
   const selectedXmlPartnerId = selectedXmlFile && input.vulpeScan
     ? input.xmlPartnerOverrides[selectedXmlFile.token] ?? ""
-    : input.partnerId;
+    : selectedXmlFile
+      ? input.xmlPartnerOverrides[selectedXmlFile.token] || input.partnerId
+      : input.partnerId;
   const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
   const selectedWarehouseMovement = classifyWarehouseXml(selectedXmlPreview);
   const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
