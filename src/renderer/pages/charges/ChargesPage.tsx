@@ -137,10 +137,18 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     finally { setSavingBank(false); }
   }
   const [eligible, setEligible] = useState<Operation[]>([]);
+  // Filtro da lista de notas elegiveis: numero da nota, cliente, empresa ou emitente.
+  const [noteSearch, setNoteSearch] = useState("");
   const [exportingPartnerId, setExportingPartnerId] = useState<string | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
   const selectedOperations = eligible.filter((operation) => selectedNoteIds.has(operation.fiscalDocumentId));
   const availableNoteIds = Array.from(new Set(eligible.map((operation) => operation.fiscalDocumentId)));
+  const visibleEligible = eligible.filter((operation) => {
+    const term = noteSearch.trim().toUpperCase();
+    if (!term) return true;
+    const haystack = [operationDocument(operation)?.documentNumber ?? "", counterpartyLabel(operation), legalEntityLabel(operation.ownLegalEntityId), triangulatedIssuerLabel(operation) ?? ""].join(" ").toUpperCase();
+    return haystack.includes(term);
+  });
   const selectedNoteCount = new Set(selectedOperations.map((operation) => operation.fiscalDocumentId)).size;
   function toggleNote(documentId: string): void {
     setSelectedNoteIds((current) => {
@@ -1293,6 +1301,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
               <label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={availableNoteIds.length > 0 && selectedNoteCount === availableNoteIds.length} onChange={(event) => setSelectedNoteIds(event.target.checked ? new Set(availableNoteIds) : new Set())} /> Selecionar todos</label>
               <span>{selectedNoteCount} de {availableNoteIds.length} nota(s) selecionada(s)</span>
             </div> : null}
+            {eligible.length > 0 ? (
+              <label className="charge-note-search">
+                Buscar nota
+                <input type="search" value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} placeholder="Número da nota, cliente ou empresa" />
+              </label>
+            ) : null}
             {eligible.length ? (
               <div className="charge-legend" aria-label="Legenda das cores por empresa">
                 <span><i style={{ background: "#2a8f5a" }} />Grão & Grão</span>
@@ -1303,7 +1317,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             {eligible.length ? (
               <div className="table">
                 <div className="table-head charge-operation-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status</span><span>Acoes</span></div>
-                {eligible.map((op) => {
+                {visibleEligible.length === 0 ? <p className="muted">Nenhuma nota encontrada com "{noteSearch.trim()}".</p> : null}
+                {visibleEligible.map((op) => {
                   const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                   const issuerLabel = triangulatedIssuerLabel(op);
                   const companyContextLabel = issuerLabel ? "Operacao terceirizada" : companyLabel;
