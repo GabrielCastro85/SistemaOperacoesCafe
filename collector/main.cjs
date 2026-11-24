@@ -186,7 +186,7 @@ function repairScheduledTaskSettings() {
 // sem precisar mexer no PC. Hoje: a Villa MG passou a ser coletada pelo PC do Grao (GRAO_GRAO).
 const CONFIG_EXTRA_EMITTER_CNPJS = { GRAO_GRAO: ["44963370000523"] };
 // Pastas extras da Vulpe que um perfil ja instalado passa a ler (Villa MG, no PC do Grao).
-const CONFIG_EXTRA_XML_ROOTS = { GRAO_GRAO: ["C:\\Vulpe\\Vulpe\\NFe\\VILLA_COFFEE_MG"] };
+const CONFIG_EXTRA_XML_ROOTS = { GRAO_GRAO: ["C:\\Vulpe\\Vulpe\\vila mg\\VILLA_COFFEE_MG nfe"] };
 
 // Roda uma vez por inicializacao: acrescenta os CNPJs e as pastas que faltam e grava o arquivo.
 // Nao remove nada e nao mexe em outros campos (credencial, pastas, intervalos).
