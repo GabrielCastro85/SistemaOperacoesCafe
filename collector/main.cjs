@@ -211,6 +211,10 @@ function loadConfig() {
     if (!String(value[field] || "").trim()) throw new Error(`Configuracao obrigatoria ausente: ${field}`);
   }
   if (!existsSync(value.xmlRoot)) throw new Error(`Pasta da Vulpe nao encontrada: ${value.xmlRoot}`);
+  // xmlRoots (opcional): pastas extras onde a Vulpe grava notas, como a da Villa MG
+  // num PC que tem a Vulpe em outro caminho. Pasta extra que nao existe e' ignorada.
+  const extraRoots = (Array.isArray(value.xmlRoots) ? value.xmlRoots : []).map((path) => String(path || "").trim()).filter(Boolean);
+  const xmlRoots = [...new Set([value.xmlRoot, ...extraRoots])].filter((root) => existsSync(root));
   const emitterCnpjs = Array.isArray(value.emitterCnpjs)
     ? value.emitterCnpjs.map(digits).filter((cnpj) => /^\d{14}$/.test(cnpj))
     : [];
@@ -222,7 +226,8 @@ function loadConfig() {
     scanIntervalSeconds: Math.max(15, Number(value.scanIntervalSeconds || 60)),
     updateCheckSeconds: Math.max(300, Number(value.updateCheckSeconds || 3600)),
     monthsBack: Math.max(0, Math.min(24, Number(value.monthsBack || 1))),
-    emitterCnpjs
+    emitterCnpjs,
+    xmlRoots
   };
 }
 
@@ -514,7 +519,7 @@ async function scan(backfill = null) {
     const fromYearMonth = backfill ? accessKeyYearMonth(backfill.periodStart) : null;
     const toYearMonth = backfill ? accessKeyYearMonth(backfill.periodEnd) : null;
     const inPeriod = (accessKey) => !backfill || (accessKey.slice(2, 6) >= fromYearMonth && accessKey.slice(2, 6) <= toYearMonth);
-    const candidates = listCandidates(config.xmlRoot);
+    const candidates = [...new Set(config.xmlRoots.flatMap((root) => listCandidates(root)))];
     let lastProgressAt = Date.now();
     if (backfill) log("Envio de periodo iniciado", { ...backfill, candidates: candidates.length });
     for (const filePath of candidates) {
