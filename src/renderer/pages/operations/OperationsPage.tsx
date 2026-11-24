@@ -871,14 +871,17 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function executeXmlImport(): Promise<void> {
     if (!xmlJob) return;
-    const requiresCommercialPartner = xmlQueue.some((file) =>
+    // Cada nota precisa do proprio cliente ou do cliente padrao (mesma regra da validacao).
+    const noteWithoutPartner = vulpeScan ? undefined : xmlQueue.find((file) =>
       file.status !== "ERROR"
       && !file.xmlType.startsWith("EVENT_")
       && !xmlInspectionIsWarehouse(file)
       && !xmlDeferredSelections[file.token]
+      && !(xmlPartnerOverrides[file.token] || partnerId)
     );
-    if (!partnerId && !vulpeScan && requiresCommercialPartner) {
-      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsável antes de salvar a nota." : "Selecione o cliente/corretor responsável pela cobrança antes de salvar a nota.");
+    if (noteWithoutPartner) {
+      setSelectedXmlToken(noteWithoutPartner.token);
+      setMessage(operationType === "PURCHASE" ? "Selecione o fornecedor responsável desta nota antes de salvar." : "Selecione o cliente/corretor responsável pela cobrança desta nota antes de salvar.");
       setXmlDetailTab("cliente");
       scrollXmlIntoView(xmlDataRef);
       return;
