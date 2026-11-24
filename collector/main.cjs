@@ -598,15 +598,23 @@ else app.whenReady().then(async () => {
   await scan();
   if (once) return app.quit();
   let interval = 60_000;
+  let updateInterval = 3600_000;
   try {
     const config = loadConfig();
     interval = config.scanIntervalSeconds * 1000;
+    updateInterval = config.updateCheckSeconds * 1000;
     await pollRemoteCommands(config);
   } catch {}
   setInterval(() => void scan(), interval);
   setInterval(() => {
     try { void pollRemoteCommands(loadConfig()); } catch (error) { log("Falha ao preparar consulta de comandos", { error: error instanceof Error ? error.message : String(error) }); }
   }, 30_000);
+  // Checagem automatica de atualizacao (updateCheckSeconds). Quando ha versao nova,
+  // checkForUpdate baixa, valida o hash e reinicia o coletor em segundo plano.
+  setInterval(() => {
+    try { void checkForUpdate(loadConfig()).catch((error) => log("Falha na checagem automatica de atualizacao", { error: error instanceof Error ? error.message : String(error) })); }
+    catch (error) { log("Falha ao preparar checagem de atualizacao", { error: error instanceof Error ? error.message : String(error) }); }
+  }, updateInterval);
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
