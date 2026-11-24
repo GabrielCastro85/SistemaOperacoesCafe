@@ -182,6 +182,28 @@ function repairScheduledTaskSettings() {
   }
 }
 
+// CNPJs que uma versao nova acrescenta sozinha a configuracao de um perfil ja instalado,
+// sem precisar mexer no PC. Hoje: a Villa MG passou a ser coletada pelo PC do Grao (GRAO_GRAO).
+const CONFIG_EXTRA_EMITTER_CNPJS = { GRAO_GRAO: ["44963370000523"] };
+
+// Roda uma vez por inicializacao: acrescenta os CNPJs que faltam em emitterCnpjs e grava o arquivo.
+// Nao remove nada e nao mexe em outros campos (credencial, pastas, intervalos).
+function applyConfigMigrations() {
+  try {
+    if (!existsSync(configPath)) return;
+    const value = JSON.parse(readFileSync(configPath, "utf8"));
+    const extras = CONFIG_EXTRA_EMITTER_CNPJS[value.sourceCode] || [];
+    const current = (Array.isArray(value.emitterCnpjs) ? value.emitterCnpjs : []).map(digits);
+    const missing = extras.filter((cnpj) => !current.includes(cnpj));
+    if (missing.length === 0) return;
+    value.emitterCnpjs = [...(Array.isArray(value.emitterCnpjs) ? value.emitterCnpjs : []), ...missing];
+    writeFileSync(configPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    log("Configuracao atualizada: CNPJs acrescentados", { sourceCode: value.sourceCode, added: missing });
+  } catch (error) {
+    log("Falha ao atualizar a configuracao", { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 function loadConfig() {
   if (!existsSync(configPath)) throw new Error(`Arquivo de configuracao nao encontrado: ${configPath}`);
   const value = JSON.parse(readFileSync(configPath, "utf8"));
@@ -572,6 +594,7 @@ else app.whenReady().then(async () => {
   mkdirSync(portableDir, { recursive: true });
   repairScheduledTaskSettings();
   startRecoveryWatchdog();
+  applyConfigMigrations();
   await scan();
   if (once) return app.quit();
   let interval = 60_000;
