@@ -848,7 +848,7 @@ html.site .import-columns {
 /* Cartoes de resumo (numeros do topo das telas): quantos couberem por linha,
    sem cair para um por linha em janelas medias. */
 html.site .content-section :is(.dashboard-grid--hero, .cards, .metrics-grid) {
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
 }
 
 /* Filtro de periodo: campos e "Limpar" na mesma linha quando couber. */
@@ -1174,14 +1174,39 @@ html.site .transfer-invoice-title-actions .primary {
 html.site .site-ticker {
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid var(--site-line, #e3ddd2);
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-secondary, #d4a875) 22%, transparent);
   background: var(--site-brand, #1c1a17);
   color: #f4efe6;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
+  height: 30px;
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
   mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
 }
+
+/* Recolhida: some a faixa e fica so a barra fina com o botao para abrir. */
+html.site .site-ticker.is-collapsed { height: 22px; }
+html.site .site-ticker.is-collapsed .site-ticker__track { animation-play-state: paused; visibility: hidden; }
+
+html.site .site-ticker__toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  height: 100%;
+  min-width: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--brand-secondary, #d4a875) 22%, transparent);
+  background: var(--site-brand, #1c1a17);
+  color: var(--brand-secondary, #d4a875);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+html.site .site-ticker__toggle:hover { color: #fffaf0; }
+html.site .site-ticker.is-collapsed .site-ticker__toggle { left: 0; right: auto; width: 100%; border-left: 0; text-align: left; }
 
 html.site .site-ticker__track {
   display: flex;
@@ -1197,7 +1222,7 @@ html.site .site-ticker__item {
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
-  padding: 9px 22px;
+  padding: 7px 16px;
   white-space: nowrap;
   border-right: 1px solid rgb(255 255 255 / 10%);
 }

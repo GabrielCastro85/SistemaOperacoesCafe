@@ -15,6 +15,7 @@ interface MarketQuote {
 
 const API_URL = ((import.meta.env.VITE_API_URL as string | undefined) ?? "https://mindful-peace-production.up.railway.app").replace(/\/$/, "");
 const REFRESH_MS = 10 * 60 * 1000;
+const TICKER_COLLAPSED_KEY = "site-ticker-collapsed";
 const UNIT_LABEL: Record<string, string> = { saca: "/saca", grama: "/g", pts: " pts" };
 
 // Icones desenhados (SVG): bandeira em emoji nao aparece no Windows (vira "US").
@@ -71,8 +72,22 @@ function render(): void {
   const items = quotes.map(itemHtml).join("");
   if (items === lastRender && bar.firstChild) return;
   lastRender = items;
+  // Recolher/abrir a faixa: a preferencia fica guardada neste computador.
+  if (bar.dataset.toggleReady !== "1") {
+    bar.dataset.toggleReady = "1";
+    bar.classList.toggle("is-collapsed", localStorage.getItem(TICKER_COLLAPSED_KEY) === "1");
+    bar.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement).closest(".site-ticker__toggle")) return;
+      const collapsed = !bar.classList.contains("is-collapsed");
+      bar.classList.toggle("is-collapsed", collapsed);
+      localStorage.setItem(TICKER_COLLAPSED_KEY, collapsed ? "1" : "0");
+      const toggle = bar.querySelector<HTMLButtonElement>(".site-ticker__toggle");
+      if (toggle) { toggle.setAttribute("aria-expanded", String(!collapsed)); toggle.textContent = collapsed ? "Cotações ▴" : "Ocultar ▾"; }
+    });
+  }
+  const collapsed = bar.classList.contains("is-collapsed");
   // Conteudo duplicado: a animacao anda metade da largura e recomeca sem emenda.
-  bar.innerHTML = `<div class="site-ticker__track"><div class="site-ticker__group">${items}</div><div class="site-ticker__group" aria-hidden="true">${items}</div></div>`;
+  bar.innerHTML = `<button type="button" class="site-ticker__toggle" aria-expanded="${String(!collapsed)}" aria-label="${collapsed ? "Mostrar cotações" : "Ocultar cotações"}">${collapsed ? "Cotações ▴" : "Ocultar ▾"}</button><div class="site-ticker__track"><div class="site-ticker__group">${items}</div><div class="site-ticker__group" aria-hidden="true">${items}</div></div>`;
   const track = bar.querySelector<HTMLElement>(".site-ticker__track");
   if (track) track.style.setProperty("--site-ticker-duration", `${Math.max(30, quotes.length * 7)}s`);
 }

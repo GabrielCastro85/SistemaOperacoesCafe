@@ -7110,3 +7110,95 @@ table tbody tr:hover {
   background: #fff;
   font-weight: 400;
 }
+
+/* ===== Modernizacao visual (Fase 2): menu lateral e cabecalho =====
+   Sobrescreve as camadas anteriores de .app-sidebar e .app-topbar (ver mapa de CSS).
+   Cores vem dos tokens do tema (--color-*); --brand-secondary e o dourado de cada empresa. */
+.professional-shell { background: var(--color-background); }
+
+.app-sidebar {
+  background: var(--color-sidebar);
+  border-right: 1px solid color-mix(in srgb, var(--brand-secondary) 16%, transparent);
+}
+
+.app-sidebar__brand {
+  padding-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-secondary) 16%, transparent);
+}
+
+.app-sidebar__nav .nav-group-title {
+  padding: 14px 12px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--brand-secondary) 55%, transparent);
+}
+
+.app-sidebar__nav button {
+  min-height: 36px;
+  padding: 6px 10px;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 14px;
+  box-shadow: none;
+}
+
+.app-sidebar__nav button:hover {
+  background: color-mix(in srgb, var(--brand-secondary) 8%, transparent);
+  border-color: transparent;
+}
+
+.app-sidebar__nav button.active {
+  background: color-mix(in srgb, var(--brand-secondary) 15%, transparent);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--brand-secondary);
+  color: #fffaf0;
+}
+
+.app-sidebar__nav button.active .nav-icon {
+  border-color: var(--brand-secondary);
+  color: var(--brand-secondary);
+}
+
+.app-topbar {
+  min-height: 56px;
+  padding: 8px 16px;
+  background: var(--color-sidebar);
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-secondary) 16%, transparent);
+}
+
+.app-topbar__brandline {
+  gap: 10px;
+  grid-template-columns: 32px minmax(0, 1fr);
+}
+
+.app-topbar__brandline img {
+  width: 32px;
+  height: 32px;
+}
+
+.page-context strong { font-size: 16px; }
+.page-context small { font-size: 11px; }
+
+.app-topbar .context-pill--active-company {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.app-topbar .context-pill--active-company::after { background: none; }
+
+.app-topbar select,
+.app-topbar button {
+  background: rgb(255 255 255 / 4%);
+  min-height: 32px;
+}
+
+.topbar-actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
