@@ -105,7 +105,7 @@ export function InvoiceReceiptsPage({ data }: { data: BootstrapData }): JSX.Elem
     <div className="invoice-receipt-layout">
       <section className="invoice-receipt-notes">
         <div className="invoice-receipt-filters">
-          <label>Buscar<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Número da nota, empresa ou CNPJ" /></label>
+          <label>Buscar<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nota, empresa ou CNPJ" /></label>
           <label>De<input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></label>
           <label>Até<input type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} /></label>
         </div>

@@ -290,7 +290,7 @@ export function AccountsPayablePage({ data }: FinancePageProps): JSX.Element {
         <div className="ui-tabs" role="tablist">
           {([["OPEN", "A pagar"], ["OVERDUE", "Vencidas"], ["PAID", "Pagas"], ["ALL", "Todas"]] as Array<[Tab, string]>).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
         </div>
-        <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por descrição, favorecido ou categoria" />
+        <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar conta ou favorecido" />
         <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} aria-label="Empresa">
           <option value="ALL">Todas as empresas</option>
           {ownerOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.tradeName || entity.legalName}</option>)}

@@ -12,166 +12,26 @@ import { useCentralDataRefresh } from "../../hooks/useCentralDataRefresh";
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { isPackagingDocument, PACKAGING_OVERRIDE_PREFIX } from "../../../shared/utils/packagingBilling";
 import { NumberingAudit } from "./NumberingAudit";
-import { classifyWarehouseXml, inferXmlOperationType, parseNfeExtractedPreview, resolveOwnAndCounterparty, type NfeExtractedPreview } from "./xmlPreview";
+import { CollectorStatusList } from "./components/CollectorStatusList";
+import { useManualFiscalDocumentForm } from "./hooks/useManualFiscalDocumentForm";
+import { useXmlImportState } from "./hooks/useXmlImportState";
+import { XmlImportHistory } from "./components/XmlImportHistory";
+import { XmlImportQueue } from "./components/XmlImportQueue";
+import { XmlImportDataColumn } from "./components/XmlImportDataColumn";
+import { ManualFiscalDocumentForm } from "./components/ManualFiscalDocumentForm";
+import { FiscalDocumentDetailPanel } from "./components/FiscalDocumentDetailPanel";
+import { NotesSearchPanel } from "./components/NotesSearchPanel";
+import { useFiscalDocumentDetailState } from "./hooks/useFiscalDocumentDetailState";
+import { FiscalDocumentsTable, type FiscalDocumentRowView } from "./components/FiscalDocumentsTable";
+import { classifyWarehouseXml, inferXmlOperationType, parseNfeExtractedPreview, resolveOwnAndCounterparty } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
 
-function decimalTextBr(value: string | null): string {
-  return value ? value.replace(".", ",") : "-";
-}
-
-function xmlQuantityInSacks(
-  quantity: string | null | undefined,
-  unit: string | null | undefined
-): string | null {
-  if (!quantity) return null;
-
-  const normalizedUnit = unit?.trim().toUpperCase() ?? "";
-  const numericQuantity = Number(quantity.replace(",", "."));
-
-  if (!Number.isFinite(numericQuantity)) return quantity;
-
-  if (["KG", "KGS", "KILO", "KILOS", "QUILO", "QUILOS"].includes(normalizedUnit)) {
-    const sacks = numericQuantity / 60;
-    return sacks.toFixed(6).replace(/\.?0+$/, "");
-  }
-
-  return quantity;
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
-}
-
-function formatCnpjCompact(value: string | null | undefined): string {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  if (digits.length !== 14) return value || "CNPJ nao informado";
-  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
-}
-
-function xmlQueueSummaryLine(file: XmlFileInspection): string {
-  const extracted = file.extractedData as Record<string, unknown> | null;
-  const totals = extracted?.totals as Record<string, unknown> | undefined;
-  const number = extracted?.number ? `NF ${String(extracted.number)}` : "NF sem numero";
-  const date = typeof extracted?.issuedAt === "string" ? extracted.issuedAt.split("-").reverse().join("/") : null;
-  const amount = typeof totals?.invoiceAmountCents === "number" ? formatCurrencyFromCents(totals.invoiceAmountCents) : null;
-  return [number, date, amount].filter(Boolean).join(" · ");
-}
-
-function xmlPartySummary(file: XmlFileInspection, direction: "INBOUND" | "OUTBOUND"): { title: string; subtitle: string } {
-  const extracted = file.extractedData as Record<string, unknown> | null;
-  const counterparty = extracted?.[direction === "INBOUND" ? "issuer" : "recipient"] as Record<string, unknown> | undefined;
-  const ownParty = extracted?.[direction === "INBOUND" ? "recipient" : "issuer"] as Record<string, unknown> | undefined;
-  const name = String(counterparty?.legalName ?? counterparty?.tradeName ?? (direction === "INBOUND" ? "Fornecedor nao identificado" : "Cliente nao identificado"));
-  const counterpartyCnpj = formatCnpjCompact(counterparty?.cnpjCpf == null ? null : String(counterparty.cnpjCpf));
-  const ownName = String(ownParty?.tradeName ?? ownParty?.legalName ?? "empresa propria");
-  const ownCnpj = formatCnpjCompact(ownParty?.cnpjCpf == null ? null : String(ownParty.cnpjCpf));
-  return {
-    title: name,
-    subtitle: `${direction === "INBOUND" ? "Fornecedor" : "Cliente"}: ${counterpartyCnpj} · ${direction === "INBOUND" ? "Recebida por" : "Emitida por"}: ${ownName} (${ownCnpj})`
-  };
-}
-
-function inferXmlOperationScope(preview: NfeExtractedPreview | null): OperationScope | null {
-  const issuerState = preview?.issuer?.state?.trim().toUpperCase() ?? "";
-  const recipientState = preview?.recipient?.state?.trim().toUpperCase() ?? "";
-  if (!issuerState || !recipientState) return null;
-  return issuerState === recipientState ? "INTERNAL" : "EXTERNAL";
-}
-
-function xmlInspectionIsWarehouse(file: XmlFileInspection): boolean {
-  return classifyWarehouseXml(parseNfeExtractedPreview(file.extractedData ?? null)) !== null;
-}
-
-function xmlImportIsVisuallyDeleted(job: XmlImportJob): boolean {
-  return job.status === "CANCELLED" || job.status === "REVERTED";
-}
-
-function xmlImportFileIsVisuallyDeleted(file: XmlImportFile): boolean {
-  return file.status === "REVERTED";
-}
-
-type DocumentSortKey = "number" | "client";
-type SortDirection = "asc" | "desc";
-type OperationsPageTab = "received" | "issued" | "documents" | "spreadsheets";
-type VulpeDevScanResult = Awaited<ReturnType<Window["operationsCafe"]["scanVulpeDevXml"]>>;
-type VulpeDevStatusResult = Awaited<ReturnType<Window["operationsCafe"]["getVulpeDevStatus"]>>;
-type CollectorMonitorStatus = VulpeDevStatusResult["collectors"][number];
-
-function formatCollectorActivity(value: string | null): string {
-  if (!value) return "Ainda nao registrado";
-  const instant = new Date(value);
-  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - instant.getTime()) / 60_000));
-  const relative = elapsedMinutes < 1
-    ? "agora"
-    : elapsedMinutes < 60
-      ? `ha ${elapsedMinutes} min`
-      : elapsedMinutes < 1_440
-        ? `ha ${Math.floor(elapsedMinutes / 60)} h`
-        : `ha ${Math.floor(elapsedMinutes / 1_440)} dia(s)`;
-  const exact = new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    dateStyle: "short",
-    timeStyle: "medium"
-  }).format(instant);
-  return `${relative} (${exact})`;
-}
-
-function formatCollectorUptime(value: number | null): string {
-  if (value === null) return "Ainda nao informado";
-  const hours = Math.floor(value / 3_600);
-  const minutes = Math.floor((value % 3_600) / 60);
-  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
-}
-
-function collectorCommandLabel(command: CollectorMonitorStatus["lastCommand"]): string {
-  if (command === "SCAN_NOW") return "Buscar notas";
-  if (command === "UPDATE_NOW") return "Atualizar coletor";
-  if (command === "RESTART") return "Reiniciar coletor";
-  if (command === "BACKFILL") return "Enviar notas do periodo";
-  return "Nenhum comando enviado";
-}
-
-function collectorCommandStatusLabel(status: CollectorMonitorStatus["lastCommandStatus"]): string {
-  if (status === "PENDING") return "aguardando o coletor";
-  if (status === "RUNNING") return "em execucao";
-  if (status === "COMPLETED") return "concluido";
-  if (status === "FAILED") return "falhou";
-  return "";
-}
-
-function collectorCompanyLabels(cnpjs: string[]): string {
-  const labels = cnpjs.map((cnpj) => {
-    if (cnpj === "16594876000224") return "Grao & Grao MG";
-    if (cnpj === "16594876000496") return "Grao & Grao SP";
-    if (cnpj === "44963370000108") return "Villa SP";
-    return cnpj;
-  });
-  return labels.join(" e ");
-}
+import { buildSelectedXmlView, decimalTextBr, xmlQuantityInSacks, formatFileSize, formatCnpjCompact, xmlQueueSummaryLine, xmlPartySummary, inferXmlOperationScope, xmlInspectionIsWarehouse, xmlImportIsVisuallyDeleted, xmlImportFileIsVisuallyDeleted, DocumentSortKey, SortDirection, OperationsPageTab, VulpeDevScanResult, VulpeDevStatusResult, CollectorMonitorStatus, collectorCommandLabel, brazilDateValue } from "./operationsFormatters";
 
 export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
-  function brazilDateValue(date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Sao_Paulo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
 
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  if (!year || !month || !day) {
-    throw new Error("Nao foi possivel determinar a data de Brasilia.");
-  }
-
-  return `${year}-${month}-${day}`;
-}
   function currentBrazilMonthRange(): { start: string; end: string } {
     const today = brazilDateValue();
     const year = Number(today.slice(0, 4));
@@ -198,30 +58,47 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     direction: "asc"
   });
   const [documentServiceInfo, setDocumentServiceInfo] = useState<Record<string, { sacks: string; rateCents: number | null; serviceCents: number; missingRate: boolean }>>({});
-  const [replacementPartnerId, setReplacementPartnerId] = useState("");
+  const detailState = useFiscalDocumentDetailState();
+  const {
+    detailCompanySearchTerm, setDetailCompanySearchTerm,
+    detailSecondaryPartnerId, setDetailSecondaryPartnerId,
+    financialServiceEnabled, setFinancialServiceEnabled,
+    freightDaeAmount, setFreightDaeAmount,
+    freightDaeEnabled, setFreightDaeEnabled,
+    freightDaeReference, setFreightDaeReference,
+    invoiceDaeAmount, setInvoiceDaeAmount,
+    invoiceDaeEnabled, setInvoiceDaeEnabled,
+    invoiceDaeReference, setInvoiceDaeReference,
+    packagingUnitValue, setPackagingUnitValue,
+    productId, setProductId,
+    quantity, setQuantity,
+    replacementPartnerId, setReplacementPartnerId,
+    returnDate, setReturnDate,
+    returnQuantity, setReturnQuantity,
+    returnReason, setReturnReason,
+    returnUnit, setReturnUnit,
+    sacks, setSacks,
+    scope, setScope,
+    unitPrice, setUnitPrice
+  } = detailState;
   const [reviewBeforeConfirm, setReviewBeforeConfirm] = useState(false);
-  const [billingObservations, setBillingObservations] = useState("");
-  const [freightDaeEnabled, setFreightDaeEnabled] = useState(false);
-  const [freightDaeReference, setFreightDaeReference] = useState("");
-  const [freightDaeAmount, setFreightDaeAmount] = useState("");
-  const [financialServiceEnabled, setFinancialServiceEnabled] = useState(false);
-  const [invoiceDaeEnabled, setInvoiceDaeEnabled] = useState(false);
-  const [invoiceDaeReference, setInvoiceDaeReference] = useState("");
-  const [invoiceDaeAmount, setInvoiceDaeAmount] = useState("");
+  const manualForm = useManualFiscalDocumentForm();
+  const {
+    billingObservations, setBillingObservations,
+    partnerId, setPartnerId,
+    number, setNumber,
+    contractNumber, setContractNumber,
+    accessKey, setAccessKey,
+    total, setTotal,
+    issueDate, setIssueDate,
+    operationType, setOperationType,
+    manualIssuerSearchTerm, setManualIssuerSearchTerm,
+    manualIssuerPartnerLegalEntityId, setManualIssuerPartnerLegalEntityId,
+    manualCounterpartyLegalEntityId, setManualCounterpartyLegalEntityId,
+    manualSecondaryPartnerId, setManualSecondaryPartnerId
+  } = manualForm;
   const [detail, setDetail] = useState<FiscalDocumentDetail | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [partnerId, setPartnerId] = useState("");
-  const [number, setNumber] = useState("");
-  const [contractNumber, setContractNumber] = useState("");
-  const [accessKey, setAccessKey] = useState("");
-  const [total, setTotal] = useState("0,00");
-  const [issueDate, setIssueDate] = useState(() => brazilDateValue());
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState("1");
-  const [unitPrice, setUnitPrice] = useState("0.0000");
-  const [sacks, setSacks] = useState("1");
-  const [scope, setScope] = useState<OperationScope>("EXTERNAL");
-  const [operationType, setOperationType] = useState<"PURCHASE" | "SALE">("SALE");
   const [pageTab, setPageTab] = useState<OperationsPageTab>("issued");
   const [workbook, setWorkbook] = useState<WorkbookInspection | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
@@ -229,34 +106,38 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [importHistory, setImportHistory] = useState<SpreadsheetImportJob[]>([]);
   const [selectedSheet, setSelectedSheet] = useState("");
   const [headerRow, setHeaderRow] = useState("1");
-  const [xmlSelections, setXmlSelections] = useState<Array<{ token: string; fileName: string; sizeBytes: number }>>([]);
-  const [xmlQueue, setXmlQueue] = useState<XmlFileInspection[]>([]);
-  const [xmlJob, setXmlJob] = useState<{ job: XmlImportJob; files: XmlImportFile[] } | null>(null);
-  const [xmlHistory, setXmlHistory] = useState<XmlImportJob[]>([]);
-  const [xmlHistoryLimit, setXmlHistoryLimit] = useState(15);
-  const [includeXmlSubfolders, setIncludeXmlSubfolders] = useState(false);
-  const [xmlSelectionSource, setXmlSelectionSource] = useState<"FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP">("FILE");
-  const [xmlResolutionSelections, setXmlResolutionSelections] = useState<Record<string, string>>({});
-  const [xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections] = useState<Record<string, string>>({});
-  const [xmlScopeOverrides, setXmlScopeOverrides] = useState<Record<string, OperationScope>>({});
+  const xmlState = useXmlImportState();
+  const {
+    xmlSelections, setXmlSelections,
+    xmlQueue, setXmlQueue,
+    xmlJob, setXmlJob,
+    xmlHistory, setXmlHistory,
+    xmlHistoryLimit, setXmlHistoryLimit,
+    includeXmlSubfolders, setIncludeXmlSubfolders,
+    xmlSelectionSource, setXmlSelectionSource,
+    xmlResolutionSelections, setXmlResolutionSelections,
+    xmlSecondaryResolutionSelections, setXmlSecondaryResolutionSelections,
+    xmlScopeOverrides, setXmlScopeOverrides,
+    xmlOperationTypeOverrides, setXmlOperationTypeOverrides,
+    xmlManualRates, setXmlManualRates,
+    xmlManualReasons, setXmlManualReasons,
+    xmlPartnerOverrides, setXmlPartnerOverrides,
+    xmlIgnoredSelections, setXmlIgnoredSelections,
+    xmlDeferredSelections, setXmlDeferredSelections,
+    xmlContractNumbers, setXmlContractNumbers,
+    xmlBillingObservations, setXmlBillingObservations,
+    xmlFreightDaeEnabled, setXmlFreightDaeEnabled,
+    xmlFreightDaeReferences, setXmlFreightDaeReferences,
+    xmlFreightDaeAmounts, setXmlFreightDaeAmounts,
+    xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled,
+    xmlInvoiceDaeEnabled, setXmlInvoiceDaeEnabled,
+    xmlInvoiceDaeReferences, setXmlInvoiceDaeReferences,
+    xmlInvoiceDaeAmounts, setXmlInvoiceDaeAmounts,
+    selectedXmlToken, setSelectedXmlToken,
+    xmlDetailTab, setXmlDetailTab
+  } = xmlState;
   // Compra/venda por nota: o XML define (empresa propria emitente = venda, destinataria = compra); o usuario pode trocar.
-  const [xmlOperationTypeOverrides, setXmlOperationTypeOverrides] = useState<Record<string, "PURCHASE" | "SALE">>({});
   // Valor por saca so desta nota (texto digitado e motivo); vazio = usa a regra do cliente.
-  const [xmlManualRates, setXmlManualRates] = useState<Record<string, string>>({});
-  const [xmlManualReasons, setXmlManualReasons] = useState<Record<string, string>>({});
-  const [xmlPartnerOverrides, setXmlPartnerOverrides] = useState<Record<string, string>>({});
-  const [xmlIgnoredSelections, setXmlIgnoredSelections] = useState<Record<string, boolean>>({});
-  const [xmlDeferredSelections, setXmlDeferredSelections] = useState<Record<string, boolean>>({});
-  const [xmlContractNumbers, setXmlContractNumbers] = useState<Record<string, string>>({});
-  const [xmlBillingObservations, setXmlBillingObservations] = useState<Record<string, string>>({});
-  const [xmlFreightDaeEnabled, setXmlFreightDaeEnabled] = useState<Record<string, boolean>>({});
-  const [xmlFreightDaeReferences, setXmlFreightDaeReferences] = useState<Record<string, string>>({});
-  const [xmlFreightDaeAmounts, setXmlFreightDaeAmounts] = useState<Record<string, string>>({});
-  const [xmlFinancialServiceEnabled, setXmlFinancialServiceEnabled] = useState<Record<string, boolean>>({});
-  const [xmlInvoiceDaeEnabled, setXmlInvoiceDaeEnabled] = useState<Record<string, boolean>>({});
-  const [xmlInvoiceDaeReferences, setXmlInvoiceDaeReferences] = useState<Record<string, string>>({});
-  const [xmlInvoiceDaeAmounts, setXmlInvoiceDaeAmounts] = useState<Record<string, string>>({});
-  const [selectedXmlToken, setSelectedXmlToken] = useState<string | null>(null);
   const [vulpeDevAvailable, setVulpeDevAvailable] = useState(false);
   const [vulpeDevSources, setVulpeDevSources] = useState<Array<{ source: "VILLA_MG" | "VILLA_ES" | "VILLA_SP" | "GRAO_MG" | "GRAO_SP" | "ALL"; label: string; available: boolean }>>([]);
   const [collectorStatuses, setCollectorStatuses] = useState<CollectorMonitorStatus[]>([]);
@@ -265,29 +146,17 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   const [vulpeScan, setVulpeScan] = useState<VulpeDevScanResult | null>(null);
   const [vulpePeriodStart, setVulpePeriodStart] = useState(() => currentBrazilMonthRange().start);
   const [vulpePeriodEnd, setVulpePeriodEnd] = useState(() => currentBrazilMonthRange().end);
-  const [detailSecondaryPartnerId, setDetailSecondaryPartnerId] = useState("");
-  const [detailCompanySearchTerm, setDetailCompanySearchTerm] = useState("");
-  const [returnDate, setReturnDate] = useState(() => brazilDateValue());
-  const [returnUnit, setReturnUnit] = useState<"SACKS" | "KG">("SACKS");
-  const [returnQuantity, setReturnQuantity] = useState("");
-  const [packagingUnitValue, setPackagingUnitValue] = useState("");
-  const [returnReason, setReturnReason] = useState("");
   // Nota terceirizada lancada manualmente: nem emitente nem destinatario e' a
   // empresa propria ativa no topo -- ver resolveIssuerLegalEntityFromPartner.
   // Vazio = comportamento de sempre (emissora = CNPJ proprio ativo).
-  const [manualIssuerSearchTerm, setManualIssuerSearchTerm] = useState("");
-  const [manualIssuerPartnerLegalEntityId, setManualIssuerPartnerLegalEntityId] = useState<string | null>(null);
-  const [manualCounterpartyLegalEntityId, setManualCounterpartyLegalEntityId] = useState("");
   // Cliente da revenda numa nota triangulada lancada manualmente -- so' usado
   // quando manualIssuerPartnerLegalEntityId esta preenchido (ver createDocument).
-  const [manualSecondaryPartnerId, setManualSecondaryPartnerId] = useState("");
   const scrollTo = useAutoScroll();
   const manualDetailRef = useRef<HTMLDivElement | null>(null);
   const spreadsheetResultRef = useRef<HTMLDivElement | null>(null);
   const spreadsheetHistoryRef = useRef<HTMLDivElement | null>(null);
   const xmlDataRef = useRef<HTMLDivElement | null>(null);
   const xmlResultRef = useRef<HTMLDivElement | null>(null);
-  const [xmlDetailTab, setXmlDetailTab] = useState<"nota" | "cliente">("nota");
   // Rola so se a secao nao estiver visivel na tela; nao leva a pagina para o topo.
   function scrollXmlIntoView(target: { current: HTMLElement | null }): void {
     const element = target.current;
@@ -820,10 +689,15 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
 
   async function prepareDroppedXmlImport(files: File[]): Promise<void> {
     try {
-      const paths = window.operationsCafe.getDroppedFilePaths(files);
-      const xmlPaths = paths.filter((path) => path.toLowerCase().endsWith(".xml"));
+      // A extensao vem do nome do arquivo: no site o "caminho" e um token (web-file:...), sem .xml.
+      const droppedXml = files.filter((file) => file.name.toLowerCase().endsWith(".xml"));
+      if (droppedXml.length === 0) {
+        setMessage(files.length === 0 ? "Nao foi possivel ler o arquivo arrastado. Tente arrastar o arquivo direto do Explorador do Windows." : "Arraste somente arquivos XML da NF-e para importar.");
+        return;
+      }
+      const xmlPaths = window.operationsCafe.getDroppedFilePaths(droppedXml);
       if (xmlPaths.length === 0) {
-        setMessage(paths.length === 0 ? "Nao foi possivel ler o arquivo arrastado. Tente arrastar o arquivo direto do Explorador do Windows." : "Arraste somente arquivos XML da NF-e para importar.");
+        setMessage("Nao foi possivel ler o arquivo arrastado. Tente arrastar o arquivo direto do Explorador do Windows.");
         return;
       }
       const selected = await window.operationsCafe.registerDroppedXmlFiles(xmlPaths);
@@ -1127,33 +1001,11 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const selectedXmlFile = xmlQueue.find((file) => file.token === selectedXmlToken) ?? xmlQueue[0] ?? null;
-  const selectedXmlIsEvent = selectedXmlFile?.xmlType.startsWith("EVENT_") === true;
-  const selectedXmlEvent = selectedXmlIsEvent ? selectedXmlFile?.extractedData ?? null : null;
-  const selectedXmlPartnerId = selectedXmlFile && vulpeScan
-    ? xmlPartnerOverrides[selectedXmlFile.token] ?? ""
-    : partnerId;
-  const selectedXmlPreview = parseNfeExtractedPreview(selectedXmlFile?.extractedData ?? null);
-  const selectedWarehouseMovement = classifyWarehouseXml(selectedXmlPreview);
-  const selectedXmlExtractedContract = typeof selectedXmlFile?.extractedData?.contractNumber === "string"
-    ? selectedXmlFile.extractedData.contractNumber
-    : "";
-  const selectedXmlParties = resolveOwnAndCounterparty(selectedXmlPreview, data.legalEntities);
-  const selectedXmlItem = selectedXmlPreview?.items[0] ?? null;
-  const selectedXmlSacks = xmlQuantityInSacks(
-    selectedXmlItem?.commercialQuantity,
-    selectedXmlItem?.commercialUnit
-  );
-  const selectedXmlInferredScope = inferXmlOperationScope(selectedXmlPreview);
-  const selectedXmlScope = selectedXmlFile ? selectedXmlInferredScope ?? xmlScopeOverrides[selectedXmlFile.token] ?? scope : scope;
   // Tipo da nota: escolha do usuario > o que o XML indica > o botao geral.
   const xmlFileOperationType = (token: string, extractedData: XmlFileInspection["extractedData"]): "PURCHASE" | "SALE" =>
     xmlOperationTypeOverrides[token] ?? inferXmlOperationType(parseNfeExtractedPreview(extractedData ?? null), data.legalEntities) ?? operationType;
-  const selectedXmlOperationType = selectedXmlFile ? xmlFileOperationType(selectedXmlFile.token, selectedXmlFile.extractedData) : operationType;
-  const selectedXmlOwnMismatch = Boolean(
-    selectedXmlParties.ownEntityLabel &&
-    ownLegalEntity &&
-    selectedXmlParties.ownEntityLabel !== (ownLegalEntity.legalName || ownLegalEntity.tradeName)
-  );
+  const selectedXmlView = buildSelectedXmlView({ selectedXmlFile, partnerId, vulpeScan, xmlPartnerOverrides, legalEntities: data.legalEntities, ownLegalEntity, xmlScopeOverrides, scope, operationType, resolveOperationType: xmlFileOperationType });
+  const { selectedXmlIsEvent, selectedXmlEvent, selectedXmlPartnerId, selectedXmlPreview, selectedWarehouseMovement, selectedXmlExtractedContract, selectedXmlParties, selectedXmlItem, selectedXmlSacks, selectedXmlInferredScope, selectedXmlScope, selectedXmlOperationType, selectedXmlOwnMismatch } = selectedXmlView;
   const hasValidXmlSelection = xmlQueue.some((file) => file.status !== "ERROR");
   const xmlQueueRequiresCommercialPartner = xmlQueue.some((file) =>
     file.status !== "ERROR"
@@ -1220,19 +1072,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     }
   ];
   const visibleServiceCents = Object.values(documentServiceInfo).reduce((sum, item) => sum + item.serviceCents, 0);
-  const detailMainItem = detail?.items[0] ?? null;
-  const detailMainOperation = detail?.operations[0] ?? null;
-  const detailIsPackaging = detail ? isPackagingDocument({ documentNotes: detail.document.notes, overrideReasons: detail.operations.map((operation) => operation.manualOverrideReason) }) : false;
-  const packagingValueSaved = Boolean(detailMainOperation?.manualOverrideReason?.startsWith(`${PACKAGING_OVERRIDE_PREFIX}:`));
-  const operationTypeLabel = detailMainOperation?.operationType === "PURCHASE" ? "Compra" : detailMainOperation?.operationType === "SALE" ? "Venda" : "-";
-  const operationScopeLabel = formatOperationScope(detailMainOperation?.operationScope);
   // Nota triangulada: a mesma nota gerou uma operacao de compra (fornecedor)
   // e uma de venda (corretor/cliente) a partir da mesma remessa.
   const allKnownPartners = [...partners, ...secondaryPartners];
   const partnerName = (id: string | null | undefined): string => (id ? allKnownPartners.find((partner) => partner.id === id)?.displayName ?? id : "-");
-  const isTriangulatedDetail = Boolean(detail?.document.secondaryResponsiblePartnerId);
-  const purchaseLeg = detail?.operations.find((op) => op.operationType === "PURCHASE") ?? null;
-  const saleLeg = detail?.operations.find((op) => op.operationType === "SALE") ?? null;
 
   // Procura nos clientes e nos fornecedores: nota de compra (ou com o responsavel
   // trocado para fornecedor) mostrava o id do parceiro em vez do nome.
@@ -1248,6 +1091,35 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     return null;
   };
 
+  // Dados de exibicao de uma linha da tabela de notas lancadas (regras de sempre).
+  function documentRowView(doc: FiscalDocument): FiscalDocumentRowView {
+        const info = documentServiceInfo[doc.id];
+        const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
+        const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
+        // Nota terceirizada aparece aqui mesmo com CNPJ emissor diferente do
+        // ativo no topo (ver listFiscalDocuments) -- mostra a empresa
+        // emissora real pra nao parecer que a nota e' do CNPJ ativo.
+        const isThirdPartyRow = doc.ownLegalEntityId !== ownLegalEntityId;
+        const docOwnEntity = isThirdPartyRow ? data.legalEntities.find((entity) => entity.id === doc.ownLegalEntityId) : null;
+        // Nota triangulada de verdade (secondaryResponsiblePartnerId
+        // preenchido): a compra e a venda pertencem mesmo a nossa empresa
+        // ativa (e' assim que ela entra na cobranca certinho), mas o papel
+        // fisico da NF nunca passou pelo nosso CNPJ -- entao mesmo sem cair
+        // no caso "terceirizada" acima, ainda mostra quem emitiu de
+        // verdade (o fornecedor por tras da ponta de compra).
+        const triangulatedIssuer = !isThirdPartyRow && doc.secondaryResponsiblePartnerId
+          ? partnerLegalEntities.find((entity) => entity.id === doc.partnerLegalEntityId)
+          : null;
+        const docOwnEntityName = docOwnEntity
+          ? (docOwnEntity.legalName || docOwnEntity.tradeName)
+          : triangulatedIssuer
+            ? (triangulatedIssuer.legalName || triangulatedIssuer.tradeName)
+            : null;
+        const partyKind = documentPartyKind(doc);
+        // Estado visual da linha: cancelada > duplicada > pendente.
+        const rowState = doc.status === "CANCELED" ? "canceled" : doc.duplicateWarning ? "duplicate" : (doc.hasPendingIssues || info?.missingRate) ? "pending" : null;
+    return { ownEntityName: docOwnEntityName, partyKind, clientName: documentClientName(doc), serviceLabel, alertLabel, rowState };
+  }
   function toggleDocumentSort(key: DocumentSortKey): void {
     setDocumentLimit(20);
     setDocumentSort((current) => ({
@@ -1371,97 +1243,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
       />
       {pageTab === "documents" && <>
       <AdminBlock title="Lancamento manual de nota">
-        <div className="notes-flow-intro">
-          <div>
-            <span className="notes-flow-intro__eyebrow">Alternativa ao XML</span>
-            <strong>Use este formulario somente quando a nota nao estiver disponivel na busca automatica.</strong>
-            <details className="notes-flow-intro__details"><summary>Como preencher</summary><small>Primeiro escolha se e compra ou venda, depois o responsavel e o CNPJ exato que aparece na NF-e.</small></details>
-          </div>
-        </div>
-        <div className="operation-context-note">
-          <span>CNPJ ativo para notas</span>
-          <strong>{ownLegalEntity ? (ownLegalEntity.legalName || ownLegalEntity.tradeName) : "Nao selecionado"}</strong>
-          <small>{ownLegalEntity?.cnpj ?? "CNPJ pendente"} - a lista abaixo mostra somente notas desse CNPJ.</small>
-        </div>
-        <div className="operation-context-note">
-          <span>Empresa emissora (opcional)</span>
-          <strong>{manualIssuerPartnerLegalEntityId ? (() => { const selected = partnerLegalEntities.find((entity) => entity.id === manualIssuerPartnerLegalEntityId); return selected ? (selected.legalName || selected.tradeName) : "Selecionada"; })() : "Nenhuma -- emissora e' o CNPJ proprio ativo acima"}</strong>
-          {manualIssuerPartnerLegalEntityId ? (
-            <small>Nota triangulada: nem emitente nem destinatario e' sua empresa. Informe abaixo o fornecedor (emissor) e o cliente da revenda -- cada item lancado ja cria as duas operacoes (compra e venda) automaticamente.</small>
-          ) : (
-            <small>Deixe vazio se a nota foi emitida pela sua propria empresa. Escolha outra empresa aqui quando a nota e' de terceiro (nem emitente nem destinatario e' sua empresa).</small>
-          )}
-          {manualIssuerPartnerLegalEntityId ? (
-            <button type="button" onClick={() => { setManualIssuerPartnerLegalEntityId(null); setManualIssuerSearchTerm(""); setManualSecondaryPartnerId(""); }}>Remover empresa emissora</button>
-          ) : (
-            <>
-              <TextField label="Buscar empresa emissora por nome ou CNPJ" value={manualIssuerSearchTerm} onChange={setManualIssuerSearchTerm} />
-              {manualIssuerSearchTerm.trim() ? (
-                <div className="confirmation-company-results">
-                  {partnerLegalEntities
-                    .filter((entity) => {
-                      const term = manualIssuerSearchTerm.trim().toUpperCase();
-                      const digitsTerm = term.replace(/\D/g, "");
-                      return entity.tradeName.toUpperCase().includes(term) || entity.legalName.toUpperCase().includes(term) || (digitsTerm.length > 0 && (entity.cnpj?.includes(digitsTerm) ?? false));
-                    })
-                    .slice(0, 8)
-                    .map((entity) => (
-                      <div key={entity.id} className="confirmation-company-result-row">
-                        <button type="button" className="partner-action-button" onClick={() => { setManualIssuerPartnerLegalEntityId(entity.id); setManualIssuerSearchTerm(""); setOperationType("PURCHASE"); }}>{entity.legalName || entity.tradeName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
-                      </div>
-                    ))}
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
-        <div className="cards">
-          <article><span>Notas deste CNPJ</span><strong>{documents.length}</strong></article>
-          <article><span>Pendencias</span><strong>{documents.filter((doc) => doc.status === "PENDING" || doc.hasPendingIssues).length}</strong></article>
-          <article><span>Servico calculado</span><strong>{formatCurrencyFromCents(visibleServiceCents)}</strong></article>
-        </div>
-        <FormGrid>
-          {manualIssuerPartnerLegalEntityId ? (
-            <>
-              <PartnerQuickSearch label="Fornecedor (emissor)" value={partnerId} onChange={setPartnerId} partners={partners} legalEntities={partnerLegalEntities} />
-              <PartnerQuickSearch label="Cliente (revenda)" value={manualSecondaryPartnerId} onChange={setManualSecondaryPartnerId} partners={secondaryPartners} legalEntities={partnerLegalEntities} />
-            </>
-          ) : (
-            <>
-              <SelectField label="Tipo da nota" value={operationType} onChange={(value) => { setOperationType(value as "PURCHASE" | "SALE"); setPartnerId(""); setManualCounterpartyLegalEntityId(""); }} options={[["PURCHASE", "Nota recebida (compra/entrada)"], ["SALE", "Nota emitida (venda/saida)"]]} />
-              <PartnerQuickSearch label={operationType === "PURCHASE" ? "Fornecedor" : "Cliente/corretor"} value={partnerId} onChange={(value) => { setPartnerId(value); setManualCounterpartyLegalEntityId(""); }} partners={partners} legalEntities={partnerLegalEntities} />
-              <SelectField
-                label={operationType === "PURCHASE" ? "CNPJ emissor da nota" : "CNPJ destinatario da nota"}
-                value={manualCounterpartyLegalEntityId}
-                onChange={setManualCounterpartyLegalEntityId}
-                options={[
-                  ["", partnerId ? "Selecione o CNPJ exato" : "Escolha primeiro o responsavel"],
-                  ...partnerLegalEntities
-                    .filter((entity) => entity.businessPartnerId === partnerId && entity.isActive)
-                    .map((entity) => [entity.id, `${entity.legalName || entity.tradeName} — ${formatCnpjCompact(entity.cnpj)}`] as [string, string])
-                ]}
-              />
-            </>
-          )}
-          <TextField label="Numero da nota" value={number} onChange={setNumber} />
-          <TextField label="Contrato" value={contractNumber} onChange={setContractNumber} />
-          <label>Observacoes da nota (sai na cobranca)<textarea rows={3} maxLength={500} value={billingObservations} onChange={(event) => setBillingObservations(event.target.value)} placeholder="Ex.: lote 123, contrato ABC, referencia do pedido" /></label>
-          <TextField label="Chave de acesso" value={accessKey} onChange={setAccessKey} />
-          <DateInput label="Data de emissão" value={issueDate} onChange={(event) => setIssueDate(event.target.value)} />
-          <TextField label="Valor total" value={total} onChange={setTotal} />
-          <button
-            className="primary"
-            disabled={manualIssuerPartnerLegalEntityId
-              ? (!partnerId || !manualSecondaryPartnerId || partnerId === manualSecondaryPartnerId)
-              : (!partnerId || !manualCounterpartyLegalEntityId)}
-            onClick={() => void createDocument()}
-          >
-            Criar nota
-          </button>
-        </FormGrid>
-        {manualIssuerPartnerLegalEntityId && partnerId && manualSecondaryPartnerId && partnerId === manualSecondaryPartnerId ? (
-          <p className="feedback" role="status" aria-live="polite">Fornecedor e cliente da nota triangulada precisam ser parceiros diferentes.</p>
-        ) : null}
+      <ManualFiscalDocumentForm form={manualForm} documents={documents} ownLegalEntity={ownLegalEntity} partners={partners} secondaryPartners={secondaryPartners} partnerLegalEntities={partnerLegalEntities} visibleServiceCents={visibleServiceCents} onCreate={() => void createDocument()} />
         <div className="toolbar document-search-toolbar">
           <TextField
             label="Pesquisar notas por numero, contrato, cliente, empresa ou CNPJ"
@@ -1480,300 +1262,26 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             Exibindo {Math.min(visibleDocuments.length, filteredDocuments.length)} de {filteredDocuments.length} nota(s){!showCanceledDocuments && canceledDocumentsCount > 0 ? ` · ${canceledDocumentsCount} cancelada(s) oculta(s)` : filteredDocuments.length !== documents.length ? ` filtradas de ${documents.length}` : ""}
           </span>
         </div>
-        <div className="table"><div className="table-head invoice-grid"><button type="button" className={`table-sort-button${documentSort.key === "number" ? " active" : ""}`} onClick={() => toggleDocumentSort("number")} aria-label={`Ordenar notas por numero ${documentSort.key === "number" && documentSort.direction === "asc" ? "do maior para o menor" : "do menor para o maior"}`}><span>Numero</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("number")}</span></button><button type="button" className={`table-sort-button${documentSort.key === "client" ? " active" : ""}`} onClick={() => toggleDocumentSort("client")} aria-label={`Ordenar notas por cliente ${documentSort.key === "client" && documentSort.direction === "asc" ? "de Z a A" : "de A a Z"}`}><span>Cliente/corretor</span><span className="table-sort-indicator" aria-hidden="true">{documentSortIndicator("client")}</span></button><span>Emissao</span><span>Status</span><span>Valor NF</span><span>Servico</span><span>Alerta</span><span>Acoes</span></div>{visibleDocuments.map((doc) => {
-          const info = documentServiceInfo[doc.id];
-          const serviceLabel = info ? `${formatCurrencyFromCents(info.serviceCents)}${info.rateCents !== null ? ` (${formatCurrencyFromCents(info.rateCents)}/saca)` : ""}` : "-";
-          const alertLabel = info?.missingRate ? "Sem valor por saca" : doc.hasPendingIssues && doc.pendingNotes ? doc.pendingNotes : doc.duplicateWarning ?? "-";
-          // Nota terceirizada aparece aqui mesmo com CNPJ emissor diferente do
-          // ativo no topo (ver listFiscalDocuments) -- mostra a empresa
-          // emissora real pra nao parecer que a nota e' do CNPJ ativo.
-          const isThirdPartyRow = doc.ownLegalEntityId !== ownLegalEntityId;
-          const docOwnEntity = isThirdPartyRow ? data.legalEntities.find((entity) => entity.id === doc.ownLegalEntityId) : null;
-          // Nota triangulada de verdade (secondaryResponsiblePartnerId
-          // preenchido): a compra e a venda pertencem mesmo a nossa empresa
-          // ativa (e' assim que ela entra na cobranca certinho), mas o papel
-          // fisico da NF nunca passou pelo nosso CNPJ -- entao mesmo sem cair
-          // no caso "terceirizada" acima, ainda mostra quem emitiu de
-          // verdade (o fornecedor por tras da ponta de compra).
-          const triangulatedIssuer = !isThirdPartyRow && doc.secondaryResponsiblePartnerId
-            ? partnerLegalEntities.find((entity) => entity.id === doc.partnerLegalEntityId)
-            : null;
-          const docOwnEntityName = docOwnEntity
-            ? (docOwnEntity.legalName || docOwnEntity.tradeName)
-            : triangulatedIssuer
-              ? (triangulatedIssuer.legalName || triangulatedIssuer.tradeName)
-              : null;
-          const partyKind = documentPartyKind(doc);
-          // Estado visual da linha: cancelada > duplicada > pendente.
-          const rowState = doc.status === "CANCELED" ? "canceled" : doc.duplicateWarning ? "duplicate" : (doc.hasPendingIssues || info?.missingRate) ? "pending" : null;
-          return <div key={doc.id} className={`table-row invoice-grid${partyKind ? ` invoice-row--${partyKind.tone}` : ""}${rowState ? ` invoice-row--state-${rowState}` : ""}`}><span>{doc.documentNumber}{docOwnEntityName ? <small>Emitida por {docOwnEntityName}</small> : null}</span><span className="invoice-party">{partyKind ? <em className={`party-kind party-kind--${partyKind.tone}`}>{partyKind.label}</em> : null}<span>{documentClientName(doc)}</span></span><span>{formatDateOnlyBr(doc.issueDate)}</span><span><StatusBadge status={doc.status} /></span><span>{formatCurrencyFromCents(doc.totalAmountCents)}</span><span>{serviceLabel}</span><span title={alertLabel !== "-" ? alertLabel : undefined}>{alertLabel}</span><span className="row-actions"><button onClick={() => window.operationsCafe.getFiscalDocument(doc.id).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); })}>Abrir</button><button className="danger" onClick={() => void deleteDocument(doc)}>Excluir</button></span></div>;
-        })}
+        <FiscalDocumentsTable
+          rows={visibleDocuments.map((doc) => ({ doc, view: documentRowView(doc) }))}
+          sort={documentSort}
+          onSort={toggleDocumentSort}
+          sortIndicator={documentSortIndicator}
+          onOpen={(documentId) => { window.operationsCafe.getFiscalDocument(documentId).then((opened) => { setDetail(opened); scrollTo(manualDetailRef); }); }}
+          onDelete={(doc) => { void deleteDocument(doc); }}
+        >
         {sortedDocuments.length === 0 ? (
           <EmptyState
             title="Nenhuma nota encontrada"
             description={documentSearch ? "Tente pesquisar por outro numero, cliente, empresa ou CNPJ." : canceledDocumentsCount > 0 && !showCanceledDocuments ? "Nao ha notas ativas nesta lista. Use 'Ver canceladas' para consultar o historico." : "Nenhuma nota cadastrada para este CNPJ."}
           />
         ) : null}
-        </div>
+        </FiscalDocumentsTable>
         {visibleDocuments.length < sortedDocuments.length ? <button type="button" className="documents-show-more" onClick={() => setDocumentLimit((current) => current + 20)}>Mostrar mais notas</button> : null}
       </AdminBlock>
-      {detail ? <div ref={manualDetailRef}><AdminBlock title={`Detalhe da nota ${detail.document.documentNumber}`}>
-        <FormGrid>
-          <PartnerQuickSearch label="Corrigir responsavel da nota" value={replacementPartnerId} onChange={setReplacementPartnerId} partners={[...partners, ...secondaryPartners].filter((partner, index, all) => all.findIndex((item) => item.id === partner.id) === index && partner.roles.includes(detail.document.direction === "INBOUND" ? "SUPPLIER" : "CLIENT"))} legalEntities={partnerLegalEntities} />
-          <button disabled={!replacementPartnerId || replacementPartnerId === detail.document.responsiblePartnerId || detail.document.status === "CANCELED" || detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
-            try {
-              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, { ...detail.document, responsiblePartnerId: replacementPartnerId, operationType: detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE" });
-              setDetail(updated); setReplacementPartnerId(""); await load(); setMessage("Responsavel corrigido e tarifa recalculada. Confira os valores.");
-            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao corrigir responsavel."}`); }
-          }}>Trocar responsavel e recalcular</button>
-          <TextField label="Contrato" value={detail.document.contractNumber ?? ""} onChange={(value) => setDetail((current) => current ? ({ ...current, document: { ...current.document, contractNumber: value } }) : current)} />
-          <label>Observacoes da nota (sai na cobranca)<textarea rows={3} maxLength={500} value={detail.document.billingObservations ?? ""} onChange={(event) => setDetail((current) => current ? { ...current, document: { ...current.document, billingObservations: event.target.value } } : current)} placeholder="Ex.: lote 123, contrato ABC, referencia do pedido" /></label>
-          <button onClick={async () => {
-            try {
-              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, { ...detail.document, operationType: detail.operations[0]?.operationType ?? "SALE", contractNumber: detail.document.contractNumber?.trim() || null });
-              setDetail(updated); await load(); setMessage("Contrato e observacoes salvos para o relatorio de cobranca.");
-            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar contrato."}`); }
-          }}>Salvar contrato e observacoes</button>
-        </FormGrid>
-        <p className="muted">Ao trocar o responsavel, a tarifa anterior (inclusive manual) e substituida pela regra do novo cliente. Notas vinculadas a cobranca ou acerto precisam ser liberadas primeiro.</p>
-        <section className="coffee-return-card">
-          <header><span>Servico financeiro</span><strong>Define o valor por saca desta nota</strong></header>
-          <label className="inline-check">
-            <input type="checkbox" checked={financialServiceEnabled} onChange={(event) => setFinancialServiceEnabled(event.target.checked)} />
-            Esta nota possui financeiro
-          </label>
-          <p className="muted">Quando marcado, o sistema usa o valor "com financeiro" cadastrado na regra por saca do cliente. Sem essa marca, usa o valor normal.</p>
-          <button className="invoice-action-button invoice-action-button--primary" disabled={detail.operations.some((op) => op.billingStatus !== "UNBILLED" || op.purchaseSettlementStatus !== "UNSETTLED")} onClick={async () => {
-            try {
-              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
-                ...detail.document,
-                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
-                hasFinancialService: financialServiceEnabled
-              });
-              setDetail(updated);
-              await load();
-              setMessage(`Condicao financeira salva. A tarifa foi recalculada para ${financialServiceEnabled ? "com financeiro" : "sem financeiro"}.`);
-            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar a condicao financeira."}`); }
-          }}>Salvar condicao e recalcular</button>
-        </section>
-        <section className="coffee-return-card">
-          <header><span>DAE de frete</span><strong>Valor adicional vinculado à NF {detail.document.documentNumber}</strong></header>
-          <label className="inline-check">
-            <input type="checkbox" checked={freightDaeEnabled} onChange={(event) => {
-              setFreightDaeEnabled(event.target.checked);
-              if (!event.target.checked) { setFreightDaeReference(""); setFreightDaeAmount(""); }
-            }} />
-            Foi feito DAE de frete para esta nota
-          </label>
-          {freightDaeEnabled ? <FormGrid>
-            <TextField label="Numero ou referencia do DAE (opcional)" value={freightDaeReference} onChange={setFreightDaeReference} />
-            <TextField label="Valor a cobrar (R$)" value={freightDaeAmount} onChange={setFreightDaeAmount} />
-          </FormGrid> : null}
-          <p className="muted">Ao gerar uma cobranca com esta nota, o DAE entra automaticamente no total e aparece identificado no PDF e na planilha.</p>
-          <button className="invoice-action-button invoice-action-button--primary" onClick={async () => {
-            const amountCents = freightDaeEnabled ? parseCurrency(freightDaeAmount) : 0;
-            if (freightDaeEnabled && amountCents <= 0) { setMessage("Informe um valor de DAE maior que zero."); return; }
-            try {
-              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
-                ...detail.document,
-                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
-                freightDaeReference: freightDaeEnabled ? freightDaeReference.trim() || null : null,
-                freightDaeAmountCents: amountCents
-              });
-              setDetail(updated);
-              setFreightDaeEnabled((updated.document.freightDaeAmountCents ?? 0) > 0);
-              setFreightDaeReference(updated.document.freightDaeReference ?? "");
-              setFreightDaeAmount((updated.document.freightDaeAmountCents ?? 0) > 0 ? formatCurrencyFromCents(updated.document.freightDaeAmountCents ?? 0) : "");
-              await load();
-              setMessage(amountCents > 0 ? "DAE de frete salvo. O valor entrara automaticamente na cobranca desta nota." : "DAE de frete removido desta nota.");
-            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar o DAE de frete."}`); }
-          }}>Salvar DAE de frete</button>
-        </section>
-        <section className="coffee-return-card">
-          <header><span>DAE da nota fiscal</span><strong>Valor do DAE referente à NF {detail.document.documentNumber}</strong></header>
-          <label className="inline-check">
-            <input type="checkbox" checked={invoiceDaeEnabled} onChange={(event) => {
-              setInvoiceDaeEnabled(event.target.checked);
-              if (!event.target.checked) { setInvoiceDaeReference(""); setInvoiceDaeAmount(""); }
-            }} />
-            Foi feito DAE referente a esta nota
-          </label>
-          {invoiceDaeEnabled ? <FormGrid>
-            <TextField label="Numero ou referencia do DAE (opcional)" value={invoiceDaeReference} onChange={setInvoiceDaeReference} />
-            <TextField label="Valor a cobrar (R$)" value={invoiceDaeAmount} onChange={setInvoiceDaeAmount} />
-          </FormGrid> : null}
-          <p className="muted">Entra na cobranca junto com a nota, como o DAE de frete. Se a nota tiver os dois, a cobranca mostra os dois valores.</p>
-          <button className="invoice-action-button invoice-action-button--primary" onClick={async () => {
-            const amountCents = invoiceDaeEnabled ? parseCurrency(invoiceDaeAmount) : 0;
-            if (invoiceDaeEnabled && amountCents <= 0) { setMessage("Informe um valor de DAE maior que zero."); return; }
-            try {
-              const updated = await window.operationsCafe.updateFiscalDocument(detail.document.id, {
-                ...detail.document,
-                operationType: detail.operations[0]?.operationType ?? (detail.document.direction === "INBOUND" ? "PURCHASE" : "SALE"),
-                invoiceDaeReference: invoiceDaeEnabled ? invoiceDaeReference.trim() || null : null,
-                invoiceDaeAmountCents: amountCents
-              });
-              setDetail(updated);
-              await load();
-              setMessage(amountCents > 0 ? "DAE da nota salvo. O valor entrara automaticamente na cobranca desta nota." : "DAE da nota removido.");
-            } catch (error) { setMessage(`Erro: ${error instanceof Error ? error.message : "Falha ao salvar o DAE da nota."}`); }
-          }}>Salvar DAE da nota</button>
-        </section>
-        <h3>Revisao para cobranca</h3>
-        <p>Contrato: <strong>{detail.document.contractNumber || "Nao informado"}</strong></p>
-        {detail.operations.map((op) => <div className="operation-warning-card operation-warning-card--neutral" key={op.id}>
-          <strong>{partnerName(op.responsiblePartnerId)} · {op.operationType === "SALE" ? "A receber" : "A pagar"} · {formatOperationScope(op.operationScope)}</strong>
-          <span>{decimalTextBr(op.quantitySacks)} sacas × {formatCurrencyFromCents(op.appliedRateValueCents)} = {formatCurrencyFromCents(op.serviceAmountCents)}{op.appliedRateValueCents <= 0 ? " — Tarifa pendente: esta operacao nao entra na cobranca." : ""}</span>
-        </div>)}
-        {detail.operations.some((op) => op.operationType === "SALE") ? <section className="coffee-return-card">
-          <header><span>Devolucao de cafe</span><strong>Reduz a quantidade cobrada desta nota</strong></header>
-          {(() => {
-            const sales = detail.operations.filter((op) => op.operationType === "SALE" && op.status !== "CANCELED");
-            const gross = sales.reduce((sum, op) => sum + Number(op.grossQuantitySacks), 0);
-            const returned = detail.returns.reduce((sum, item) => sum + Number(item.quantitySacks), 0);
-            return <div className="coffee-return-summary"><span>Original: <strong>{decimalTextBr(String(gross))} sacas</strong></span><span>Devolvido: <strong>{decimalTextBr(String(returned))} sacas</strong></span><span>Saldo para cobranca: <strong>{decimalTextBr(String(Math.max(0, gross - returned)))} sacas</strong></span></div>;
-          })()}
-          <FormGrid>
-            <label>Data da devolucao<input type="date" value={returnDate} onChange={(event) => setReturnDate(event.target.value)} /></label>
-            <SelectField label="Informar em" value={returnUnit} onChange={(value) => setReturnUnit(value as "SACKS" | "KG")} options={[["SACKS", "Sacas"], ["KG", "Quilos"]]} />
-            <TextField label={returnUnit === "KG" ? "Quantidade devolvida (kg)" : "Quantidade devolvida (sacas)"} value={returnQuantity} onChange={setReturnQuantity} />
-            <TextField label="Motivo" value={returnReason} onChange={setReturnReason} />
-          </FormGrid>
-          <p className="muted">Conversao usada: 60 kg = 1 saca. A cobranca e qualquer rascunho em aberto sao recalculados automaticamente.</p>
-          <button className="invoice-action-button invoice-action-button--primary" disabled={!returnQuantity.trim() || !returnReason.trim()} onClick={() => void window.operationsCafe.addFiscalDocumentReturn({ fiscalDocumentId: detail.document.id, returnDate, inputUnit: returnUnit, inputQuantity: returnQuantity, reason: returnReason }).then((updated) => { setDetail(updated); setReturnQuantity(""); setReturnReason(""); void load(); setMessage("Devolucao registrada e valor da cobranca recalculado."); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao registrar devolucao."}`))}>Registrar devolucao</button>
-          {detail.returns.length ? <div className="coffee-return-history">
-            {detail.returns.map((item) => <div key={item.id} className="coffee-return-row"><span>{formatDateOnlyBr(item.returnDate)}</span><span>{decimalTextBr(item.inputQuantity)} {item.inputUnit === "KG" ? "kg" : "sacas"}</span><span>{decimalTextBr(item.quantitySacks)} sacas abatidas</span><strong>{item.reason}</strong><button className="danger" onClick={() => void window.operationsCafe.deleteFiscalDocumentReturn(item.id).then((updated) => { setDetail(updated); void load(); setMessage("Devolucao removida e quantidade restaurada."); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao remover devolucao."}`))}>Remover</button></div>)}
-          </div> : null}
-        </section> : null}
-        {detail.document.hasPendingIssues ? <p role="alert">Pendencias: {detail.document.pendingNotes}. Revise os itens antes de liberar a nota.</p> : null}
-        <div className="invoice-detail-layout">
-          <section className="invoice-action-card invoice-action-card--wide">
-            <header><span>{detail.items.length ? "Dados da nota" : "Adicionar item"}</span><strong>{detail.items.length ? "Preenchido pelo XML/regra" : "Produto e classificacao fiscal"}</strong></header>
-            {detailMainItem || detailMainOperation ? (
-              <div className="invoice-auto-summary">
-                <div><span>Produto</span><strong>{detailMainItem?.description ?? products.find((product) => product.id === detailMainOperation?.productId)?.name ?? "-"}</strong></div>
-                <div><span>Quantidade</span><strong>{detailMainItem ? `${detailMainItem.quantity} ${formatProductUnit(detailMainItem.unit)}` : "-"}</strong></div>
-                <div><span>Preco comercial</span><strong>{detailMainItem ? decimalTextBr(detailMainItem.unitPriceDecimal) : "-"}</strong></div>
-                <div><span>Sacas</span><strong>{detailIsPackaging ? (packagingValueSaved ? "0 (sacaria)" : "Nao soma") : detailMainOperation?.quantitySacks ?? detailMainItem?.sacksQuantity ?? "-"}</strong></div>
-                <div><span>UF da venda</span><strong>{operationTypeLabel} / {operationScopeLabel}</strong></div>
-                <div><span>Servico calculado</span><strong>{detailMainOperation ? (detailIsPackaging && !packagingValueSaved ? "Informe o valor por unidade" : `${formatCurrencyFromCents(detailMainOperation.serviceAmountCents)} (${formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)}/${detailIsPackaging ? "un" : "saca"})`) : "-"}</strong></div>
-              </div>
-            ) : null}
-            {detail.items.length ? <p className="muted">Os campos abaixo servem apenas para adicionar outro item/operacao manualmente nesta nota.</p> : null}
-            <p className="muted">Compra/venda: <strong>{operationType === "PURCHASE" ? "Compra" : "Venda"}</strong> (definido na criacao da nota, mesmo para todos os itens dela).</p>
-            <FormGrid>
-              <SelectField label="Produto" value={productId} onChange={setProductId} options={products.map((item) => [item.id, item.name])} />
-              <SelectField label="UF da venda" value={scope} onChange={(value) => setScope(value as OperationScope)} options={OPERATION_SCOPE_OPTIONS} />
-              <TextField label="Quantidade" value={quantity} onChange={setQuantity} />
-              <TextField label="Preco unitario comercial" value={unitPrice} onChange={setUnitPrice} />
-              <TextField label="Sacas" value={sacks} onChange={setSacks} />
-            </FormGrid>
-            <button className="invoice-action-button invoice-action-button--primary" onClick={() => void addItemAndOperation()}>Adicionar item e operacao</button>
-          </section>
-          {detailIsPackaging ? (
-          <section className="invoice-action-card">
-            <header><span>Remessa de sacaria</span><strong>Valor por unidade</strong></header>
-            <p className="muted">Big bag vazio: a nota nao soma sacas. Informe quanto cobrar por unidade{detailMainItem ? ` (${decimalTextBr(detailMainItem.quantity)} unidades)` : ""}. Use 0 para nao cobrar.</p>
-            {packagingValueSaved && detailMainOperation ? <p className="muted">Atual: {formatCurrencyFromCents(detailMainOperation.appliedRateValueCents)} por unidade, total {formatCurrencyFromCents(detailMainOperation.serviceAmountCents)}.</p> : null}
-            <TextField label="Valor por unidade (R$)" value={packagingUnitValue} onChange={setPackagingUnitValue} />
-            <button className="invoice-action-button invoice-action-button--primary" disabled={!detail.operations.length || detail.operations.some((op) => op.billingStatus !== "UNBILLED")} onClick={() => void savePackagingUnitValue()}>Salvar valor por unidade</button>
-          </section>
-          ) : (
-          <section className="invoice-action-card">
-            <header><span>Servico</span><strong>Valor por saca</strong></header>
-            <p className="muted">Altera manualmente a primeira operacao da nota e exige motivo.</p>
-            <button className="invoice-action-button" disabled={!detail.operations.length} onClick={() => void overrideFirstOperation()}>Alterar valor da primeira operacao</button>
-          </section>
-          )}
-          <section className="invoice-action-card">
-            <header><span>Status</span><strong>Controle da nota</strong></header>
-            <p className="muted">Confirme para liberar cobranca ou cancele quando a nota deve permanecer no historico.</p>
-            <div className="invoice-action-row">
-              <button className="invoice-action-button invoice-action-button--primary" disabled={detail.document.status === "CONFIRMED" || detail.document.status === "CANCELED"} onClick={() => window.operationsCafe.confirmFiscalDocument(detail.document.id).then((updated) => { setDetail(updated); void load(); }).catch((errorValue: unknown) => setMessage(`Erro: ${errorValue instanceof Error ? errorValue.message : "falha ao confirmar."}`))}>Confirmar nota</button>
-              <button className="invoice-action-button" disabled={detail.document.status === "CANCELED"} onClick={() => { void requestTextInput({ title: "Cancelar nota", label: "Motivo do cancelamento" }).then((reason) => { if (reason) void window.operationsCafe.cancelFiscalDocument(detail.document.id, reason).then((updated) => { setDetail(updated); void load(); }); }); }}>Cancelar nota</button>
-              <button className="invoice-action-button invoice-action-button--danger" onClick={() => void deleteCurrentDocument()}>Excluir nota</button>
-            </div>
-          </section>
-          <section className="invoice-action-card">
-            <header><span>Empresa da nota</span><strong>Necessaria para Confirmacoes</strong></header>
-            <p className="muted">Nota lancada manualmente (sem XML) nao vem com empresa/CNPJ vinculado. Sem isso ela nao aparece nas buscas de Confirmacoes por empresa ou por numero.</p>
-            {(() => {
-              const linkedCompany = partnerLegalEntities.find((entity) => entity.id === detail.document.partnerLegalEntityId);
-              if (linkedCompany) return <p><strong>Vinculada:</strong> {linkedCompany.legalName || linkedCompany.tradeName} ({linkedCompany.cnpj ?? "CNPJ nao informado"})</p>;
-              const term = detailCompanySearchTerm.trim().toUpperCase();
-              const digitsTerm = term.replace(/\D/g, "");
-              const matches = term ? partnerLegalEntities.filter((entity) =>
-                entity.tradeName.toUpperCase().includes(term) ||
-                entity.legalName.toUpperCase().includes(term) ||
-                (digitsTerm && entity.cnpj?.includes(digitsTerm))
-              ).slice(0, 8) : [];
-              return (
-                <>
-                  <TextField label="Buscar empresa por nome ou CNPJ" value={detailCompanySearchTerm} onChange={setDetailCompanySearchTerm} />
-                  {matches.length ? (
-                    <div className="confirmation-company-results">
-                      {matches.map((entity) => (
-                        <div key={entity.id} className="confirmation-company-result-row">
-                          <button type="button" className="partner-action-button" onClick={() => void linkCompanyToDocument(entity.id)}>{entity.legalName || entity.tradeName} — {entity.cnpj ?? "CNPJ nao informado"}</button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : term ? <p className="muted">Nenhuma empresa encontrada.</p> : null}
-                </>
-              );
-            })()}
-          </section>
-        </div>
-        <div className="cards">
-          <article><span>Itens</span><strong>{detail.items.map((item) => `${item.description}: ${item.quantity} ${formatProductUnit(item.unit)}`).join(" | ") || "Nenhum"}</strong></article>
-          <article><span>Operacoes</span><strong>{detail.operations.map((op) => `${op.operationType}/${formatOperationScope(op.operationScope)}: ${formatSacks(op.quantitySacks)} sacas - ${formatCurrencyFromCents(op.serviceAmountCents)}`).join(" | ") || "Nenhuma"}</strong></article>
-          <article><span>Status</span><strong>{formatStatusLabel(detail.document.status)}</strong></article>
-        </div>
-        {isTriangulatedDetail ? (
-          <div className="operation-warning-card operation-warning-card--neutral">
-            <strong>Nota triangulada</strong>
-            <span>
-              Compra: {partnerName(purchaseLeg?.responsiblePartnerId)}
-              {purchaseLeg ? ` — ${formatCurrencyFromCents(purchaseLeg.appliedRateValueCents)}/saca (${formatCurrencyFromCents(purchaseLeg.serviceAmountCents)})` : " — sem operacao ainda"}
-              {" | "}
-              Venda: {partnerName(saleLeg?.responsiblePartnerId)}
-              {saleLeg ? ` — ${formatCurrencyFromCents(saleLeg.appliedRateValueCents)}/saca (${formatCurrencyFromCents(saleLeg.serviceAmountCents)})` : " — sem operacao ainda"}
-            </span>
-          </div>
-        ) : detail.operations.length ? (
-          <div className="operation-warning-card operation-warning-card--neutral">
-            <strong>Completar nota triangulada</strong>
-            <span>
-              Use quando a nota ja foi importada antes do cadastro do outro lado do negocio. O sistema cria a operacao oposta
-              para o parceiro/corretor escolhido, sem duplicar a chave da NF-e.
-            </span>
-            <div className="toolbar">
-              <PartnerQuickSearch
-                label={detailMainOperation?.operationType === "PURCHASE" ? "Cliente/corretor para cobranca" : "Fornecedor para acerto"}
-                value={detailSecondaryPartnerId}
-                onChange={setDetailSecondaryPartnerId}
-                partners={secondaryPartners}
-                legalEntities={partnerLegalEntities}
-              />
-              <button className="primary" disabled={!detailSecondaryPartnerId} onClick={() => void completeDetailTriangulation()}>Completar nota</button>
-            </div>
-          </div>
-        ) : null}
-        {detail.rateHistory && detail.rateHistory.length > 0 ? (
-          <div className="cards">
-            <article className="rate-history-card">
-              <span>Historico de tarifa</span>
-              <strong>
-                {detail.rateHistory.map((entry) => (
-                  <span key={entry.id} className="rate-history-entry">
-                    {formatDateOnlyBr(entry.changedAt)}: {entry.previousRateValueCents !== null ? formatCurrencyFromCents(entry.previousRateValueCents) : "sem valor"} → {entry.newRateValueCents !== null ? formatCurrencyFromCents(entry.newRateValueCents) : "sem valor"}{entry.reason ? ` (${entry.reason})` : ""}
-                  </span>
-                ))}
-              </strong>
-            </article>
-          </div>
-        ) : null}
-      </AdminBlock></div> : null}
+      {detail ? <div ref={manualDetailRef}>
+        <FiscalDocumentDetailPanel detail={detail} state={detailState} message={message} operationType={operationType} setMessage={setMessage} setDetail={setDetail} products={products} partners={partners} secondaryPartners={secondaryPartners} partnerLegalEntities={partnerLegalEntities} partnerName={partnerName} onReload={load} onAddItem={addItemAndOperation} onCompleteTriangulation={completeDetailTriangulation} onDelete={deleteCurrentDocument} onLinkCompany={linkCompanyToDocument} onOverrideFirstOperation={overrideFirstOperation} onSavePackagingUnitValue={savePackagingUnitValue} />
+      </div> : null}
       </>}
       {pageTab === "spreadsheets" && <>
       <AdminBlock title="Importar planilha">
@@ -1805,278 +1313,17 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
             <small>{pageTab === "received" ? "O nome e o CNPJ exato do fornecedor ficam visiveis antes do lancamento." : "O cliente e o CNPJ destinatario ficam visiveis antes do lancamento."}</small>
           </div>
         </div>
-        {vulpeDevAvailable ? (
-          <div className="operation-warning-card operation-warning-card--neutral">
-            <strong>{pageTab === "received" ? "Buscar notas recebidas" : "Buscar notas emitidas"}</strong>
-            <span>Escolha abaixo qual empresa propria deve ser consultada. O sistema separa as notas pelo sentido correto, remove as chaves ja cadastradas e nao lanca nada antes da sua confirmacao.</span>
-            <section className="collector-monitor" aria-label="Monitor do coletor remoto">
-              <div className="collector-monitor__heading">
-                <div>
-                  <strong>Monitor do coletor da Grao &amp; Grao</strong>
-                  <small>O estado e atualizado automaticamente a cada 30 segundos.</small>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void window.operationsCafe
-                      .getVulpeDevStatus()
-                      .then((status) => {
-                        setCollectorStatuses(status.collectors);
-                        setCollectorMonitorError(status.collectorMonitorError);
-                      })
-                      .catch(() => setMessage("Nao foi possivel atualizar o status do coletor agora."));
-                  }}
-                >
-                  Atualizar status
-                </button>
-              </div>
-              {collectorStatuses.length ? (
-                <div className="collector-monitor__list">
-                  {collectorStatuses.map((collector) => {
-                    const tone = !collector.online || collector.status === "ERROR" ? "danger" : collector.status === "PENDING_RETRY" ? "warning" : "success";
-                    const label = !collector.online ? "Sem sinal" : collector.status === "OK" ? "Funcionando agora" : collector.status === "PENDING_RETRY" ? "Online, com envio pendente" : "Online, com erro";
-                    return (
-                      <article className={`collector-monitor__item collector-monitor__item--${tone}`} key={`${collector.sourceCode}-${collector.machineId}`}>
-                        <div className="collector-monitor__title">
-                          <strong>{collector.sourceLabel}</strong>
-                          <span className={`collector-monitor__badge collector-monitor__badge--${tone}`}>{label}</span>
-                        </div>
-                        <small>{collectorCompanyLabels(collector.emitterCnpjs)} · coletor {collector.collectorVersion ?? "sem versao"}</small>
-                        <dl>
-                          <div><dt>Ultima atividade</dt><dd>{formatCollectorActivity(collector.updatedAt)}</dd></div>
-                          <div><dt>Ultima varredura correta</dt><dd>{formatCollectorActivity(collector.lastSuccessAt)}</dd></div>
-                          <div><dt>Ultimo XML enviado</dt><dd>{formatCollectorActivity(collector.lastUploadAt ?? collector.lastFileReceivedAt)}</dd></div>
-                          <div><dt>Fila no servidor</dt><dd>{collector.pendingFiles} arquivo(s)</dd></div>
-                          <div><dt>Iniciado em</dt><dd>{formatCollectorActivity(collector.startedAt)}</dd></div>
-                          <div><dt>Tempo ativo</dt><dd>{formatCollectorUptime(collector.uptimeSeconds)}</dd></div>
-                          <div><dt>Inicializacao automatica</dt><dd>{collector.startupConfigured ? "Configurada" : "Nao confirmada"}</dd></div>
-                          <div><dt>Ultima busca de atualizacao</dt><dd>{formatCollectorActivity(collector.lastUpdateCheckAt)}</dd></div>
-                        </dl>
-                        {collector.lastCommand ? (
-                          <p>Ultimo comando: <strong>{collectorCommandLabel(collector.lastCommand)}</strong> · {collectorCommandStatusLabel(collector.lastCommandStatus)}{collector.lastCommandResult ? ` · ${collector.lastCommandResult}` : ""}</p>
-                        ) : null}
-                        {collector.lastError ? <p>{collector.lastError}</p> : null}
-                        <div className="collector-monitor__actions">
-                          {(["SCAN_NOW", "BACKFILL", "UPDATE_NOW", "RESTART"] as const).map((command) => {
-                            const key = `${collector.sourceCode}-${collector.machineId}-${command}`;
-                            return (
-                              <button type="button" key={command} disabled={collectorCommandBusy !== null} onClick={() => void sendCollectorCommand(collector, command)}>
-                                {collectorCommandBusy === key ? "Enviando..." : collectorCommandLabel(command)}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <details className="collector-monitor__diagnostics">
-                          <summary>Ver diagnostico e registros recentes</summary>
-                          <pre>{collector.recentLogs?.trim() || "O coletor ainda nao enviou registros detalhados."}</pre>
-                        </details>
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="collector-monitor__empty">
-                  {collectorMonitorError ?? <>O servidor ainda nao recebeu o sinal de monitoramento. O coletor antigo continua enviando notas, mas precisa ser atualizado uma vez para mostrar o estado remoto.</>}
-                </div>
-              )}
-            </section>
-            <FormGrid>
-              <DateInput
-                label="Data inicial"
-                value={vulpePeriodStart}
-                onChange={(event) => {
-                  setVulpePeriodStart(event.target.value);
-                  setVulpeScan(null);
-                }}
-              />
-              <DateInput
-                label="Data final"
-                value={vulpePeriodEnd}
-                onChange={(event) => {
-                  setVulpePeriodEnd(event.target.value);
-                  setVulpeScan(null);
-                }}
-              />
-            </FormGrid>
-            <div className="toolbar vulpe-search-actions">
-              {[...vulpeDevSources].sort((left, right) => Number(right.source === "ALL") - Number(left.source === "ALL")).map((source) => (
-                <button key={source.source} className={source.source === "ALL" ? "vulpe-search-all" : undefined} type="button" disabled={!source.available} onClick={() => void prepareVulpeDevImport(source.source)}>
-                  {pageTab === "received" ? "Recebidas por" : "Emitidas por"} {source.label}
-                </button>
-              ))}
-            </div>
-            {vulpeScan ? (
-              <span>
-                {vulpeScan.label}: {vulpeScan.authorized} NF-e autorizada(s), {vulpeScan.alreadyImported} ja cadastrada(s), {vulpeScan.ignoredByUser} marcada(s) para nao cadastrar, {vulpeScan.canceledInvoicesHidden} cancelada(s) ocultada(s) e {vulpeScan.pendingReview} arquivo(s) aguardando revisao. Cancelamentos encontrados: {vulpeScan.cancellationEvents} ({vulpeScan.cancellationsAlreadyApplied} ja aplicado(s)).
-              </span>
-            ) : null}
-          </div>
-        ) : null}
+        <NotesSearchPanel available={vulpeDevAvailable} pageTab={pageTab} vulpeDevSources={vulpeDevSources} vulpePeriodStart={vulpePeriodStart} vulpePeriodEnd={vulpePeriodEnd} setVulpePeriodStart={setVulpePeriodStart} setVulpePeriodEnd={setVulpePeriodEnd} vulpeScan={vulpeScan} setVulpeScan={setVulpeScan} collectorStatuses={collectorStatuses} setCollectorStatuses={setCollectorStatuses} collectorMonitorError={collectorMonitorError} setCollectorMonitorError={setCollectorMonitorError} collectorCommandBusy={collectorCommandBusy} onCollectorCommand={sendCollectorCommand} setMessage={setMessage} onPrepareSource={prepareVulpeDevImport} />
         <div className="xml-stepper-top">
           <Stepper activeId={xmlImportSteps.find((step) => step.status === "current")?.id ?? "save"} steps={xmlImportSteps} />
         </div>
         <div className="import-columns">
           <div className="import-column import-column--queue" ref={xmlDataRef}>
-            <h3>{pageTab === "received" ? "Importar XMLs recebidos" : "Importar XMLs"}</h3>
-            <div className={`xml-dropzone-wrap${xmlQueue.length ? " is-compact" : ""}`}>
-            <FileDropzone
-              title="Arraste XMLs aqui ou selecione os arquivos"
-              description="Solte um ou mais XMLs da NF-e nesta área para inspecionar automaticamente."
-              dropHint="Também é possível usar os botões abaixo para escolher arquivo, vários XMLs ou uma pasta inteira."
-              onDropFiles={(files) => void prepareDroppedXmlImport(files)}
-              actions={
-                <>
-                  <button onClick={() => void prepareXmlImport("single")}>Selecionar XML</button>
-                  <button onClick={() => void prepareXmlImport("multiple")}>Selecionar varios XMLs</button>
-                  <button onClick={() => void prepareXmlImport("folder")}>Selecionar pasta</button>
-                </>
-              }
-            />
-            </div>
-            <label className="inline-check"><input type="checkbox" checked={includeXmlSubfolders} onChange={(event) => setIncludeXmlSubfolders(event.target.checked)} /> Incluir subpastas</label>
-            {xmlQueue.length ? (
-              <ul className="xml-queue-list">
-                  {xmlQueue.map((file) => {
-                    const party = xmlPartySummary(file, pageTab === "received" ? "INBOUND" : "OUTBOUND");
-                    return (
-                  <li key={file.token} className={xmlDeferredSelections[file.token] ? "xml-queue-item--deferred" : undefined}>
-                    <button type="button" className={file.token === selectedXmlFile?.token ? "active" : ""} onClick={() => setSelectedXmlToken(file.token)}>
-                      <span className="xml-queue-party"><strong>{party.title}</strong><small>{xmlQueueSummaryLine(file)}</small></span>
-                      <StatusBadge status={file.status} />
-                      {file.errorMessage ? <small className="xml-queue-file" title={file.errorMessage}>{file.errorMessage}</small> : null}
-                    </button>
-                    <button type="button" className="xml-defer-toggle" onClick={() => setXmlDeferredSelections((current) => ({ ...current, [file.token]: !current[file.token] }))}>{xmlDeferredSelections[file.token] ? "Voltar à fila" : "Ignorar por enquanto"}</button>
-                  </li>
-                    );
-                  })}
-              </ul>
-            ) : (
-              <EmptyState title="Nenhum arquivo selecionado" description="Selecione um ou mais XMLs de NF-e para começar." />
-            )}
-            {xmlQueue.length && !partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner ? (
-              <p className="xml-validate-hint">Falta escolher o cliente/corretor da cobrança na aba "Cliente e operação", ou marcar "Ignorar por enquanto" nas notas que não entram.</p>
-            ) : null}
-            <div className="toolbar">
-              <button onClick={() => void validateXmlImport()} disabled={xmlQueue.length === 0 || !hasValidXmlSelection || (!partnerId && !vulpeScan && xmlQueueRequiresCommercialPartner)}>
-                {xmlQueueHasWarehouseMovement && !xmlQueueRequiresCommercialPartner ? "Validar movimentação" : "Validar fila"}
-              </button>
-            </div>
+            <XmlImportQueue pageTab={pageTab} partnerId={partnerId} includeXmlSubfolders={includeXmlSubfolders} setIncludeXmlSubfolders={setIncludeXmlSubfolders} xmlQueue={xmlQueue} xmlDeferredSelections={xmlDeferredSelections} setXmlDeferredSelections={setXmlDeferredSelections} selectedXmlFile={selectedXmlFile} setSelectedXmlToken={setSelectedXmlToken} xmlQueueHasWarehouseMovement={xmlQueueHasWarehouseMovement} xmlQueueRequiresCommercialPartner={xmlQueueRequiresCommercialPartner} hasValidXmlSelection={hasValidXmlSelection} vulpeScan={vulpeScan} onPrepareDropped={prepareDroppedXmlImport} onPrepare={prepareXmlImport} onValidate={validateXmlImport} />
           </div>
 
           <div className="import-column">
-            <h3>Dados extraídos</h3>
-            {selectedXmlEvent ? (
-              <>
-                <div className="operation-warning-card operation-warning-card--neutral">
-                  <strong>Cancelamento autorizado encontrado na Vulpe</strong>
-                  <span>Este evento sera ligado a nota pela chave de acesso quando a fila for concluida.</span>
-                </div>
-                <dl className="kv-list">
-                  <div><dt>Chave da NF-e</dt><dd>{String(selectedXmlEvent.accessKey ?? selectedXmlFile?.accessKey ?? "-")}</dd></div>
-                  <div><dt>Data do evento</dt><dd>{selectedXmlEvent.eventDate ? formatDateBr(String(selectedXmlEvent.eventDate)) : "-"}</dd></div>
-                  <div><dt>Protocolo</dt><dd>{String(selectedXmlEvent.protocolNumber ?? "-")}</dd></div>
-                  <div><dt>Situação SEFAZ</dt><dd>{String(selectedXmlEvent.statusCode ?? "-")} - {String(selectedXmlEvent.statusMessage ?? "-")}</dd></div>
-                </dl>
-              </>
-            ) : selectedXmlPreview ? (
-              <>
-                {selectedXmlOwnMismatch ? (
-                  <div className="operation-warning-card operation-warning-card--inline">
-                    <strong>Outro CNPJ</strong>
-                    <span>Esta nota sera salva na empresa do XML ({selectedXmlParties.ownEntityLabel}).</span>
-                  </div>
-                ) : null}
-                {selectedXmlParties.isThirdPartyOrigin ? (
-                  <div className="operation-warning-card operation-warning-card--neutral operation-warning-card--inline">
-                    <strong>Empresa externa</strong>
-                    <span>Não é um CNPJ Villa ou Grão. Se emitente e destinatario ja estiverem cadastrados, gera compra e venda automaticamente.</span>
-                  </div>
-                ) : null}
-                <div className="xml-detail-parties">
-                  <div className="xml-detail-card">
-                    <span className="xml-detail-label">Emitente</span>
-                    <strong title={selectedXmlParties.issuerLabel ?? undefined}>{selectedXmlParties.issuerLabel ?? "Não identificado"}</strong>
-                    <small>Origem: {selectedXmlParties.originLabel}</small>
-                  </div>
-                  <div className="xml-detail-card">
-                    <span className="xml-detail-label">Destinatário</span>
-                    <strong title={selectedXmlParties.recipientLabel ?? undefined}>{selectedXmlParties.recipientLabel ?? "Não identificado"}</strong>
-                  </div>
-                </div>
-                <div className="xml-detail-card xml-detail-card--total">
-                  <div>
-                    <span className="xml-detail-label">Produto</span>
-                    <strong>{selectedXmlItem?.description ?? "-"}</strong>
-                    <small>{decimalTextBr(selectedXmlSacks)} sacas{selectedXmlItem?.commercialUnitValue ? ` · ${formatCurrencyFromCents(Math.round(Number(selectedXmlItem.commercialUnitValue) * 100))} por saca` : ""}</small>
-                  </div>
-                  <div className="xml-detail-total">
-                    <span className="xml-detail-label">Total dos produtos</span>
-                    <strong>{selectedXmlPreview.productsAmountCents != null ? formatCurrencyFromCents(selectedXmlPreview.productsAmountCents) : "-"}</strong>
-                  </div>
-                </div>
-                <div className="xml-detail-card">
-                  <span className="xml-detail-label">Documento</span>
-                  <dl className="kv-list">
-                    <div><dt>Emissão</dt><dd>{selectedXmlPreview.issuedAt ? formatDateBr(selectedXmlPreview.issuedAt) : "-"}</dd></div>
-                    <div><dt>Número/Série</dt><dd>{selectedXmlPreview.number ?? "-"}/{selectedXmlPreview.series ?? "-"}</dd></div>
-                    <div><dt>Modelo</dt><dd>{selectedXmlPreview.model ?? "-"}</dd></div>
-                    <div><dt>Natureza da operação</dt><dd>{selectedXmlPreview.nature ?? "-"}</dd></div>
-                    <div><dt>Transportadora</dt><dd>{selectedXmlPreview.transportCarrierName ?? "-"}</dd></div>
-                    <div><dt>Chave da NF-e</dt><dd className="xml-detail-key">
-                      <span title={selectedXmlPreview.accessKey ?? undefined}>{selectedXmlPreview.accessKey ?? "-"}</span>
-                      {selectedXmlPreview.accessKey ? <button type="button" className="xml-copy-key" onClick={() => void navigator.clipboard.writeText(selectedXmlPreview.accessKey ?? "").then(() => setMessage("Chave da NF-e copiada.")).catch(() => setMessage("Nao foi possivel copiar a chave."))}>Copiar</button> : null}
-                    </dd></div>
-                  </dl>
-                </div>
-                {selectedXmlFile && !selectedWarehouseMovement ? (
-                  <div className="xml-notes-block">
-                    <label>Contrato desta nota<input maxLength={200} value={xmlContractNumbers[selectedXmlFile.token] ?? selectedXmlExtractedContract} onChange={(event) => setXmlContractNumbers((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: contrato 123/2026" /></label>
-                    <label>Observações desta nota (saem na cobrança)<textarea rows={3} maxLength={500} value={xmlBillingObservations[selectedXmlFile.token] ?? ""} onChange={(event) => setXmlBillingObservations((current) => ({ ...current, [selectedXmlFile.token]: event.target.value }))} placeholder="Ex.: lote, pedido ou referencia comercial" /></label>
-                    <div className="note-options" role="group" aria-label="Itens desta nota que entram na cobranca">
-                      <span className="note-options__title">O que esta nota tem</span>
-                      <div className={`note-option${xmlFinancialServiceEnabled[selectedXmlFile.token] ? " is-on" : ""}`}>
-                        <label className="note-option__head">
-                          <input type="checkbox" checked={xmlFinancialServiceEnabled[selectedXmlFile.token] === true} onChange={(event) => {
-                            setXmlJob(null);
-                            setXmlFinancialServiceEnabled((current) => ({ ...current, [selectedXmlFile.token]: event.target.checked }));
-                          }} />
-                          <span><strong>Financeiro</strong><small>Usa o valor por saca "com financeiro" do cliente</small></span>
-                        </label>
-                      </div>
-                      {([
-                        { key: "freight", title: "DAE de frete", hint: "Valor do DAE de frete cobrado junto com a nota", enabled: xmlFreightDaeEnabled, setEnabled: setXmlFreightDaeEnabled, refs: xmlFreightDaeReferences, setRefs: setXmlFreightDaeReferences, amounts: xmlFreightDaeAmounts, setAmounts: setXmlFreightDaeAmounts },
-                        { key: "invoice", title: "DAE da nota fiscal", hint: "Valor do DAE referente à nota, cobrado junto com ela", enabled: xmlInvoiceDaeEnabled, setEnabled: setXmlInvoiceDaeEnabled, refs: xmlInvoiceDaeReferences, setRefs: setXmlInvoiceDaeReferences, amounts: xmlInvoiceDaeAmounts, setAmounts: setXmlInvoiceDaeAmounts }
-                      ] as const).map((option) => {
-                        const token = selectedXmlFile.token;
-                        const on = option.enabled[token] === true;
-                        return <div key={option.key} className={`note-option${on ? " is-on" : ""}`}>
-                          <label className="note-option__head">
-                            <input type="checkbox" checked={on} onChange={(event) => {
-                              const checked = event.target.checked;
-                              setXmlJob(null);
-                              option.setEnabled((current) => ({ ...current, [token]: checked }));
-                              if (!checked) {
-                                option.setRefs((current) => ({ ...current, [token]: "" }));
-                                option.setAmounts((current) => ({ ...current, [token]: "" }));
-                              }
-                            }} />
-                            <span><strong>{option.title}</strong><small>{option.hint}</small></span>
-                          </label>
-                          {on ? <div className="note-option__fields">
-                            <label>Valor a cobrar (R$)<input value={option.amounts[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setAmounts((current) => ({ ...current, [token]: event.target.value })); }} placeholder="R$ 0,00" /></label>
-                            <label>Número do DAE (opcional)<input maxLength={120} value={option.refs[token] ?? ""} onChange={(event) => { setXmlJob(null); option.setRefs((current) => ({ ...current, [token]: event.target.value })); }} placeholder="Ex.: 12345" /></label>
-                          </div> : null}
-                        </div>;
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-              </>
-            ) : selectedXmlFile?.status === "ERROR" ? (
-              <EmptyState title="XML não lido" description={selectedXmlFile.errorMessage ?? "O arquivo selecionado não pode ser lido. Confira se ele não está vazio ou corrompido."} />
-            ) : (
-              <EmptyState title="Sem dados ainda" description="Selecione um arquivo na lista ao lado para ver os dados extraídos automaticamente." />
-            )}
+            <XmlImportDataColumn selectedXmlFile={selectedXmlFile} view={selectedXmlView} xml={xmlState} setMessage={setMessage} />
           </div>
 
           <div className="import-column">
@@ -2324,10 +1571,9 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
         </div>
       </AdminBlock>
       {pageTab === "issued" ? <NumberingAudit legalEntities={data.legalEntities} periodStart={vulpePeriodStart} periodEnd={vulpePeriodEnd} onPeriodChange={(start, end) => { setVulpePeriodStart(start); setVulpePeriodEnd(end); setVulpeScan(null); }} /> : null}
-      <div ref={xmlHistoryRef}><AdminBlock title="Historico de XML">
-        <div className="table"><div className="table-head xml-history-grid"><span>Data</span><span>Status</span><span>Arquivos</span><span>Notas</span><span>Operacoes</span><span>Sem operacao</span><span>Eventos</span><span>Erros</span><span>Acoes</span></div>{visibleXmlHistory.slice(0, xmlHistoryLimit).map((job) => <div key={job.id} className="table-row xml-history-grid"><span>{formatDateBr(job.createdAt)}</span><span><StatusBadge status={job.status} /></span><span>{job.totalFiles}</span><span>{job.importedNotes}</span><span>{job.createdOperations}</span><span>{job.itemsWithoutOperation}</span><span>{job.importedEvents}</span><span>{job.errorFiles}</span><span className="row-actions"><button onClick={() => void openXmlImportJob(job.id)}>Detalhar</button><button className="danger" disabled={!xmlImportCanBeReverted(job)} onClick={() => void removeXmlImportJob(job.id)}>Excluir/Reverter</button></span></div>)}</div>
-        {visibleXmlHistory.length > xmlHistoryLimit ? <div className="toolbar"><button onClick={() => setXmlHistoryLimit((current) => current + 15)}>Mostrar mais ({visibleXmlHistory.length - xmlHistoryLimit} restantes)</button></div> : null}
-      </AdminBlock></div>
+      <div ref={xmlHistoryRef}>
+        <XmlImportHistory jobs={visibleXmlHistory} limit={xmlHistoryLimit} canRevert={xmlImportCanBeReverted} onShowMore={() => setXmlHistoryLimit((current) => current + 15)} onDetail={(jobId) => void openXmlImportJob(jobId)} onRevert={(jobId) => void removeXmlImportJob(jobId)} />
+      </div>
       </>}
       <Feedback message={message} />
     </section>

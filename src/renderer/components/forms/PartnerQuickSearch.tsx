@@ -21,7 +21,7 @@ export function PartnerQuickSearch({
   onChange,
   partners,
   legalEntities = [],
-  placeholder = "Digite nome, CNPJ ou cidade",
+  placeholder = "Nome ou CNPJ",
   disabled = false
 }: {
   label: string;

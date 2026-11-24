@@ -133,7 +133,9 @@ describe("renderer design system", () => {
   });
 
   it("separates received and issued invoices and requires the exact counterparty CNPJ in manual entry", () => {
-    const pageSource = readFileSync("src/renderer/pages/operations/OperationsPage.tsx", "utf8");
+    // O formulario de lancamento manual saiu da pagina para um componente; os textos conferidos ficam nos dois arquivos.
+    const pageOnlySource = readFileSync("src/renderer/pages/operations/OperationsPage.tsx", "utf8");
+    const pageSource = pageOnlySource + readFileSync("src/renderer/pages/operations/components/ManualFiscalDocumentForm.tsx", "utf8");
     const handlerSource = readFileSync("electron/main/ipc/handlers.ts", "utf8");
 
     expect(pageSource).toContain('{ id: "received", label: "Notas recebidas" }');

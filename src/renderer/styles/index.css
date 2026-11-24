@@ -1072,7 +1072,8 @@ input[type="checkbox"] {
 
 .warehouse-filters {
   display: grid;
-  grid-template-columns: minmax(190px, 1.2fr) minmax(190px, 1.2fr) repeat(2, minmax(145px, .75fr)) minmax(135px, .7fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: end;
   gap: 12px;
   align-items: end;
   padding: 16px;
@@ -1106,6 +1107,7 @@ input[type="checkbox"] {
 .warehouse-filters button {
   width: auto;
   min-width: 110px;
+  justify-self: end;
   cursor: pointer;
   font-weight: 700;
 }
@@ -2471,11 +2473,11 @@ table tbody tr:hover {
 }
 
 .partner-grid {
-  grid-template-columns: 1.3fr 1.35fr 80px 130px 190px;
+  grid-template-columns: minmax(120px, 1.3fr) minmax(120px, 1.2fr) minmax(64px, .5fr) minmax(100px, .9fr) minmax(150px, 1fr);
 }
 
 .partner-company-grid {
-  grid-template-columns: minmax(220px, 1.35fr) 150px minmax(120px, .75fr) minmax(180px, 1fr) 80px 110px;
+  grid-template-columns: minmax(160px, 1.35fr) minmax(120px, 1fr) minmax(100px, .75fr) minmax(130px, 1fr) minmax(64px, .5fr) minmax(104px, .75fr);
 }
 
 .partner-company-grid span {
@@ -2771,7 +2773,7 @@ table tbody tr:hover {
 }
 
 .xml-history-grid {
-  grid-template-columns: 130px 140px 78px 78px 90px 110px 78px 70px 180px;
+  grid-template-columns: minmax(104px, 1.2fr) minmax(104px, 1.1fr) minmax(64px, .7fr) minmax(64px, .7fr) minmax(76px, .8fr) minmax(90px, .9fr) minmax(64px, .7fr) minmax(56px, .6fr) minmax(150px, 1.4fr);
 }
 
 .xml-files-grid {
@@ -6455,7 +6457,7 @@ table tbody tr:hover {
 .invoice-receipt-filters label, .invoice-receipt-fields label { display: grid; gap: 6px; min-width: 0; font-size: 13px; font-weight: 700; }
 .invoice-receipt-filters input, .invoice-receipt-fields input { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: #fff; }
 .invoice-receipt-table { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
-.invoice-receipt-row { display: grid; grid-template-columns: 26px minmax(48px, 0.6fr) minmax(80px, 0.7fr) minmax(120px, 2.2fr) minmax(48px, 0.6fr) minmax(100px, 1fr); gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface, #fff); cursor: pointer; }
+.invoice-receipt-row { display: grid; grid-template-columns: 22px minmax(40px, 0.5fr) minmax(90px, 0.8fr) minmax(0, 1.6fr) minmax(36px, 0.4fr) minmax(104px, 1.1fr); gap: 8px; align-items: center; padding: 10px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface, #fff); cursor: pointer; }
 .invoice-receipt-row > span { min-width: 0; overflow-wrap: anywhere; }
 .invoice-receipt-row small { display: block; color: var(--color-text-muted, #7a7366); font-size: 12px; }
 .invoice-receipt-row.is-on { border-color: #2f8f57; background: #f1faf4; }
@@ -6498,8 +6500,9 @@ table tbody tr:hover {
 .payables-summary__card.is-active { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #1c1a17) 25%, transparent) !important; }
 .payables-drafts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid #e2c27a; border-radius: 10px; background: #fff8e6; color: #6b4a0b; font-size: 13px; }
 .payables-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.payables-toolbar input[type="search"] { flex: 1 1 260px; min-width: 0; min-height: 38px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: #fff; }
-.payables-toolbar select { min-height: 38px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: #fff; }
+.payables-toolbar input[type="search"] { flex: 1 1 200px; min-width: 0; min-height: 38px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: #fff; }
+.payables-toolbar > button { margin-left: auto; }
+.payables-toolbar select { flex: 0 0 auto; min-height: 38px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: #fff; }
 .payables-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .payables-row { display: grid; grid-template-columns: 96px minmax(180px, 2.2fr) minmax(110px, 1fr) minmax(100px, 0.9fr) minmax(100px, 0.9fr) minmax(120px, 1fr) auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--color-border); border-left: 4px solid transparent; border-radius: 10px; background: var(--color-surface, #fff); }
 .payables-row > span { min-width: 0; overflow-wrap: anywhere; }
@@ -7092,25 +7095,6 @@ table tbody tr:hover {
   font-size: 13px;
 }
 
-/* Busca de notas dentro de Cobranca: campo acima da lista de notas elegiveis. */
-.charge-note-search {
-  display: grid;
-  gap: 6px;
-  max-width: 420px;
-  margin-bottom: 12px;
-  font-size: 13px;
-  font-weight: 700;
-}
-.charge-note-search input {
-  width: 100%;
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: #fff;
-  font-weight: 400;
-}
-
 /* ===== Modernizacao visual (Fase 2): menu lateral e cabecalho =====
    Sobrescreve as camadas anteriores de .app-sidebar e .app-topbar (ver mapa de CSS).
    Cores vem dos tokens do tema (--color-*); --brand-secondary e o dourado de cada empresa. */
@@ -7201,4 +7185,97 @@ table tbody tr:hover {
   padding: 4px 10px;
   font-size: 13px;
   font-weight: 600;
+}
+
+/* Rodape do menu lateral (Configuracoes e atualizacoes): o botao fica no tema escuro do menu.
+   Sem isso, a regra geral de botoes deixava o fundo branco no hover e o texto claro ficava ilegivel. */
+.app-sidebar .app-sidebar__footer button,
+.app-sidebar .app-sidebar__footer button:hover:not(:disabled),
+.app-sidebar .app-sidebar__footer button:active:not(:disabled) {
+  min-height: 36px;
+  padding: 8px 12px;
+  color: var(--color-sidebar-text);
+  border: 1px solid color-mix(in srgb, var(--color-sidebar-text) 22%, transparent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  font-weight: 600;
+}
+
+.app-sidebar .app-sidebar__footer button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-sidebar-text) 10%, transparent) !important;
+  border-color: color-mix(in srgb, var(--brand-secondary) 55%, transparent) !important;
+  color: var(--color-sidebar-text) !important;
+}
+
+.app-sidebar .app-sidebar__footer button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand-secondary) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* Botoes dentro de cartoes (ex.: Configuracoes > Templates de confirmacao): o texto quebra
+   dentro do botao em vez de passar da borda do cartao. */
+.ui-card > button:not(.ui-icon-button),
+html .ui-card > button:not(.ui-icon-button) {
+  max-width: 100% !important;
+  white-space: normal !important;
+  line-height: 1.25 !important;
+  text-align: left !important;
+}
+
+/* Avisos (ui-alert): a altura acompanha o texto. Havia uma altura fixa que cortava o texto
+   de avisos mais longos (ex.: Assistente > "Modo de consulta"). */
+.ui-alert {
+  height: auto !important;
+  min-height: 0;
+}
+
+/* Aviso no topo do Assistente: nao e esticado pela linha da grade (a linha ficava menor que o texto). */
+.assistant-page > .ui-alert {
+  align-self: start;
+}
+
+/* Recibos: data e valor da nota ficam em uma linha (nao quebram no meio do numero). */
+.invoice-receipt-row > span:nth-child(3),
+.invoice-receipt-row > span:nth-child(6) {
+  white-space: nowrap;
+}
+
+/* Confirmacoes: seis resumos em tres colunas (dois por linha em telas estreitas). */
+html.site .content-section .cards.cards--six,
+.cards.cards--six {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+@media (max-width: 900px) {
+  html.site .content-section .cards.cards--six,
+  .cards.cards--six {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Seletor dentro de campo de barra de ferramentas (ex.: Planilhas > Aba): nao pode encolher
+   ate ficar sem espaco para o nome da opcao. */
+.toolbar > .ui-field > select {
+  min-width: 140px;
+}
+
+/* Busca de notas dentro de Cobranca: campo acima da lista de notas elegiveis. */
+.charge-note-search {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.charge-note-search input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 400;
 }

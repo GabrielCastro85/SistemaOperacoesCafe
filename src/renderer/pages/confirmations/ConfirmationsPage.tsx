@@ -760,7 +760,7 @@ export function ConfirmationsPage({ data }: { data: BootstrapData }): JSX.Elemen
       )}
       <div className="settings-tabs">{["Confirmacoes", "Clausulas"].map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</div>
       {tab === "Confirmacoes" && view !== "detail" && (
-        <div className="cards">
+        <div className="cards cards--six">{/* 6 resumos: 3 por linha evita a linha com um card sobrando */}
           <article><span>Confirmacoes</span><strong>{summary?.confirmations ?? 0}</strong></article>
           <article><span>Sacas confirmadas</span><strong>{formatSacks(summary?.totalSacksDecimal)}</strong></article>
           <article><span>Valor comercial</span><strong>{formatCurrencyFromCents(summary?.totalCommercialAmountCents ?? 0)}</strong></article>
