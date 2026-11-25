@@ -382,6 +382,16 @@ html.site :where(.ui-button):hover:not(:disabled) {
   box-shadow: var(--site-shadow-hover) !important;
 }
 
+/* Seletores de dois lados (Compra/Venda, Interno/Externo): o lado escolhido
+   continua escuro ao passar o mouse; sem isto o fundo claro do hover acima
+   deixava o texto branco ilegivel. */
+html.site .xml-segment__options button.active,
+html.site .xml-segment__options button.active:hover:not(:disabled) {
+  border-color: var(--color-primary, #263238) !important;
+  background: var(--color-primary, #263238) !important;
+  color: var(--color-primary-text, #ffffff) !important;
+}
+
 html.site button:focus-visible {
   outline: none !important;
   box-shadow: var(--site-focus) !important;
