@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { BusinessPartner, BusinessPartnerLegalEntity } from "../../../shared/types/domain";
+import { useDropdownAlignEnd } from "./useDropdownAlign";
 import { formatCnpj, onlyDigits } from "../../../shared/utils/format";
 
 function normalizeSearch(value: string | null | undefined): string {
@@ -33,9 +34,11 @@ export function PartnerQuickSearch({
   disabled?: boolean;
 }): JSX.Element {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const selectedPartner = partners.find((partner) => partner.id === value);
   const [query, setQuery] = useState(partnerLabel(selectedPartner));
   const [open, setOpen] = useState(false);
+  const alignEnd = useDropdownAlignEnd(open, wrapperRef, panelRef);
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
@@ -124,7 +127,7 @@ export function PartnerQuickSearch({
         }}
       />
       {open ? (
-        <div className="partner-search__panel">
+        <div ref={panelRef} className={alignEnd ? "partner-search__panel partner-search__panel--end" : "partner-search__panel"}>
           <div className="partner-search__head"><span>Cliente</span><span>CNPJ</span><span>Cidade/UF</span></div>
           {results.length ? results.map((item, index) => (
             <button

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { BusinessPartnerLegalEntity } from "../../../shared/types/domain";
+import { useDropdownAlignEnd } from "./useDropdownAlign";
 import { formatCnpj, onlyDigits } from "../../../shared/utils/format";
 
 function normalizeSearch(value: string | null | undefined): string {
@@ -32,9 +33,11 @@ export function LegalEntityQuickSearch({
   disabled?: boolean;
 }): JSX.Element {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const selectedEntity = legalEntities.find((entity) => entity.id === value);
   const [query, setQuery] = useState(entityLabel(selectedEntity));
   const [open, setOpen] = useState(false);
+  const alignEnd = useDropdownAlignEnd(open, wrapperRef, panelRef);
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
@@ -112,7 +115,7 @@ export function LegalEntityQuickSearch({
         }}
       />
       {open ? (
-        <div className="partner-search__panel">
+        <div ref={panelRef} className={alignEnd ? "partner-search__panel partner-search__panel--end" : "partner-search__panel"}>
           <div className="partner-search__head"><span>Empresa</span><span>CNPJ</span><span>Cidade/UF</span></div>
           {results.length ? results.map((item, index) => (
             <button

@@ -7279,3 +7279,10 @@ html.site .content-section .cards.cards--six,
   background: #fff;
   font-weight: 400;
 }
+
+/* Busca de cliente/empresa num campo perto da borda direita: a lista abre alinhada
+   pela direita do campo para nao sair da tela (useDropdownAlign.ts). */
+.partner-search__panel.partner-search__panel--end {
+  left: auto;
+  right: 0;
+}
