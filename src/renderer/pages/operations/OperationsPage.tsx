@@ -1410,7 +1410,7 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
                     <span className="xml-segment__label">UF da operação</span>
                     <div className="xml-segment__options" role="group" aria-label="UF da operação">
                       {OPERATION_SCOPE_OPTIONS.filter(([value]) => value !== "ALL").map(([value, label]) => (
-                        <button key={value} type="button" className={selectedXmlScope === value ? "active" : ""} onClick={() => { if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: value })); setScope(value); }}>{value === "INTERNAL" ? "Interno" : value === "EXTERNAL" ? "Externo" : label}</button>
+                        <button key={value} type="button" className={selectedXmlScope === value ? "active" : ""} onClick={() => { if (selectedXmlFile) setXmlScopeOverrides((current) => ({ ...current, [selectedXmlFile.token]: value })); setScope(value); }}>{label}</button>
                       ))}
                     </div>
                   </div>

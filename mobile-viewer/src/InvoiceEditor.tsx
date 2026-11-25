@@ -216,7 +216,7 @@ export function ManualInvoiceDrawer({ open, organizationId, legalEntityId, onClo
           <label>Valor total da nota (R$)<input className="ui-input" inputMode="decimal" placeholder="0,00" value={total} onChange={(event) => setTotal(event.target.value)} /></label>
           <label>Escopo
             <select className="ui-select" value={operationScope} onChange={(event) => setOperationScope(event.target.value as "INTERNAL" | "EXTERNAL")}>
-              <option value="INTERNAL">Mesma UF</option><option value="EXTERNAL">Outra UF</option>
+              <option value="INTERNAL">Interno</option><option value="EXTERNAL">Externo</option>
             </select>
           </label>
           <label>Contrato<input className="ui-input" value={contractNumber} onChange={(event) => setContractNumber(event.target.value)} /></label>
@@ -421,7 +421,7 @@ export function InvoiceDetailDrawer({ invoiceId, organizationId, legalEntityId, 
               <strong>Operações e tarifas</strong>
               {detail.operations.map((operation) => (
                 <div className="viewer-invoice-editor__line" key={operation.id}>
-                  <span><strong>{operation.responsiblePartnerName ?? "—"}</strong><small>{operation.productName ?? "Produto"} · {operation.operationScope === "EXTERNAL" ? "Outra UF" : "Mesma UF"} · {BILLING_LABELS[operation.billingStatus] ?? operation.billingStatus}</small></span>
+                  <span><strong>{operation.responsiblePartnerName ?? "—"}</strong><small>{operation.productName ?? "Produto"} · {operation.operationScope === "EXTERNAL" ? "Externo" : "Interno"} · {BILLING_LABELS[operation.billingStatus] ?? operation.billingStatus}</small></span>
                   <span>{formatSacks(operation.quantitySacks)} sacas × {formatCurrencyBr(operation.rateCents)}<small>
                     {Number(operation.grossQuantitySacks) !== Number(operation.quantitySacks) ? `${formatSacks(operation.grossQuantitySacks)} na nota, menos devoluções · ` : ""}
                     {operation.manualRate ? `Manual: ${operation.manualReason ?? ""}` : "Pela regra"}

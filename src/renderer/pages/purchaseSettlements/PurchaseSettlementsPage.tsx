@@ -318,9 +318,9 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
 
       {tab === "resumo" ? (
         <AdminBlock title="Resumo do periodo por fornecedor">
-          <p className="muted">Sacas e valor a pagar por fornecedor, separado entre notas da mesma UF e de outra UF.</p>
+          <p className="muted">Sacas e valor a pagar por fornecedor, separado entre notas internas e externas.</p>
           <div className="table">
-            <div className="table-head partner-summary-grid"><span>Fornecedor</span><span>Sacas mesma UF</span><span>Sacas outra UF</span><span>Valor mesma UF</span><span>Valor outra UF</span><span>Total</span><span>Acoes</span></div>
+            <div className="table-head partner-summary-grid"><span>Fornecedor</span><span>Sacas internas</span><span>Sacas externas</span><span>Valor interno</span><span>Valor externo</span><span>Total</span><span>Acoes</span></div>
             {summary.map((row) => (
               <div key={row.partnerId} className="table-row partner-summary-grid">
                 <span>{row.partnerDisplayName}</span>

@@ -439,8 +439,8 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
       if (!form.specificCounterpartyLegalEntityId) throw new Error("Selecione a empresa especifica para a regra especial.");
       created += await createBrokerRule(partnerId, partnerOrganizationId, "ALL", form.specificCounterpartyValue, form.specificCounterpartyLegalEntityId, "Regra especial por empresa da nota") ? 1 : 0;
     }
-    created += await createBrokerRule(partnerId, partnerOrganizationId, "INTERNAL", form.internalValue, null, "Regra padrao para venda na mesma UF") ? 1 : 0;
-    created += await createBrokerRule(partnerId, partnerOrganizationId, "EXTERNAL", form.externalValue, null, "Regra padrao para venda em outra UF") ? 1 : 0;
+    created += await createBrokerRule(partnerId, partnerOrganizationId, "INTERNAL", form.internalValue, null, "Regra padrao para venda interna") ? 1 : 0;
+    created += await createBrokerRule(partnerId, partnerOrganizationId, "EXTERNAL", form.externalValue, null, "Regra padrao para venda externa") ? 1 : 0;
     return created;
   }
 
@@ -836,8 +836,8 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                       <div className="broker-rules-grid">
                         <SelectField label="Empresa especifica" value={brokerRuleForm.specificCounterpartyLegalEntityId} onChange={(value) => updateBrokerRuleForm("specificCounterpartyLegalEntityId", value)} options={[["", "Nenhuma"], ...allLegalEntities.map((entity) => [entity.id, entity.tradeName] as [string, string])]} />
                         <TextField label="Valor para empresa especifica" value={brokerRuleForm.specificCounterpartyValue} onChange={(value) => updateBrokerRuleForm("specificCounterpartyValue", value)} />
-                        <TextField label="Valor mesma UF" value={brokerRuleForm.internalValue} onChange={(value) => updateBrokerRuleForm("internalValue", value)} />
-                        <TextField label="Valor outra UF" value={brokerRuleForm.externalValue} onChange={(value) => updateBrokerRuleForm("externalValue", value)} />
+                        <TextField label="Valor interno" value={brokerRuleForm.internalValue} onChange={(value) => updateBrokerRuleForm("internalValue", value)} />
+                        <TextField label="Valor externo" value={brokerRuleForm.externalValue} onChange={(value) => updateBrokerRuleForm("externalValue", value)} />
                       </div>
                     </section>
                   </div>
@@ -889,14 +889,14 @@ export function PartnersPage({ data }: { data: BootstrapData; refresh?: () => Pr
                       <span className="partner-action-icon" aria-hidden="true">%</span>
                       <div>
                         <strong>Regras de cobranca por saca</strong>
-                        <small>Use para casos como Valani: empresa especifica, vendas na mesma UF e vendas em outra UF.</small>
+                        <small>Use para casos como Valani: empresa especifica, vendas internas e vendas externas.</small>
                       </div>
                     </div>
                     <div className="broker-rules-grid">
                       <SelectField label="Empresa especifica" value={editBrokerRuleForm.specificCounterpartyLegalEntityId} onChange={(value) => updateEditBrokerRuleForm("specificCounterpartyLegalEntityId", value)} options={[["", "Nenhuma"], ...allLegalEntities.map((entity) => [entity.id, entity.tradeName] as [string, string])]} />
                       <TextField label="Valor para empresa especifica" value={editBrokerRuleForm.specificCounterpartyValue} onChange={(value) => updateEditBrokerRuleForm("specificCounterpartyValue", value)} />
-                      <TextField label="Valor mesma UF" value={editBrokerRuleForm.internalValue} onChange={(value) => updateEditBrokerRuleForm("internalValue", value)} />
-                      <TextField label="Valor outra UF" value={editBrokerRuleForm.externalValue} onChange={(value) => updateEditBrokerRuleForm("externalValue", value)} />
+                      <TextField label="Valor interno" value={editBrokerRuleForm.internalValue} onChange={(value) => updateEditBrokerRuleForm("internalValue", value)} />
+                      <TextField label="Valor externo" value={editBrokerRuleForm.externalValue} onChange={(value) => updateEditBrokerRuleForm("externalValue", value)} />
                     </div>
                     <div className="partner-action-row">
                       <button className="partner-action-button partner-action-button--primary" onClick={() => void saveSelectedBrokerRules()}>Salvar regras do corretor</button>

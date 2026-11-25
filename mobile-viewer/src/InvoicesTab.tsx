@@ -291,7 +291,7 @@ export function InvoicesTab({ organizationId, legalEntityId }: { organizationId:
                 </label>
                 <label>Escopo da operação
                   <select className="ui-select" value={operationScope} onChange={(event) => setOperationScope(event.target.value as "INTERNAL" | "EXTERNAL")}>
-                    <option value="INTERNAL">Mesma UF</option><option value="EXTERNAL">Outra UF</option>
+                    <option value="INTERNAL">Interno</option><option value="EXTERNAL">Externo</option>
                   </select>
                 </label>
               </div>

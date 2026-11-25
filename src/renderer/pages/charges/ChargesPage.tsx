@@ -1504,7 +1504,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
             <DateInput label="Inicio do periodo" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
             <DateInput label="Fim do periodo" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
           </FormGrid>
-        <p className="muted">Sacas e valor de servico por cliente/corretor, separado entre vendas na mesma UF e em outra UF. Clientes sem movimento no periodo aparecem zerados.</p>
+        <p className="muted">Sacas e valor de servico por cliente/corretor, separado entre vendas internas e externas. Clientes sem movimento no periodo aparecem zerados.</p>
         <Input
           label="Pesquisar cliente/corretor"
           value={partnerSummarySearch}
@@ -1514,7 +1514,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         <label className="inline-check"><input type="checkbox" checked={includeAlreadyBilled} onChange={(event) => setIncludeAlreadyBilled(event.target.checked)} /> Incluir operacoes ja cobradas</label>
         <label className="inline-check"><input type="checkbox" checked={showEmptyPartners} onChange={(event) => setShowEmptyPartners(event.target.checked)} /> Mostrar clientes sem movimento</label>
         <div className="table">
-          <div className="table-head partner-summary-grid"><span>Cliente/corretor</span><span>Sacas mesma UF</span><span>Sacas outra UF</span><span>Valor mesma UF</span><span>Valor outra UF</span><span>Total</span><span>Acoes</span></div>
+          <div className="table-head partner-summary-grid"><span>Cliente/corretor</span><span>Sacas internas</span><span>Sacas externas</span><span>Valor interno</span><span>Valor externo</span><span>Total</span><span>Acoes</span></div>
           {visiblePartnerSummary.map((row) => (
             <div key={row.partnerId} className="table-row partner-summary-grid">
               <span>{row.partnerDisplayName}</span>

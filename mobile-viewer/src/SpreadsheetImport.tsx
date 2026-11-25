@@ -179,7 +179,7 @@ export function SpreadsheetImportCard({ organizationId, legalEntityId, onClose, 
               </label>
               <label>Escopo padrão
                 <select className="ui-select" value={operationScope} onChange={(event) => { setOperationScope(event.target.value as "INTERNAL" | "EXTERNAL"); setValidation(null); }}>
-                  <option value="INTERNAL">Interno (mesma UF)</option><option value="EXTERNAL">Externo (outra UF)</option>
+                  <option value="INTERNAL">Interno</option><option value="EXTERNAL">Externo</option>
                 </select>
               </label>
               <label>Data padrão<input className="ui-input" type="date" value={defaultDate} onChange={(event) => { setDefaultDate(event.target.value); setValidation(null); }} /></label>

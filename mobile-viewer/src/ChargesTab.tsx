@@ -234,7 +234,7 @@ function OpenNotesPanel({ organizationId, legalEntityId, periodStart, periodEnd,
               <span className="viewer-open-note-row__note" role="cell"><label className="viewer-open-note-select"><input type="checkbox" disabled={!clientId || note.hasPendingIssues} checked={selectedIds.includes(note.id)} onChange={() => toggleNote(note.id)} /><span><strong>NF {note.documentNumber}</strong><small>{formatDateBr(note.operationDate)}</small></span></label></span>
               <span role="cell"><strong>{note.clientName}</strong><small>{note.companyContext}</small></span>
               <span role="cell"><strong>{note.issuerName ?? "Emitente não identificado"}</strong><small>Destino: {note.destinationName ?? "Não identificado"}</small></span>
-              <span role="cell"><strong>{note.operationScope === "INTERNAL" ? "Mesma UF" : "Outra UF"}</strong><small>{decimalBr(note.quantitySacks)} sacas · {formatCurrencyBr(note.rateCents)}/saca</small></span>
+              <span role="cell"><strong>{note.operationScope === "INTERNAL" ? "Interno" : "Externo"}</strong><small>{decimalBr(note.quantitySacks)} sacas · {formatCurrencyBr(note.rateCents)}/saca</small></span>
               <span className="viewer-open-note-row__amount" role="cell"><strong>{formatCurrencyBr(note.serviceAmountCents)}</strong><small>{decimalBr(note.quantitySacks)} sacas</small></span>
               <span role="cell"><span className="viewer-open-note__status">Não cobrada{note.hasPendingIssues ? " · Com pendências" : ""}</span></span>
             </div>
