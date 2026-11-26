@@ -9,7 +9,7 @@ import { AdminBlock, FormGrid } from "../../components/layout/SectionPrimitives"
 import { requestDecision, requestTextInput } from "../../utils/dialogs";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import { formatOperationScope } from "../../../shared/utils/operationLabels";
-import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentRecipientNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
+import { fiscalDocumentCounterpartyNameFromSnapshot, fiscalDocumentIssuerNameFromSnapshot, fiscalDocumentRecipientNameFromSnapshot } from "../../../shared/utils/fiscalDocumentLabels";
 import { formatCombinedStatusLabel, formatStatusLabel } from "../../../shared/utils/statusLabels";
 import { sumDecimalTexts } from "../../../shared/utils/decimal";
 import { adjustedChargeTotal } from "../../../shared/utils/chargePeriodTotal";
@@ -512,6 +512,12 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   function triangulatedIssuerLabel(operation: Operation): string | null {
     const document = operationDocument(operation);
     if (!document?.secondaryResponsiblePartnerId) return null;
+    // Quem emitiu de verdade e' o emitente do XML. O partnerLegalEntityId da
+    // ponta de venda aponta para o destinatario (ex.: NF 149 Rodrigues ->
+    // Primavera mostrava "Primavera" como emitente), entao ele so' vale como
+    // fallback para notas sem XML gravado.
+    const xmlIssuerName = fiscalDocumentIssuerNameFromSnapshot(document);
+    if (xmlIssuerName) return xmlIssuerName;
     // partnerLegalEntities aqui so' cobre empresas ligadas a parceiros com
     // papel CLIENTE (ver load() acima) -- o emissor real de uma triangulada
     // costuma ser o lado FORNECEDOR, que nao esta nessa lista. Por isso cai
@@ -1259,8 +1265,8 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                     const issuerLabel = triangulatedIssuerLabel(op);
                     return (
                       <div key={`paid-${op.id}`} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
-                        <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
-                        <span><strong>{counterpartyLabel(op)}</strong><small>{companyLabel}</small></span>
+                        <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
+                        <span><strong>{counterpartyLabel(op)}</strong><small>{issuerLabel ?? companyLabel}</small></span>
                         <span>{formatOperationScope(op.operationScope)}</span>
                         <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
                         <span><strong>{decimalTextBr(op.quantitySacks)}</strong></span>
@@ -1326,10 +1332,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                 {visibleEligible.map((op) => {
                   const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                   const issuerLabel = triangulatedIssuerLabel(op);
-                  const companyContextLabel = issuerLabel ? "Operacao terceirizada" : companyLabel;
+                  const companyContextLabel = issuerLabel ?? companyLabel;
                   return (
                     <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
-                      <span><label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={selectedNoteIds.has(op.fiscalDocumentId)} onChange={() => toggleNote(op.fiscalDocumentId)} aria-label={`Selecionar ${operationNoteLabel(op)}`} /> <strong>{operationNoteLabel(op)}</strong></label><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
+                      <span><label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={selectedNoteIds.has(op.fiscalDocumentId)} onChange={() => toggleNote(op.fiscalDocumentId)} aria-label={`Selecionar ${operationNoteLabel(op)}`} /> <strong>{operationNoteLabel(op)}</strong></label><small>{formatDateOnlyBr(op.operationDate)}</small></span>
                       <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{chargeQuantityLabel(op.quantitySacks, op.appliedRateValueCents, op.serviceAmountCents)}</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>
@@ -1364,10 +1370,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   {diagnosticOperations.map((op) => {
                     const companyLabel = legalEntityLabel(op.ownLegalEntityId);
                     const issuerLabel = triangulatedIssuerLabel(op);
-                    const companyContextLabel = issuerLabel ? "Operacao terceirizada" : companyLabel;
+                    const companyContextLabel = issuerLabel ?? companyLabel;
                     return (
                       <div key={op.id} className={`table-row charge-diagnostic-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
-                        <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small>{issuerLabel ? <small>Emitida por {issuerLabel}</small> : null}</span>
+                        <span><strong>{operationNoteLabel(op)}</strong><small>{formatDateOnlyBr(op.operationDate)}</small></span>
                         <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
                         <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{chargeQuantityLabel(op.quantitySacks, op.appliedRateValueCents, op.serviceAmountCents)}</small></span>
                         <span>
