@@ -92,10 +92,11 @@ function currentBillingRange(periodicity: BillingPeriodicity): { periodStart: st
   const today = new Date();
   const start = new Date(today);
   if (periodicity === "WEEKLY") {
-    const daysSinceMonday = (today.getDay() + 6) % 7;
-    start.setDate(today.getDate() - daysSinceMonday);
+    // Semana de cobranca: sabado a sexta, para nao deixar de fora nota emitida no fim de semana.
+    const daysSinceSaturday = (today.getDay() + 1) % 7;
+    start.setDate(today.getDate() - daysSinceSaturday);
     const end = new Date(start);
-    end.setDate(start.getDate() + 4);
+    end.setDate(start.getDate() + 6);
     return { periodStart: localDateInputValue(start), periodEnd: localDateInputValue(end), label: "semana atual" };
   }
   if (periodicity === "BIWEEKLY") {
