@@ -144,12 +144,6 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
   const selectedOperations = eligible.filter((operation) => selectedNoteIds.has(operation.fiscalDocumentId));
   const availableNoteIds = Array.from(new Set(eligible.map((operation) => operation.fiscalDocumentId)));
-  const visibleEligible = eligible.filter((operation) => {
-    const term = noteSearch.trim().toUpperCase();
-    if (!term) return true;
-    const haystack = [operationDocument(operation)?.documentNumber ?? "", counterpartyLabel(operation), legalEntityLabel(operation.ownLegalEntityId), triangulatedIssuerLabel(operation) ?? ""].join(" ").toUpperCase();
-    return haystack.includes(term);
-  });
   const selectedNoteCount = new Set(selectedOperations.map((operation) => operation.fiscalDocumentId)).size;
   function toggleNote(documentId: string): void {
     setSelectedNoteIds((current) => {
@@ -1170,6 +1164,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const payableAdjustments = detail?.adjustments.filter((adjustment) => adjustment.effect === "INCREASE_RECEIVABLE") ?? [];
+
+  // Fica aqui (e nao junto do estado das notas) porque as funcoes de rotulo leem
+  // operationDocuments e outros estados declarados mais abaixo; calcular antes deles
+  // quebrava a tela ao digitar na busca ("Cannot access ... before initialization").
+  const visibleEligible = eligible.filter((operation) => {
+    const term = noteSearch.trim().toUpperCase();
+    if (!term) return true;
+    const haystack = [operationDocument(operation)?.documentNumber ?? "", counterpartyLabel(operation), legalEntityLabel(operation.ownLegalEntityId), triangulatedIssuerLabel(operation) ?? ""].join(" ").toUpperCase();
+    return haystack.includes(term);
+  });
 
   return (
     <section className="content-section settings">
