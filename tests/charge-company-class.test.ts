@@ -4,6 +4,7 @@ import { chargeCompanyClass } from "../src/shared/utils/chargeCompanyClass";
 it.each([
   "BOM DO GRAOS EXPORTACAO E COMERCIALIZACAO LTDA",
   "GRÃOS REIS",
+  "GRAO FORTE COMERCIO E SERVICOS LTDA",
   "PRIME COFFEE",
   "VILLA CEREAIS LTDA",
   "",
