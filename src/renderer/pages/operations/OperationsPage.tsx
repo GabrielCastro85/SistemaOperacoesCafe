@@ -192,6 +192,41 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
   };
 
   useEffect(() => { setXmlJob(null); }, [partnerId, operationType, scope, productId, ownLegalEntityId]);
+
+  // "Mesmo cliente para todas as notas da fila": com a caixa marcada, o cliente escolhido
+  // vai para todas as notas da fila (inclusive as que entrarem depois). Desmarcada, cada
+  // nota continua com o proprio cliente. Nao usa partnerId, que e' do lancamento manual.
+  const [xmlSameClientForQueue, setXmlSameClientForQueue] = useState(false);
+  const [xmlQueueClientId, setXmlQueueClientId] = useState("");
+  const xmlFileTakesClient = useCallback((file: XmlFileInspection) =>
+    file.status !== "ERROR" && !file.xmlType.startsWith("EVENT_") && !xmlInspectionIsWarehouse(file), []);
+  const applyClientToXmlQueue = useCallback((value: string, overwrite: boolean) => {
+    setXmlPartnerOverrides((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const file of xmlQueue) {
+        if (!xmlFileTakesClient(file)) continue;
+        if (vulpeScan && xmlIgnoredSelections[file.token]) continue;
+        if (!overwrite && next[file.token]) continue;
+        if (next[file.token] === value) continue;
+        next[file.token] = value;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [setXmlPartnerOverrides, vulpeScan, xmlFileTakesClient, xmlIgnoredSelections, xmlQueue]);
+  // Notas que entram na fila com a caixa marcada recebem o cliente da fila.
+  useEffect(() => {
+    if (xmlSameClientForQueue && xmlQueueClientId) applyClientToXmlQueue(xmlQueueClientId, false);
+  }, [applyClientToXmlQueue, xmlQueueClientId, xmlSameClientForQueue]);
+  // Fila esvaziada (limpar ou salvar): a proxima fila comeca com a caixa desmarcada,
+  // para o cliente de um lote nao ir sem querer para o lote seguinte.
+  useEffect(() => {
+    if (xmlQueue.length === 0) {
+      setXmlSameClientForQueue(false);
+      setXmlQueueClientId("");
+    }
+  }, [xmlQueue.length]);
   useEffect(() => { setReplacementPartnerId(""); }, [detail?.document.id]);
   useEffect(() => { setReturnDate(brazilDateValue()); setReturnUnit("SACKS"); setReturnQuantity(""); setReturnReason(""); }, [detail?.document.id]);
   useEffect(() => {
@@ -1381,13 +1416,35 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
               </div>
             ) : (
               <>
+                {xmlQueue.length > 0 ? (
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={xmlSameClientForQueue}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setXmlJob(null);
+                        setXmlSameClientForQueue(checked);
+                        // Ao marcar, o cliente que ja esta na nota aberta passa para a fila toda.
+                        const current = checked ? selectedXmlPartnerId : "";
+                        setXmlQueueClientId(current);
+                        if (checked && current) applyClientToXmlQueue(current, true);
+                      }}
+                    />
+                    {operationType === "PURCHASE" ? "Mesmo fornecedor para todas as notas da fila" : "Mesmo cliente para todas as notas da fila"}
+                  </label>
+                ) : null}
                 <FormGrid>
                   <PartnerQuickSearch
                     label={operationType === "PURCHASE" ? "Fornecedor responsável pela nota" : "Cliente/corretor responsável pela cobrança"}
                     value={selectedXmlPartnerId}
                     onChange={(value) => {
                       setXmlJob(null);
-                      if (selectedXmlFile) {
+                      if (xmlSameClientForQueue) {
+                        // Caixa marcada: o cliente vale para todas as notas da fila.
+                        setXmlQueueClientId(value);
+                        applyClientToXmlQueue(value, true);
+                      } else if (selectedXmlFile) {
                         // Cliente por nota: a escolha vale so para o XML selecionado.
                         setXmlPartnerOverrides((current) => ({ ...current, [selectedXmlFile.token]: value }));
                         if (vulpeScan && value) setXmlIgnoredSelections((current) => ({ ...current, [selectedXmlFile.token]: false }));
