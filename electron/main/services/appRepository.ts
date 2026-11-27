@@ -3607,6 +3607,9 @@ export class AppRepository {
     return this.getClientCharge(id);
   }
 
+  // So entram cobrancas com o periodo DENTRO do periodo desta. Antes bastava encostar:
+  // a cobranca paga da semana anterior (15/11 a 21/11) dividia o dia 21 com a desta
+  // semana (21/11 a 27/11) e as notas dela apareciam no PDF (Valani, 27/11/2026).
   private listRelatedOpenChargeDetailsForDocuments(detail: ClientChargeDetail): ClientChargeDetail[] {
     const charge = detail.charge;
     const rows = this.db.prepare(`
@@ -3616,10 +3619,10 @@ export class AppRepository {
         AND client_partner_id = ?
         AND status NOT IN ('PAID', 'CANCELLED', 'REPLACED')
         AND open_amount_cents > 0
-        AND period_start <= ?
-        AND period_end >= ?
+        AND period_start >= ?
+        AND period_end <= ?
       ORDER BY period_start, charge_number, created_at
-    `).all(charge.id, charge.clientPartnerId, charge.periodEnd, charge.periodStart) as DbRecord[];
+    `).all(charge.id, charge.clientPartnerId, charge.periodStart, charge.periodEnd) as DbRecord[];
     return rows.map((row) => this.getClientCharge(String(row.id)));
   }
 
@@ -3632,10 +3635,10 @@ export class AppRepository {
         AND client_partner_id = ?
         AND status = 'PAID'
         AND paid_amount_cents >= final_amount_cents
-        AND period_start <= ?
-        AND period_end >= ?
+        AND period_start >= ?
+        AND period_end <= ?
       ORDER BY period_start, charge_number, created_at
-    `).all(charge.id, charge.clientPartnerId, charge.periodEnd, charge.periodStart) as DbRecord[];
+    `).all(charge.id, charge.clientPartnerId, charge.periodStart, charge.periodEnd) as DbRecord[];
     return rows.map((row) => this.getClientCharge(String(row.id)));
   }
 

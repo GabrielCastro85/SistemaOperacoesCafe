@@ -433,9 +433,11 @@ function detailFromRows(charge: Row, rows: { links: Row[]; adjustments: Row[]; c
   } as ClientChargeDetail;
 }
 
+// So cobrancas com o periodo DENTRO do periodo desta (ver listRelatedOpenChargeDetailsForDocuments
+// no appRepository): uma cobranca que so encosta no periodo nao entra no PDF.
 async function relatedDetails(pool: pg.Pool, charge: Row, context: ChargeContext): Promise<{ open: ClientChargeDetail[]; paid: ClientChargeDetail[] }> {
   const candidates = (await rowsWhere(pool, "client_charges", "client_partner_id", [text(charge.client_partner_id)]))
-    .filter((row) => text(row.id) !== text(charge.id) && text(row.period_start) <= text(charge.period_end) && text(row.period_end) >= text(charge.period_start))
+    .filter((row) => text(row.id) !== text(charge.id) && text(row.period_start) >= text(charge.period_start) && text(row.period_end) <= text(charge.period_end))
     .sort((left, right) => text(left.period_start).localeCompare(text(right.period_start)) || text(left.charge_number).localeCompare(text(right.charge_number)) || text(left.created_at).localeCompare(text(right.created_at)));
   const open = candidates.filter((row) => !["PAID", "CANCELLED", "REPLACED"].includes(text(row.status)) && cents(row.open_amount_cents) > 0);
   const paid = candidates.filter((row) => text(row.status) === "PAID" && cents(row.paid_amount_cents) >= cents(row.final_amount_cents));
