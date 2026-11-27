@@ -236,7 +236,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   // Atalho na aba Gerar: cobrancas ja geradas do cliente escolhido que tocam o periodo,
   // para abrir e salvar o PDF de novo sem ir ao Historico.
   const existingClientCharges = useMemo(() => {
-    if (!clientId || !/^d{4}-d{2}-d{2}$/.test(periodStart) || !/^d{4}-d{2}-d{2}$/.test(periodEnd)) return [];
+    if (!clientId || !/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) return [];
     return charges
       .filter((charge) => charge.clientPartnerId === clientId
         && !["CANCELLED", "REPLACED"].includes(charge.status)
