@@ -246,7 +246,10 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }
 
   const load = useCallback(async () => {
-    const clients = await window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" });
+    const [clients, allPartners] = await Promise.all([
+      window.operationsCafe.listBusinessPartners({ role: "CLIENT", status: "active" }),
+      window.operationsCafe.listBusinessPartners({ status: "active" })
+    ]);
     setPartners(clients);
     // Empresas/CNPJs sem cliente/corretor dono (cadastradas direto em
     // "Empresas e CNPJs") nao aparecem percorrendo os parceiros -- precisa
@@ -254,8 +257,13 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     // tela mostra "Nao identificado" mesmo pra nota ja vinculada a uma dessas
     // empresas (ver mesmo padrao em PartnersPage/OperationsPage).
     // Tudo junto (antes: uma consulta por cliente e o resto em fila).
+    // As empresas vem de TODOS os parceiros, nao so' dos clientes: o
+    // destinatario de uma nota pode ser empresa de um cadastro que e' so'
+    // fornecedor (ex.: NF 8 Agroforte -> Rodrigues, cobrada do SAMUEL), e sem
+    // ela a coluna "Empresa" mostrava "Nao identificado". A lista de clientes
+    // da busca continua so' com clientes (setPartners acima).
     const [linkedLegalEntities, unlinkedLegalEntities, ownLegalEntities, chargeList] = await Promise.all([
-      window.operationsCafe.listPartnerLegalEntitiesForPartners(clients.map((partner) => partner.id)),
+      window.operationsCafe.listPartnerLegalEntitiesForPartners(allPartners.map((partner) => partner.id)),
       organizationId ? window.operationsCafe.listUnlinkedPartnerLegalEntities(organizationId) : Promise.resolve([]),
       window.operationsCafe.listLegalEntities({ status: "all" }),
       window.operationsCafe.listClientCharges({ status: "all" })
