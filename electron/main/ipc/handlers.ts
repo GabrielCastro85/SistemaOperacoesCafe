@@ -1029,7 +1029,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, context: AppContext, repos
         for (const periodFolder of periodFolders) {
           const candidates = findXmlFiles(periodFolder, true).filter((filePath) => {
             const name = basename(filePath);
-            return /^\d{44}-nfe\.xml$/i.test(name) || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name));
+            // -procEventoNFe.xml: copia do cancelamento com nome unico (o -eve.xml
+            // usa so o minuto e se sobrescreve; ver isCandidateFileName no coletor).
+            return /^\d{44}-nfe\.xml$/i.test(name)
+              || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name))
+              || /-procEventoNFe\.xml$/i.test(name);
           });
           candidates.forEach((filePath) => inspectCandidate(filePath, null));
         }

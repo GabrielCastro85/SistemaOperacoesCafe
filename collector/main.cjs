@@ -275,6 +275,19 @@ function inspectXml(content) {
   return { accessKey, emitterCnpj: accessKey.slice(6, 20), recipientCnpj: "", xmlType: "CANCELLATION" };
 }
 
+// Arquivos que o coletor le: a NF-e (<chave>-nfe.xml) e os eventos de
+// cancelamento. A Vulpe grava o evento em dois lugares: "<minuto>-eve.xml" na
+// pasta da nota (o nome so tem o minuto, entao dois cancelamentos no mesmo
+// minuto se sobrescrevem -- foi assim que a NF 963 da Villa ES se perdeu em
+// 26/11/2026) e "110111<chave><seq>-procEventoNFe.xml" em Evento\...\Cancelamento,
+// com nome unico. Ler os dois garante que nenhum cancelamento fica de fora;
+// o servidor e o sistema ignoram o repetido pelo protocolo.
+function isCandidateFileName(name) {
+  return /^\d{44}-nfe\.xml$/i.test(name)
+    || (/-eve\.xml$/i.test(name) && !/-ped-eve\.xml$/i.test(name))
+    || /-procEventoNFe\.xml$/i.test(name);
+}
+
 function listCandidates(root) {
   const files = [];
   const pending = [root];
@@ -283,7 +296,7 @@ function listCandidates(root) {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       const fullPath = join(current, entry.name);
       if (entry.isDirectory()) pending.push(fullPath);
-      else if (/^\d{44}-nfe\.xml$/i.test(entry.name) || (/-eve\.xml$/i.test(entry.name) && !/-ped-eve\.xml$/i.test(entry.name))) files.push(fullPath);
+      else if (isCandidateFileName(entry.name)) files.push(fullPath);
     }
   }
   return files;
