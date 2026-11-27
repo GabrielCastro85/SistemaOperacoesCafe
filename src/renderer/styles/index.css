@@ -7286,3 +7286,13 @@ html.site .content-section .cards.cards--six,
   left: auto;
   right: 0;
 }
+
+/* Cobrancas > Gerar: atalho para abrir cobranca ja gerada do cliente no periodo. */
+.charge-existing-note .charge-existing-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  padding-top: 6px;
+}

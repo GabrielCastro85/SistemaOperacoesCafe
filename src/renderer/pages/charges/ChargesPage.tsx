@@ -233,6 +233,16 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
         return leftName.localeCompare(rightName, "pt-BR") || left.periodStart.localeCompare(right.periodStart);
       });
   }, [charges, controlIncludeAllOpen, periodEnd, periodStart, partners]);
+  // Atalho na aba Gerar: cobrancas ja geradas do cliente escolhido que tocam o periodo,
+  // para abrir e salvar o PDF de novo sem ir ao Historico.
+  const existingClientCharges = useMemo(() => {
+    if (!clientId || !/^d{4}-d{2}-d{2}$/.test(periodStart) || !/^d{4}-d{2}-d{2}$/.test(periodEnd)) return [];
+    return charges
+      .filter((charge) => charge.clientPartnerId === clientId
+        && !["CANCELLED", "REPLACED"].includes(charge.status)
+        && charge.periodStart <= periodEnd && charge.periodEnd >= periodStart)
+      .sort((left, right) => right.periodStart.localeCompare(left.periodStart) || right.createdAt.localeCompare(left.createdAt));
+  }, [charges, clientId, periodEnd, periodStart]);
 
   useEffect(() => {
     setHistoryVisibleCount(HISTORY_PAGE_SIZE);
@@ -1222,6 +1232,17 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
           <DateInput label="Fim" value={periodEnd} onChange={(event) => { setPeriodEnd(event.target.value); void findOperationsForRange(periodStart, event.target.value); }} />
           <DateInput label="Vencimento" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
         </FormGrid>
+        {!detail && existingClientCharges.length ? (
+          <div className="charge-context-note charge-existing-note">
+            <span>{existingClientCharges.length === 1 ? "Este cliente já tem cobrança gerada neste período" : "Este cliente já tem cobranças geradas neste período"}</span>
+            {existingClientCharges.map((charge) => (
+              <div key={charge.id} className="charge-existing-row">
+                <small>{formatDateOnlyBr(charge.periodStart)} a {formatDateOnlyBr(charge.periodEnd)} · {formatCurrencyFromCents(charge.finalAmountCents)} · {charge.finalAmountCents < 0 ? "Saldo a favor do cliente" : formatStatusLabel(charge.status)}{charge.openAmountCents > 0 && charge.paidAmountCents > 0 ? ` · aberto ${formatCurrencyFromCents(charge.openAmountCents)}` : ""}</small>
+                <button type="button" onClick={() => void openCharge(charge)}>Abrir cobrança já gerada</button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="inline-actions" style={{ marginBottom: "var(--space-4)" }}>
           <span className="muted">Periodicidade:</span>
           <Tabs items={PERIODICITY_ITEMS} active={periodicity} onChange={(next) => void applyPeriodicityFilter(next as BillingPeriodicity)} />
