@@ -23,7 +23,7 @@ import { FiscalDocumentDetailPanel } from "./components/FiscalDocumentDetailPane
 import { NotesSearchPanel } from "./components/NotesSearchPanel";
 import { useFiscalDocumentDetailState } from "./hooks/useFiscalDocumentDetailState";
 import { FiscalDocumentsTable, type FiscalDocumentRowView } from "./components/FiscalDocumentsTable";
-import { classifyWarehouseXml, inferXmlOperationType, parseNfeExtractedPreview, resolveOwnAndCounterparty } from "./xmlPreview";
+import { classifyWarehouseXml, inferXmlOperationType, parseNfeExtractedPreview, resolveOwnAndCounterparty, sortXmlQueueByCompanyAndNumber } from "./xmlPreview";
 import { formatOperationScope, OPERATION_SCOPE_OPTIONS } from "../../../shared/utils/operationLabels";
 import { formatProductUnit } from "../../../shared/utils/productLabels";
 import { formatStatusLabel } from "../../../shared/utils/statusLabels";
@@ -747,7 +747,10 @@ export function OperationsPage({ data }: { data: BootstrapData }): JSX.Element {
     sourceType: "FILE" | "MULTIPLE_FILES" | "FOLDER" | "DRAG_DROP"
   ): Promise<void> {
     if (selected.length === 0) return;
-    const inspections = await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token));
+    const inspections = sortXmlQueueByCompanyAndNumber(
+      await window.operationsCafe.inspectXmlFiles(selected.map((file) => file.token)),
+      data.legalEntities
+    );
     const invalidCount = inspections.filter((file) => file.status === "ERROR").length;
     setXmlSelectionSource(sourceType);
     setXmlSelections(selected);

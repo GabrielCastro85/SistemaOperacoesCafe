@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty } from "../src/renderer/pages/operations/xmlPreview";
+import { classifyWarehouseXml, parseNfeExtractedPreview, resolveOwnAndCounterparty, sortXmlQueueByCompanyAndNumber } from "../src/renderer/pages/operations/xmlPreview";
 import type { LegalEntity } from "../src/shared/types/domain";
 
 function legalEntity(overrides: Partial<LegalEntity>): LegalEntity {
@@ -107,5 +107,33 @@ describe("classifyWarehouseXml", () => {
       items: [{ cfop: "5102", description: "CAFE", commercialQuantity: "500", commercialUnit: "SC" }]
     });
     expect(classifyWarehouseXml(preview)).toBeNull();
+  });
+});
+
+describe("ordem da fila de XMLs", () => {
+  const entities = [
+    legalEntity({ id: "grao-sp", tradeName: "Grão & Grão SP", legalName: "GRAO E GRAO", cnpj: "40000000000004", state: "SP" }),
+    legalEntity({ id: "villa-es", tradeName: "Villa Coffee ES", legalName: "VILLA COFFEE", cnpj: "20000000000002", state: "ES" }),
+    legalEntity({ id: "grao-mg", tradeName: "Grão & Grão MG", legalName: "GRAO E GRAO", cnpj: "30000000000003", state: "MG" }),
+    legalEntity({ id: "villa-mg", tradeName: "Villa Coffee MG", legalName: "VILLA COFFEE", cnpj: "10000000000001", state: "MG" })
+  ];
+  const file = (name: string, issuer: string, number: string, status = "VALID") => ({
+    status,
+    originalFileName: name,
+    extractedData: { number, issuer: { cnpjCpf: issuer }, recipient: { cnpjCpf: "99999999000199" } }
+  });
+
+  it("separa por empresa (Villa MG, ES, Grao MG, SP) e ordena o numero crescente", () => {
+    const sorted = sortXmlQueueByCompanyAndNumber([
+      file("a", "40000000000004", "5"),
+      file("b", "10000000000001", "2448"),
+      file("c", "20000000000002", "964"),
+      file("d", "10000000000001", "2447"),
+      file("e", "30000000000003", "12"),
+      file("f", "20000000000002", "963"),
+      file("g", "88888888000188", "1"),
+      file("h", "10000000000001", "", "ERROR")
+    ], entities);
+    expect(sorted.map((item) => item.originalFileName)).toEqual(["d", "b", "f", "c", "e", "a", "g", "h"]);
   });
 });

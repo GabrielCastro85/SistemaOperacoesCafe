@@ -240,3 +240,49 @@ export function inferXmlOperationType(
   if (isOwn(recipientCnpj)) return "PURCHASE";
   return null;
 }
+
+// Ordem da fila de XMLs (pedido do Gabriel): uma empresa propria de cada vez --
+// Villa MG, Villa ES, Villa SP, Grao & Grao MG, Grao & Grao SP -- e dentro de
+// cada empresa da nota de menor numero para a maior. A empresa e a emitente
+// (notas emitidas) ou a destinataria (notas recebidas). Notas de terceiros vem
+// depois das empresas proprias; arquivos com erro ficam no fim.
+const XML_QUEUE_STATE_ORDER = ["MG", "ES", "SP"];
+
+function xmlQueueCompanyRank(entity: LegalEntity | undefined): number {
+  if (!entity) return 1000;
+  const name = `${entity.tradeName} ${entity.legalName}`.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
+  const brand = name.includes("VILLA") ? 0 : name.includes("GRAO") ? 1 : 2;
+  const stateIndex = XML_QUEUE_STATE_ORDER.indexOf((entity.state ?? "").toUpperCase());
+  return brand * 10 + (stateIndex === -1 ? XML_QUEUE_STATE_ORDER.length : stateIndex);
+}
+
+export function sortXmlQueueByCompanyAndNumber<T extends { status: string; originalFileName: string; extractedData: Record<string, unknown> | null }>(
+  files: T[],
+  legalEntities: LegalEntity[]
+): T[] {
+  const ownLegalEntities = legalEntities.filter((entity) => entity.documentPrefix !== "TERC-XML");
+  const keyOf = (file: T) => {
+    const preview = parseNfeExtractedPreview(file.extractedData);
+    const issuerCnpj = preview?.issuer?.cnpjCpf ? onlyDigits(preview.issuer.cnpjCpf) : cnpjFromAccessKey(preview?.accessKey ?? null);
+    const recipientCnpj = preview?.recipient?.cnpjCpf ? onlyDigits(preview.recipient.cnpjCpf) : null;
+    const own =
+      (issuerCnpj ? ownLegalEntities.find((entity) => onlyDigits(entity.cnpj) === issuerCnpj) : undefined)
+      ?? (recipientCnpj ? ownLegalEntities.find((entity) => onlyDigits(entity.cnpj) === recipientCnpj) : undefined);
+    const number = Number.parseInt(preview?.number ?? "", 10);
+    return {
+      error: file.status === "ERROR" ? 1 : 0,
+      company: xmlQueueCompanyRank(own),
+      companyCnpj: own ? "" : issuerCnpj ?? "",
+      number: Number.isFinite(number) ? number : Number.MAX_SAFE_INTEGER
+    };
+  };
+  return files
+    .map((file) => ({ file, key: keyOf(file) }))
+    .sort((left, right) =>
+      left.key.error - right.key.error
+      || left.key.company - right.key.company
+      || left.key.companyCnpj.localeCompare(right.key.companyCnpj)
+      || left.key.number - right.key.number
+      || left.file.originalFileName.localeCompare(right.file.originalFileName))
+    .map((item) => item.file);
+}
