@@ -7346,3 +7346,16 @@ html.site .content-section .cards.cards--six,
   color: #8a5a1f;
   font-size: 11px;
 }
+
+/* Cobrancas: tabelas "Notas pagas no periodo" e "Operacoes encontradas fora da
+   cobranca atual" tambem herdavam o min-width: 1060px de .table-row e criavam
+   rolagem lateral no card (~830px no PC). As colunas de texto encolhem e quebram. */
+.charge-diagnostics .table-head.charge-diagnostic-grid,
+.charge-diagnostics .table-row.charge-diagnostic-grid {
+  min-width: 0;
+  grid-template-columns: minmax(76px, 0.6fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(64px, 0.5fr) minmax(0, 0.9fr);
+}
+.charge-diagnostics .charge-diagnostic-table .table-head.charge-diagnostic-grid,
+.charge-diagnostics .charge-diagnostic-table .table-row.charge-diagnostic-grid {
+  grid-template-columns: minmax(76px, 0.6fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
+}
