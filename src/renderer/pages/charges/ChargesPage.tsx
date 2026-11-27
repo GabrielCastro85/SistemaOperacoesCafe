@@ -88,6 +88,13 @@ function localDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+// "2026-11-28" -> "2026-11-27" (conta em UTC so para nao depender do fuso).
+function dayBefore(isoDate: string): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function currentBillingRange(periodicity: BillingPeriodicity): { periodStart: string; periodEnd: string; label: string } {
   const today = new Date();
   const start = new Date(today);
@@ -142,6 +149,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   const [noteSearch, setNoteSearch] = useState("");
   const [exportingPartnerId, setExportingPartnerId] = useState<string | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
+  const [leftoverOperationIds, setLeftoverOperationIds] = useState<Set<string>>(new Set());
   const selectedOperations = eligible.filter((operation) => selectedNoteIds.has(operation.fiscalDocumentId));
   const availableNoteIds = Array.from(new Set(eligible.map((operation) => operation.fiscalDocumentId)));
   const selectedNoteCount = new Set(selectedOperations.map((operation) => operation.fiscalDocumentId)).size;
@@ -305,7 +313,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   }, [detail?.charge.id]);
   useEffect(() => {
     if (detail?.charge.clientPartnerId === clientId) return;
-    setEligible([]); setSelectedNoteIds(new Set());
+    setEligible([]); setSelectedNoteIds(new Set()); setLeftoverOperationIds(new Set());
     setClientPeriodOperations([]);
     setSearchedOperations(false);
     setDetail(null);
@@ -407,30 +415,50 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
   async function findOperationsForRange(nextPeriodStart: string, nextPeriodEnd: string, selectedClientId = clientId): Promise<void> {
     const request = ++periodRequestRef.current;
     setDetail(null);
-    setEligible([]); setSelectedNoteIds(new Set()); setClientPeriodOperations([]); setSearchedOperations(false);
+    setEligible([]); setSelectedNoteIds(new Set()); setLeftoverOperationIds(new Set()); setClientPeriodOperations([]); setSearchedOperations(false);
     setLoadingPeriod(false);
     if (!selectedClientId || !/^\d{4}-\d{2}-\d{2}$/.test(nextPeriodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(nextPeriodEnd) || nextPeriodStart > nextPeriodEnd) return;
     setLoadingPeriod(true);
     try {
-    const found = await window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: selectedClientId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, includeAllCompanies });
+    const [periodFound, currentCharges] = await Promise.all([
+      window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: selectedClientId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, includeAllCompanies }),
+      window.operationsCafe.listClientCharges({ status: "all" })
+    ]);
+    // Notas que ficaram para tras: emitidas depois de fechar a cobranca anterior,
+    // com data dentro do periodo dela (ex.: UNI GRAO ES, cobranca de 21/11 a 27/11
+    // gerada na sexta e nota do dia 27 emitida depois). Busca as notas sem cobranca
+    // entre o inicio da ultima cobranca do cliente e a vespera do periodo novo, e
+    // ja deixa marcadas, com a etiqueta "Ficou da cobrança anterior".
+    const previousCharge = currentCharges
+      .filter((charge) => charge.clientPartnerId === selectedClientId && !["CANCELLED", "REPLACED"].includes(charge.status) && charge.periodStart < nextPeriodStart)
+      .sort((left, right) => right.periodStart.localeCompare(left.periodStart))[0];
+    const leftoverEnd = previousCharge ? dayBefore(nextPeriodStart) : "";
+    const leftovers = previousCharge && previousCharge.periodStart <= leftoverEnd
+      ? (await window.operationsCafe.findEligibleChargeOperations({ organizationId, ownLegalEntityId, clientPartnerId: selectedClientId, periodStart: previousCharge.periodStart, periodEnd: leftoverEnd, includeAllCompanies }))
+        .filter((operation) => !periodFound.some((item) => item.id === operation.id))
+      : [];
+    const found = [...leftovers, ...periodFound];
     const related = await window.operationsCafe.listOperations({ responsiblePartnerId: selectedClientId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, status: "all", billingStatus: "all" });
-    const [documents, entities, billingSummary, partnerRates, currentCharges] = await Promise.all([
+    const [documents, entities, billingSummary, partnerRates] = await Promise.all([
       loadOperationDocuments([...found, ...related]),
       window.operationsCafe.listLegalEntities({ status: "all" }),
       window.operationsCafe.getBillingSummary({ organizationId, includeAllCompanies, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd }),
-      window.operationsCafe.getPartnerRateSummary({ organizationId, ownLegalEntityId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, includeAlreadyBilled, includeAllCompanies }),
-      window.operationsCafe.listClientCharges({ status: "all" })
+      window.operationsCafe.getPartnerRateSummary({ organizationId, ownLegalEntityId, periodStart: nextPeriodStart, periodEnd: nextPeriodEnd, includeAlreadyBilled, includeAllCompanies })
     ]);
     if (request !== periodRequestRef.current) return;
     setOperationDocuments(documents);
     setLegalEntities(entities);
     setCharges(currentCharges);
     setEligible(found);
+    setLeftoverOperationIds(new Set(leftovers.map((operation) => operation.id)));
+    setSelectedNoteIds(new Set(leftovers.map((operation) => operation.fiscalDocumentId)));
     setClientPeriodOperations(related);
     setSummary(billingSummary);
     setPartnerSummary(partnerRates);
     setSearchedOperations(true);
-    setMessage("Marque as notas que deseja incluir na cobranca ou use Selecionar todos.");
+    setMessage(leftovers.length
+      ? `${new Set(leftovers.map((operation) => operation.fiscalDocumentId)).size} nota(s) que ficaram sem cobrança desde ${formatDateOnlyBr(previousCharge!.periodStart)} já vieram marcadas. Marque as outras notas ou use Selecionar todos.`
+      : "Marque as notas que deseja incluir na cobranca ou use Selecionar todos.");
     } catch (error) {
       if (request === periodRequestRef.current) setMessage(`Erro ao calcular o periodo: ${error instanceof Error ? error.message : "Falha inesperada"}`);
     } finally {
@@ -452,7 +480,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
     setPeriodEnd(range.periodEnd);
     setDueDate(today);
     setDetail(null);
-    setEligible([]); setSelectedNoteIds(new Set());
+    setEligible([]); setSelectedNoteIds(new Set()); setLeftoverOperationIds(new Set());
     setClientPeriodOperations([]);
     setSearchedOperations(false);
     setMessage(`Filtro ajustado para ${range.label}: ${formatDateOnlyBr(range.periodStart)} a ${formatDateOnlyBr(range.periodEnd)}.`);
@@ -1364,7 +1392,7 @@ export function ChargesPage({ data }: { data: BootstrapData }): JSX.Element {
                   const companyContextLabel = issuerLabel ?? companyLabel;
                   return (
                     <div key={op.id} className={`table-row charge-operation-grid ${chargeCompanyClass(companyLabel, Boolean(issuerLabel))}`}>
-                      <span><label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={selectedNoteIds.has(op.fiscalDocumentId)} onChange={() => toggleNote(op.fiscalDocumentId)} aria-label={`Selecionar ${operationNoteLabel(op)}`} /> <strong>{operationNoteLabel(op)}</strong></label><small>{formatDateOnlyBr(op.operationDate)}</small></span>
+                      <span><label><input type="checkbox" disabled={Boolean(detail) || loadingPeriod} checked={selectedNoteIds.has(op.fiscalDocumentId)} onChange={() => toggleNote(op.fiscalDocumentId)} aria-label={`Selecionar ${operationNoteLabel(op)}`} /> <strong>{operationNoteLabel(op)}</strong></label><small>{formatDateOnlyBr(op.operationDate)}</small>{leftoverOperationIds.has(op.id) ? <small className="charge-leftover-tag" title="Nota com data de um período já cobrado, emitida depois de fechar a cobrança anterior">Ficou da cobrança anterior</small> : null}</span>
                       <span><strong>{counterpartyLabel(op)}</strong><small>{companyContextLabel}</small></span>
                       <span><strong>{formatOperationScope(op.operationScope)}</strong><small>{chargeQuantityLabel(op.quantitySacks, op.appliedRateValueCents, op.serviceAmountCents)}</small></span>
                       <span><strong>{formatCurrencyFromCents(op.serviceAmountCents)}</strong><small>{operationValueByNote(op)}</small></span>

@@ -7359,3 +7359,15 @@ html.site .content-section .cards.cards--six,
 .charge-diagnostics .charge-diagnostic-table .table-row.charge-diagnostic-grid {
   grid-template-columns: minmax(76px, 0.6fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
 }
+
+/* Cobrancas: nota que ficou sem cobranca na semana anterior e entra nesta. */
+.charge-operation-grid small.charge-leftover-tag {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fbf3e4;
+  color: #8a5a1f;
+  font-size: 11px;
+  white-space: nowrap;
+}
