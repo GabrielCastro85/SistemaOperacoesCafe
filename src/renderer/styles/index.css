@@ -7296,3 +7296,49 @@ html.site .content-section .cards.cards--six,
   flex-wrap: wrap;
   padding-top: 6px;
 }
+
+/* Acertos de entrada: emitente e destinatario em linhas curtas (De / Para). */
+.charges-column .purchase-operation-grid {
+  grid-template-columns: minmax(84px, 0.6fr) minmax(220px, 1.8fr) minmax(130px, 0.9fr) minmax(100px, 0.7fr) minmax(96px, 0.6fr);
+  align-items: center;
+}
+.purchase-parties {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.purchase-party {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.purchase-party em {
+  flex: 0 0 34px;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.purchase-party b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+.purchase-party + .purchase-party b {
+  font-weight: 500;
+}
+.purchase-party-tag {
+  justify-self: start;
+  margin-top: 2px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fbf3e4;
+  color: #8a5a1f;
+  font-size: 11px;
+}

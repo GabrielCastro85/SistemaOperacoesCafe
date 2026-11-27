@@ -48,6 +48,18 @@ function currentBillingRange(periodicity: BillingPeriodicity): { periodStart: st
   return { periodStart: localDateInputValue(start), periodEnd: localDateInputValue(today), label: "mes atual" };
 }
 
+type PartyLabel = { short: string; full: string; isOwn: boolean };
+
+function decodeXmlEntities(value: string): string {
+  return value.replace(/&amp;/gi, "&").replace(/&quot;/gi, "\"").replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">");
+}
+
+// Tira a natureza juridica do fim (LTDA, EIRELI, S/A, ME...) para o nome caber na linha.
+function shortCompanyName(name: string): string {
+  const short = name.replace(/\s+(LTDA\.?|EIRELI|S\.?\/?A\.?|ME|EPP)(?=\s*(-|$))/gi, "").replace(/\s{2,}/g, " ").trim();
+  return short || name;
+}
+
 export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.Element {
   const organizationId = data.profile?.defaultOrganizationId ?? data.organizations[0]?.id ?? "";
   const ownLegalEntityId = data.profile?.defaultLegalEntityId ?? data.legalEntities.find((item) => item.organizationId === organizationId)?.id ?? "";
@@ -141,12 +153,29 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
     return operationDocuments[operation.fiscalDocumentId] ?? null;
   }
 
-  function operationPartiesLabel(operation: Operation): string {
+  // Emitente e destinatario da nota em duas linhas curtas (De / Para). Empresa propria
+  // aparece pelo nome curto do cadastro; as outras pelo nome do XML sem "LTDA" e com
+  // "&amp;" decodificado. Triangulada = nenhum dos dois lados e' empresa propria
+  // (ex.: Futura/Grao Forte do LEO ES -> Primavera da VALANI).
+  function operationParties(operation: Operation): { from: PartyLabel; to: PartyLabel | null; triangulated: boolean } {
+    const own = [...legalEntities, ...data.legalEntities].filter((entity) => entity.documentPrefix !== "TERC-XML");
+    const label = (party: { legalName?: string; tradeName?: string; cnpjCpf?: string } | undefined): PartyLabel | null => {
+      if (!party) return null;
+      const digits = (party.cnpjCpf ?? "").replace(/\D/g, "");
+      const ownEntity = digits ? own.find((entity) => (entity.cnpj ?? "").replace(/\D/g, "") === digits) : undefined;
+      const full = decodeXmlEntities(party.legalName ?? party.tradeName ?? "").trim();
+      if (ownEntity) return { short: ownEntity.tradeName || full, full: full || ownEntity.legalName, isOwn: true };
+      if (!full) return null;
+      return { short: shortCompanyName(full), full, isOwn: false };
+    };
     try {
-      const snapshot = JSON.parse(operationDocument(operation)?.fiscalSnapshotJson ?? "null") as { issuer?: { legalName?: string }; recipient?: { legalName?: string } } | null;
-      if (snapshot?.issuer?.legalName && snapshot.recipient?.legalName) return `${snapshot.issuer.legalName} → ${snapshot.recipient.legalName}`;
+      const snapshot = JSON.parse(operationDocument(operation)?.fiscalSnapshotJson ?? "null") as { issuer?: { legalName?: string; tradeName?: string; cnpjCpf?: string }; recipient?: { legalName?: string; tradeName?: string; cnpjCpf?: string } } | null;
+      const from = label(snapshot?.issuer);
+      const to = label(snapshot?.recipient);
+      if (from) return { from, to, triangulated: Boolean(to && !from.isOwn && !to.isOwn) };
     } catch { /* Notas manuais usam a empresa cadastrada. */ }
-    return legalEntityLabel(operation.ownLegalEntityId);
+    const name = legalEntityLabel(operation.ownLegalEntityId);
+    return { from: { short: name, full: name, isOwn: true }, to: null, triangulated: false };
   }
 
   function operationNoteLabel(operation: Operation): string {
@@ -280,13 +309,24 @@ export function PurchaseSettlementsPage({ data }: { data: BootstrapData }): JSX.
               <h3>Notas de entrada no periodo</h3>
               {eligible.length ? (
                 <div className="table">
-                  <div className="table-head purchase-operation-grid"><span>Nota</span><span>Empresa</span><span>Operacao</span><span>Valor</span><span>Status</span></div>
+                  <div className="table-head purchase-operation-grid"><span>Nota</span><span>Emitente e destinatário</span><span>Operacao</span><span>Valor</span><span>Status</span></div>
                   {eligible.map((operation) => (
                     <div key={operation.id} className="table-row purchase-operation-grid">
                       <span><strong>{operationNoteLabel(operation)}</strong><small>{formatDateOnlyBr(operation.operationDate)}</small></span>
-                      <span>{operationPartiesLabel(operation)}</span>
+                      <span className="purchase-parties">
+                        {(() => {
+                          const parties = operationParties(operation);
+                          return (
+                            <>
+                              <span className="purchase-party" title={parties.from.full}><em>De</em><b>{parties.from.short}</b></span>
+                              {parties.to ? <span className="purchase-party" title={parties.to.full}><em>Para</em><b>{parties.to.short}</b></span> : null}
+                              {parties.triangulated ? <span className="purchase-party-tag">Triangulada</span> : null}
+                            </>
+                          );
+                        })()}
+                      </span>
                       <span><strong>{formatOperationScope(operation.operationScope)}</strong><small>{decimalTextBr(operation.quantitySacks)} sacas · {formatCurrencyFromCents(operation.appliedRateValueCents)}/saca</small></span>
-                      <span><strong>{formatCurrencyFromCents(operation.serviceAmountCents)}</strong><small>{formatCurrencyFromCents(operation.serviceAmountCents)} x {operationNoteLabel(operation)}</small></span>
+                      <span><strong>{formatCurrencyFromCents(operation.serviceAmountCents)}</strong></span>
                       <span>{operation.purchaseSettlementStatus === "UNSETTLED" ? "Nao acertada" : "Ja em acerto"}</span>
                     </div>
                   ))}
