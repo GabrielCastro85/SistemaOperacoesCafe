@@ -7298,8 +7298,12 @@ html.site .content-section .cards.cards--six,
 }
 
 /* Acertos de entrada: emitente e destinatario em linhas curtas (De / Para). */
-.charges-column .purchase-operation-grid {
-  grid-template-columns: minmax(84px, 0.6fr) minmax(220px, 1.8fr) minmax(130px, 0.9fr) minmax(100px, 0.7fr) minmax(96px, 0.6fr);
+/* Sem o min-width: 0, a regra geral .table-row (min-width: 1060px) criava rolagem
+   lateral no card, como ja era tratado para .charge-operation-grid. */
+.charges-column .table-head.purchase-operation-grid,
+.charges-column .table-row.purchase-operation-grid {
+  min-width: 0;
+  grid-template-columns: minmax(72px, 0.6fr) minmax(0, 2fr) minmax(110px, 0.9fr) minmax(90px, 0.7fr) minmax(88px, 0.6fr);
   align-items: center;
 }
 .purchase-parties {
